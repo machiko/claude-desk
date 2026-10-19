@@ -1,4 +1,4 @@
-// 風險分級：看這個分支相對 release 線改了哪些檔。
+// 風險分級：看這個分支相對要併進去的分支（PR 目標、release 線、card.base 或 origin/HEAD）改了哪些檔。
 // 低：只動文件 → 跳過審查。高：碰到下列任一處 → 審查過了還要加跑資安審查，最後停下來給你看。
 // 這裡只放跨專案通用的路徑；專案自己的（例如授權核心類別）寫在 dispatch.json 的 risk.high。
 export type RiskLevel = 'low' | 'normal' | 'high'

@@ -167,22 +167,6 @@ test('a running case offers no dispatch, and a failed launch is reported without
   expect(data.toasts.some(t => t.includes('not logged in'))).toBe(true)
 })
 
-test('the first dispatch of a case resumes the session console-status recorded for it', async ($, on) => {
-  const { data, clock } = fixture(on)
-  const old = 'cccccccc-0000-4000-8000-000000000000'
-  data.files['/home/u/.claude/handoffs/claude-sessions.json'] = JSON.stringify({ version: 1, roots: { '/home/u/wt/alpha': { root: '/home/u/wt/alpha', sessionId: old, jobs: [] } } })
-  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
-  data.launch = async (e: any) => {
-    data.agents = [{ id: 'cccccccc', kind: 'background', cwd: '/home/u/wt/alpha', name: e.argv[3], sessionId: old, state: 'working', status: 'busy' }]
-    return { exitCode: 0, stdout: 'cccccccc', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
-  }
-  await $.command.run({ command: 'desk', args: 'refresh' } as any)
-  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
-  await clock.settle()
-  const argv = data.launches[0].argv
-  expect(argv[argv.indexOf('--resume') + 1]).toBe(old)
-})
-
 test('the status shows one short line by default and the full clauses when expanded', async ($, on) => {
   const { data } = fixture(on)
   data.files[CARD_A] = data.files[CARD_A]!.replace('- 狀態：Alpha 一切就緒', '- 狀態：第一件事（細節 abc1234def）；第二件事；第三件事；第四件事')

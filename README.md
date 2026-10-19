@@ -5,7 +5,7 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 > **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH findings for up to two rounds. The UI and prompts are in Traditional Chinese.
 
 ```
- desk 0.16.0  5 小時 剩 78%  本週 剩 31%            示範資料 · 20:00 更新
+ desk 0.17.0  5 小時 剩 78%  本週 剩 31%            示範資料 · 20:00 更新
  ──────────────────────────────────────────────────────────────────────
  現在
  ● 主工作區（release/v1.4）  等你 · 20 分鐘
@@ -35,8 +35,9 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 ## 需要什麼
 
 - Claude Code：以 2.1.302 開發與測試。mod API 仍是 early access，Claude Code 改版可能讓 desk 需要跟著更新。
+- macOS 或 Linux（開檔案用 `open`／`xdg-open`）；Windows 沒有測試過。
 - `git`、`python3`（`/desk:card` 用）。
-- 選用：`docker compose`（完成檢查前確認容器）、Bitbucket MCP 伺服器（讀 PR 與 CI，只呼叫 `bb_get`）。
+- 選用：讀 PR 與 CI——GitHub 的 repo 用 [`gh`](https://cli.github.com/)（要先 `gh auth login`，只執行 `gh pr list`）、Bitbucket 的 repo 用 Bitbucket MCP 伺服器（只呼叫 `bb_get`）；都沒有時合併改看 git。`docker compose`（完成檢查前確認容器）。
 
 ## 安裝
 
@@ -146,6 +147,13 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - 派工：用 `claude --bg` 在案子根目錄開背景 agent，權限照你的 Claude Code 設定。提示詞要求執行者不 push、不開 PR、不碰正式環境、不啟動容器。
 - 不會 push、不會開或合併 PR、不會部署。
 
+## 限制
+
+- 介面、提示詞與卡片欄位都是繁體中文。
+- 預設的發版慣例：發版線是 `release/*` 分支、上線看 `v*` tag。用 main 直接發版也可以，只是「開發中版本」那一欄不會出現。
+- PR 狀態只讀 GitHub 與 Bitbucket；GitLab 等其他平台的合併靠 git 判斷，squash 合併在這種情況下看不出來，要自己在卡片寫回。
+- 背景執行者的權限照你的 Claude Code 設定；desk 只在提示詞裡要求不 push、不開 PR、不碰正式環境，不是沙盒。
+
 ## 設定
 
 plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
@@ -155,13 +163,12 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `registryPath` | 空白 | 案子登錄表：每列 `\| 案名 \| \`卡片路徑\` \|`。空白＝目前專案的 `projects-scope.md`；填了就每個專案都讀這一份 |
 | `dispatchSettingsPath` | `~/.claude/handoffs/dispatch.json` | 全域派工設定；目前專案的 `dispatch.json` 疊在上面（見下） |
 | `refreshSeconds` | `30` | 重讀間隔（10–600） |
-| `bitbucketServer` | `bitbucket` | 讀 PR 與 CI 的 MCP 伺服器名稱 |
+| `bitbucketServer` | `bitbucket` | Bitbucket 的 repo 讀 PR 與 CI 的 MCP 伺服器名稱（GitHub 用 `gh`，不用設定） |
 | `pitfallsPath` | 空白 | 常犯錯誤清單，審查先讀；空白＝目前專案的 `review-pitfalls.md` |
 | `reviewsDir` | 空白 | 審查存底；空白＝目前專案的 `reviews/` |
 | `composeDir` | 空白 | `docker-compose.yml` 所在資料夾；專案 `dispatch.json` 的 `composeDir` 優先；都空白就不看容器 |
 | `summaryModel` | `haiku` | 把卡片狀態濃縮成一句的模型；`off` 不呼叫模型 |
 | `activation` | `auto` | `auto`：輸入過 `/desk` 的對話才啟用；`always`：每個對話都啟用 |
-| `legacySessionsPath` | `~/.claude/handoffs/claude-sessions.json` | 舊版 console-status 的 session 對應，沒有就不用管 |
 
 ### 專案資料夾
 
@@ -218,7 +225,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `risk.high` | 額外的高風險路徑（正規式）；碰到就加跑資安審查並停下來等你看 |
 | `checkServices` | 完成檢查裡出現這個指令名時需要哪些容器服務 |
 | `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
-| `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
+| `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base（desk 也拿它當 diff 與合併判斷的基準之一）、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
 
 ## 開發
 

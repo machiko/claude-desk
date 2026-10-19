@@ -6,14 +6,14 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, FeedEvent, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, CARD_CMD } from './card'
 import { buildCase, demoSnapshot, events, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain } from './model'
-import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, optionPath, prProbe, riskOf, versions } from './probes'
+import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
 import type { DeskPaths } from './probes'
 import { CONFIRM_MS, confirmStep, deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, UUID, REVIEW_FILE, SECURITY_FILE, buildPrompt, confirmLaunch, dispatchable, launchArgs, launchName, modelFor, normalizeRoot, parseLaunchToken } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, confirmLaunch, dispatchable, launchArgs, launchName, modelFor, normalizeRoot, parseLaunchToken } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { checkStands, finalState, isReleaseLine, parseVerdict, pipeline, stageLabel } from './pipeline'
 import { nextStep } from './chain'
@@ -453,7 +453,7 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
   const jobs = await loadJobs($)
   const rootKey = normalizeRoot(c.root)
-  const own: RootJobs = jobs[rootKey] ?? { ...(await legacySession($, options, rootKey)) }
+  const own: RootJobs = jobs[rootKey] ?? {}
   const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
   const now = await $.clock.now()
   const name = launchName(now, launchSeq++)
@@ -496,17 +496,6 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   }
 }
 
-/** console-status 留下的案子 session（claude-sessions.json），讓換到 desk 後第一次繼續仍接續同一個對話。 */
-async function legacySession($: any, options: PluginOptions, rootKey: string): Promise<{ sessionId?: string }> {
-  const text = await $.fs.read(await optionPath($, options, 'legacySessionsPath', '~/.claude/handoffs/claude-sessions.json')).catch(() => null)
-  if (!text) return {}
-  try {
-    const roots = JSON.parse(text)?.roots ?? {}
-    const hit = Object.values<any>(roots).find(r => typeof r?.root === 'string' && normalizeRoot(r.root) === rootKey)
-    return typeof hit?.sessionId === 'string' && UUID.test(hit.sessionId) ? { sessionId: hit.sessionId } : {}
-  } catch { return {} }
-}
-
 /** 回覆停下來問的執行者：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   if (demo) { $.ui.toast('示範資料不會派工；輸入 /desk refresh 切回實際資料'); return }
@@ -536,8 +525,7 @@ async function fillDecision($: any, c: Case) {
 
 async function openCard($: any, c: Case) {
   if (demo) { $.ui.toast('示範資料沒有實際卡片可開啟'); return }
-  const r = await $.process.run(['open', c.statusPath], { timeoutMs: 15_000 }).catch(() => null)
-  if (!r || r.exitCode !== 0) $.ui.toast(`${c.name}：無法開啟 ${c.statusPath}`)
+  if (!(await openWith($, c.statusPath))) $.ui.toast(`${c.name}：無法開啟 ${c.statusPath}`)
 }
 
 /** 系統通知（macOS 通知、手機）：同一句話這次載入只送一次，送不出去就算了。 */
@@ -591,8 +579,15 @@ async function toggleLogs($: any, c: Case) {
 }
 
 async function openPath($: any, target: string, what: string) {
-  const r = await $.process.run(['open', target], { timeoutMs: 15_000 }).catch(() => null)
-  if (!r || r.exitCode !== 0) $.ui.toast(`無法開啟${what}`)
+  if (!(await openWith($, target))) $.ui.toast(`無法開啟${what}`)
+}
+
+/** 用系統預設程式開檔案或網址：macOS 用 open，其他（Linux）用 xdg-open。 */
+async function openWith($: any, target: string): Promise<boolean> {
+  const os = await $.process.run(['uname', '-s'], { timeoutMs: 5_000 }).catch(() => null)
+  const cmd = os && os.exitCode === 0 && String(os.stdout).trim() !== 'Darwin' ? 'xdg-open' : 'open'
+  const r = await $.process.run([cmd, target], { timeoutMs: 15_000 }).catch(() => null)
+  return !!r && r.exitCode === 0
 }
 
 /** 選取的案子在下一個提示附上它的卡：模型看得到內容，使用者不用貼。 */
