@@ -1,0 +1,158 @@
+"""card.py 的測試：在暫存資料夾造主 repo、登錄表與卡片，跑真的子指令。
+
+執行：python3 -m unittest discover -s skills/card/tests
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts', 'card.py')
+TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'templates', 'DESK-template.md')
+
+
+def read(path):
+    with open(path, encoding='utf-8') as f:
+        return f.read()
+
+
+def write(path, text, mode='w'):
+    with open(path, mode, encoding='utf-8') as f:
+        f.write(text)
+
+
+def git(*args, cwd):
+    subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
+
+
+class CardScriptTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = self.t = self.tmp.name
+        # 主 repo：一個 commit、一個本地的 origin，new 才能 fetch。
+        self.origin = os.path.join(t, 'origin.git')
+        self.main = os.path.join(t, 'shop')
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', self.origin], check=True)
+        os.makedirs(self.main)
+        git('init', '-q', '-b', 'main', cwd=self.main)
+        git('config', 'user.email', 't@example.com', cwd=self.main)
+        git('config', 'user.name', 't', cwd=self.main)
+        write(os.path.join(self.main, 'README.md'), 'x\n')
+        git('add', 'README.md', cwd=self.main)
+        git('commit', '-q', '-m', 'init', cwd=self.main)
+        git('remote', 'add', 'origin', self.origin, cwd=self.main)
+        git('push', '-q', 'origin', 'main', cwd=self.main)
+        self.reg = os.path.join(t, 'registry.md')
+        write(self.reg, '# 登錄\n\n| 案名 | 卡片 |\n| --- | --- |\n')
+        self.settings = os.path.join(t, 'dispatch.json')
+        self.write_settings({})
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write_settings(self, extra):
+        card = {'main': self.main, 'registry': self.reg, 'archive': os.path.join(self.t, 'archive'), **extra.pop('card', {})}
+        write(self.settings, json.dumps({'card': card, **extra}, ensure_ascii=False))
+
+    def run_card(self, *args):
+        env = {**os.environ, 'DESK_SETTINGS': self.settings}
+        for k in ('DESK_CARD_MAIN', 'DESK_CARD_REGISTRY', 'DESK_CARD_TEMPLATE', 'DESK_CARD_ARCHIVE'):
+            env.pop(k, None)
+        return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True, env=env)
+
+    def card_path(self, slug='order-export'):
+        return os.path.join(self.main + '-worktrees', slug, '.desk', 'CARD.md')
+
+    def fill_spec(self, path):
+        s = read(path)
+        s = s.replace('| AC-1 | <前提：角色、資料、狀態> | <操作或事件> | <看得到的結果：畫面、回應、資料、log> | `<測試名稱>` |', '| AC-1 | 管理員 | 匯出訂單 | 下載 CSV | `export csv`（新） |')
+        s = s.replace('| AC-2 | | | | |', '| AC-2 | 一般會員 | 匯出訂單 | 403 | `export forbidden`（新） |')
+        write(path, s)
+
+    def test_new_creates_worktree_card_registry_row_and_excludes(self):
+        self.write_settings({'card': {'check': 'make test SLUG={slug}'}})
+        r = self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        card = self.card_path()
+        self.assertTrue(os.path.isfile(card))
+        self.assertIn('# 訂單匯出 DESK', read(card))
+        self.assertIn(f'| 訂單匯出 | `{card}` |', read(self.reg))
+        exclude = read(os.path.join(self.main, '.git', 'info', 'exclude'))
+        self.assertIn('.desk/\n', exclude)
+        self.assertIn('.task/\n', exclude)
+        self.assertIn('建議完成檢查：make test SLUG=order-export', r.stdout)
+        self.assertIn('/desk:card spec order-export', r.stdout)
+        # 同一個分支再開一次要拒絕
+        self.assertNotEqual(self.run_card('new', 'feature/order-export', '訂單匯出').returncode, 0)
+
+    def test_new_without_main_says_how_to_set_it(self):
+        write(self.settings, json.dumps({'card': {'registry': self.reg}}))
+        r = self.run_card('new', 'feature/x', 'X')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('card', r.stderr)
+        self.assertIn('main', r.stderr)
+
+    def test_spec_flow_gate_then_ok_writes_decision_with_configured_user(self):
+        self.write_settings({'user': 'Alex', 'card': {'specRules': ['寫入操作要有稽核紀錄']}})
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        info = self.run_card('card', 'order-export').stdout
+        self.assertIn('format: DESK', info)
+        self.assertIn('branch: feature/order-export', info)
+        self.assertIn('user: Alex', info)
+        self.assertIn('rule: 寫入操作要有稽核紀錄', info)
+        self.assertEqual(self.run_card('spec-init', 'order-export').stdout.strip(), f'已有「## 規格」：{card}')
+        # 關卡不是 spec：拒絕；AC 還空著：拒絕
+        self.assertNotEqual(self.run_card('spec-ok', 'order-export').returncode, 0)
+        self.run_card('gate', 'order-export', 'spec：待確認規格')
+        self.assertIn('沒有填好的驗收情境', self.run_card('spec-ok', 'order-export').stderr)
+        self.fill_spec(card)
+        r = self.run_card('spec-ok', '訂單')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 關卡：無', text)
+        self.assertIn('- 狀態：規格已確認（AC-1～AC-2），可派實作', text)
+        self.assertRegex(text, r'- D-02 \d{4}-\d{2}-\d{2} Alex：確認規格（AC-1～AC-2，共 2 條）')
+
+    def test_old_card_gate_bumps_rev(self):
+        os.makedirs(os.path.join(self.t, 'old', '.console'))
+        old = os.path.join(self.t, 'old', '.console', 'STATUS.md')
+        write(old, '# Old\n\n<!-- CARD -->\n- 更新：2026-10-01 09:00 · rev 3 · x\n- 狀態：a\n- 關卡：無\n<!-- /CARD -->\n')
+        write(self.reg, f'| 舊案 | `{old}` |\n', 'a')
+        self.assertEqual(self.run_card('gate', '舊案', 'spec：待確認規格').returncode, 0)
+        text = read(old)
+        self.assertIn('- 關卡：spec：待確認規格', text)
+        self.assertRegex(text, r'- 更新：.* · rev 4 · desk-card')
+
+    def test_archive_copies_card_and_reviews_and_moves_registry_row(self):
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
+        write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
+        r = self.run_card('archive', 'order-export')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'order-export-CARD.md')))
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'order-export-REVIEW.md')))
+        reg = read(self.reg)
+        self.assertNotIn('| 訂單匯出 |', reg)
+        self.assertIn('## 已歸檔的卡', reg)
+        self.assertIn('worktree remove', r.stdout)
+        # worktree 不會被刪
+        self.assertTrue(os.path.isdir(os.path.join(self.main + '-worktrees', 'order-export')))
+
+    def test_unknown_target_lists_cases(self):
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        r = self.run_card('card', 'nope')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('訂單匯出', r.stderr)
+
+    def test_bundled_template_is_used_by_default(self):
+        self.assertTrue(os.path.isfile(TEMPLATE))
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        self.assertIn('## 驗收情境', read(self.card_path()).replace('### 驗收情境', '## 驗收情境'))
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,0 +1,187 @@
+// 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
+import type { Case } from '../types'
+import { isReleaseLine } from './pipeline'
+import { named, parseGate } from './card'
+
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const SHORT_ID = /^[0-9a-f]{8}$/i
+
+export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply'
+/** 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。 */
+export type ReviewWords = { high: string; security: string; categories: string; template: string }
+export type DispatchSettings = {
+  model: string; effort: string; sync: { model: string; effort: string; fresh: boolean }
+  projects: Record<string, { model?: string; effort?: string; rules?: string[] }>
+  /** 寫進提示詞與卡片的人名（「要 <user> 決定的事」「<user> 在工作桌確認」）。 */
+  user: string
+  /** 每次派工都附上的專案規則（例如測試只能怎麼跑）；案子的 rules 接在後面。 */
+  rules: string[]
+  review: ReviewWords
+  /** 額外的高風險路徑（正規式, 理由），排在內建的前面。 */
+  riskHigh: [RegExp, string][]
+  /** 完成檢查裡出現這個指令名就需要哪些容器服務（例如包好的測試腳本 → mysql）。 */
+  checkServices: Record<string, string[]>
+}
+
+export const DEFAULT_USER = '使用者'
+export const DEFAULT_REVIEW: ReviewWords = {
+  high: '實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求',
+  security: '授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩（log、匯出、版控）、機密與金鑰、檔案路徑、外部呼叫',
+  categories: '授權、個資、測試、命名',
+  template: '',
+}
+
+const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
+const strList = (v: unknown) => Array.isArray(v) ? v.map(str).filter(Boolean) : []
+/** 一次派工留下的紀錄，按案子根目錄存在 $.store。 */
+export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 自動接力已處理過這次的結果。 */ handled?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，接力自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean }
+export type RootJobs = { sessionId?: string; last?: JobRecord }
+export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
+
+export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆' }
+
+/** dispatch.json：全域 model／effort、每案子覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
+export function parseSettings(text: string | null): DispatchSettings {
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {} }
+  if (!text) return out
+  try {
+    const d = JSON.parse(text.replace(/^﻿/, ''))
+    out.model = typeof d?.model === 'string' ? d.model.trim() : ''
+    out.effort = typeof d?.effort === 'string' ? d.effort.trim() : ''
+    const sync = d?.sync?.claude
+    out.sync = { model: typeof sync?.model === 'string' ? sync.model.trim() : '', effort: typeof sync?.effort === 'string' ? sync.effort.trim() : '', fresh: d?.sync?.session === 'fresh' || (d?.sync?.session === undefined && !!(typeof sync?.model === 'string' && sync.model.trim())) }
+    if (d?.projects && typeof d.projects === 'object') for (const [root, v] of Object.entries<any>(d.projects)) {
+      out.projects[normalizeRoot(root)] = { ...(typeof v?.model === 'string' ? { model: v.model.trim() } : {}), ...(typeof v?.effort === 'string' ? { effort: v.effort.trim() } : {}), ...(strList(v?.rules).length ? { rules: strList(v.rules) } : {}) }
+    }
+    out.user = str(d?.user) || DEFAULT_USER
+    out.rules = strList(d?.rules)
+    out.review = { high: str(d?.review?.high) || DEFAULT_REVIEW.high, security: str(d?.review?.security) || DEFAULT_REVIEW.security, categories: str(d?.review?.categories) || DEFAULT_REVIEW.categories, template: str(d?.review?.template) }
+    if (Array.isArray(d?.risk?.high)) for (const r of d.risk.high) {
+      // 寫錯的正規式略過，不讓整份設定失效。
+      try { if (str(r?.pattern) && str(r?.label)) out.riskHigh.push([new RegExp(str(r.pattern)), str(r.label)]) } catch { /* 略過 */ }
+    }
+    if (d?.checkServices && typeof d.checkServices === 'object') for (const [cmd, v] of Object.entries<unknown>(d.checkServices)) {
+      if (str(cmd) && strList(v).length) out.checkServices[str(cmd)] = strList(v)
+    }
+  } catch { /* 壞掉的設定檔當作沒有。 */ }
+  return out
+}
+
+export const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
+
+/** 這件案子這種派工用的 model／effort：案子覆寫 > 全域；同步另有自己的模型。 */
+export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind): { model: string; effort: string; fresh: boolean } {
+  const own = settings.projects[normalizeRoot(root)] ?? {}
+  const base = { model: own.model ?? settings.model, effort: own.effort ?? settings.effort }
+  if (kind === 'sync') return { model: settings.sync.model || base.model, effort: settings.sync.effort || base.effort, fresh: settings.sync.fresh }
+  return { ...base, fresh: kind === 'review' }
+}
+
+export function launchName(now: number, seq: number): string {
+  return `desk-${now.toString(36)}-${seq.toString(36)}`
+}
+
+export function launchArgs(prompt: string, opts: { model?: string; effort?: string; sessionId?: string; launchName: string }): string[] {
+  return ['claude', '--bg', '--name', opts.launchName, ...(opts.sessionId ? ['--resume', opts.sessionId] : []), ...(opts.model ? ['--model', opts.model] : []), ...(opts.effort ? ['--effort', opts.effort] : []), prompt]
+}
+
+/** `claude --bg` 印出的短 id 或完整 session id；一行文字、JSON 或夾在句子裡都行；找到兩個不同的就不猜。 */
+export function parseLaunchToken(stdout: string): string | null {
+  const text = stdout.replace(/\u001b\[[0-9;]*m/g, '').trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? ''
+  if (SHORT_ID.test(text) || UUID.test(text)) return text
+  try {
+    const v = JSON.parse(text)
+    const c = typeof v?.id === 'string' ? v.id.trim() : typeof v?.sessionId === 'string' ? v.sessionId.trim() : ''
+    return SHORT_ID.test(c) || UUID.test(c) ? c : null
+  } catch { /* 一般文字輸出 */ }
+  const found = new Set<string>()
+  for (const m of stdout.matchAll(/(?<![0-9a-f])(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{8})(?![0-9a-f])/gi)) found.add(m[0])
+  return found.size === 1 ? [...found][0]! : null
+}
+
+/** 啟動後清單裡唯一一個叫這個名字、對得上 token、且啟動前不存在的背景 agent。 */
+export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: string, token: string): RawAgent | null {
+  const seen = new Set(before.map(a => `${a.id ?? ''}|${a.sessionId ?? ''}`))
+  const hits = after.filter(a => a.kind === 'background' && a.name === name && (a.id === token || a.sessionId === token) && !seen.has(`${a.id ?? ''}|${a.sessionId ?? ''}`) && typeof a.sessionId === 'string' && UUID.test(a.sessionId))
+  return hits.length === 1 ? hits[0]! : null
+}
+
+/** 每次派工都附的規則；專案規則（dispatch.json 的 rules 與案子的 rules）接在最後。 */
+function cardRules(settings: DispatchSettings, root: string): string[] {
+  return [
+    '卡片要精簡：狀態一句話 60 字內、下一步 40 字內，多件事用「；」分開；commit、測試數字、檔案清單等細節寫在卡片下方的歷程，不要塞進這兩欄。',
+    '卡片在 .desk/CARD.md（或 .console/STATUS.md）；結束這一輪前把五欄寫回，每欄一行。保留卡片既有的欄位名，不要改名：舊卡用「驗證」「等使用者」，新卡用「檢查」「等你」，工作桌兩種都讀得懂。',
+    '寫入前重讀卡片；內容與你開始時讀到的不同就停止並回報衝突，不要覆寫。',
+    '檢查欄只放一條可執行的完成檢查（反引號），exit 0 代表做完；發現寫在 狀態 或 .task/REPORT.md。',
+    `要${named(settings.user)}決定的事寫進 等你（有選項寫成 問題：A) … B) …）後結束這一輪，不要提問等待。`,
+    '做完實作：關卡留 無；完成檢查與審查由工作桌自動接力，你不用自己送審查。',
+    '只在此案子根目錄作業；不 push、不開 PR、不碰正式環境、不啟動或重建容器、不改 port、不在主工作區切分支。',
+    ...settings.rules,
+    ...(settings.projects[normalizeRoot(root)]?.rules ?? []),
+  ]
+}
+
+/** 會改程式的派工（繼續、回覆、修正）多這一條：照規格做，審查會逐條對照驗收情境。 */
+const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。卡片沒有規格段就照下一步做。'
+
+export const REVIEW_FILE = '.task/REVIEW.md'
+export const SECURITY_FILE = '.task/SECURITY.md'
+
+/** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單與過去審查紀錄在哪。 */
+export type ReviewOpts = { round: number; base?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; history: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string }
+
+export type FixReason = { from: 'check' | 'review'; round: number; tail?: string[] }
+
+export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null)): string {
+  const head = fix ? (fix.from === 'check'
+      ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
+      : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
+    : kind === 'continue' ? `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`
+    : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。'
+    : kind === 'review' ? reviewPrompt(c, settings.review, review)
+    : `${named(settings.user).trimStart()}的回覆：${text}`
+  const base = cardRules(settings, c.root)
+  const rules = fix || kind === 'continue' || kind === 'reply' ? [SPEC_RULE, ...base] : base
+  return `${head}\n案子：${c.name}\n根目錄：${c.root}\n卡片：${c.statusPath}\n${rules.join('\n')}`
+}
+
+/** 下一步以 .task/review-… 開頭時，那個路徑。 */
+export function reviewTask(c: Case): string {
+  const m = c.next.match(/^\s*(\.task\/review-[^\s（(]+\.md)/)
+  return m ? m[1]! : ''
+}
+
+/** 現在可以派哪些：進行中一律不派；等回覆只給回覆；規格未確認或沒有完成檢查不能派實作；同步隨時可。 */
+export function dispatchable(c: Case): DispatchKind[] {
+  if (c.manual || c.state === 'running' || c.state === 'nocard') return []
+  if (c.state === 'reply') return ['reply', 'sync']
+  // 已上線：沒有要實作或審查的東西，只能同步。
+  if (c.state === 'done') return ['sync']
+  // 規格還沒確認（關卡 spec：…）：不派實作也不審查，只能同步。
+  if (parseGate(c.gate)?.kind === 'spec') return ['sync']
+  const out: DispatchKind[] = []
+  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify) out.push('continue')
+  if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
+  out.push('sync')
+  return out
+}
+
+function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
+  const file = r?.security ? SECURITY_FILE : REVIEW_FILE
+  const scope = r?.base && r.recheck
+    ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 MEDIUM／LOW 不要再提。`
+    : r?.base && r.round > 0
+    ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；上一輪已列過的 MEDIUM／LOW 與標「不修」的項目不要再提。`
+    : '看這個分支相對 release 線的 diff（從 git merge-base 起算）。'
+  return [
+    `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續執行者、不參考執行者的結論。`,
+    `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。自己重跑完成檢查 \`${c.verify}\`。`,
+    scope,
+    ...(r?.pitfalls ? [`先讀專案常犯錯誤清單 ${r.pitfalls}，逐條對照這次的改動。`] : []),
+    ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
+    `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
+    '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>',
+    ...(r?.pitfalls && r.history ? [`審完後看 ${r.history} 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 ${r.pitfalls} 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。`] : []),
+    '不改程式、不 commit。',
+  ].join('\n')
+}

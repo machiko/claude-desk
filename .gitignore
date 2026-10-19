@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+__pycache__/
+# 發布前檢查用的禁用字詞清單，只放在本機（見 scripts/check-public.sh）
+.public-denylist
+.claude/

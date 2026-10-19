@@ -1,0 +1,88 @@
+// 輪到誰、該做什麼：依六段與案子狀態產生一句給你看的話，以及這一刻該出現哪些動作。
+// 卡片的「下一步」是寫給執行者的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
+import type { Case } from '../types'
+import { CARD_CMD, parseGate, saysNone } from './card'
+import { isReleaseLine, standingVerdict } from './pipeline'
+import { tutorialStep, tutorialTurn } from './tutorial'
+
+export type Turn = {
+  /** you：輪到你動手；ai：AI 或機器處理中，等著就好；none：沒有要做的事。 */
+  who: 'you' | 'ai' | 'none'
+  text: string
+  /** 該按的那個鍵；footer 上對應的按鈕會亮。 */
+  key?: string
+}
+
+/** 畫面上才知道的事：完成檢查執行中、排隊中、派工中，以及現在是不是教學模式。 */
+export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean }
+
+export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'tutorial'
+
+const slugOf = (c: Case) => c.root.split('/').filter(Boolean).pop() ?? ''
+const isRunning = (c: Case) => c.state === 'running'
+
+export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
+  if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
+  if (ctx.launching) return { who: 'ai', text: '派工中，等執行者啟動' }
+  // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
+  const lesson = ctx.tutorial && !isRunning(c) && !ctx.verifying && !ctx.queued ? tutorialTurn(c) : null
+  if (lesson) return { who: 'you', ...lesson }
+  if (c.state === 'ask') return { who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' }
+  if (c.state === 'reply') return { who: 'you', text: '按 y 回覆執行者的提問', key: 'y' }
+  if (ctx.verifying) return { who: 'ai', text: '完成檢查執行中，不用做事' }
+  if (ctx.queued) return { who: 'ai', text: '完成檢查排隊中，不用做事' }
+  if (isRunning(c)) return { who: 'ai', text: c.chain?.lastKind === 'review' ? '審查進行中，不用做事' : '執行者工作中，不用做事（l 看輸出）' }
+  if (c.manual) return { who: 'none', text: '手動案子：工作桌只追蹤，不派工' }
+  if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
+  if (c.state === 'failed') return c.chain?.stopped
+    ? { who: 'you', text: `接力已暫停（${c.chain.stopped}）：看審查檔（e）後按 g 再修一輪`, key: 'g' }
+    : { who: 'you', text: '完成檢查未通過：按 g 讓執行者修正，或自己修好後按 v 重跑', key: 'g' }
+  const gate = parseGate(c.gate)
+  if (gate?.kind === 'unknown') return { who: 'you', text: `關卡「${gate.detail}」：開卡片（o）處理`, key: 'o' }
+  switch (c.pipeline?.current) {
+    case 'spec':
+      if (gate?.kind === 'spec') return { who: 'you', text: `看過規格後輸入 ${CARD_CMD} spec ${slugOf(c)} ok` }
+      return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫規格與完成檢查` }
+    case 'build':
+      if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
+      return { who: 'you', text: `按 g 派執行者：${c.next}`, key: 'g' }
+    case 'check':
+      return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 v 重新執行完成檢查' : '按 v 執行完成檢查', key: 'v' }
+    case 'review':
+      if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接力處理中' }
+      return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）', key: 'w' }
+    case 'merge':
+      if (!c.pr && c.chain?.needsHuman) return { who: 'you', text: '高風險改動：看過資安審查（e）後再開 PR', key: 'e' }
+      if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') return { who: 'you', text: 'push 分支並開 PR 到 release 線' }
+      if (c.pr.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 執行中，不用做事' }
+      if (c.pr.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
+      return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
+    case 'ship':
+      if (c.tag && gate?.kind === 'release') return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線`, key: 'u' }
+      return { who: 'you', text: '合併後打 tag 發版' }
+    default:
+      return { who: 'none', text: '沒有待辦' }
+  }
+}
+
+/**
+ * 這一刻該出現的動作：只列現在可以做、而且有意義的。開卡片永遠在；同步在沒有人執行時都在。
+ * 已經過了的段落不再出現它的鍵（檢查過了沒有 v、審查過了沒有 w）；之後有新 commit，六段會退回去，鍵也會回來。
+ */
+export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
+  const out = new Set<ActionId>(['open'])
+  const current = c.pipeline?.current ?? null
+  if (c.agent?.id) out.add('logs')
+  if (c.reviewTop?.length) out.add('review-file')
+  if (c.pr?.url) out.add('pr')
+  if (c.state === 'ask') out.add('fill')
+  if (c.state === 'reply') out.add('reply')
+  if (isRunning(c)) { out.add('stop'); return out }
+  if (c.state !== 'done') out.add('sync')
+  if (current === 'build' || c.state === 'failed') out.add('continue')
+  if (current === 'check' || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
+  if (current === 'review' && !standingVerdict(c)) out.add('review')
+  if (current === 'ship') out.add('ship')
+  if (ctx.tutorial && tutorialStep(c)) out.add('tutorial')
+  return out
+}

@@ -1,0 +1,110 @@
+import { mock } from 'claude-code/testing'
+
+export const NOW = Date.parse('2030-01-05T12:00:00Z')
+export const REGISTRY = '/home/u/.claude/handoffs/projects-scope.md'
+export const CARD_A = '/home/u/wt/alpha/.desk/CARD.md'
+export const CARD_B = '/home/u/wt/beta/.desk/CARD.md'
+export const CARD_C = '/home/u/wt/gamma/.desk/CARD.md'
+
+export const BAND = (bodyColumns: number) => ({ plugin: 'desk', component: 'AbovePrompt', surface: 'terminal',
+  props: { hasSurvey: false, isWorking: false, bodyColumns, maxRows: 3, scroll: { offset: 0, total: 0, visible: 0 }, view: {} } } as any)
+export const PANE = (bodyColumns = 72, placement: 'dock' | 'inline' = 'inline', bodyRows?: number) => ({ plugin: 'desk', component: 'Pane', requestId: 'desk', surface: 'terminal',
+  props: { title: 'desk', isFocused: true, bodyColumns, placement, scroll: { offset: 0, bodyRows }, view: {} } } as any)
+
+export const result = (exitCode = 0, stdout = '', stderr = '') => ({ exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false })
+
+export function fixture(on: any) {
+  const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { HOME: '/home/u' })
+  const data = {
+    files: {
+      [REGISTRY]: `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`,
+      [CARD_A]: `<!-- DESK -->\n- 狀態：Alpha 一切就緒\n- 驗證：\`node test.mjs\`\n- 等你：要 push 嗎？A) 要 B) 等\n- 下一步：push\n- 關卡：無\n<!-- /DESK -->`,
+      [CARD_B]: `<!-- DESK -->\n- 狀態：Beta 修正中\n- 驗證：\`npm test\`\n- 等你：無\n- 下一步：依審核修正\n- 關卡：無\n<!-- /DESK -->`,
+      [CARD_C]: `<!-- DESK -->\n- 狀態：Gamma 閒置\n- 驗證：無\n- 等你：無\n- 下一步：無\n- 關卡：無\n<!-- /DESK -->`,
+    } as Record<string, string>,
+    mtimes: { [CARD_A]: NOW - 20 * 60_000, [CARD_B]: NOW - 3 * 60_000, [CARD_C]: NOW - 2 * 86_400_000 } as Record<string, number>,
+    agents: [{ id: 'bbbbbbbb', kind: 'background', cwd: '/home/u/wt/beta', state: 'working', status: 'busy', name: 'beta-agent', sessionId: 'bbbbbbbb-0000-4000-8000-000000000000', startedAt: NOW - 60_000 }] as any[],
+    toasts: [] as string[],
+    logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
+    launches: [] as any[],
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[] }>,
+    mcpCalls: [] as any[],
+    compose: '' as string | null,
+    composeCalls: [] as any[],
+    opens: [] as any[],
+    closes: [] as any[],
+    panes: [] as any[],
+    /** 引擎會不會畫出這次開啟；false 模擬「主動開啟、終端機不夠寬」。 */
+    placeOpen: (_e: any) => true as boolean,
+    usage: { startedAt: NOW, context: { percent: 34 }, rateLimits: [] as any[] } as any,
+    writes: [] as string[],
+    status: undefined as string | undefined,
+    prs: [] as any[],
+    statuses: [] as string[],
+    launch: async (_e: any): Promise<any> => result(0, ''),
+    processCalls: [] as any[],
+    fills: [] as any[],
+    submitted: [] as any[],
+    asks: [] as string[],
+    answer: '執行',
+    run: async (_e: any): Promise<any> => result(0, 'all green\n'),
+    store: {} as Record<string, unknown>,
+  }
+  on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.9.9"}' } : { deny: 'ENOENT' })
+  on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
+  on('fs.exists', (_: any, e: any) => ({ value: data.files[e.path] !== undefined }))
+  on('fs.write', (_: any, e: any) => { data.files[e.path] = e.text; data.writes.push(e.path); return { value: undefined } })
+  on('process.run', async (_: any, e: any) => {
+    if (e.argv[0] === 'claude' && e.argv[1] === 'agents') return { value: result(0, JSON.stringify(data.agents)) }
+    if (e.argv[0] === 'docker' && e.argv[1] === 'compose' && e.argv[2] === 'ps') { data.composeCalls.push(e); return { value: data.compose === null ? result(1, '', 'Cannot connect to the Docker daemon') : result(0, data.compose) } }
+    if (e.argv[0] === 'git') {
+      const g = data.git[e.argv[2]]
+      if (!g) return { value: result(128, '', 'not a git repository') }
+      const args = e.argv.slice(3).join(' ')
+      if (args.startsWith('rev-parse')) return { value: result(0, `${g.branch}\n${g.head}\n`) }
+      if (args.startsWith('tag --contains')) return { value: result(0, g.tag ? `${g.tag}\n` : '') }
+      if (args.startsWith('tag --list')) return { value: result(0, 'v1.3.0\nv1.2.0\n') }
+      if (args.startsWith('remote get-url')) return { value: result(0, 'git@bitbucket.org:acme/shop.git\n') }
+      if (args.startsWith('for-each-ref')) return { value: result(0, 'origin/release/v1.4\n') }
+      if (args.startsWith('merge-base')) return { value: result(0, 'base0\n') }
+      if (args.startsWith('diff --name-only')) return { value: result(0, (g.files ?? []).join('\n')) }
+      return { value: result(0, '') }
+    }
+    if (e.argv[0] === 'claude' && e.argv[1] === 'logs') return { value: result(0, data.logs[e.argv[2]] ?? '') }
+    if (e.argv[0] === 'claude' && e.argv[1] === '--bg') { data.launches.push(e); return { value: await data.launch(e) } }
+    data.processCalls.push(e)
+    return { value: await data.run(e) }
+  })
+  on('mcp.call', (_: any, e: any) => {
+    data.mcpCalls.push(e)
+    const body = String(e.args?.path ?? '').endsWith('/statuses') ? data.statuses : data.prs
+    return { value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError: false } }
+  })
+  on('session.usage', () => ({ value: data.usage }))
+  on('session.id', () => ({ value: 'fixture-session' }))
+  on('store.get', (_: any, e: any) => ({ value: data.store[e.key] ?? null }))
+  on('store.set', (_: any, e: any) => { data.store[e.key] = e.value; return { value: undefined } })
+  on('ui.toast', (_: any, e: any) => { data.toasts.push(e.text); return { value: undefined } })
+  on('ui.status', (_: any, e: any) => { data.status = e.text; return { value: undefined } })
+  on('ui.open', (_: any, e: any) => {
+    data.opens.push(e)
+    const placed = data.placeOpen(e)
+    data.panes = [...data.panes.filter((p: any) => p.id !== e.id), { id: e.id, title: e.title ?? e.id, isShown: placed, isFocused: false, isPlaced: placed }]
+    return { value: placed ? { isPlaced: true } : { isPlaced: false, reason: 'needs 144 columns, 120 now' } }
+  })
+  on('ui.close', (_: any, e: any) => { data.closes.push(e); data.panes = data.panes.filter((p: any) => p.id !== e.id); return { value: undefined } })
+  on('ui.panes', () => ({ value: data.panes }))
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: any, e: any) => {
+    const q = e.questions?.[0]
+    data.asks.push(String(q?.question ?? ''))
+    return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: data.answer } } }
+  })
+  on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: true } })
+  on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [] }))
+  return { data, clock }
+}
+
+export const leaves = (node: any, type: string): any[] => typeof node === 'string' ? [] : node?.type === type ? [node] : (node?.children ?? []).flatMap((child: any) => leaves(child, type))
+export const text = (node: any): string => typeof node === 'string' ? node : (node?.children ?? []).map(text).join('')

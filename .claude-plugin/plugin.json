@@ -1,0 +1,79 @@
+{
+  "name": "desk",
+  "version": "0.16.0",
+  "description": "工作桌：一眼看完每件案子卡在哪、在等誰；決策用按的、驗證一鍵、派工（繼續／同步／審核／回覆）用 claude --bg。讀 DESK 卡與案子登錄表；只在「上線確認」時清卡片的 release 關卡，其他一律不寫卡、不碰正式環境。",
+  "author": {
+    "name": "Reyes"
+  },
+  "license": "MIT",
+  "keywords": [
+    "desk",
+    "workflow",
+    "kanban",
+    "background-agents",
+    "code-review"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "registryPath": {
+      "type": "string",
+      "title": "案子登錄表",
+      "description": "Markdown 表格：每列「| 案名 | `DESK 卡路徑` |」。絕對路徑或 ~/ 開頭。",
+      "default": "~/.claude/handoffs/projects-scope.md"
+    },
+    "refreshSeconds": {
+      "type": "string",
+      "title": "更新間隔（秒）",
+      "description": "工作桌重新讀卡與背景 agent 狀態的間隔；10 到 600。",
+      "default": "30"
+    },
+    "dispatchSettingsPath": {
+      "type": "string",
+      "title": "派工設定",
+      "description": "dispatch.json：全域 model／effort、projects 覆寫、sync.claude.model 同步模型；user 人名、rules 專案規則、review 審查用語、risk.high 高風險路徑、checkServices 檢查要的容器。",
+      "default": "~/.claude/handoffs/dispatch.json"
+    },
+    "legacySessionsPath": {
+      "type": "string",
+      "title": "舊 session 對應",
+      "description": "console-status 的 claude-sessions.json；desk 第一次派某個案子時從這裡接續原本的對話。",
+      "default": "~/.claude/handoffs/claude-sessions.json"
+    },
+    "bitbucketServer": {
+      "type": "string",
+      "title": "Bitbucket MCP 名稱",
+      "description": "讀 PR 與 CI 用的 MCP 伺服器名稱（/mcp 列出的名字）；只會呼叫 bb_get。",
+      "default": "bitbucket"
+    },
+    "pitfallsPath": {
+      "type": "string",
+      "title": "常犯錯誤清單",
+      "description": "審查每次都先讀；重複出現的問題由審查對話追加到檔尾。",
+      "default": "~/.claude/handoffs/review-pitfalls.md"
+    },
+    "reviewsDir": {
+      "type": "string",
+      "title": "審查紀錄資料夾",
+      "description": "每次審查結束後，desk 把審查檔存一份到這裡。",
+      "default": "~/.claude/handoffs/reviews"
+    },
+    "composeDir": {
+      "type": "string",
+      "title": "容器所在的專案",
+      "description": "docker-compose.yml 所在資料夾；面板的「容器」一列與檢查前的容器確認都看這裡。留空就不看容器。",
+      "default": ""
+    },
+    "summaryModel": {
+      "type": "string",
+      "title": "狀態摘要模型",
+      "description": "把卡片「狀態」濃縮成一句話用的模型；同一段狀態只摘要一次。填 off 只用規則精簡、不呼叫模型。",
+      "default": "haiku"
+    },
+    "activation": {
+      "type": "string",
+      "title": "啟動方式",
+      "description": "auto：只有輸入過 /desk 的對話才會啟用工作桌（resume 後自動再開）。always：每個互動對話都啟用。",
+      "default": "auto"
+    }
+  }
+}
