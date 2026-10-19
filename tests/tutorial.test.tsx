@@ -31,12 +31,12 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   const ui = await $.ui.mount(PANE(100))
   expect(await ui.find({ type: 'Text', text: /教學模式/ })).toBeDefined()
 
-  // 1 規格：t 執行 /desk:card 的腳本，設定檔指向沙盒
+  // 1 規格：t 執行 /desk:card 的腳本，設定檔指向沙盒；DESK_PROJECT_DIR 留空，免得依 cwd 認到真實專案、拿它的登錄表
   await turn(ui, '後按 t 確認（實際：/desk:card spec discount ok）')
   await ui.press({ key: KEY('tutorial') })
   const specOk = data.processCalls.find((c: any) => c.argv.includes('spec-ok'))
   expect(specOk.argv[0]).toBe('python3')
-  expect(specOk.init.env).toEqual({ DESK_SETTINGS: P.settings })
+  expect(specOk.init.env).toEqual({ DESK_SETTINGS: P.settings, DESK_PROJECT_DIR: '' })
 
   // 2 實作：按兩次 g，由腳本扮演執行者
   await turn(ui, '按 g 派執行者')

@@ -718,7 +718,8 @@ async function tutorialAct($: any, options: PluginOptions, c: Case) {
   const failed = (what: string, r: any) => $.ui.toast(`${what}失敗：${String(r?.stderr || r?.stdout || '').trim().split(/\r?\n/).pop() || '沒有輸出'}`, { timeoutMs: 10_000 })
   const run = (argv: string[], env?: Record<string, string>) => $.process.run(argv, { timeoutMs: 30_000, ...(env ? { env } : {}) }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
   if (step === 'spec-ok') {
-    const r = await run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', TUTORIAL_SLUG], { DESK_SETTINGS: p.settings })
+    // DESK_PROJECT_DIR 留空：card.py 不依 cwd 認專案，否則會疊上真實專案的 card 設定、讀到它的登錄表
+    const r = await run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', TUTORIAL_SLUG], { DESK_SETTINGS: p.settings, DESK_PROJECT_DIR: '' })
     if (r.exitCode !== 0) return failed('確認規格', r)
     await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success' }])
   } else if (step === 'merge') {
