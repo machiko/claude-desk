@@ -1,4 +1,4 @@
-// 探測：git、tag、Bitbucket PR、風險、執行者記錄、容器、版本、模型。都是讀，不寫卡片；
+// 探測：git、tag、PR（Bitbucket／GitHub）、合併、風險、執行者記錄、容器、版本、模型。都是讀，不寫卡片；
 // 唯一的寫入是審查存底（archiveReview）。快取放在這個模組裡，重新載入就清空。
 import type { PluginOptions } from 'claude-code'
 import type { Case, PrInfo, Snapshot } from '../types'
@@ -8,6 +8,8 @@ import { REVIEW_FILE, SECURITY_FILE, modelFor, parseSettings } from './dispatch'
 import type { DispatchSettings } from './dispatch'
 import { READ_TOOL, ciOf, mcpJson, pickPr, prQuery, repoOf, statusQuery } from './bitbucket'
 import type { Repo } from './bitbucket'
+import { ghPrArgs, githubRepoOf, pickGhPr } from './github'
+import type { GhRepo } from './github'
 import { classify } from './risk'
 import type { Risk } from './risk'
 import { parseCompose, summarize } from './containers'
@@ -20,10 +22,12 @@ import type { Project } from './project'
 const PR_TTL_MS = 5 * 60_000
 const LOGS_TIMEOUT_MS = 15_000
 let deskVersion: string | undefined
-const remotes = new Map<string, Repo | null>()
+type Remote = { host: 'bitbucket'; repo: Repo } | { host: 'github'; repo: GhRepo } | null
+const remotes = new Map<string, Remote>()
 const tags = new Map<string, string>()
 const prs = new Map<string, { at: number; branch: string; pr: PrInfo | null }>()
 const risks = new Map<string, Risk>()
+const merges = new Map<string, string>()
 const projects = new Map<string, Project>()
 
 export async function home($: any): Promise<string> {
@@ -86,23 +90,25 @@ export async function gitProbe($: any, root: string): Promise<{ git?: { branch: 
   return { git: { branch, head }, ...(tag ? { tag } : {}) }
 }
 
-/** Bitbucket 上這個分支的 PR 與 CI，透過 MCP 的 bb_get（唯讀）；發版線不查；5 分鐘快取，CI 跑中時每次更新都查。 */
+/** origin 是哪一家：Bitbucket 走 MCP、GitHub 走 gh CLI；其他（GitLab、自架）不查 PR，合併交給 git 判斷。 */
+function remoteOf(url: string): Remote {
+  const bb = repoOf(url)
+  if (bb) return { host: 'bitbucket', repo: bb }
+  const gh = githubRepoOf(url)
+  return gh ? { host: 'github', repo: gh } : null
+}
+
+/** 這個分支的 PR 與 CI：Bitbucket 用 MCP 的 bb_get、GitHub 用 gh pr list，都是唯讀；發版線不查；5 分鐘快取，CI 跑中時每次更新都查。 */
 export async function prProbe($: any, options: PluginOptions, root: string, branch: string, now: number, force = false): Promise<PrInfo | undefined> {
   if (/^release\//.test(branch) || branch === 'HEAD') return undefined
-  if (!remotes.has(root)) remotes.set(root, repoOf((await git($, root, ['remote', 'get-url', 'origin'])) ?? ''))
-  const repo = remotes.get(root)
-  if (!repo) return undefined
+  if (!remotes.has(root)) remotes.set(root, remoteOf((await git($, root, ['remote', 'get-url', 'origin'])) ?? ''))
+  const remote = remotes.get(root)
+  if (!remote) return undefined
   const cached = prs.get(root)
   const live = cached?.pr?.state === 'OPEN' && cached.pr.ci === 'pending'
   if (cached && cached.branch === branch && !force && !live && now - cached.at < PR_TTL_MS) return cached.pr ?? undefined
-  const server = String(options.bitbucketServer || 'bitbucket')
   try {
-    const found = pickPr(mcpJson(await $.mcp.call(server, READ_TOOL, prQuery(repo, branch))))
-    let pr: PrInfo | null = null
-    if (found) {
-      const ci = found.state === 'OPEN' ? ciOf(mcpJson(await $.mcp.call(server, READ_TOOL, statusQuery(repo, found.id)))) : 'none'
-      pr = { ...found, ci } as PrInfo
-    }
+    const pr = remote.host === 'github' ? await githubPr($, root, remote.repo, branch) : await bitbucketPr($, options, remote.repo, branch)
     prs.set(root, { at: now, branch, pr })
     return pr ?? undefined
   } catch {
@@ -110,15 +116,66 @@ export async function prProbe($: any, options: PluginOptions, root: string, bran
   }
 }
 
-/** 這個分支相對 release 線（PR 的目標，沒有 PR 就是最新的 origin/release/*）改了哪些檔，依 HEAD 快取。 */
-export async function riskOf($: any, c: Case, extra: readonly [RegExp, string][] = []): Promise<Risk> {
+async function bitbucketPr($: any, options: PluginOptions, repo: Repo, branch: string): Promise<PrInfo | null> {
+  const server = String(options.bitbucketServer || 'bitbucket')
+  const found = pickPr(mcpJson(await $.mcp.call(server, READ_TOOL, prQuery(repo, branch))))
+  if (!found) return null
+  const ci = found.state === 'OPEN' ? ciOf(mcpJson(await $.mcp.call(server, READ_TOOL, statusQuery(repo, found.id)))) : 'none'
+  return { ...found, ci } as PrInfo
+}
+
+/** gh 沒裝、沒登入或沒網路：丟出去，由 prProbe 沿用上一次的結果。 */
+async function githubPr($: any, root: string, repo: GhRepo, branch: string): Promise<PrInfo | null> {
+  const r = await $.process.run(ghPrArgs(repo, branch), { cwd: root, timeoutMs: 15_000 })
+  if (r.exitCode !== 0) throw new Error(String(r.stderr || 'gh pr list failed'))
+  return pickGhPr(JSON.parse(String(r.stdout)))
+}
+
+/**
+ * 這個分支要併進去的分支（候選，依序）：PR 目標 → 最新的 origin/release/* → dispatch.json 的 card.base → origin/HEAD。
+ * 不含分支自己（主工作區在 main 上時不拿 origin/main 當基準）。
+ */
+export async function baseRefs($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = ''): Promise<string[]> {
+  const release = (await git($, c.root, ['for-each-ref', '--sort=-committerdate', '--count=1', '--format=%(refname:short)', 'refs/remotes/origin/release/'])) ?? ''
+  const originHead = (await git($, c.root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])) ?? ''
+  const own = c.git?.branch ?? ''
+  const list = [c.pr?.dest ? `origin/${c.pr.dest}` : '', release, cardBase.trim(), originHead].map(r => r.trim())
+  return [...new Set(list.filter(r => r && r !== own && r !== `origin/${own}`))]
+}
+
+/** 分支相對第一個找得到 merge-base 的候選：基準分支與分叉點。都找不到就 null。 */
+export async function diffBase($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = ''): Promise<{ target: string; base: string } | null> {
+  for (const target of await baseRefs($, c, cardBase)) {
+    const base = await git($, c.root, ['merge-base', 'HEAD', target])
+    if (base) return { target, base }
+  }
+  return null
+}
+
+/**
+ * git 判斷合併：分支 HEAD 已經在哪個候選分支裡。只在合併段才問（剛開的分支 HEAD 也在 base 裡，不能算）；
+ * squash 合併看不出來，那種靠 PR 狀態。找到才快取。
+ */
+export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = ''): Promise<string | undefined> {
+  const head = c.git?.head
+  if (!head) return undefined
+  const key = `${c.root}\n${head}`
+  const hit = merges.get(key)
+  if (hit) return hit
+  for (const ref of await baseRefs($, c, cardBase)) {
+    if ((await git($, c.root, ['merge-base', '--is-ancestor', 'HEAD', ref])) !== null) { merges.set(key, ref); return ref }
+  }
+  return undefined
+}
+
+/** 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 快取。找不到基準就是空清單（算一般風險）。 */
+export async function riskOf($: any, c: Case, extra: readonly [RegExp, string][] = [], cardBase = ''): Promise<Risk> {
   const head = c.git?.head
   if (!head) return classify([], extra)
   const cached = risks.get(`${c.root}\n${head}`)
   if (cached) return cached
-  const target = c.pr?.dest ? `origin/${c.pr.dest}` : ((await git($, c.root, ['for-each-ref', '--sort=-committerdate', '--count=1', '--format=%(refname:short)', 'refs/remotes/origin/release/'])) ?? '')
-  const base = target ? await git($, c.root, ['merge-base', 'HEAD', target]) : null
-  const files = base ? ((await git($, c.root, ['diff', '--name-only', `${base}..HEAD`])) ?? '').split(/\r?\n/) : []
+  const found = await diffBase($, c, cardBase)
+  const files = found ? ((await git($, c.root, ['diff', '--name-only', `${found.base}..HEAD`])) ?? '').split(/\r?\n/) : []
   const risk = classify(files, extra)
   risks.set(`${c.root}\n${head}`, risk)
   return risk

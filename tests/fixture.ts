@@ -31,8 +31,11 @@ export function fixture(on: any) {
     toasts: [] as string[],
     logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
     launches: [] as any[],
-    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[] }>,
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[] }>,
     mcpCalls: [] as any[],
+    /** gh pr list 的回應；null 模擬沒裝或沒登入。 */
+    gh: [] as any[] | null,
+    ghCalls: [] as any[],
     compose: '' as string | null,
     composeCalls: [] as any[],
     opens: [] as any[],
@@ -72,12 +75,15 @@ export function fixture(on: any) {
       if (args.startsWith('rev-parse')) return { value: result(0, `${g.branch}\n${g.head}\n`) }
       if (args.startsWith('tag --contains')) return { value: result(0, g.tag ? `${g.tag}\n` : '') }
       if (args.startsWith('tag --list')) return { value: result(0, 'v1.3.0\nv1.2.0\n') }
-      if (args.startsWith('remote get-url')) return { value: result(0, 'git@bitbucket.org:acme/shop.git\n') }
-      if (args.startsWith('for-each-ref')) return { value: result(0, 'origin/release/v1.4\n') }
+      if (args.startsWith('remote get-url')) return { value: result(0, `${g.remote ?? 'git@bitbucket.org:acme/shop.git'}\n`) }
+      if (args.startsWith('for-each-ref')) return { value: result(0, g.releases ?? 'origin/release/v1.4\n') }
+      if (args.startsWith('symbolic-ref')) return { value: g.originHead ? result(0, `${g.originHead}\n`) : result(1, '', 'not a symbolic ref') }
+      if (args.startsWith('merge-base --is-ancestor')) return { value: (g.merged ?? []).includes(e.argv[e.argv.length - 1]) ? result(0) : result(1) }
       if (args.startsWith('merge-base')) return { value: result(0, 'base0\n') }
       if (args.startsWith('diff --name-only')) return { value: result(0, (g.files ?? []).join('\n')) }
       return { value: result(0, '') }
     }
+    if (e.argv[0] === 'gh') { data.ghCalls.push(e); return { value: data.gh === null ? result(1, '', 'gh: not logged in') : result(0, JSON.stringify(data.gh)) } }
     if (e.argv[0] === 'claude' && e.argv[1] === 'logs') return { value: result(0, data.logs[e.argv[2]] ?? '') }
     if (e.argv[0] === 'claude' && e.argv[1] === '--bg') { data.launches.push(e); return { value: await data.launch(e) } }
     data.processCalls.push(e)

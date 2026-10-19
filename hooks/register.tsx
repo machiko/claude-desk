@@ -6,7 +6,7 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, FeedEvent, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, CARD_CMD } from './card'
 import { buildCase, demoSnapshot, events, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain } from './model'
-import { archiveReview, containers, deskPaths, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, models, optionPath, prProbe, riskOf, versions } from './probes'
+import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, optionPath, prProbe, riskOf, versions } from './probes'
 import type { DeskPaths } from './probes'
 import { CONFIRM_MS, confirmStep, deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
@@ -130,6 +130,7 @@ async function refresh($: any, options: PluginOptions) {
     const summaries = await loadSummaries($)
     const launching = await read($, launchingAtom)
     const verifying = await read($, verifyingAtom)
+    const cardBase = tutorial ? '' : (await loadSettings($, options)).cardBase
     const cases: Case[] = await Promise.all(rows.map(async row => {
       const [card, stat] = await Promise.all([
         $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
@@ -152,7 +153,12 @@ async function refresh($: any, options: PluginOptions) {
       const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
-      const piped = { ...withState, ...(short ? { statusShort: short } : {}), pipeline: pipeline(withState, verifies[row.statusPath], row.statusPath in verifying) }
+      const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying)
+      // 合併段、沒有已合併的 PR：問 git 分支 HEAD 是不是已經在基準分支裡（GitLab、沒裝 gh、本機合併都靠這個）。
+      const atMerge = !tutorial && stages(withState).current === 'merge' && withState.pr?.state !== 'MERGED'
+      const into = atMerge ? await mergedProbe($, withState, cardBase) : undefined
+      const merged = into ? { ...withState, mergedInto: into } : withState
+      const piped = { ...merged, ...(short ? { statusShort: short } : {}), pipeline: stages(merged) }
       return { ...piped, state: finalState(piped) }
     }))
     const usage = await $.session.usage().catch(() => null)
@@ -251,7 +257,8 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const verify = (await read($, verifiesAtom))[c.statusPath]
     const fresh = verify && verify.at >= last.startedAt ? verify : undefined
     const finished: DispatchKind | null = last.kind === 'sync' ? null : last.kind
-    const risk = finished ? await riskOf($, c, (await loadSettings($, options)).riskHigh) : undefined
+    const settings = finished ? await loadSettings($, options) : undefined
+    const risk = settings ? await riskOf($, c, settings.riskHigh, settings.cardBase) : undefined
     const step = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security })
     if (!step) continue
     acted = true
@@ -460,7 +467,8 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     const pitfalls = paths.pitfalls
     const template = settings.review.template || `${$.plugin.root}/templates/review.md`
     const recheck = !!opts.auto && !!run?.recheck && !opts.security
-    review = { round, template, ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
+    const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target
+    review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
   }
   const prompt = buildPrompt(c, kind, text, opts.fix, review, settings)
   await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))

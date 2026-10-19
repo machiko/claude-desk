@@ -20,7 +20,7 @@ export type StageStatus = 'done' | 'active' | 'wait' | 'fail' | 'todo' | 'na'
 export type Stage = { id: StageId; label: string; status: StageStatus }
 export type Pipeline = { stages: Stage[]; current: StageId | null; note: string }
 export type ReviewVerdict = { critical: number; high: number; medium: number; low: number }
-/** Bitbucket 上這個分支的 PR：狀態與 CI。 */
+/** 這個分支的 PR（Bitbucket 或 GitHub）：狀態與 CI。 */
 export type PrInfo = { id: number; state: 'OPEN' | 'MERGED' | 'DECLINED' | 'SUPERSEDED'; ci: 'none' | 'pending' | 'pass' | 'fail'; dest?: string; url?: string }
 /** 自動接力在這件案子的狀況，畫圖用。 */
 export type ChainInfo = { round: number; stopped?: string; passed?: boolean; needsHuman?: string; skippedReview?: boolean; /** 審查（或免審查過關）之後分支有新 commit：那次的結論不算數。 */ stale?: boolean; lastKind?: 'continue' | 'sync' | 'review' | 'reply' | 'fix' | 'verify' }
@@ -43,6 +43,8 @@ export type Case = {
   state: CaseState
   git?: { branch: string; head: string }
   pr?: PrInfo
+  /** git 看到分支 HEAD 已經在這個分支裡（例如 origin/main）；只在合併段才查。 */
+  mergedInto?: string
   /** 包含目前 HEAD 的 v* tag（最舊的那個）。 */
   tag?: string
   chain?: ChainInfo

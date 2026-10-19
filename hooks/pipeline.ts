@@ -59,6 +59,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
   // 審查後有新 commit：程式已經寫了，退回檢查重來。
   else if (stale && !runningKind) reached = INDEX.build
   else if (!saysNone(c.next) || c.agent || c.verify) reached = c.verify && saysNone(c.ask) && gate?.kind !== 'spec' ? INDEX.spec : -1
+  // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
+  if (reached === INDEX.review && c.mergedInto) reached = INDEX.merge
   for (let i = 0; i <= reached; i++) status[STAGES[i]!.id] = 'done'
 
   const current = STAGES[reached + 1]?.id ?? null

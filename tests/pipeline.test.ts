@@ -78,3 +78,13 @@ test('a commit after the review passed sends the case back to check, then to rev
   // 合併後就不再退回
   expect(glyphs(stale({ pr: { id: 9, state: 'MERGED', ci: 'none' } }))).toBe('●●●●●◆')
 })
+
+test('a branch already inside its base counts as merged only once it reached the merge stage', () => {
+  const passed = { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }
+  // 審查過了、git 看到 HEAD 已在 main 裡：合併算過，輪到上線
+  expect(glyphs(mk(passed, { mergedInto: 'origin/main' }))).toBe('●●●●●◆')
+  expect(pipeline(mk(passed, { mergedInto: 'origin/main' }), undefined).note).toBe('待打 tag')
+  // 剛開的分支（HEAD 還是 base 的 commit）不算合併
+  expect(glyphs(mk({}, { mergedInto: 'origin/main' }))).toBe('●◆○○○○')
+  expect(glyphs(mk({}, { mergedInto: 'origin/main' }), ok())).toBe('●●●◆○○')
+})

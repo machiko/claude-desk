@@ -53,7 +53,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）', key: 'w' }
     case 'merge':
       if (!c.pr && c.chain?.needsHuman) return { who: 'you', text: '高風險改動：看過資安審查（e）後再開 PR', key: 'e' }
-      if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') return { who: 'you', text: 'push 分支並開 PR 到 release 線' }
+      if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') return { who: 'you', text: 'push 分支並開 PR' }
       if (c.pr.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 執行中，不用做事' }
       if (c.pr.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
       return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
