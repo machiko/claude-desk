@@ -236,7 +236,7 @@ claude plugin test .                  # hooks 的測試
 python3 -m unittest discover -s skills/card/tests   # /desk:card 的測試
 ```
 
-型別檢查：`npx -y -p typescript@5 tsc -p tsconfig.json --noEmit`。
+型別檢查：`npx -y -p typescript@5 tsc -p tsconfig.json --noEmit`。它要讀 `.claude-plugin/types/`（Claude Code 產生的 mod 型別，不進版控），所以只在本機跑；GitHub Actions 跑 `plugin validate`、`plugin test` 與 `/desk:card` 的測試（`.github/workflows/ci.yml`）。
 
 ## 授權
 

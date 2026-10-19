@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # 與 README「需要什麼」寫的開發版本一致；升版時兩處一起改。
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.1.302
+      - name: Validate plugin
+        run: claude plugin validate .
+      - name: Hook tests
+        run: claude plugin test .
+      - name: /desk:card tests
+        run: python3 -m unittest discover -s skills/card/tests
