@@ -131,12 +131,17 @@ test('risk is not cached when no base could be found', async () => {
   expect((await riskOf($, c)).level).toBe('high')
 })
 
-test('a failing gh is retried after a minute, and an old PR stops showing after an hour', async ($, on) => {
-  const { data, clock } = fixture(on)
+/** 一張 GitHub 案子、PR 開著且 CI 跑中；gh 之後可以改成失敗。 */
+function githubCase(data: any) {
   data.agents = []
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', PASSED)
   data.git[BETA] = { branch: 'feature/b', head: 'g8', remote: 'git@github.com:acme/shop.git' }
   data.gh = [{ number: 21, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, statusCheckRollup: [{ conclusion: '', status: 'IN_PROGRESS' }] }]
+}
+
+test('a failing gh is retried after a minute, not on every refresh', async ($, on) => {
+  const { data, clock } = fixture(on)
+  githubCase(data)
   // /desk refresh 與 r 會強制重讀 PR；這裡用每 30 秒的定時更新
   const tickRefresh = async () => { await clock.advance(30_000); await clock.settle() }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -151,11 +156,23 @@ test('a failing gh is retried after a minute, and an old PR stops showing after 
   expect(data.ghCalls.length).toBe(2)
   await tickRefresh()
   expect(data.ghCalls.length).toBe(3)
+})
+
+// 更新間隔拉到 10 分鐘：時鐘往前推一小時只跑幾輪，CI 的慢機器也不會逾時。
+test('an old PR stops showing after an hour of failed reads', { options: { refreshSeconds: '600' } }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  githubCase(data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  data.gh = null
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: `row-${CARD_B}` })
+  await clock.advance(600_000)
+  await clock.settle()
+  // 讀失敗，但還在一小時內：沿用舊的 PR
+  expect(data.ghCalls.length).toBe(2)
   expect(await ui.find({ type: 'Text', text: /PR #21/ })).toBeDefined()
-  // 一小時都讀不到：舊的 PR 不再顯示
-  await clock.advance(61 * 60_000)
+  await clock.advance(55 * 60_000)
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: /PR #21/ })).toBeUndefined()
   await ui.unmount()
