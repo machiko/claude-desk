@@ -25,6 +25,8 @@ export type DispatchSettings = {
   composeDir: string
   /** card.base：分支預設要併進去的分支（例如 origin/main）；沒有 PR 與 release 線時當 diff 與合併判斷的基準。 */
   cardBase: string
+  /** updateCheck："off" 不自動檢查 desk 新版本；沒設＝每 24 小時查一次。 */
+  updateCheck: '' | 'off'
 }
 
 export const DEFAULT_USER = '使用者'
@@ -46,7 +48,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每案子覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '' }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '' }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -69,6 +71,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     }
     out.composeDir = str(d?.composeDir)
     out.cardBase = str(d?.card?.base)
+    out.updateCheck = d?.updateCheck === false || str(d?.updateCheck).toLowerCase() === 'off' ? 'off' : ''
   } catch { /* 壞掉的設定檔當作沒有。 */ }
   return out
 }

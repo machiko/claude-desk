@@ -7,11 +7,13 @@ import { COLOR, STATE, WORD } from './theme'
 import { dueReminders, reminderWhen } from './extras'
 import { turnOf } from './turn'
 import type { TurnCtx } from './turn'
+import { noticeText } from './update'
 
 export const STAGE_COLOR: Record<StageStatus, string> = { done: COLOR.dim, active: COLOR.running, wait: COLOR.attention, fail: COLOR.bad, todo: COLOR.faint, na: COLOR.faint }
 
 export type BandPart = { text: string; color: string; bold?: boolean }
-export type BandLayout = { lead: BandPart[]; wait: BandPart | null; button: string; buttonWidth: number }
+/** notice：desk 有新版本（自動檢查查到的），放在面板按鈕左邊；太窄才拿掉。 */
+export type BandLayout = { lead: BandPart[]; wait: BandPart | null; notice: BandPart | null; button: string; buttonWidth: number }
 
 const NARROW = 48
 const width = (parts: BandPart[]) => parts.reduce((n, p) => n + displayWidth(p.text), 0)
@@ -27,7 +29,11 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   const narrow = columns < NARROW
   const button = narrow ? '⌗' : paneOpen ? `⌗ ${WORD.brand} ▾` : `⌗ ${WORD.brand} ▸`
   const buttonWidth = displayWidth(button) + 1
-  const room = columns - buttonWidth - 1
+  const update: BandPart | null = s.update ? { text: noticeText(s.update.latest), color: COLOR.attention } : null
+  const updateWidth = update ? displayWidth(update.text) + 3 : 0
+  // 有新版本的提示放在面板按鈕左邊；放了之後左邊還留得下 24 格才放，其餘照原本由寬到窄擠。
+  const notice = update && columns - buttonWidth - 1 - updateWidth >= 24 ? update : null
+  const room = columns - buttonWidth - 1 - (notice ? updateWidth : 0)
   const lead = leadCase(s)
   const runningMore = s.cases.filter(c => c.state === 'running').length - 1
   const waiting = liveCases(s.cases).filter(c => NEEDS_YOU.has(c.state) && c !== lead)
@@ -35,7 +41,7 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
 
   if (!lead) {
     const quiet = s.cases.length ? `○ ${s.cases.length} 件都閒置` : '尚無案子'
-    return { lead: [...demo, { text: quiet, color: COLOR.faint }], wait: null, button, buttonWidth }
+    return { lead: [...demo, { text: quiet, color: COLOR.faint }], wait: null, notice, button, buttonWidth }
   }
   const meta = STATE[lead.state]
   const head: BandPart[] = [...demo, { text: `${meta.glyph} `, color: meta.color }]
@@ -72,10 +78,10 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   for (const t of tries) {
     const r = t()
     const total = width(r.lead) + (r.wait ? displayWidth(r.wait.text) + 3 : 0)
-    if (total <= room) return { ...r, button, buttonWidth }
+    if (total <= room) return { ...r, notice, button, buttonWidth }
   }
   const last: BandPart[] = [...head, name(Math.max(4, room - width(head)))]
-  return { lead: last, wait: null, button, buttonWidth }
+  return { lead: last, wait: null, notice, button, buttonWidth }
 }
 
 export function renderBand(ui: any, layout: BandLayout, columns: number, onToggle: () => void) {
@@ -86,6 +92,7 @@ export function renderBand(ui: any, layout: BandLayout, columns: number, onToggl
         <Text wrap="truncate-end">{layout.lead.map((p, i) => <Text key={`l${i}`} color={p.color} bold={p.bold}>{p.text}</Text>)}</Text>
       </Box>
       {layout.wait && <Box flexShrink={0} height={1} paddingLeft={3}><Text color={layout.wait.color} bold={layout.wait.bold} wrap="truncate-end">{layout.wait.text}</Text></Box>}
+      {layout.notice && <Box flexShrink={0} height={1} paddingLeft={3}><Text color={layout.notice.color} wrap="truncate-end">{layout.notice.text}</Text></Box>}
       <Box width={layout.buttonWidth} flexShrink={0} height={1} overflow="hidden" justifyContent="flex-end">
         <Button key="pane" plain dimColor label={layout.button} onPress={onToggle} />
       </Box>

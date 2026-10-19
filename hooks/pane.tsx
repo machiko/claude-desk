@@ -10,6 +10,7 @@ import { STAGE_COLOR } from './band'
 import { contentWindow, flowRows, scrollHint, wrapText } from './layout'
 import type { ContentWindow } from './layout'
 import { caseActions, nowCardRows, picksKey, shortCommand } from './pane-card'
+import { noticeText } from './update'
 import type { Action } from './pane-card'
 import type { DispatchKind } from './dispatch'
 
@@ -60,6 +61,8 @@ export type PaneActions = {
   help: () => void
   refresh: () => void
   toggleBand: () => void
+  /** 把 desk 更新到 GitHub 上的最新版本（跟 /desk update 一樣）；只用點的，不綁快捷鍵。 */
+  update: () => void
   expand: () => void
   more: () => void
   /** 這次畫出來 content 最多能捲到哪；捲動 hook 用它夾住位置。 */
@@ -171,11 +174,13 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
   const s = view.s
   const brand = `${WORD.brand}${s.versions?.desk ? ` ${s.versions.desk}` : ''}${s.project ? ` · ${s.project}` : ''}`
   const time = `${s.demo ? '示範資料 · ' : s.tutorial ? '教學模式 · ' : ''}${hhmm(s.at)} 更新`
-  const limits = limitParts(s, view.now, width - displayWidth(brand) - displayWidth(time) - 6)
+  const notice = s.update ? `  ${noticeText(s.update.latest)}` : ''
+  const limits = limitParts(s, view.now, width - displayWidth(brand) - displayWidth(notice) - displayWidth(time) - 6)
   const rows: any[] = [
     <Box flexDirection="row">
       <Text bold color={COLOR.text}>{WORD.brand}</Text>
       {s.versions?.desk ? <Text color={COLOR.faint}>{` ${s.versions.desk}`}</Text> : null}
+      {s.update ? <Text color={COLOR.attention} bold>{`  ${noticeText(s.update.latest)}`}</Text> : null}
       {s.project ? <Text color={COLOR.dim} wrap="truncate-end">{` · ${s.project}`}</Text> : null}
       <Box flexGrow={1} />
       {line(ui, limits)}
@@ -266,7 +271,7 @@ function feedRows(ui: any, view: PaneView, width: number): any[] {
 const HELP: [string, string][] = [
   ['1–9', '選其他案子'], ['n', '下一件（需要你的優先）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／審查／同步（按兩次確認）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）'], ['l', 'Agent 輸出'],
-  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
+  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理'], ['⇡ 更新版本', '把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
   ['● ◉ ◆ ✕ ○ ·', '已過／進行中／等你／卡住／未到／不適用'], ['✓（綠）', '六段全過、已上線，可歸檔'],
 ]
@@ -350,18 +355,22 @@ function footerRows(ui: any, view: PaneView, act: PaneActions, width: number, fo
     { key: 'more', hotkey: 'm', label: view.showAll ? '▴ 精簡動作' : '⋯ 更多動作', isDim: true, onPress: act.more, width: 0 },
     { key: 'help', hotkey: 'i', label: view.isHelp ? '▴ 收起說明' : '? 說明', isDim: true, onPress: act.help, width: 0 },
   ].map(a => ({ ...a, width: displayWidth(a.label) + 3 }))
+  // 更新版本不綁快捷鍵：只用點的（或 Tab 移到它再按 Enter），免得誤按就更新。跟著狀態列走，不多佔一列。
+  const upd: Action = { key: 'update', label: `⇡ ${WORD.update}`, isDim: !view.s.update, onPress: act.update, width: displayWidth(WORD.update) + 2 }
   const mine = focus && view.s.cases.length ? caseActions(view, focus, act) : []
   const rule = hint ? `${'─'.repeat(Math.max(2, width - displayWidth(hint) - 1))} ${hint}` : '─'.repeat(Math.max(2, width))
   const status = statusParts(view)
   const globalsWidth = globals.reduce((n, a) => n + a.width, 0) + 2 * (globals.length - 1)
-  const together = partsWidth(status) + 3 + globalsWidth <= width
+  const statusWidth = partsWidth(status) + (status.length ? 2 : 0) + upd.width
+  const together = statusWidth + 3 + globalsWidth <= width
   const actionsRow = (list: Action[]) => <Box flexDirection="row" gap={2}>{list.map(a => actionNode(ui, a))}</Box>
+  const statusRow = <Box flexDirection="row" gap={2}>{status.length ? line(ui, status) : null}{actionNode(ui, upd)}</Box>
   return [
     <Text color={COLOR.faint}>{rule}</Text>,
     ...flowRows(mine.map(a => a.width), width, 2).map(idx => actionsRow(idx.map(i => mine[i]!))),
     ...(together
-      ? [<Box flexDirection="row">{line(ui, status)}<Box flexGrow={1} />{actionsRow(globals)}</Box>]
-      : [...flowRows(globals.map(a => a.width), width, 2).map(idx => actionsRow(idx.map(i => globals[i]!))), ...(status.length ? [line(ui, status)] : [])]),
+      ? [<Box flexDirection="row">{statusRow}<Box flexGrow={1} />{actionsRow(globals)}</Box>]
+      : [...flowRows(globals.map(a => a.width), width, 2).map(idx => actionsRow(idx.map(i => globals[i]!))), ...(statusWidth <= width ? [statusRow] : [line(ui, status), actionsRow([upd])])]),
   ]
 }
 

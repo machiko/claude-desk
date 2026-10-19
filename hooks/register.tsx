@@ -24,6 +24,8 @@ import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialDecision, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
 import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, VERIFY_TIMEOUT_MS, cardContext, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
+import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, updateDesk } from './update'
+import type { UpdateCheck } from './update'
 
 const PANE = 'desk'
 const DEMO_ONLY = '示範案子只能看；請照教學那件的指示操作'
@@ -84,7 +86,9 @@ export async function refresh($: any, options: PluginOptions) {
     const summaries = await loadSummaries($)
     const launching = await read($, launchingAtom)
     const verifying = await read($, verifyingAtom)
-    const cardBase = tutorial ? '' : (await loadSettings($, options)).cardBase
+    const settings = tutorial ? null : await loadSettings($, options)
+    const cardBase = settings?.cardBase ?? ''
+    const notice = settings && settings.updateCheck !== 'off' ? noticeOf(await loadUpdateCheck($)) : undefined
     const cases: Case[] = await Promise.all(rows.map(async row => {
       const [card, stat] = await Promise.all([
         $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
@@ -118,7 +122,7 @@ export async function refresh($: any, options: PluginOptions) {
     const usage = await $.session.usage().catch(() => null)
     const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
     // 教學模式：示範案子接在後面當「其他案子」的背景（只能看）；版本、轉圈等仍只看真的案子。
-    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: await versions($, cases), models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(tutorial ? { tutorial: true } : {}) }
+    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: await versions($, cases), models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
@@ -133,11 +137,68 @@ export async function refresh($: any, options: PluginOptions) {
     await spin($, cases.some(c => c.state === 'running'))
     await autoChain($, options, cur)
     void summarizeStatuses($, options, cur, summaries)
+    if (settings && settings.updateCheck !== 'off') void autoUpdateCheck($, now)
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
     await update($, snapshot, prev => prev ? { ...prev, error: message } : { at: 0, cases: [], error: message, contextPercent: null })
   }).finally(() => { refreshing = null })
   return refreshing
+}
+
+async function loadUpdateCheck($: any): Promise<UpdateCheck | null> {
+  return parseCheck(await $.store.get(UPDATE_KEY).catch(() => null))
+}
+
+let checkingUpdate = false
+/**
+ * desk 新版本的自動檢查：距離上次查到結果超過 24 小時才查（時間存 $.store，重開也算）。只提示、不安裝；
+ * 同一個版號只在「最近」記一筆、跳一次 toast。查失敗不出聲、不記時間，下一輪再查。
+ */
+async function autoUpdateCheck($: any, now: number) {
+  if (checkingUpdate || tutorial) return
+  const prev = await loadUpdateCheck($)
+  if (prev && now - prev.at < UPDATE_EVERY_MS) return
+  checkingUpdate = true
+  try {
+    const found = await checkLatest($, now)
+    const fresh = isNewer(found.latest, found.current) && prev?.notified !== found.latest
+    const next: UpdateCheck = { ...found, ...(fresh ? { notified: found.latest } : prev?.notified ? { notified: prev.notified } : {}) }
+    await $.store.set(UPDATE_KEY, next)
+    await showNotice($, next)
+    if (fresh) {
+      await feedPush($, [{ at: now, text: `desk ${noticeText(found.latest)}`, tone: 'suggestion' }])
+      $.ui.toast(`desk ${noticeText(found.latest)}`, { timeoutMs: 8000 })
+    }
+  } catch { /* 查失敗不提示，下一輪再查 */ } finally { checkingUpdate = false }
+}
+
+async function showNotice($: any, check: UpdateCheck) {
+  const notice = noticeOf(check)
+  await update($, snapshot, s => {
+    if (!s) return s
+    const { update: _old, ...rest } = s
+    return notice ? { ...rest, update: notice } : rest
+  })
+}
+
+let updating = false
+/** 手動更新（/desk update、面板按鈕）：結果記進「最近」並跳 toast；查到的版號給自動檢查沿用。 */
+async function runUpdate($: any): Promise<string> {
+  if (updating) return 'desk 正在更新中，請稍候。'
+  updating = true
+  try {
+    const now = await $.clock.now()
+    const r = await updateDesk($, now)
+    if (r.check) {
+      const prev = await loadUpdateCheck($)
+      const check: UpdateCheck = { ...r.check, ...(prev?.notified ? { notified: prev.notified } : {}) }
+      await $.store.set(UPDATE_KEY, check)
+      await showNotice($, check)
+    }
+    await feedPush($, [{ at: now, text: r.text, tone: r.tone }])
+    $.ui.toast(r.text, { timeoutMs: r.tone === 'success' ? 10_000 : 8000 })
+    return r.text
+  } finally { updating = false }
 }
 
 /** 讀不到登錄表時面板上的說明：選項指定的、這個專案還沒建的、目前資料夾不在 git repo 裡。 */
@@ -491,7 +552,7 @@ export const register: Register = (on, options) => {
     await update($, launchingAtom, () => ({}))
     checkQueue.length = 0
     await update($, queueAtom, () => [])
-    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <案名> [回覆] 派工；verify|open <案名> 執行檢查／開啟卡片；bar 摘要列；tutorial [end] 教學（含示範案子）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <案名>|bar|tutorial [end]|off]' })
+    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <案名> [回覆] 派工；verify|open <案名> 執行檢查／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範案子）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <案名>|bar|update|tutorial [end]|off]' })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
     const id = await $.session.id().catch(() => null)
     const list = ((await $.store.get(SESSIONS_KEY).catch(() => null)) as string[] | null) ?? []
@@ -540,6 +601,7 @@ export const register: Register = (on, options) => {
     if (arg === 'tutorial') return { text: await tutorialStart($, options) }
     if (arg === 'tutorial end') return { text: await tutorialEnd($, options) }
     if (arg === 'refresh') { forcePr = true; await refresh($, options); return { text: '工作桌已重新整理。' } }
+    if (arg === 'update') return { text: await runUpdate($) }
     if (arg === 'band' || arg === 'bar') { const hidden = await update($, isBandHidden, v => !v); return { text: hidden ? '摘要列已隱藏，輸入 /desk bar 可重新顯示。' : '摘要列已顯示。' } }
     const m = arg.match(/^(verify|open|go|continue|sync|review|reply)\s+(\S+)\s*(.*)$/)
     if (m) {
@@ -554,7 +616,7 @@ export const register: Register = (on, options) => {
       return { text: `${c.name}：${KIND_LABEL[kind]}派送中。` }
     }
     if (arg === 'close') { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}); return { text: '工作桌已收起。' } }
-    if (arg) return { text: '可用：/desk、close、refresh、go|sync|review <案名>、reply <案名> [回覆]、verify|open <案名>、bar、tutorial [end]、off' }
+    if (arg) return { text: '可用：/desk、close、refresh、go|sync|review <案名>、reply <案名> [回覆]、verify|open <案名>、bar、update、tutorial [end]、off' }
     if (!(await read($, snapshot))) void refresh($, options)
     // 從輸入框打 /desk 時鍵盤一定在輸入框：開著就把焦點移到面板，不關閉；收起用面板裡的 Esc 或 /desk close。
     const wasOpen = await read($, isPaneOpen)
@@ -630,6 +692,7 @@ export const register: Register = (on, options) => {
       more: () => void update($, showAllAtom, v => !v),
       refresh: () => { forcePr = true; void refresh($, options) },
       toggleBand: () => void update($, isBandHidden, v => !v),
+      update: () => void runUpdate($),
       expand: () => void update($, isExpanded, v => !v),
       window: w => { maxOffset = w.maxOffset },
     }

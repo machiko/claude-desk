@@ -59,12 +59,18 @@ export function fixture(on: any) {
     /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
     root: SESSION_ROOT,
     repos: { [SESSION_ROOT]: `${SESSION_ROOT}/.git` } as Record<string, string>,
+    /** 先問這個：回傳結果就用它（update 測試模擬 claude plugin 與 desk 的 git）；null 交給下面的預設。 */
+    exec: null as null | ((e: any) => Promise<any> | any),
   }
   on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.9.9"}' } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
   on('fs.exists', (_: any, e: any) => ({ value: data.files[e.path] !== undefined }))
   on('fs.write', (_: any, e: any) => { data.files[e.path] = e.text; data.writes.push(e.path); return { value: undefined } })
   on('process.run', async (_: any, e: any) => {
+    const own = data.exec ? await data.exec(e) : null
+    if (own) return { value: own }
+    // desk 自我更新的自動檢查：預設查不到安裝（失敗不出聲），也不算進 processCalls。
+    if (e.argv[0] === 'claude' && e.argv[1] === 'plugin') return { value: result(1, '', 'plugin list unavailable in tests') }
     if (e.argv[0] === 'claude' && e.argv[1] === 'agents') return { value: result(0, JSON.stringify(data.agents)) }
     if (e.argv[0] === 'docker' && e.argv[1] === 'compose' && e.argv[2] === 'ps') { data.composeCalls.push(e); return { value: data.compose === null ? result(1, '', 'Cannot connect to the Docker daemon') : result(0, data.compose) } }
     if (e.argv[0] === 'git') {

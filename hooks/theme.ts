@@ -43,5 +43,6 @@ export const WORD = {
   open: '開啟',
   fill: '填入決策',
   refresh: '重新整理',
+  update: '更新版本',
   hide: '收起',
 } as const

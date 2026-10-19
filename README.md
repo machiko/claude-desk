@@ -93,6 +93,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk verify <案名>` | 執行卡片的完成檢查（第一次會先確認） |
 | `/desk open <案名>` | 用系統預設程式開卡片 |
 | `/desk bar` | 收起／顯示摘要列 |
+| `/desk update` | 把 desk 自己更新到 GitHub 上的最新版本（面板 footer 的「⇡ 更新版本」按鈕相同，只用點的、不綁快捷鍵）；重新啟動 Claude Code 後生效 |
 | `/desk tutorial` | 教學：在沙盒裡把六段走一遍，旁邊配幾件示範案子（`/desk tutorial end` 結束並刪除沙盒） |
 | `/desk off` | 這個對話關閉工作桌 |
 | `/desk:card new <分支> <卡名> [base]` | 建 worktree、DESK 卡、登錄表列 |
@@ -139,12 +140,14 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - **六段圖示**：● 已過、◉ 進行中、◆ 等你、✕ 卡住、○ 未到、· 不適用；上線確認後六個 ● 轉綠、狀態是 ✓「已上線」。
 - **提醒**：登錄表「## 提醒」段 `- YYYY-MM-DD 事項`，到期前三天出現。
 - **通知**：等你、接力暫停、可開 PR、檢查未通過會送一次通知（走 Claude Code 的通知管道）。
+- **新版本**：每 24 小時查一次 GitHub 上有沒有新的 desk（時間記在本機，重開也算），有就在面板與摘要列顯示「有新版本 x.y.z」，同一版只在「最近」記一筆；只提示、不安裝，查不到就不出聲。專案 `dispatch.json` 設 `"updateCheck": "off"` 關掉。
 
 ## desk 會寫什麼
 
 - 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
 - 派工：用 `claude --bg` 在案子根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞要求 Agent 不 push、不開 PR、不碰正式環境、不啟動容器。
+- desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push，也不自動重新啟動 Claude Code。
 - 不會 push、不會開或合併 PR、不會部署。
 
 ## 限制
@@ -225,6 +228,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `risk.high` | 額外的高風險路徑（正規式）；碰到就加跑資安審查並停下來等你看 |
 | `checkServices` | 完成檢查裡出現這個指令名時需要哪些容器服務 |
 | `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
+| `updateCheck` | `"off"` 不自動檢查 desk 新版本；沒設＝每 24 小時查一次（`/desk update` 不受影響） |
 | `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base（desk 也拿它當 diff 與合併判斷的基準之一）、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
 
 ## 開發
