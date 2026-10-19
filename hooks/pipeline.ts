@@ -73,8 +73,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
         else set('wait', '尚缺完成檢查')
         break
       case 'build':
-        if (runningKind === 'continue' || runningKind === 'fix' || runningKind === 'reply') set('active', c.chain?.round ? `修正第 ${c.chain.round} 輪` : '執行者處理中')
-        else if (c.state === 'reply') set('wait', '執行者等待你回覆')
+        if (runningKind === 'continue' || runningKind === 'fix' || runningKind === 'reply') set('active', c.chain?.round ? `修正第 ${c.chain.round} 輪` : 'Agent 處理中')
+        else if (c.state === 'reply') set('wait', 'Agent 等待你回覆')
         else if (c.chain?.stopped) set('fail', c.chain.stopped)
         else if (c.manual) set('todo', '手動追蹤')
         else if (c.state === 'idle') set('todo', '閒置')

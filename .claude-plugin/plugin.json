@@ -1,7 +1,7 @@
 {
   "name": "desk",
   "version": "0.18.0",
-  "description": "工作桌：每件案子走規格、實作、檢查、審查、合併、上線六段，面板告訴你輪到誰、該按什麼；實作、完成檢查、審查與修正由背景 agent（claude --bg）自動接力。PR 與 CI 可讀 Bitbucket（MCP）或 GitHub（gh），都是唯讀；不 push、不合併、不碰正式環境。",
+  "description": "工作桌：每件案子走規格、實作、檢查、審查、合併、上線六段，面板告訴你輪到誰、該按什麼；實作、完成檢查、審查與修正由背景 Agent（claude --bg）自動接力。PR 與 CI 可讀 Bitbucket（MCP）或 GitHub（gh），都是唯讀；不 push、不合併、不碰正式環境。",
   "author": {
     "name": "Reyes C"
   },
@@ -24,7 +24,7 @@
     "refreshSeconds": {
       "type": "string",
       "title": "更新間隔（秒）",
-      "description": "工作桌重新讀卡與背景 agent 狀態的間隔；10 到 600。",
+      "description": "工作桌重新讀卡與背景 Agent 狀態的間隔；10 到 600。",
       "default": "30"
     },
     "dispatchSettingsPath": {

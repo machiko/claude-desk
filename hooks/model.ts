@@ -9,7 +9,7 @@ import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
 export const STALE_MS = 3 * 24 * 60 * 60_000
 
 /**
- * 外部來的文字（執行者記錄、檢查輸出、卡片）進畫面前清乾淨：拿掉所有終端機控制序列與控制字元。
+ * 外部來的文字（Agent 記錄、檢查輸出、卡片）進畫面前清乾淨：拿掉所有終端機控制序列與控制字元。
  * 引擎會整個拒畫含控制字元的文字，面板就會變成一片空白。
  */
 export function plain(text: string): string {
@@ -35,7 +35,7 @@ export function isNoise(line: string): boolean {
   return false
 }
 
-/** 執行者記錄的最後一句有意義的話：控制序列與 \r 都當成分行，略過雜訊。 */
+/** Agent 記錄的最後一句有意義的話：控制序列與 \r 都當成分行，略過雜訊。 */
 export function lastMeaningful(raw: string, max = 120): string {
   const lines = String(raw ?? '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '\n').split(/[\r\n]+/).map(l => plain(l).trim()).filter(l => l && !isNoise(l))
   return (lines.pop() ?? '').replace(/^\[[^\]]*\]\s*/, '').slice(0, max)
@@ -193,7 +193,7 @@ export function focusCase(cases: readonly Case[]): Case | null {
 /** 一件案子在列表上的那句話：等你的題目、關卡、agent 等什麼、否則下一步。 */
 export function summary(c: Case): string {
   if (c.state === 'ask') { const d = parseDecisions(c.ask)[0]; return d ? d.title || c.ask : c.ask }
-  if (c.state === 'reply') return c.agent?.waitingFor ? `執行者等待：${c.agent.waitingFor}` : c.agent?.last ? `執行者提問：${c.agent.last}` : '執行者等待你回覆'
+  if (c.state === 'reply') return c.agent?.waitingFor ? `Agent 等待：${c.agent.waitingFor}` : c.agent?.last ? `Agent 提問：${c.agent.last}` : 'Agent 等待你回覆'
   if (c.state === 'gate') { const g = parseGate(c.gate)!; return g.detail || c.gate }
   if (c.state === 'nocard') return '找不到卡片'
   if (c.state === 'failed' && c.chain?.stopped) return c.chain.stopped
@@ -214,10 +214,10 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     const p = before.get(c.statusPath)
     if (!p) { out.push({ at: cur.at, text: `${c.name} 加入工作桌`, tone: 'subtle' }); continue }
     if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) out.push({ at: cur.at, text: `${c.name} 等你：${fit(summary(c), 40)}`, tone: 'warning' })
-    else if (c.state === 'reply' && p.state !== 'reply') out.push({ at: cur.at, text: `${c.name} 執行者等待你回覆`, tone: 'warning' })
+    else if (c.state === 'reply' && p.state !== 'reply') out.push({ at: cur.at, text: `${c.name} Agent 等待你回覆`, tone: 'warning' })
     else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) out.push({ at: cur.at, text: `${c.name} 進入關卡：${fit(summary(c), 40)}`, tone: 'warning' })
     else if (c.state === 'running' && p.state !== 'running') out.push({ at: cur.at, text: `${c.name} 開始執行`, tone: 'suggestion' })
-    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply') out.push({ at: cur.at, text: `${c.name} 執行者已完成`, tone: 'subtle' })
+    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply') out.push({ at: cur.at, text: `${c.name} Agent 已完成`, tone: 'subtle' })
     else if (c.state === 'failed' && p.state !== 'failed') out.push({ at: cur.at, text: `${c.name} 檢查未通過`, tone: 'error' })
   }
   return out

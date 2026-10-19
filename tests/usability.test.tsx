@@ -33,7 +33,7 @@ test('stop asks twice and only stops the agent desk launched', async ($, on) => 
   await ui.press({ key: `case-${CARD_B}-stop` })
   await clock.settle()
   expect(stops).toEqual([['claude', 'stop', 'dddddddd']])
-  expect((data.store.chains as any)['/home/u/wt/beta'].stopped).toBe('你手動停止了執行者')
+  expect((data.store.chains as any)['/home/u/wt/beta'].stopped).toBe('你手動停止了 Agent')
   await ui.unmount()
 })
 
@@ -98,7 +98,7 @@ test('help lists the keys; n moves to the next case', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: 'help' })
-  expect(await ui.find({ type: 'Text', text: '停止執行者（按兩次確認）' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '停止 Agent（按兩次確認）' })).toBeDefined()
   await ui.press({ key: 'next' })
   expect(await ui.find({ type: 'Text', text: /^Beta$/ })).toBeDefined()
   await ui.unmount()

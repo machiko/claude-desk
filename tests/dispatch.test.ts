@@ -76,7 +76,7 @@ test('prompts carry the case, the card rules and the environment limits', () => 
   expect(p.startsWith('依卡片的下一步繼續：寫測試')).toBe(true)
   expect(p).toContain('卡片：/p/a/.desk/CARD.md')
   expect(p).toContain('不啟動或重建容器')
-  expect(buildPrompt(c, 'review')).toContain('不參考執行者的結論')
+  expect(buildPrompt(c, 'review')).toContain('不參考 Agent 的結論')
   expect(buildPrompt(c, 'sync')).toContain('看不出結果的寫「待確認」')
   expect(buildPrompt(c, 'reply', '用 B')).toContain('使用者的回覆：用 B')
   expect(p).toContain('要使用者決定的事寫進 等你')

@@ -1,4 +1,4 @@
-// 0.9 起的純函式：派工二次確認、執行者輸出、部署步驟、提醒、審查摘要、git 狀態、下一件。不碰磁碟。
+// 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態、下一件。不碰磁碟。
 import type { Case } from '../types'
 import { isNoise, plain } from './model'
 
@@ -11,7 +11,7 @@ export function confirmStep(armed: Armed | null, key: string, now: number): { fi
 }
 export const isArmed = (armed: Armed | null, key: string, now: number) => !!armed && armed.key === key && now - armed.at <= CONFIRM_MS
 
-/** 執行者最近幾行有意義的輸出：清掉控制序列、略過雜訊與連續重複。 */
+/** Agent 最近幾行有意義的輸出：清掉控制序列、略過雜訊與連續重複。 */
 export function logLines(raw: string, n = 10): string[] {
   const out: string[] = []
   for (const l of String(raw ?? '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '\n').split(/[\r\n]+/)) {

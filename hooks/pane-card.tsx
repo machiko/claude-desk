@@ -31,10 +31,10 @@ export function turnCtx(view: PaneView, c: Case): TurnCtx {
   return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, tutorial: !!view.s.tutorial }
 }
 
-const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '◐ AI 處理中', none: '— 沒有待辦' }
+const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '◐ 處理中', none: '— 沒有待辦' }
 const TURN_COLOR: Record<Turn['who'], string> = { you: COLOR.attention, ai: COLOR.running, none: COLOR.faint }
 
-/** 現在卡最上方那一句：輪到誰＋該做什麼（寫給人看，不是卡片給執行者的下一步）。 */
+/** 現在卡最上方那一句：輪到誰＋該做什麼（寫給人看，不是卡片給 Agent 的下一步）。 */
 /** 輪到誰那一句：最重要的指示，寫不下就換行（接在文字底下對齊），不截斷。 */
 function turnRows(ui: any, t: Turn, width: number): any[] {
   const { Box, Text } = ui
@@ -123,7 +123,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   ]
 }
 
-/** 現在卡的內容列：案名、六段、PR、狀態、git、審查、部署、決策、執行者、下一步、檢查。 */
+/** 現在卡的內容列：案名、六段、PR、狀態、git、審查、部署、決策、Agent、下一步、檢查。 */
 export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act: PaneActions): any[] {
   const { Box, Text, Button } = ui
   const meta = STATE[c.state]
@@ -191,7 +191,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.attention} bold>{head}</Text><Text color={COLOR.text}>{(first ?? '').slice(head.length)}</Text></Text></Box>)
     rows.push(...rest.map(line => <Box paddingLeft={INDENT}><Text color={COLOR.text} wrap="truncate-end">{line}</Text></Box>))
   }
-  if (c.state === 'running') rows.push(...kvRows(ui, '執行者', c.agent?.last || c.next, width, view.isExpanded, COLOR.running))
+  if (c.state === 'running') rows.push(...kvRows(ui, 'Agent', c.agent?.last || c.next, width, view.isExpanded, COLOR.running))
   if (view.logsOpen === c.statusPath) {
     const lines = view.logView[c.statusPath] ?? []
     if (!lines.length) rows.push(<Box paddingLeft={INDENT + KV_LABEL}><Text color={COLOR.faint}>讀取中…</Text></Box>)

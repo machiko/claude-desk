@@ -359,7 +359,7 @@ export let optionsRef: PluginOptions | undefined
 async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}) {
   const text = opts.text ?? ''
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (!opts.auto && !dispatchable(c).includes(kind)) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${c.manual ? '登錄表設為 manual，只追蹤不派工' : c.state === 'running' ? '執行者仍在執行' : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'}）`); return }
+  if (!opts.auto && !dispatchable(c).includes(kind)) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${c.manual ? '登錄表設為 manual，只追蹤不派工' : c.state === 'running' ? 'Agent 仍在執行' : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'}）`); return }
   if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
@@ -408,12 +408,12 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   }
 }
 
-/** 回覆停下來問的執行者：先問要回什麼（可打自己的字），再 resume 那個 session。 */
+/** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   let answer = text?.trim() ?? ''
   if (!answer) {
-    const picked = await $.ui.ask(`執行者提問：${c.agent?.last || '（無法讀取問題，請開啟卡片或用 claude logs 查看）'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
+    const picked = await $.ui.ask(`Agent 提問：${c.agent?.last || '（無法讀取問題，請開啟卡片或用 claude logs 查看）'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
     if (!picked || picked === '取消') return
     answer = picked === '照卡片的下一步繼續' ? `照卡片的下一步繼續：${c.next || '依卡片'}` : picked
   }
@@ -467,13 +467,13 @@ async function confirmShipped($: any, c: Case) {
 /** 停止 desk 自己派出去、正在跑的那個背景 agent（名字要對得上這件案子最後一次派工），接力一併暫停。 */
 async function stopAgent($: any, c: Case) {
   const last = (await loadJobs($))[normalizeRoot(c.root)]?.last
-  if (!c.agent?.id || !last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：只能停止 desk 派出去的執行者`); return }
+  if (!c.agent?.id || !last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：只能停止 desk 派出去的 Agent`); return }
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${String(r?.stderr ?? '').trim().split(/\r?\n/).pop() || 'claude stop 失敗'}）`); return }
-  await saveChain($, normalizeRoot(c.root), run => run ? { ...run, stopped: '你手動停止了執行者' } : run)
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止執行者（對話保留，可再派工接續）`, tone: 'warning' }])
-  $.ui.toast(`${c.name}：已停止執行者`)
+  await saveChain($, normalizeRoot(c.root), run => run ? { ...run, stopped: '你手動停止了 Agent' } : run)
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止 Agent（對話保留，可再派工接續）`, tone: 'warning' }])
+  $.ui.toast(`${c.name}：已停止 Agent`)
   void refresh($, optionsRef!)
 }
 

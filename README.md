@@ -1,6 +1,6 @@
 # desk
 
-Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張面板只放「現在該看的那一件」，並告訴你輪到誰、該按什麼。從規格、實作、檢查、審查、合併到上線，中間的實作、檢查、審查、修正由背景 agent 自動接力。
+Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張面板只放「現在該看的那一件」，並告訴你輪到誰、該按什麼。從規格、實作、檢查、審查、合併到上線，中間的實作、檢查、審查、修正由背景 Agent 自動接力。
 
 > **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH findings for up to two rounds. The UI and prompts are in Traditional Chinese.
 
@@ -55,7 +55,7 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 輸入 `/desk tutorial`。它會在 `~/.claude/desk-tutorial` 建一個小 repo 和一件案子「教學：會員折扣」放在現在卡；「其他案子」是幾件示範案子（只能看），讓你看到多件案子同時進行時面板的樣子。照現在卡第二列「▶ 輪到你」的指示把六段走完：
 
 1. 規格：看過預先寫好的規格，按 `t` 確認（實際使用時是 `/desk:card spec <slug> ok`）。
-2. 實作：按兩次 `g`。教學裡的執行者和審查由腳本扮演，不花額度，也不需要信任資料夾。
+2. 實作：按兩次 `g`。教學裡的 Agent 和審查由腳本扮演，不花額度，也不需要信任資料夾。
 3. 檢查：自動執行，會真的跑 `python3 -m unittest`。
 4. 審查：第一輪會挑出一條 HIGH，自動修正、重新檢查、複審；過關後留一條 MEDIUM 讓你決定。
 5. 合併：回答審查建議，再按 `f` 寫回卡片；然後按 `t` 在本機合併。選 c（現在改）會改程式並 commit，接著自動退回重新檢查、重新審查，過關後才輪到合併。
@@ -75,9 +75,9 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 2. 在 repo 裡開一件案子：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。
 3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後輸入 `/desk:card spec order-export ok`。
-4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派執行者）。
+4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派 Agent）。
 
-背景執行者只會在「信任過的 repo」裡啟動：第一次用某個 repo 前，先在那個 repo 根目錄開一次 `claude`，信任提示選 Yes。
+背景 Agent 只會在「信任過的 repo」裡啟動：第一次用某個 repo 前，先在那個 repo 根目錄開一次 `claude`，信任提示選 Yes。
 
 完整流程（角色、六段、自動接力、風險分級、常見狀況）見 [docs/WORKFLOW.md](docs/WORKFLOW.md)。
 
@@ -89,7 +89,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk close` | 收起面板（面板有焦點時按 Esc 也可以） |
 | `/desk refresh` | 立刻重讀 |
 | `/desk go\|sync\|review <案名>` | 派工：繼續（開始一輪接力）、同步、審查 |
-| `/desk reply <案名> [回覆]` | 回覆停下來問的執行者 |
+| `/desk reply <案名> [回覆]` | 回覆停下來問的 Agent |
 | `/desk verify <案名>` | 執行卡片的完成檢查（第一次會先確認） |
 | `/desk open <案名>` | 用系統預設程式開卡片 |
 | `/desk bar` | 收起／顯示摘要列 |
@@ -106,9 +106,9 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | 1–9、n | 選其他案子；n 跳到下一件（需要你的優先） |
 | a b c d、f | 選決策選項、填入輸入框 |
 | g／w／s | 繼續／審查／同步（**按兩次確認**，確認文字寫出模型與 effort） |
-| y | 回覆停下來問的執行者 |
-| k | 停止 desk 派出去的執行者（按兩次確認；對話保留） |
-| l | 展開執行者最近 10 行輸出 |
+| y | 回覆停下來問的 Agent |
+| k | 停止 desk 派出去的 Agent（按兩次確認；對話保留） |
+| l | 展開 Agent 最近 10 行輸出 |
 | v | 完成檢查 |
 | u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡並記 History |
 | o／e／p | 開卡片／審查檔／PR |
@@ -133,7 +133,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 ## 面板
 
-- **輪到誰**：現在卡第二列一定是 **▶ 輪到你**（後面寫要按什麼或輸入什麼）、**◐ AI 處理中**（等著就好）或 **— 沒有待辦**。摘要列用同一句。
+- **輪到誰**：現在卡第二列一定是 **▶ 輪到你**（後面寫要按什麼或輸入什麼）、**◐ 處理中**（AI 或機器在做，等著就好）或 **— 沒有待辦**。摘要列用同一句。
 - **只列能做的動作**：實作段只有 `g`、檢查段只有 `v`、審查段只有 `w`、上線段只有 `u`；已經過了的段落不再出現它的鍵。`m` 展開全部動作。
 - **header／content／footer**：header 與 footer 常駐，只有中間捲動（滾輪、↑ ↓ PageUp PageDown）。寬 100 欄以上時現在卡與進度表左右並排。
 - **六段圖示**：● 已過、◉ 進行中、◆ 等你、✕ 卡住、○ 未到、· 不適用；上線確認後六個 ● 轉綠、狀態是 ✓「已上線」。
@@ -142,9 +142,9 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 ## desk 會寫什麼
 
-- 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是執行者或 `/desk:card` 寫的。
+- 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在案子根目錄開背景 agent，權限照你的 Claude Code 設定。提示詞要求執行者不 push、不開 PR、不碰正式環境、不啟動容器。
+- 派工：用 `claude --bg` 在案子根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞要求 Agent 不 push、不開 PR、不碰正式環境、不啟動容器。
 - 不會 push、不會開或合併 PR、不會部署。
 
 ## 限制
@@ -152,7 +152,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - 介面、提示詞與卡片欄位都是繁體中文。
 - 預設的發版慣例：發版線是 `release/*` 分支、上線看 `v*` tag。用 main 直接發版也可以，只是「開發中版本」那一欄不會出現。
 - PR 狀態只讀 GitHub 與 Bitbucket；其他平台（或沒裝 `gh`）的合併靠 git 判斷，只認得 merge commit，squash、rebase、fast-forward 合併看不出來，要自己在卡片寫回。
-- 背景執行者的權限照你的 Claude Code 設定；desk 只在提示詞裡要求不 push、不開 PR、不碰正式環境，不是沙盒。
+- 背景 Agent 的權限照你的 Claude Code 設定；desk 只在提示詞裡要求不 push、不開 PR、不碰正式環境，不是沙盒。
 
 ## 設定
 

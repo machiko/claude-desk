@@ -19,7 +19,7 @@ const ids = (c: Case, ctx = {}) => [...stageActions(c, ctx)].sort()
 test('each stage says whose turn it is and what to press, in plain words', () => {
   expect(turnOf(mk({ check: '無' }))).toEqual({ who: 'you', text: '輸入 /desk:card spec age-group 寫規格與完成檢查' })
   expect(turnOf(mk({ gate: 'spec：待確認規格' })).text).toBe('看過規格後輸入 /desk:card spec age-group ok')
-  expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派執行者：依規格實作', key: 'g' })
+  expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派 Agent：依規格實作', key: 'g' })
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
   expect(turnOf(mk({}), { verifying: true }).who).toBe('ai')
   expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }))).toEqual({ who: 'you', text: 'push 分支並開 PR' })
@@ -41,6 +41,21 @@ test('only the actions that make sense now are listed: passed stages drop their 
   expect(ids(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual(['open'])
   // 執行中：停止與輸出，不能再派
   expect(ids(mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' } }))).toEqual(['logs', 'open', 'stop'])
-  // 檢查未通過：可以讓執行者修，也可以重跑
+  // 檢查未通過：可以讓 Agent 修，也可以重跑
   expect(ids(mk({}, {}, { ...passed, ok: false, exitCode: 1 }))).toEqual(['continue', 'open', 'sync', 'verify'])
+})
+
+test('processing lines say who is doing what, without repeating that it is in progress', () => {
+  const running = (lastKind?: any) => mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' }, ...(lastKind ? { chain: { round: 0, lastKind } } : {}) })
+  expect(turnOf(running()).text).toBe('Agent 在寫程式（l 看輸出）')
+  expect(turnOf(running('fix')).text).toBe('Agent 在修正（l 看輸出）')
+  expect(turnOf(running('sync')).text).toBe('Agent 在同步卡片（l 看輸出）')
+  expect(turnOf(running('review')).text).toBe('Agent 在審查 diff（新對話）')
+  expect(turnOf(mk({}), { verifying: true }).text).toBe('完成檢查在跑')
+  expect(turnOf(mk({}), { queued: true }).text).toBe('完成檢查排隊中')
+  expect(turnOf(mk({}), { launching: true }).text).toBe('派工中，等 Agent 啟動')
+  expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }, { pr: { id: 1, state: 'OPEN', ci: 'pending' } })).text).toBe('PR 的 CI 在跑')
+  expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修' }, { chain: { round: 1 }, state: 'ready' }, passed)).text).toBe('審查有結論，接著自動修正或過關')
+  // 沒有任何一句還留著舊的「執行者」或「不用做事」
+  for (const c of [running(), running('review')]) expect(turnOf(c).text).not.toMatch(/執行者|不用做事/)
 })

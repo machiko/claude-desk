@@ -1,5 +1,5 @@
 // 教學模式：在 ~/.claude/desk-tutorial 建一個小 repo，讓第一次用的人親手把六段走一遍。
-// 執行者與審查由這裡的腳本扮演（不花額度、不需要信任資料夾）；完成檢查是真的執行。
+// Agent 與審查由這裡的腳本扮演（不花額度、不需要信任資料夾）；完成檢查是真的執行。
 // 這個檔只放內容與卡片的變化；I/O 在 register.tsx。
 import type { Case } from '../types'
 import { parseGate } from './card'
@@ -10,7 +10,7 @@ export const TUTORIAL_BRANCH = 'feature/discount'
 export const TUTORIAL_RELEASE = 'release/v1.0'
 export const TUTORIAL_TAG = 'v1.0.0'
 export const TUTORIAL_CHECK = 'python3 -m unittest -q'
-/** 模擬的執行者與審查要「做」多久。 */
+/** 模擬的 Agent 與審查要「做」多久。 */
 export const SIM_MS = 2500
 
 export type TutorialState = { dir: string; reviews: number; merged: boolean }
@@ -198,15 +198,15 @@ export function appendTo(text: string, heading: string, line: string): string {
   return `${lines.join('\n')}\n`
 }
 
-/** 模擬的執行者或審查做完後，卡片長什麼樣。 */
+/** 模擬的 Agent 或審查做完後，卡片長什麼樣。 */
 export type SimWork = 'build' | 'fix' | 'review-1' | 'review-2' | 'review-3' | 'sync'
 
 export function cardAfter(text: string, work: SimWork, date: string): string {
   switch (work) {
     case 'build':
-      return appendTo(setFields(text, { 狀態: '實作完成：discount() 與兩個測試，已 commit', 下一步: '等完成檢查與審查', 關卡: '無' }), '## History', `- ${date}：（教學執行者）實作 AC-1、AC-2 並 commit`)
+      return appendTo(setFields(text, { 狀態: '實作完成：discount() 與兩個測試，已 commit', 下一步: '等完成檢查與審查', 關卡: '無' }), '## History', `- ${date}：（教學 Agent）實作 AC-1、AC-2 並 commit`)
     case 'fix':
-      return appendTo(setFields(text, { 狀態: '已修正審查的 HIGH：負數金額丟出 ValueError', 下一步: '等複審', 關卡: '無' }), '## History', `- ${date}：（教學執行者）依審查補上 AC-3 與測試`)
+      return appendTo(setFields(text, { 狀態: '已修正審查的 HIGH：負數金額丟出 ValueError', 下一步: '等複審', 關卡: '無' }), '## History', `- ${date}：（教學 Agent）依審查補上 AC-3 與測試`)
     case 'review-1':
       return appendTo(setFields(text, { 狀態: '審查發現 AC-3 沒做到', 關卡: 'review：CRITICAL 0、HIGH 1、MEDIUM 1、LOW 0；AC-3 沒做到，需修正' }), '## History', `- ${date}：（教學審查）HIGH 1、MEDIUM 1`)
     case 'review-2':
@@ -268,10 +268,10 @@ export function tutorialTurn(c: Case): { text: string; key?: string } | null {
 /** 教學一開始的說明（/desk tutorial 的回應）。 */
 export const TUTORIAL_INTRO = [
   `教學已開始：沙盒在 ~/.claude/desk-tutorial，現在卡是「${TUTORIAL_NAME}」。`,
-  '「其他案子」是示範案子（只能看），讓你看到多件案子同時進行時面板長什麼樣子：有的在等你、有的 AI 正在處理、有的閒置。',
+  '「其他案子」是示範案子（只能看），讓你看到多件案子同時進行時面板長什麼樣子：有的在等你、有的正在處理、有的閒置。',
   '照現在卡第二列「▶ 輪到你」的指示按鍵，把六段走完：',
   '  1 規格：看過規格後按 t 確認',
-  '  2 實作：按兩次 g 派執行者（教學裡由腳本扮演，不花額度）',
+  '  2 實作：按兩次 g 派 Agent（教學裡由腳本扮演，不花額度）',
   '  3 檢查：自動執行（真的跑 python3 的測試）',
   '  4 審查：自動派審查；第一輪會挑出一條 HIGH，自動修正後複審',
   '  5 合併：先回答審查建議（a、b 或 c → f；選 c 會改程式並 commit，接著自動退回檢查、重新審查），再按 t 合併',

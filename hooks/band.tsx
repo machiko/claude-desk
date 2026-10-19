@@ -43,10 +43,10 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   const strip = (compact: boolean): BandPart[] => lead.pipeline ? stageParts(lead.pipeline, compact).map(p => ({ text: compact ? p.text : ` ${p.text}`, color: STAGE_COLOR[p.status] })) : []
   const current = lead.pipeline?.stages.find(st => st.id === lead.pipeline!.current)
   const label: BandPart[] = current ? [{ text: ` ${current.label}`, color: STAGE_COLOR[current.status] }] : []
-  // 摘要列的那句話跟現在卡最上方一樣：輪到你／AI 處理中＋該做什麼。
+  // 摘要列的那句話跟現在卡最上方一樣：輪到你／處理中＋該做什麼。
   const turn = turnOf(lead, ctxOf(lead))
-  // AI 處理中時摘要列只留主句（「，不用做事」與括號提示留在面板），把位置讓給六段與提醒。
-  const noteText = turn.who === 'you' ? `輪到你：${turn.text}` : turn.who === 'ai' ? `AI：${turn.text.split(/[，（]/)[0]}` : turn.text
+  // 處理中時摘要列只留主句（括號提示留在面板），把位置讓給六段與提醒。
+  const noteText = turn.who === 'you' ? `輪到你：${turn.text}` : turn.who === 'ai' ? `處理中：${turn.text.split(/[，（]/)[0]}` : turn.text
   const note: BandPart[] = noteText ? [{ text: `  ${noteText}`, color: turn.who === 'you' ? COLOR.attention : COLOR.dim }] : []
   const more: BandPart[] = runningMore > 0 ? [{ text: `  +${runningMore}`, color: COLOR.running }] : []
   const waitPart = (max: number): BandPart | null => {

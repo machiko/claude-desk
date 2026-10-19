@@ -180,7 +180,7 @@ function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): s
     ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；上一輪已列過的 MEDIUM／LOW 與標「不修」的項目不要再提。`
     : r?.target ? `看這個分支相對 ${r.target} 的 diff（從 git merge-base 起算）。` : '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。'
   return [
-    `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續執行者、不參考執行者的結論。`,
+    `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續 Agent、不參考 Agent 的結論。`,
     `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。自己重跑完成檢查 \`${c.verify}\`。`,
     scope,
     ...(r?.pitfalls ? [`先讀專案常犯錯誤清單 ${r.pitfalls}，逐條對照這次的改動。`] : []),

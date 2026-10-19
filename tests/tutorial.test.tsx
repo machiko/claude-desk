@@ -38,11 +38,11 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(specOk.argv[0]).toBe('python3')
   expect(specOk.init.env).toEqual({ DESK_SETTINGS: P.settings, DESK_PROJECT_DIR: '' })
 
-  // 2 實作：按兩次 g，由腳本扮演執行者
-  await turn(ui, '按 g 派執行者')
+  // 2 實作：按兩次 g，由腳本扮演 Agent
+  await turn(ui, '按 g 派 Agent')
   await ui.press({ key: KEY('continue') })
   await ui.press({ key: KEY('continue') })
-  await turn(ui, '執行者工作中')
+  await turn(ui, 'Agent 在寫程式')
   await step()
   expect(data.files[`${P.wt}/discount.py`]).toContain('def discount')
   data.git[P.wt]!.head = 'h1'
@@ -79,7 +79,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   await clock.settle()
   await turn(ui, '教學完成！輸入 /desk tutorial end 清除沙盒')
 
-  // 從頭到尾沒有啟動任何真的執行者，也沒有送通知
+  // 從頭到尾沒有啟動任何真的 Agent，也沒有送通知
   expect(data.launches.length).toBe(0)
   // 教學的審查不會寫進真實的審查存底
   expect(data.writes.some((w: string) => w.includes('/handoffs/reviews/'))).toBe(false)
@@ -171,7 +171,7 @@ test('only the tutorial folder can be removed', () => {
   expect(tutorialPaths('/home/u/').dir).toBe('/home/u/.claude/desk-tutorial')
 })
 
-/** 開始教學、確認規格、派實作，停在模擬執行者「工作中」。 */
+/** 開始教學、確認規格、派實作，停在模擬 Agent「在寫程式」。 */
 async function toBuilding($: any, data: any) {
   data.git[P.wt] = { branch: 'feature/discount', head: 'h0' }
   data.run = async (e: any) => {
@@ -213,6 +213,6 @@ test('while the scripted agent works, a refresh still sees it busy and runs no c
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   expect(data.processCalls.some((c: any) => c.argv[0] === 'sh' && c.argv[2] === 'python3 -m unittest -q')).toBe(false)
-  expect(String(text(await ui.drawn())).replace(/\s+/g, '')).toContain('執行者工作中')
+  expect(String(text(await ui.drawn())).replace(/\s+/g, '')).toContain('Agent在寫程式')
   await ui.unmount()
 })

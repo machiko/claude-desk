@@ -3,7 +3,7 @@ import { fixture, PANE, CARD_B } from './fixture'
 import { confirmShip } from '../hooks/card'
 
 const DESK = `# A\n\n<!-- DESK -->\n- 狀態：已合併\n- 檢查：\`npm test\`\n- 等你：無\n- 下一步：上線\n- 關卡：release：v0.2.0 待上線確認\n<!-- /DESK -->\n\n## History\n\n- 2026-10-18：合併\n`
-const CARD = `# B\n\n<!-- CARD: 看板只讀這個區塊 -->\n- 更新：2026-10-17 09:00 · rev 7 · job x · 執行者更新\n- 狀態：已合併\n- 驗證：\`npm test\`\n- 等使用者：無\n- 下一步：上線\n- 關卡：release：v1.4.0\n<!-- /CARD -->\n\n## History\n\n- 2026-10-17：合併\n`
+const CARD = `# B\n\n<!-- CARD: 看板只讀這個區塊 -->\n- 更新：2026-10-17 09:00 · rev 7 · job x · Agent 更新\n- 狀態：已合併\n- 驗證：\`npm test\`\n- 等使用者：無\n- 下一步：上線\n- 關卡：release：v1.4.0\n<!-- /CARD -->\n\n## History\n\n- 2026-10-17：合併\n`
 
 test('confirming ship clears only the release gate and logs it; an old card bumps its rev', () => {
   const desk = confirmShip(DESK, '2026-10-18', '21:30', 'v0.2.0', '可歸檔：/desk:card archive a')!

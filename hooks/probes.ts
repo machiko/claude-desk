@@ -1,4 +1,4 @@
-// 探測：git、tag、PR（Bitbucket／GitHub）、合併、風險、執行者記錄、容器、版本、模型。都是讀，不寫卡片；
+// 探測：git、tag、PR（Bitbucket／GitHub）、合併、風險、Agent 記錄、容器、版本、模型。都是讀，不寫卡片；
 // 唯一的寫入是審查存底（archiveReview）。快取放在這個模組裡，重新載入就清空。
 import type { PluginOptions } from 'claude-code'
 import type { Case, PrInfo, Snapshot } from '../types'
@@ -281,7 +281,7 @@ export async function gitStatus($: any, root: string): Promise<GitState | undefi
   return out === null ? undefined : parseGitStatus(out)
 }
 
-/** 執行者最近幾行有意義的輸出。 */
+/** Agent 最近幾行有意義的輸出。 */
 export async function logTail($: any, id: string | undefined, n = 10): Promise<string[]> {
   if (!id) return []
   const r = await $.process.run(['claude', 'logs', id], { timeoutMs: LOGS_TIMEOUT_MS }).catch(() => null)

@@ -1,4 +1,4 @@
-// 教學模式（/desk tutorial）的執行：沙盒、模擬的執行者與審查、t 鍵的下一步。教學的進度狀態也住在這裡，
+// 教學模式（/desk tutorial）的執行：沙盒、模擬的 Agent 與審查、t 鍵的下一步。教學的進度狀態也住在這裡，
 // register.tsx 只讀（ES module 的 live binding），要改一律呼叫 setTutorial／cancelSim。
 import { atom, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
@@ -21,13 +21,13 @@ const contentOffset = atom({ plugin: 'desk', key: 'contentOffset' } as const, 0)
 
 /** 教學模式（/desk tutorial）：沙盒資料夾與進度；null 是一般模式。存在 $.store，重新載入後接著教。 */
 export let tutorial: TutorialState | null = null
-/** 教學裡正在「工作」的模擬執行者或審查。 */
+/** 教學裡正在「工作」的模擬 Agent 或審查。 */
 export let sim: { root: string; statusPath: string; name: string; startedAt: number; work: SimWork; timer: Timer; token: number; finishing?: boolean } | null = null
 let simSeq = 0
 export const TUTORIAL_KEY = 'tutorial'
 
 export function setTutorial(next: TutorialState | null) { tutorial = next }
-/** 停掉正在「工作」的模擬執行者（離開教學、手動停止、換對話時）。 */
+/** 停掉正在「工作」的模擬 Agent（離開教學、手動停止、換對話時）。 */
 export function cancelSim() { sim?.timer?.cancel(); sim = null }
 
 const SIM_SESSION = '00000000-0000-4000-8000-00000000d35c'
@@ -54,7 +54,7 @@ export function startSim($: any, options: PluginOptions, c: Case, kind: Dispatch
 }
 
 /**
- * 模擬的執行者或審查做完：改程式並 commit、寫審查檔、寫回卡片，然後重讀讓接力往下走。
+ * 模擬的 Agent 或審查做完：改程式並 commit、寫審查檔、寫回卡片，然後重讀讓接力往下走。
  * 收尾期間模擬仍算「工作中」（refresh 不會以為它結束了）；每一步之後確認這一輪還有效（教學沒有結束、沒有被新的一輪取代）。
  */
 export async function finishSim($: any, options: PluginOptions) {
@@ -86,7 +86,7 @@ export async function finishSim($: any, options: PluginOptions) {
     if (typeof card === 'string') await $.fs.write(job.statusPath, cardAfter(card, job.work, day))
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (live()) await feedPush($, [{ at: await $.clock.now(), text: `教學執行者失敗：${message}`, tone: 'error' }])
+    if (live()) await feedPush($, [{ at: await $.clock.now(), text: `教學 Agent 失敗：${message}`, tone: 'error' }])
   } finally {
     if (sim?.token === job.token) sim = null
   }
@@ -98,7 +98,7 @@ export async function finishSim($: any, options: PluginOptions) {
 
 /**
  * 重新載入後接著教：沙盒被刪了就結束教學；上一輪模擬還沒做完（派工紀錄未處理、沒有在跑的模擬）就重新排上，
- * 不然接力會以為執行者做完了，拿舊的程式跑檢查。
+ * 不然接力會以為 Agent 做完了，拿舊的程式跑檢查。
  */
 export async function resumeTutorial($: any, options: PluginOptions) {
   if (!tutorial) return

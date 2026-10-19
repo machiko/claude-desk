@@ -9,7 +9,7 @@ test('the now card opens with whose turn it is, and the footer lists only what t
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_A}` })
   expect(await ui.find({ type: 'Text', text: '▶ 輪到你' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /按 g 派執行者：push/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /按 g 派 Agent：push/ })).toBeDefined()
   // 實作段：有 g 與開卡片；檢查與審查還沒到，不出現
   expect(await ui.find({ key: `case-${CARD_A}-continue` })).toBeDefined()
   expect(await ui.find({ key: `case-${CARD_A}-open` })).toBeDefined()
@@ -23,6 +23,6 @@ test('the now card opens with whose turn it is, and the footer lists only what t
   // 摘要列用同一句話
   // 摘要列用同一句話（沒有人在跑時領頭的是工作桌挑的那件）
   const band = await $.ui.mount(BAND(160))
-  expect(JSON.stringify(await band.drawn())).toContain('輪到你：按 g 派執行者')
+  expect(JSON.stringify(await band.drawn())).toContain('輪到你：按 g 派 Agent')
   await band.unmount()
 })

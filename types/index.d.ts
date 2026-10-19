@@ -67,7 +67,7 @@ export type Snapshot = {
   error: string | null
   contextPercent: number | null
   demo?: boolean
-  /** 教學模式：只顯示沙盒裡的那一件，執行者與審查由腳本扮演。 */
+  /** 教學模式：只顯示沙盒裡的那一件，Agent 與審查由腳本扮演。 */
   tutorial?: boolean
   /** 目前專案（repo 資料夾名）；面板只列這個專案登錄表裡的案子。 */
   project?: string
@@ -111,7 +111,7 @@ declare module 'claude-code' {
       checkQueue: string[]
       /** 派工與停止要按兩次：第一次按下記在這裡，3 秒內再按同一個才執行。 */
       armed: { key: string; at: number } | null
-      /** 展開執行者輸出的那件（卡片路徑）與讀到的最近幾行。 */
+      /** 展開 Agent 輸出的那件（卡片路徑）與讀到的最近幾行。 */
       logsOpen: string | null
       logView: Record<string, string[]>
       /** 顯示快捷鍵說明。 */
