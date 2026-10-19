@@ -65,6 +65,8 @@ test('events name the change; the first snapshot is quiet', () => {
     { at: now, text: 'a 等你：要嗎？', tone: 'warning' },
     { at: now, text: 'b 加入工作桌', tone: 'subtle' },
   ])
+  // 換了專案：另一份登錄表的案子不是「加入」，不發動態
+  expect(events({ ...before, project: 'shop' }, { ...after, project: 'blog' })).toEqual([])
 })
 
 test('width helpers and ago', () => {

@@ -16,7 +16,7 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
 
 `<目標>` 可以是 worktree 資料夾名（slug）、案名（完整或唯一部分）或 `main`（主 repo）。
 
-設定（主 repo、worktree 位置、登錄表、模板、專案規則）在 desk 的 `dispatch.json`，說明見 `card.py` 開頭。
+設定（主 repo、worktree 位置、登錄表、模板、專案規則）在 desk 的 `dispatch.json`：全域那份疊上目前專案的 `~/.claude/handoffs/<repo>/dispatch.json`，說明見 `card.py` 開頭。要在專案的 repo 或 worktree 裡執行。
 
 ## 產生規格（spec）
 

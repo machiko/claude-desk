@@ -82,7 +82,7 @@ test('high risk: code review passes → security review → pass but waits for y
   const { data, clock } = fixture(on)
   data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1', files: ['app/Http/Middleware/Admin.php'] }
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
-  data.files['/home/u/.claude/handoffs/review-pitfalls.md'] = '# 清單'
+  data.files['/home/u/.claude/handoffs/shop/review-pitfalls.md'] = '# 清單'
   data.files['/home/u/wt/alpha/.task/REVIEW.md'] = '- [HIGH][稽核] a.php:1 — 漏寫稽核紀錄'
   data.files['/home/u/wt/alpha/.task/SECURITY.md'] = '（無）'
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
@@ -108,7 +108,7 @@ test('high risk: code review passes → security review → pass but waits for y
   await clock.settle()
   await finish()
   expect(prompt(1).startsWith('程式碼審查')).toBe(true)
-  expect(prompt(1)).toContain('/home/u/.claude/handoffs/review-pitfalls.md')
+  expect(prompt(1)).toContain('/home/u/.claude/handoffs/shop/review-pitfalls.md')
   // 沒設定審查契約就用 plugin 內附的範本
   expect(prompt(1)).toMatch(/契約：\S+\/templates\/review\.md。/)
 
@@ -116,7 +116,7 @@ test('high risk: code review passes → security review → pass but waits for y
   setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
   await finish()
   expect(prompt(2)).toContain('修正第 1／2 輪')
-  expect(data.writes.some(w => /\/handoffs\/reviews\/alpha-\d{8}-\d{4}-code\.md$/.test(w))).toBe(true)
+  expect(data.writes.some(w => /\/handoffs\/shop\/reviews\/alpha-\d{8}-\d{4}-code\.md$/.test(w))).toBe(true)
   setGate('無')
   data.git['/home/u/wt/alpha']!.head = 'h2'
   await finish()

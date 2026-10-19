@@ -2,6 +2,7 @@
 
 執行：python3 -m unittest discover -s skills/card/tests
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -25,6 +26,31 @@ def write(path, text, mode='w'):
 
 def git(*args, cwd):
     subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
+
+
+# 與 hooks/project.ts 的 projectKey 同一張表（tests/project.test.tsx 的 KEY_CASES）
+KEY_CASES = [
+    ('/home/u/shop/.git', 'shop'),
+    ('/srv/git/shop.git', 'shop'),
+    ('/home/u/My Project/.git', 'My Project'),
+    ('/home/u/訂單平台/.git', '訂單平台'),
+    ('/home/u/shop/.bare', 'shop'),
+    ('/home/u/shop/.git/modules/lib', 'lib'),
+    ('/home/u/.hidden/.git', ''),
+]
+
+
+class ProjectKeyTest(unittest.TestCase):
+    def test_same_keys_as_the_panel(self):
+        os.environ['DESK_PROJECT_DIR'] = ''
+        try:
+            spec = importlib.util.spec_from_file_location('card_under_test', SCRIPT)
+            card = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(card)
+        finally:
+            os.environ.pop('DESK_PROJECT_DIR', None)
+        for common, key in KEY_CASES:
+            self.assertEqual(card.project_key(common), key, common)
 
 
 class CardScriptTest(unittest.TestCase):
@@ -56,11 +82,15 @@ class CardScriptTest(unittest.TestCase):
         card = {'main': self.main, 'registry': self.reg, 'archive': os.path.join(self.t, 'archive'), **extra.pop('card', {})}
         write(self.settings, json.dumps({'card': card, **extra}, ensure_ascii=False))
 
-    def run_card(self, *args):
-        env = {**os.environ, 'DESK_SETTINGS': self.settings}
+    def run_card(self, *args, cwd=None, detect=False):
+        # 預設不認專案（DESK_PROJECT_DIR 空白），只用 DESK_SETTINGS；detect=True 時 HOME 指到暫存資料夾、依 cwd 的 repo 找專案。
+        env = {**os.environ, 'DESK_SETTINGS': self.settings, 'DESK_PROJECT_DIR': ''}
         for k in ('DESK_CARD_MAIN', 'DESK_CARD_REGISTRY', 'DESK_CARD_TEMPLATE', 'DESK_CARD_ARCHIVE'):
             env.pop(k, None)
-        return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True, env=env)
+        if detect:
+            env.pop('DESK_PROJECT_DIR')
+            env['HOME'] = self.t
+        return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True, env=env, cwd=cwd)
 
     def card_path(self, slug='order-export'):
         return os.path.join(self.main + '-worktrees', slug, '.desk', 'CARD.md')
@@ -86,6 +116,32 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('/desk:card spec order-export', r.stdout)
         # 同一個分支再開一次要拒絕
         self.assertNotEqual(self.run_card('new', 'feature/order-export', '訂單匯出').returncode, 0)
+
+    def test_project_comes_from_the_repo_and_worktrees_share_it(self):
+        # 全域設定只有人名；主 repo 寫在專案的 dispatch.json，登錄表還不存在
+        write(self.settings, json.dumps({'user': 'Alex'}))
+        project = os.path.join(self.t, '.claude', 'handoffs', 'shop')
+        os.makedirs(project)
+        write(os.path.join(project, 'dispatch.json'), json.dumps({'card': {'main': self.main}}))
+        # 專案設定用記事本這類編輯器存成帶 BOM 的 UTF-8 也要讀得到
+        write(os.path.join(project, 'dispatch.json'), '\ufeff' + read(os.path.join(project, 'dispatch.json')))
+        r = self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main', cwd=self.main, detect=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        registry = os.path.join(project, 'projects-scope.md')
+        self.assertIn(f'| 訂單匯出 | `{self.card_path()}` |', read(registry))
+        # 在 worktree 裡也是同一個專案、同一份登錄表，全域與專案設定都有
+        info = self.run_card('card', 'order-export', cwd=os.path.dirname(os.path.dirname(self.card_path())), detect=True)
+        self.assertEqual(info.returncode, 0, info.stderr)
+        self.assertIn('user: Alex', info.stdout)
+        self.assertIn('branch: feature/order-export', info.stdout)
+
+    def test_outside_a_repo_says_to_run_inside_one(self):
+        write(self.settings, json.dumps({}))
+        outside = os.path.join(self.t, 'notes')
+        os.makedirs(outside)
+        r = self.run_card('card', 'x', cwd=outside, detect=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('不在 git repo 裡', r.stderr)
 
     def test_new_without_main_says_how_to_set_it(self):
         write(self.settings, json.dumps({'card': {'registry': self.reg}}))

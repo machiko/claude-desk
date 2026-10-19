@@ -13,15 +13,17 @@
   card.py spec-ok <slug|案名|main>             關卡是 spec：… 才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
   card.py archive <slug>                       卡與審查檔複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
 
-設定讀 desk 的 dispatch.json（環境變數 DESK_SETTINGS 可指定別的路徑）：
+設定讀 desk 的全域 dispatch.json（環境變數 DESK_SETTINGS 可指定別的路徑），再疊上目前專案的
+~/.claude/handoffs/<repo 資料夾名>/dispatch.json（頂層同名鍵以專案的為準）。目前專案＝執行時所在
+資料夾的 git repo，worktree 算主 repo；環境變數 DESK_PROJECT_DIR 可指定專案資料夾（測試用）：
   user            寫進卡片的人名（預設「使用者」）
   card.main       主 repo（new 從這裡建 worktree；目標寫 main 時指它的卡片）
   card.worktrees  worktree 放哪（預設主 repo 旁邊的 <名稱>-worktrees）
   card.base       new 沒給 base 時從哪裡切（預設 origin/main）
   card.check      new 之後建議的完成檢查，{slug} 會換成資料夾名
-  card.registry   案子登錄表（預設 ~/.claude/handoffs/projects-scope.md）
+  card.registry   案子登錄表（預設專案資料夾裡的 projects-scope.md；new 時不存在就建一份）
   card.template   DESK 卡模板（預設 plugin 內附的 templates/DESK-template.md）
-  card.archive    歸檔資料夾（預設 ~/.claude/handoffs/archive）
+  card.archive    歸檔資料夾（預設登錄表旁邊的 archive/）
   card.specRules  寫規格時要額外遵守的專案規則（字串陣列）
 """
 import datetime
@@ -47,16 +49,42 @@ def expand(path):
     return os.path.expanduser(path) if path else path
 
 
-def load_settings():
-    path = expand(os.environ.get('DESK_SETTINGS') or '~/.claude/handoffs/dispatch.json')
+def project_key(common_dir):
+    """git common dir → 專案鍵（與 desk 的 hooks/project.ts 同一套規則）：一般 repo 取 .git 上一層的資料夾名；
+    bare repo 去掉 .git 字尾；點開頭的（.bare 這類）也取上一層。中文與空白都可以，只擋路徑分隔與控制字元。"""
+    parts = [p for p in common_dir.replace('\\', '/').rstrip('/').split('/') if p]
+    last = parts.pop() if parts else ''
+    name = (parts.pop() if parts else '') if last.startswith('.') else re.sub(r'\.git$', '', last)
+    return name if name and not name.startswith('.') and not re.search(r'[\x00-\x1f]', name) else ''
+
+
+def project_dir():
+    """目前專案在 ~/.claude/handoffs 底下的資料夾；不在 git repo 裡就空字串。"""
+    if 'DESK_PROJECT_DIR' in os.environ:
+        return expand(os.environ['DESK_PROJECT_DIR'])
     try:
-        with open(path, encoding='utf-8') as f:
+        r = subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    key = project_key(r.stdout.strip().split('\n')[0]) if r.returncode == 0 else ''
+    return os.path.join(HOME, '.claude', 'handoffs', key) if key else ''
+
+
+def load_json(path):
+    try:
+        with open(path, encoding='utf-8-sig') as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
+def load_settings():
+    own = load_json(expand(os.environ.get('DESK_SETTINGS') or '~/.claude/handoffs/dispatch.json'))
+    return {**own, **load_json(os.path.join(PROJECT_DIR, 'dispatch.json'))} if PROJECT_DIR else own
+
+
+PROJECT_DIR = project_dir()
 SETTINGS = load_settings()
 CFG = SETTINGS.get('card') if isinstance(SETTINGS.get('card'), dict) else {}
 USER = (SETTINGS.get('user') or '使用者').strip() if isinstance(SETTINGS.get('user'), str) else '使用者'
@@ -69,11 +97,11 @@ def cfg(key, default=''):
 
 # 環境變數優先（測試用），再來是設定檔，最後是預設值。
 MAIN = expand(os.environ.get('DESK_CARD_MAIN') or cfg('main'))
-REG = expand(os.environ.get('DESK_CARD_REGISTRY') or cfg('registry', '~/.claude/handoffs/projects-scope.md'))
+REG = expand(os.environ.get('DESK_CARD_REGISTRY') or cfg('registry', os.path.join(PROJECT_DIR, 'projects-scope.md') if PROJECT_DIR else ''))
 TPL = expand(os.environ.get('DESK_CARD_TEMPLATE') or cfg('template', os.path.join(PLUGIN_ROOT, 'templates', 'DESK-template.md')))
 WT_ROOT = expand(cfg('worktrees', (MAIN.rstrip('/') + '-worktrees') if MAIN else ''))
 BASE = cfg('base', 'origin/main')
-ARCHIVE = expand(os.environ.get('DESK_CARD_ARCHIVE') or cfg('archive', '~/.claude/handoffs/archive'))
+ARCHIVE = expand(os.environ.get('DESK_CARD_ARCHIVE') or cfg('archive', os.path.join(os.path.dirname(REG), 'archive') if REG else ''))
 SPEC_RULES = [r.strip() for r in CFG.get('specRules', []) if isinstance(r, str) and r.strip()] if isinstance(CFG.get('specRules'), list) else []
 
 
@@ -82,9 +110,15 @@ def named(user):
     return f'{user} ' if re.fullmatch(r'[\x00-\x7F]+', user) else user
 
 
+def need_registry():
+    if not REG:
+        fail('目前資料夾不在 git repo 裡，找不到這個專案的登錄表；請在專案的 repo 或 worktree 裡執行')
+
+
 def registry_rows():
+    need_registry()
     if not os.path.isfile(REG):
-        fail(f'找不到案子登錄表：{REG}（在 dispatch.json 的 card.registry 設定）')
+        fail(f'找不到案子登錄表：{REG}（用 {CMD} new 開第一張卡會自動建立，或在 dispatch.json 的 card.registry 指定）')
     rows = []
     for line in read(REG).split('\n'):
         m = re.match(r'^\|\s*([^|]+?)\s*\|\s*`([^`]+)`', line)
@@ -213,7 +247,10 @@ def append_line(text, heading_prefix, line):
 
 
 def insert_registry_row(row):
-    """插在登錄表第一個表格的最後一列之後。"""
+    """插在登錄表第一個表格的最後一列之後；這個專案還沒有登錄表就先建一份。"""
+    if not os.path.isfile(REG):
+        os.makedirs(os.path.dirname(REG), exist_ok=True)
+        write(REG, REGISTRY_TEMPLATE)
     lines = read(REG).split('\n')
     last, in_table = -1, False
     for i, l in enumerate(lines):
@@ -227,7 +264,11 @@ def insert_registry_row(row):
     write(REG, '\n'.join(lines))
 
 
+REGISTRY_TEMPLATE = '# 案子登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
+
+
 def cmd_new(branch, name, base=None):
+    need_registry()
     if not MAIN:
         fail('沒有設定主 repo：在 dispatch.json 加上 "card": { "main": "~/path/to/repo" }')
     if not os.path.isfile(TPL):

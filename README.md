@@ -63,24 +63,17 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 
 ## 快速開始
 
-1. 建一個案子登錄表（預設 `~/.claude/handoffs/projects-scope.md`）：
+desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/desk`，就列那個 repo 的案子。每個專案的登錄表與設定放在 `~/.claude/handoffs/<repo 資料夾名>/`，以主 repo `~/code/shop` 為例是 `~/.claude/handoffs/shop/`。
 
-   ```markdown
-   # 案子登錄
-
-   | 案名 | 卡片 |
-   | --- | --- |
-   ```
-
-2. 在 `~/.claude/handoffs/dispatch.json` 指定主 repo（`/desk:card new` 從這裡建 worktree）：
+1. 在專案的 `dispatch.json`（`~/.claude/handoffs/shop/dispatch.json`）指定主 repo（`/desk:card new` 從這裡建 worktree）：
 
    ```json
    { "card": { "main": "~/code/shop", "base": "origin/main" } }
    ```
 
-3. 開一件案子：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡與登錄表列。
-4. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後輸入 `/desk:card spec order-export ok`。
-5. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派執行者）。
+2. 在 repo 裡開一件案子：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。
+3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後輸入 `/desk:card spec order-export ok`。
+4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派執行者）。
 
 背景執行者只會在「信任過的 repo」裡啟動：第一次用某個 repo 前，先在那個 repo 根目錄開一次 `claude`，信任提示選 Yes。
 
@@ -159,16 +152,31 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 | 選項 | 預設 | 作用 |
 |---|---|---|
-| `registryPath` | `~/.claude/handoffs/projects-scope.md` | 案子登錄表：每列 `\| 案名 \| \`卡片路徑\` \|` |
-| `dispatchSettingsPath` | `~/.claude/handoffs/dispatch.json` | 派工與專案設定（見下） |
+| `registryPath` | 空白 | 案子登錄表：每列 `\| 案名 \| \`卡片路徑\` \|`。空白＝目前專案的 `projects-scope.md`；填了就每個專案都讀這一份 |
+| `dispatchSettingsPath` | `~/.claude/handoffs/dispatch.json` | 全域派工設定；目前專案的 `dispatch.json` 疊在上面（見下） |
 | `refreshSeconds` | `30` | 重讀間隔（10–600） |
 | `bitbucketServer` | `bitbucket` | 讀 PR 與 CI 的 MCP 伺服器名稱 |
-| `pitfallsPath` | `~/.claude/handoffs/review-pitfalls.md` | 常犯錯誤清單，審查先讀 |
-| `reviewsDir` | `~/.claude/handoffs/reviews` | 審查存底 |
-| `composeDir` | 空白 | `docker-compose.yml` 所在資料夾；空白就不看容器 |
+| `pitfallsPath` | 空白 | 常犯錯誤清單，審查先讀；空白＝目前專案的 `review-pitfalls.md` |
+| `reviewsDir` | 空白 | 審查存底；空白＝目前專案的 `reviews/` |
+| `composeDir` | 空白 | `docker-compose.yml` 所在資料夾；專案 `dispatch.json` 的 `composeDir` 優先；都空白就不看容器 |
 | `summaryModel` | `haiku` | 把卡片狀態濃縮成一句的模型；`off` 不呼叫模型 |
 | `activation` | `auto` | `auto`：輸入過 `/desk` 的對話才啟用；`always`：每個對話都啟用 |
 | `legacySessionsPath` | `~/.claude/handoffs/claude-sessions.json` | 舊版 console-status 的 session 對應，沒有就不用管 |
+
+### 專案資料夾
+
+目前專案＝session 根目錄所在的 git repo（看 `git rev-parse --git-common-dir`，所以 worktree 跟主 repo 算同一個），資料夾是 `~/.claude/handoffs/<repo 資料夾名>/`：
+
+| 檔案 | 作用 |
+|---|---|
+| `projects-scope.md` | 這個專案的案子登錄表 |
+| `dispatch.json` | 專案設定，疊在全域 `dispatch.json` 上：頂層同名鍵整個以專案的為準 |
+| `review-pitfalls.md`、`reviews/` | 常犯錯誤清單與審查存底 |
+| `archive/` | `/desk:card archive` 的歸檔 |
+
+專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
+
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，不會列出別的專案的案子。共用的設定（`model`、`effort`、`sync`、`user`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
@@ -209,7 +217,8 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `review.template` | 審查契約檔（預設內附的 [templates/review.md](templates/review.md)） |
 | `risk.high` | 額外的高風險路徑（正規式）；碰到就加跑資安審查並停下來等你看 |
 | `checkServices` | 完成檢查裡出現這個指令名時需要哪些容器服務 |
-| `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive` |
+| `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
+| `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
 
 ## 開發
 

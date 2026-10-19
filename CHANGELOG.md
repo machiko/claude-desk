@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 工作桌改成一次只看目前專案：依 session 所在的 git repo（worktree 算主 repo）讀 `~/.claude/handoffs/<repo>/` 的登錄表、設定、常犯錯誤與審查存底，面板 header 顯示專案名；不在 repo 裡或專案還沒有登錄表時說明怎麼建，不再列出別的專案的案子。
+
 ## 0.16.0 — 第一個公開版本
 
 - 工作桌面板與摘要列：現在卡、其他案子的六段進度表（規格、實作、檢查、審查、合併、上線）、最近動態與提醒；header／footer 常駐，只有中間捲動。

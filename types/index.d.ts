@@ -65,6 +65,8 @@ export type Snapshot = {
   demo?: boolean
   /** 教學模式：只顯示沙盒裡的那一件，執行者與審查由腳本扮演。 */
   tutorial?: boolean
+  /** 目前專案（repo 資料夾名）；面板只列這個專案登錄表裡的案子。 */
+  project?: string
   /** 使用額度：five_hour、seven_day 的剩餘百分比與重置時間。 */
   limits?: { kind: string; remaining: number; resetsAt?: string }[]
   /** desk 本身的版本；產品線上版（最新 v* tag）與開發中版本（release/* 分支）。 */

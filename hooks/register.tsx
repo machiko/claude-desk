@@ -6,7 +6,8 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, FeedEvent, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, CARD_CMD } from './card'
 import { buildCase, demoSnapshot, events, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain } from './model'
-import { archiveReview, containers, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, models, optionPath, prProbe, riskOf, versions } from './probes'
+import { archiveReview, containers, deskPaths, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, models, optionPath, prProbe, riskOf, versions } from './probes'
+import type { DeskPaths } from './probes'
 import { CONFIRM_MS, confirmStep, deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
@@ -114,9 +115,10 @@ async function refresh($: any, options: PluginOptions) {
     const now = await $.clock.now()
     // 示範資料的 desk 版本用真的，其他版本是假的。
     if (demo) { const desk = (await versions($, []))?.desk; await update($, snapshot, () => { const d = demoSnapshot(now); return { ...d, versions: { ...d.versions, ...(desk ? { desk } : {}) } } }); return }
-    const path = tutorial ? tutorialPaths(await home($)).registry : await optionPath($, options, 'registryPath', '~/.claude/handoffs/projects-scope.md')
-    const text = await $.fs.read(path).catch(() => null)
-    const error = text === null ? (tutorial ? `無法讀取教學的登錄表 ${path}；輸入 /desk tutorial end 回到你的案子` : `無法讀取登錄表 ${path}`) : null
+    const paths = tutorial ? null : await deskPaths($, options)
+    const path = tutorial ? tutorialPaths(await home($)).registry : paths!.registry
+    const text = path ? await $.fs.read(path).catch(() => null) : null
+    const error = text !== null ? null : tutorial ? `無法讀取教學的登錄表 ${path}；輸入 /desk tutorial end 回到你的案子` : registryError(paths!)
     const rows = parseRegistry(text ?? '', await home($))
     // 教學不看真的背景 agent，只看模擬的那一個。
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
@@ -155,7 +157,7 @@ async function refresh($: any, options: PluginOptions) {
     }))
     const usage = await $.session.usage().catch(() => null)
     const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
-    const cur: Snapshot = { at: now, cases, error, contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: await versions($, cases), models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(tutorial ? { tutorial: true } : {}) }
+    const cur: Snapshot = { at: now, cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: await versions($, cases), models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
@@ -175,6 +177,13 @@ async function refresh($: any, options: PluginOptions) {
     await update($, snapshot, prev => prev ? { ...prev, error: message } : { at: 0, cases: [], error: message, contextPercent: null })
   }).finally(() => { refreshing = null })
   return refreshing
+}
+
+/** 讀不到登錄表時面板上的說明：選項指定的、這個專案還沒建的、目前資料夾不在 git repo 裡。 */
+function registryError(paths: DeskPaths): string {
+  if (!paths.registry) return '目前資料夾不在 git repo 裡；desk 依 repo 找登錄表，請在專案裡開 /desk'
+  if (paths.project && paths.registry.startsWith(paths.project.dir + '/')) return `無法讀取登錄表：專案「${paths.project.key}」還沒建，建立 ${paths.registry} 後就會列出這個專案的案子`
+  return `無法讀取登錄表 ${paths.registry}`
 }
 
 async function loadSummaries($: any): Promise<Record<string, string>> {
@@ -447,10 +456,11 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     const run = (await loadChains($))[rootKey]
     const round = opts.auto ? run?.round ?? 0 : 0
     const base = opts.security ? run?.securityHead : run?.reviewHead
-    const pitfalls = await optionPath($, options, 'pitfallsPath', '~/.claude/handoffs/review-pitfalls.md')
+    const paths = await deskPaths($, options)
+    const pitfalls = paths.pitfalls
     const template = settings.review.template || `${$.plugin.root}/templates/review.md`
     const recheck = !!opts.auto && !!run?.recheck && !opts.security
-    review = { round, template, ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: await optionPath($, options, 'reviewsDir', '~/.claude/handoffs/reviews') }
+    review = { round, template, ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
   }
   const prompt = buildPrompt(c, kind, text, opts.fix, review, settings)
   await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))

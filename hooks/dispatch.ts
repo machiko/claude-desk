@@ -21,6 +21,8 @@ export type DispatchSettings = {
   riskHigh: [RegExp, string][]
   /** 完成檢查裡出現這個指令名就需要哪些容器服務（例如包好的測試腳本 → mysql）。 */
   checkServices: Record<string, string[]>
+  /** docker-compose.yml 所在資料夾（寫在專案的 dispatch.json，容器列就跟著專案）；空白用 plugin 選項。 */
+  composeDir: string
 }
 
 export const DEFAULT_USER = '使用者'
@@ -42,7 +44,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每案子覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {} }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '' }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -63,6 +65,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     if (d?.checkServices && typeof d.checkServices === 'object') for (const [cmd, v] of Object.entries<unknown>(d.checkServices)) {
       if (str(cmd) && strList(v).length) out.checkServices[str(cmd)] = strList(v)
     }
+    out.composeDir = str(d?.composeDir)
   } catch { /* 壞掉的設定檔當作沒有。 */ }
   return out
 }

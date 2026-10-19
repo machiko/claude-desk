@@ -18,8 +18,8 @@
     "registryPath": {
       "type": "string",
       "title": "案子登錄表",
-      "description": "Markdown 表格：每列「| 案名 | `DESK 卡路徑` |」。絕對路徑或 ~/ 開頭。",
-      "default": "~/.claude/handoffs/projects-scope.md"
+      "description": "Markdown 表格：每列「| 案名 | `DESK 卡路徑` |」。留空＝依目前所在的 repo 讀 ~/.claude/handoffs/<repo 資料夾名>/projects-scope.md（worktree 算同一個 repo）；填了就每個專案都讀這一份。",
+      "default": ""
     },
     "refreshSeconds": {
       "type": "string",
@@ -30,7 +30,7 @@
     "dispatchSettingsPath": {
       "type": "string",
       "title": "派工設定",
-      "description": "dispatch.json：全域 model／effort、projects 覆寫、sync.claude.model 同步模型；user 人名、rules 專案規則、review 審查用語、risk.high 高風險路徑、checkServices 檢查要的容器。",
+      "description": "全域 dispatch.json：model／effort、projects 覆寫、sync.claude.model 同步模型、user 人名等共用設定。目前專案的 ~/.claude/handoffs/<repo>/dispatch.json 會疊在上面（頂層同名鍵以專案的為準），rules、review、risk.high、checkServices、composeDir、card 建議寫在專案那份。",
       "default": "~/.claude/handoffs/dispatch.json"
     },
     "legacySessionsPath": {
@@ -48,19 +48,19 @@
     "pitfallsPath": {
       "type": "string",
       "title": "常犯錯誤清單",
-      "description": "審查每次都先讀；重複出現的問題由審查對話追加到檔尾。",
-      "default": "~/.claude/handoffs/review-pitfalls.md"
+      "description": "審查每次都先讀；重複出現的問題由審查對話追加到檔尾。留空＝目前專案資料夾裡的 review-pitfalls.md。",
+      "default": ""
     },
     "reviewsDir": {
       "type": "string",
       "title": "審查紀錄資料夾",
-      "description": "每次審查結束後，desk 把審查檔存一份到這裡。",
-      "default": "~/.claude/handoffs/reviews"
+      "description": "每次審查結束後，desk 把審查檔存一份到這裡。留空＝目前專案資料夾裡的 reviews/。",
+      "default": ""
     },
     "composeDir": {
       "type": "string",
       "title": "容器所在的專案",
-      "description": "docker-compose.yml 所在資料夾；面板的「容器」一列與檢查前的容器確認都看這裡。留空就不看容器。",
+      "description": "docker-compose.yml 所在資料夾；面板的「容器」一列與檢查前的容器確認都看這裡。多個專案時改寫在專案 dispatch.json 的 composeDir（優先於這裡）。都留空就不看容器。",
       "default": ""
     },
     "summaryModel": {

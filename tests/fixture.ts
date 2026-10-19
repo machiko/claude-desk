@@ -1,7 +1,10 @@
 import { mock } from 'claude-code/testing'
 
 export const NOW = Date.parse('2030-01-05T12:00:00Z')
-export const REGISTRY = '/home/u/.claude/handoffs/projects-scope.md'
+/** 對話所在的 repo（shop）；它的登錄表與設定在 ~/.claude/handoffs/shop/。 */
+export const SESSION_ROOT = '/home/u/shop'
+export const PROJECT_DIR = '/home/u/.claude/handoffs/shop'
+export const REGISTRY = `${PROJECT_DIR}/projects-scope.md`
 export const CARD_A = '/home/u/wt/alpha/.desk/CARD.md'
 export const CARD_B = '/home/u/wt/beta/.desk/CARD.md'
 export const CARD_C = '/home/u/wt/gamma/.desk/CARD.md'
@@ -50,6 +53,9 @@ export function fixture(on: any) {
     answer: '執行',
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
     store: {} as Record<string, unknown>,
+    /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
+    root: SESSION_ROOT,
+    repos: { [SESSION_ROOT]: `${SESSION_ROOT}/.git` } as Record<string, string>,
   }
   on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.9.9"}' } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
@@ -59,6 +65,7 @@ export function fixture(on: any) {
     if (e.argv[0] === 'claude' && e.argv[1] === 'agents') return { value: result(0, JSON.stringify(data.agents)) }
     if (e.argv[0] === 'docker' && e.argv[1] === 'compose' && e.argv[2] === 'ps') { data.composeCalls.push(e); return { value: data.compose === null ? result(1, '', 'Cannot connect to the Docker daemon') : result(0, data.compose) } }
     if (e.argv[0] === 'git') {
+      if (e.argv.slice(3).join(' ') === 'rev-parse --path-format=absolute --git-common-dir') return { value: data.repos[e.argv[2]] ? result(0, `${data.repos[e.argv[2]]}\n`) : result(128, '', 'not a git repository') }
       const g = data.git[e.argv[2]]
       if (!g) return { value: result(128, '', 'not a git repository') }
       const args = e.argv.slice(3).join(' ')
@@ -83,6 +90,7 @@ export function fixture(on: any) {
   })
   on('session.usage', () => ({ value: data.usage }))
   on('session.id', () => ({ value: 'fixture-session' }))
+  on('session.root', () => ({ value: data.root }))
   on('store.get', (_: any, e: any) => ({ value: data.store[e.key] ?? null }))
   on('store.set', (_: any, e: any) => { data.store[e.key] = e.value; return { value: undefined } })
   on('ui.toast', (_: any, e: any) => { data.toasts.push(e.text); return { value: undefined } })

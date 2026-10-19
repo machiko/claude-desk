@@ -169,13 +169,14 @@ function label(ui: any, text: string) {
 function headerRows(ui: any, view: PaneView, width: number): any[] {
   const { Box, Text } = ui
   const s = view.s
-  const brand = `${WORD.brand}${s.versions?.desk ? ` ${s.versions.desk}` : ''}`
+  const brand = `${WORD.brand}${s.versions?.desk ? ` ${s.versions.desk}` : ''}${s.project ? ` · ${s.project}` : ''}`
   const time = `${s.demo ? '示範資料 · ' : s.tutorial ? '教學模式 · ' : ''}${hhmm(s.at)} 更新`
   const limits = limitParts(s, view.now, width - displayWidth(brand) - displayWidth(time) - 6)
   const rows: any[] = [
     <Box flexDirection="row">
       <Text bold color={COLOR.text}>{WORD.brand}</Text>
       {s.versions?.desk ? <Text color={COLOR.faint}>{` ${s.versions.desk}`}</Text> : null}
+      {s.project ? <Text color={COLOR.dim} wrap="truncate-end">{` · ${s.project}`}</Text> : null}
       <Box flexGrow={1} />
       {line(ui, limits)}
       <Text color={COLOR.faint}>{`   ${time}`}</Text>

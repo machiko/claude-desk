@@ -200,7 +200,8 @@ export function summary(c: Case): string {
 
 /** 自上一份快照以來的變化，給動態與 toast。 */
 export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
-  if (!prev || prev.demo !== cur.demo) return []
+  // 示範資料切換、換了專案：不是案子本身有變化，不發動態。
+  if (!prev || prev.demo !== cur.demo || prev.project !== cur.project) return []
   const before = new Map(prev.cases.map(c => [c.statusPath, c]))
   const out: FeedEvent[] = []
   for (const c of cur.cases) {

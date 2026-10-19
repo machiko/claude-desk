@@ -79,7 +79,7 @@ test('a due reminder shows in the meters and on the bar when nobody waits', asyn
   const { data } = fixture(on)
   const d = new Date(NOW + 2 * 86_400_000)
   const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  data.files['/home/u/.claude/handoffs/projects-scope.md'] += `\n\n## 提醒\n- ${date} 決定 rag-proxy 是否退役\n- 2099-01-01 很久以後\n`
+  data.files['/home/u/.claude/handoffs/shop/projects-scope.md'] += `\n\n## 提醒\n- ${date} 決定 rag-proxy 是否退役\n- 2099-01-01 很久以後\n`
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))

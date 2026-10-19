@@ -14,6 +14,8 @@ import { parseCompose, summarize } from './containers'
 import type { ContainerSummary } from './containers'
 import { logLines, parseGitStatus } from './extras'
 import type { GitState } from './extras'
+import { HANDOFFS, PROJECT_FILES, mergeSettingsText, projectOf } from './project'
+import type { Project } from './project'
 
 const PR_TTL_MS = 5 * 60_000
 const LOGS_TIMEOUT_MS = 15_000
@@ -22,6 +24,7 @@ const remotes = new Map<string, Repo | null>()
 const tags = new Map<string, string>()
 const prs = new Map<string, { at: number; branch: string; pr: PrInfo | null }>()
 const risks = new Map<string, Risk>()
+const projects = new Map<string, Project>()
 
 export async function home($: any): Promise<string> {
   const h = (await $.env.get('HOME').catch(() => null)) || (await $.env.get('USERPROFILE').catch(() => null)) || ''
@@ -35,6 +38,37 @@ export async function optionPath($: any, options: PluginOptions, key: string, fa
 export async function git($: any, root: string, args: string[]): Promise<string | null> {
   const r = await $.process.run(['git', '-C', root, ...args], { timeoutMs: 10_000 }).catch(() => null)
   return r && r.exitCode === 0 ? String(r.stdout).trim() : null
+}
+
+/** 這個對話所在的專案（session 根目錄的 repo；`/cd` 換了就跟著換）。只快取找到的，之後才 git init 或 git 暫時失敗下一輪會再查。 */
+export async function currentProject($: any): Promise<Project | null> {
+  const root = String((await $.session.root().catch(() => '')) ?? '')
+  if (!root) return null
+  const cached = projects.get(root)
+  if (cached) return cached
+  const found = projectOf(await git($, root, ['rev-parse', '--path-format=absolute', '--git-common-dir']), await home($))
+  if (found) projects.set(root, found)
+  return found
+}
+
+/**
+ * 登錄表、設定、審查用檔的路徑。plugin 選項有填就照填的；沒填就用目前專案的資料夾。
+ * 認不出專案時沒有登錄表（不退回別的專案的），常犯錯誤與審查存底退回 ~/.claude/handoffs。
+ */
+export type DeskPaths = { project: Project | null; registry: string | null; settings: string; projectSettings: string | null; pitfalls: string; reviews: string }
+export async function deskPaths($: any, options: PluginOptions): Promise<DeskPaths> {
+  const project = await currentProject($)
+  const h = await home($)
+  const pick = (key: string, file: string, fallback: string | null) =>
+    String(options[key] ?? '').trim() ? expandHome(String(options[key]).trim(), h) : project ? `${project.dir}/${file}` : fallback === null ? null : expandHome(fallback, h)
+  return {
+    project,
+    registry: pick('registryPath', PROJECT_FILES.registry, null),
+    settings: await optionPath($, options, 'dispatchSettingsPath', `${HANDOFFS}/dispatch.json`),
+    projectSettings: project ? `${project.dir}/${PROJECT_FILES.settings}` : null,
+    pitfalls: pick('pitfallsPath', PROJECT_FILES.pitfalls, `${HANDOFFS}/review-pitfalls.md`)!,
+    reviews: pick('reviewsDir', PROJECT_FILES.reviews, `${HANDOFFS}/reviews`)!,
+  }
 }
 
 /** 分支、HEAD、包含 HEAD 的最舊 v* tag（依 HEAD 快取）。不是 git 資料夾就全空。 */
@@ -94,7 +128,7 @@ export async function riskOf($: any, c: Case, extra: readonly [RegExp, string][]
 export async function archiveReview($: any, options: PluginOptions, c: Case, security: boolean, at: number) {
   const text = await $.fs.read(`${c.root}/${security ? SECURITY_FILE : REVIEW_FILE}`).catch(() => null)
   if (!text) return
-  const dir = await optionPath($, options, 'reviewsDir', '~/.claude/handoffs/reviews')
+  const dir = (await deskPaths($, options)).reviews
   const slug = c.root.split('/').filter(Boolean).pop() ?? 'case'
   const d = new Date(at)
   const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`
@@ -109,16 +143,20 @@ export async function lastLine($: any, id: string | undefined): Promise<string> 
   return lastMeaningful(String(r.stdout))
 }
 
-/** dispatch.json；讀不到就是預設值。 */
+/** 全域 dispatch.json 疊上目前專案的 dispatch.json；都讀不到就是預設值。 */
 export async function loadSettings($: any, options: PluginOptions): Promise<DispatchSettings> {
-  return parseSettings(await $.fs.read(await optionPath($, options, 'dispatchSettingsPath', '~/.claude/handoffs/dispatch.json')).catch(() => null))
+  const paths = await deskPaths($, options)
+  const read = (path: string | null) => path ? $.fs.read(path).catch(() => null) as Promise<string | null> : Promise.resolve(null)
+  const [own, project] = await Promise.all([read(paths.settings), read(paths.projectSettings)])
+  return parseSettings(mergeSettingsText(own, project))
 }
 
 /** 主工作區的容器：docker compose ps；Docker 沒開或讀不到就記錯誤，不擋其他東西。 */
 export async function containers($: any, options: PluginOptions): Promise<ContainerSummary> {
-  // 沒設定 composeDir 就不看容器（面板不顯示容器列，檢查也不先確認容器）。
-  if (!String(options.composeDir ?? '').trim()) return { total: 0, running: 0, down: [], unhealthy: [] }
-  const dir = await optionPath($, options, 'composeDir', '')
+  // dispatch.json 的 composeDir 優先（跟著專案），再來是 plugin 選項；都沒有就不看容器（面板不顯示容器列，檢查也不先確認容器）。
+  const own = (await loadSettings($, options)).composeDir
+  if (!own && !String(options.composeDir ?? '').trim()) return { total: 0, running: 0, down: [], unhealthy: [] }
+  const dir = own ? expandHome(own, await home($)) : await optionPath($, options, 'composeDir', '')
   const r = await $.process.run(['docker', 'compose', 'ps', '-a', '--format', 'json'], { cwd: dir, timeoutMs: 10_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) return { total: 0, running: 0, down: [], unhealthy: [], error: '無法讀取（Docker 未啟動？）' }
   return summarize(parseCompose(String(r.stdout)))
