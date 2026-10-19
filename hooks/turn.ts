@@ -22,6 +22,7 @@ const slugOf = (c: Case) => c.root.split('/').filter(Boolean).pop() ?? ''
 const isRunning = (c: Case) => c.state === 'running'
 
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
+  if (c.demo) return { who: 'none', text: '示範案子：只能看，照教學那件的指示操作' }
   if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
   if (ctx.launching) return { who: 'ai', text: '派工中，等執行者啟動' }
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
@@ -70,6 +71,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
  * 已經過了的段落不再出現它的鍵（檢查過了沒有 v、審查過了沒有 w）；之後有新 commit，六段會退回去，鍵也會回來。
  */
 export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
+  if (c.demo) return new Set()
   const out = new Set<ActionId>(['open'])
   const current = c.pipeline?.current ?? null
   if (c.agent?.id) out.add('logs')

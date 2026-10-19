@@ -10,11 +10,14 @@ import { CODE_V1, CODE_V2, CODE_V3, REVIEW_1, REVIEW_2, REVIEW_3, SIM_MS, TEST_V
 import type { SimWork, TutorialState } from './tutorial'
 import { CHAIN_KEY, JOBS_KEY, TRUST_KEY, VERIFIES_KEY, feedPush, loadChains, loadJobs } from './desk-io'
 import type { Timer } from './desk-io'
-import { exitDemo, refreshing, refresh, openPane, optionsRef } from './register'
+import { refreshing, refresh, openPane, optionsRef } from './register'
 
 // 引擎規定：read／update 的 atom 必須在同一個檔案用 const 宣告（同 plugin、同 key 就是同一份狀態）。
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
 const verifiesAtom = atom({ plugin: 'desk', key: 'verifies' } as const, {})
+const feedAtom = atom({ plugin: 'desk', key: 'feed' } as const, [])
+const picksAtom = atom({ plugin: 'desk', key: 'picks' } as const, {})
+const contentOffset = atom({ plugin: 'desk', key: 'contentOffset' } as const, 0)
 
 /** 教學模式（/desk tutorial）：沙盒資料夾與進度；null 是一般模式。存在 $.store，重新載入後接著教。 */
 export let tutorial: TutorialState | null = null
@@ -127,7 +130,7 @@ export async function tutorialDecision($: any, c: Case, answer: string) {
 
 /** 教學按鈕 t：確認規格（真的執行 /desk:card 的腳本）、本機合併、打 tag。 */
 export async function tutorialAct($: any, options: PluginOptions, c: Case) {
-  if (!tutorial) return
+  if (!tutorial || c.demo) return
   const step = tutorialStep(c)
   const p = tutorialPaths(await home($))
   const now = await $.clock.now()
@@ -157,8 +160,9 @@ export async function tutorialAct($: any, options: PluginOptions, c: Case) {
 
 /** 開始教學：建沙盒（git repo＋worktree＋卡片＋登錄表），完成檢查先授權，面板切到教學。 */
 export async function tutorialStart($: any, options: PluginOptions): Promise<string> {
-  if (tutorial) { exitDemo(); await refresh($, options); await openPane($); return TUTORIAL_INTRO }
   const p = tutorialPaths(await home($))
+  // 教學已經在跑：選回教學那件、打開面板。
+  if (tutorial) { await update($, selected, () => p.card); await refresh($, options); await openPane($); return TUTORIAL_INTRO }
   if (await $.fs.exists(p.dir).catch(() => false)) return `${p.dir} 已經存在（上一次的教學沒有清掉）。先輸入 /desk tutorial end 清除，再輸入 /desk tutorial 重新開始。`
   const r = await $.process.run(['sh', '-c', setupScript(p.main, p.wt)], { timeoutMs: 60_000 }).catch((e: unknown) => ({ exitCode: 1, stderr: String(e), stdout: '' }))
   if (r.exitCode !== 0) return `建立教學沙盒失敗：${String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || '沒有輸出'}（需要 git）`
@@ -172,11 +176,18 @@ export async function tutorialStart($: any, options: PluginOptions): Promise<str
   await $.fs.write(p.marker, '這個資料夾由 desk 的 /desk tutorial 建立；/desk tutorial end 會整個刪除。\n')
   tutorial = { dir: p.dir, reviews: 0, merged: false }
   await saveTutorial($)
-  exitDemo()
-  await update($, selected, () => null)
+  await clearView($, p.card)
   await refresh($, options)
   await openPane($)
   return TUTORIAL_INTRO
+}
+
+/** 教學開始與結束時，畫面上上一輪留下的東西（最近動態、決策選項、捲動位置）清掉；選取改成 pick（開始時是教學那件）。 */
+async function clearView($: any, pick: string | null) {
+  await update($, selected, () => pick)
+  await update($, feedAtom, () => [])
+  await update($, picksAtom, () => ({}))
+  await update($, contentOffset, () => 0)
 }
 
 /** 結束教學：停掉模擬、刪沙盒（只刪 ~/.claude/desk-tutorial）、清掉它留下的接力紀錄，面板切回你的案子。 */
@@ -198,7 +209,7 @@ export async function tutorialEnd($: any, options: PluginOptions): Promise<strin
     const r = await $.process.run(['rm', '-rf', p.dir], { timeoutMs: 60_000 }).catch(() => null)
     removed = !!r && r.exitCode === 0
   }
-  await update($, selected, () => null)
+  await clearView($, null)
   await refresh($, options)
   if (!existed) return '目前沒有教學沙盒。'
   return removed ? '教學已結束，沙盒已刪除；面板回到你的案子。' : `教學已結束，但沙盒刪不掉，請自己刪除 ${p.dir}`

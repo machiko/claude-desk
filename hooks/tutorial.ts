@@ -267,7 +267,8 @@ export function tutorialTurn(c: Case): { text: string; key?: string } | null {
 
 /** 教學一開始的說明（/desk tutorial 的回應）。 */
 export const TUTORIAL_INTRO = [
-  `教學已開始：沙盒在 ~/.claude/desk-tutorial，面板只顯示「${TUTORIAL_NAME}」這一件。`,
+  `教學已開始：沙盒在 ~/.claude/desk-tutorial，現在卡是「${TUTORIAL_NAME}」。`,
+  '「其他案子」是示範案子（只能看），讓你看到多件案子同時進行時面板長什麼樣子：有的在等你、有的 AI 正在處理、有的閒置。',
   '照現在卡第二列「▶ 輪到你」的指示按鍵，把六段走完：',
   '  1 規格：看過規格後按 t 確認',
   '  2 實作：按兩次 g 派執行者（教學裡由腳本扮演，不花額度）',

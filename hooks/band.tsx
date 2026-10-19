@@ -1,7 +1,7 @@
 // 摘要列：輸入框上方一行。左邊是「進行中的那件」（沒有就是現在該看的那件）與它的六段，右邊是在等你的那件。
 // 版面先算好（純函式，可測），再畫；放不下時依序：段名縮成字形 → 拿掉備註 → 案名截斷 → 拿掉右邊。
 import type { Case, Snapshot, StageStatus } from '../types'
-import { displayWidth, fit, focusCase, summary } from './model'
+import { displayWidth, fit, focusCase, liveCases, summary } from './model'
 import { stageParts } from './pipeline'
 import { COLOR, STATE, WORD } from './theme'
 import { dueReminders, reminderWhen } from './extras'
@@ -17,7 +17,7 @@ const NARROW = 48
 const width = (parts: BandPart[]) => parts.reduce((n, p) => n + displayWidth(p.text), 0)
 
 function leadCase(s: Snapshot): Case | null {
-  const running = s.cases.filter(c => c.state === 'running').sort((a, b) => (b.agent?.startedAt ?? 0) - (a.agent?.startedAt ?? 0))
+  const running = liveCases(s.cases).filter(c => c.state === 'running').sort((a, b) => (b.agent?.startedAt ?? 0) - (a.agent?.startedAt ?? 0))
   return running[0] ?? focusCase(s.cases) ?? (s.tutorial ? s.cases[0] ?? null : null)
 }
 
@@ -30,7 +30,7 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   const room = columns - buttonWidth - 1
   const lead = leadCase(s)
   const runningMore = s.cases.filter(c => c.state === 'running').length - 1
-  const waiting = s.cases.filter(c => NEEDS_YOU.has(c.state) && c !== lead)
+  const waiting = liveCases(s.cases).filter(c => NEEDS_YOU.has(c.state) && c !== lead)
   const demo: BandPart[] = s.demo ? [{ text: '示範  ', color: COLOR.faint }] : s.tutorial ? [{ text: '教學  ', color: COLOR.faint }] : []
 
   if (!lead) {

@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, BAND } from './fixture'
+import { tutorialPaths } from '../hooks/tutorial'
 declare const console: { log: (...args: unknown[]) => void }
 
 // 把元素樹攤平成近似終端的文字：column Box 一子一行、row Box 同行相接、Text/Button 取文字。
@@ -22,9 +23,14 @@ function flat(node: any, indent = 0): string[] {
 }
 const textOf = (n: any): string => typeof n === 'string' ? n : n?.type === 'Button' && n.props?.label && !(n.children?.length) ? n.props.label : (n?.children ?? []).map(textOf).join('')
 
+// 教學模式的畫面：現在卡是教學那件，其他案子是示範（只能看）。
 test('preview', async ($, on) => {
-  fixture(on)
-  await $.command.run({ command: 'desk', args: 'demo' } as any)
+  const { data, clock } = fixture(on)
+  const P = tutorialPaths('/home/u')
+  data.git[P.wt] = { branch: 'feature/discount', head: 'h0' }
+  data.git[P.main] = { branch: 'release/v1.0', head: 'm0' }
+  await $.command.run({ command: 'desk', args: 'tutorial' } as any)
+  await clock.settle()
   for (const columns of [40, 72, 120]) {
     const band = await $.ui.mount(BAND(columns))
     console.log(`\n==== band ${columns} ====\n` + flat(await band.drawn()).join('\n'))

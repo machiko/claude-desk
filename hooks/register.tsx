@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, CARD_CMD } from './card'
-import { buildCase, demoSnapshot, events, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain } from './model'
+import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain } from './model'
 import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
@@ -26,6 +26,7 @@ import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KE
 import type { Timer } from './desk-io'
 
 const PANE = 'desk'
+const DEMO_ONLY = '示範案子只能看；請照教學那件的指示操作'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const isPaneOpen = atom({ plugin: 'desk', key: 'isPaneOpen' } as const, false)
 const isBandHidden = atom({ plugin: 'desk', key: 'isBandHidden' } as const, false)
@@ -50,9 +51,6 @@ let maxOffset = 0
 let refreshTimer: Timer
 let spinTimer: Timer
 let active = false
-let demo = false
-/** 教學開始與結束時離開示範資料（demo 只在這個檔案改）。 */
-export function exitDemo() { demo = false }
 let generation = 0
 export let refreshing: Promise<void> | null = null
 let launchSeq = 0
@@ -71,8 +69,6 @@ export async function refresh($: any, options: PluginOptions) {
   refreshing = (async () => {
     const mine = generation
     const now = await $.clock.now()
-    // 示範資料的 desk 版本用真的，其他版本是假的。
-    if (demo) { const desk = (await versions($, []))?.desk; await update($, snapshot, () => { const d = demoSnapshot(now); return { ...d, versions: { ...d.versions, ...(desk ? { desk } : {}) } } }); return }
     const paths = tutorial ? null : await deskPaths($, options)
     const path = tutorial ? tutorialPaths(await home($)).registry : paths!.registry
     const text = path ? await $.fs.read(path).catch(() => null) : null
@@ -121,7 +117,8 @@ export async function refresh($: any, options: PluginOptions) {
     }))
     const usage = await $.session.usage().catch(() => null)
     const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
-    const cur: Snapshot = { at: now, cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: await versions($, cases), models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(tutorial ? { tutorial: true } : {}) }
+    // 教學模式：示範案子接在後面當「其他案子」的背景（只能看）；版本、轉圈等仍只看真的案子。
+    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: await versions($, cases), models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
@@ -279,7 +276,9 @@ async function togglePane($: any) {
 function caseNamed(s: Snapshot | null, name: string): Case | null {
   if (!s) return null
   const q = name.trim()
-  return s.cases.find(c => c.name === q) ?? s.cases.find(c => c.name.includes(q)) ?? null
+  // 示範案子只能看，指令找不到它們。
+  const real = s.cases.filter(c => !c.demo)
+  return real.find(c => c.name === q) ?? real.find(c => c.name.includes(q)) ?? null
 }
 
 /** 完成檢查：第一次跑某條指令先問；之後同一條直接跑。結果記在 $.store，重開也在。 */
@@ -287,7 +286,7 @@ function caseNamed(s: Snapshot | null, name: string): Case | null {
 const checkQueue: { statusPath: string; auto: boolean }[] = []
 
 async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
-  if (demo) { $.ui.toast('示範資料不會執行任何指令；輸入 /desk refresh 切回實際資料'); return }
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return }
   const running = await read($, verifyingAtom)
   if (c.statusPath in running) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return }
@@ -359,7 +358,7 @@ export let optionsRef: PluginOptions | undefined
  */
 async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}) {
   const text = opts.text ?? ''
-  if (demo) { $.ui.toast('示範資料不會派工；輸入 /desk refresh 切回實際資料'); return }
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if (!opts.auto && !dispatchable(c).includes(kind)) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${c.manual ? '登錄表設為 manual，只追蹤不派工' : c.state === 'running' ? '執行者仍在執行' : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'}）`); return }
   if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
   const settings = await loadSettings($, options)
@@ -411,7 +410,7 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
 
 /** 回覆停下來問的執行者：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 async function reply($: any, options: PluginOptions, c: Case, text?: string) {
-  if (demo) { $.ui.toast('示範資料不會派工；輸入 /desk refresh 切回實際資料'); return }
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   let answer = text?.trim() ?? ''
   if (!answer) {
     const picked = await $.ui.ask(`執行者提問：${c.agent?.last || '（無法讀取問題，請開啟卡片或用 claude logs 查看）'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
@@ -425,6 +424,7 @@ async function reply($: any, options: PluginOptions, c: Case, text?: string) {
 }
 
 async function fillDecision($: any, c: Case) {
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const decisions = parseDecisions(c.ask)
   const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
   if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按數字鍵）`); return }
@@ -437,21 +437,21 @@ async function fillDecision($: any, c: Case) {
 }
 
 async function openCard($: any, c: Case) {
-  if (demo) { $.ui.toast('示範資料沒有實際卡片可開啟'); return }
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if (!(await openWith($, c.statusPath))) $.ui.toast(`${c.name}：無法開啟 ${c.statusPath}`)
 }
 
 /** 系統通知（macOS 通知、手機）：同一句話這次載入只送一次，送不出去就算了。 */
 const notified = new Set<string>()
 function notify($: any, text: string) {
-  if (!active || demo || tutorial || notified.has(text)) return
+  if (!active || tutorial || notified.has(text)) return
   notified.add(text)
   void Promise.resolve().then(() => $.ui.notify(text, { title: 'desk' })).catch(() => {})
 }
 
 /** 上線確認：重讀卡片，關卡還是 release 才清成「無」並記 History；desk 只在這裡寫卡。 */
 async function confirmShipped($: any, c: Case) {
-  if (demo) { $.ui.toast('示範資料沒有實際卡片'); return }
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const text = await $.fs.read(c.statusPath).catch(() => null)
   const d = new Date(await $.clock.now())
   const two = (n: number) => String(n).padStart(2, '0')
@@ -483,7 +483,6 @@ export const register: Register = (on, options) => {
   optionsRef = options
   on('session.start', async ($, e, next) => {
     active = false
-    demo = false
     setTutorial(null)
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined
@@ -492,7 +491,7 @@ export const register: Register = (on, options) => {
     await update($, launchingAtom, () => ({}))
     checkQueue.length = 0
     await update($, queueAtom, () => [])
-    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <案名> [回覆] 派工；verify|open <案名> 執行檢查／開啟卡片；bar 摘要列；demo 示範資料；tutorial [end] 教學；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <案名>|bar|demo|tutorial [end]|off]' })
+    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <案名> [回覆] 派工；verify|open <案名> 執行檢查／開啟卡片；bar 摘要列；tutorial [end] 教學（含示範案子）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <案名>|bar|tutorial [end]|off]' })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
     const id = await $.session.id().catch(() => null)
     const list = ((await $.store.get(SESSIONS_KEY).catch(() => null)) as string[] | null) ?? []
@@ -540,8 +539,7 @@ export const register: Register = (on, options) => {
     if (!active) await start($, options, true)
     if (arg === 'tutorial') return { text: await tutorialStart($, options) }
     if (arg === 'tutorial end') return { text: await tutorialEnd($, options) }
-    if (arg === 'demo') { demo = true; await refresh($, options); await openPane($); return { text: '目前顯示示範資料；輸入 /desk refresh 切回實際資料。' } }
-    if (arg === 'refresh') { demo = false; forcePr = true; await refresh($, options); return { text: '工作桌已重新整理。' } }
+    if (arg === 'refresh') { forcePr = true; await refresh($, options); return { text: '工作桌已重新整理。' } }
     if (arg === 'band' || arg === 'bar') { const hidden = await update($, isBandHidden, v => !v); return { text: hidden ? '摘要列已隱藏，輸入 /desk bar 可重新顯示。' : '摘要列已顯示。' } }
     const m = arg.match(/^(verify|open|go|continue|sync|review|reply)\s+(\S+)\s*(.*)$/)
     if (m) {
@@ -556,7 +554,7 @@ export const register: Register = (on, options) => {
       return { text: `${c.name}：${KIND_LABEL[kind]}派送中。` }
     }
     if (arg === 'close') { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}); return { text: '工作桌已收起。' } }
-    if (arg) return { text: '可用：/desk、close、refresh、go|sync|review <案名>、reply <案名> [回覆]、verify|open <案名>、bar、demo、tutorial [end]、off' }
+    if (arg) return { text: '可用：/desk、close、refresh、go|sync|review <案名>、reply <案名> [回覆]、verify|open <案名>、bar、tutorial [end]、off' }
     if (!(await read($, snapshot))) void refresh($, options)
     // 從輸入框打 /desk 時鍵盤一定在輸入框：開著就把焦點移到面板，不關閉；收起用面板裡的 Esc 或 /desk close。
     const wasOpen = await read($, isPaneOpen)
@@ -622,7 +620,8 @@ export const register: Register = (on, options) => {
       next: () => void (async () => {
         const cur = await read($, snapshot)
         if (!cur) return
-        const list = sorted(cur.cases)
+        // 示範案子只是背景：n 不會跳到它們。
+        const list = sorted(liveCases(cur.cases))
         const at = await read($, selected) ?? list[0]?.statusPath ?? null
         const to = nextCase(list, at)
         if (to) { await update($, selected, () => to); await update($, contentOffset, () => 0) }

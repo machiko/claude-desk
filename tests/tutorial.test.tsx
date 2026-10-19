@@ -28,7 +28,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(String((started as any).text)).toContain('教學已開始')
   expect(data.processCalls.some((c: any) => c.argv[0] === 'sh' && String(c.argv[2]).includes('git worktree add'))).toBe(true)
   expect(data.files[P.card]).toContain('關卡：spec：待確認規格')
-  const ui = await $.ui.mount(PANE(100))
+  const ui = await $.ui.mount(PANE(72))
   expect(await ui.find({ type: 'Text', text: /教學模式/ })).toBeDefined()
 
   // 1 規格：t 執行 /desk:card 的腳本，設定檔指向沙盒；DESK_PROJECT_DIR 留空，免得依 cwd 認到真實專案、拿它的登錄表
@@ -90,6 +90,18 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(data.processCalls.some((c: any) => c.argv.join(' ') === `rm -rf ${P.dir}`)).toBe(true)
   await turn(ui, 'Alpha')
   expect(await ui.find({ type: 'Text', text: /教學模式/ })).toBeUndefined()
+
+  // 再開一次（新的沙盒、新的 commit）：上一輪的紀錄不留下，第一步照樣是確認規格
+  data.git[P.wt] = { branch: 'feature/discount', head: 'h0-again' }
+  data.git[P.main] = { branch: 'release/v1.0', head: 'm0-again' }
+  const again = await $.command.run({ command: 'desk', args: 'tutorial' } as any)
+  expect(String((again as any).text)).toContain('教學已開始')
+  await clock.settle()
+  await turn(ui, '後按 t 確認（實際：/desk:card spec discount ok）')
+  expect(await ui.find({ key: KEY('tutorial') })).toBeDefined()
+  const screen = text(await ui.drawn())
+  if (/已確認上線|已合併|已打 v1\.0\.0/.test(screen)) console.log(screen)
+  expect(/已確認上線|已合併|已打 v1\.0\.0/.test(screen)).toBe(false)
   await ui.unmount()
 })
 
@@ -104,7 +116,7 @@ test('choosing C in the tutorial commits the change and the chain goes back to c
   const step = async () => { await clock.advance(2500); await clock.settle() }
   const flat = (x: string) => x.replace(/\s+/g, '')
   await $.command.run({ command: 'desk', args: 'tutorial' } as any)
-  const ui = await $.ui.mount(PANE(100))
+  const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: KEY('tutorial') })
   await ui.press({ key: KEY('continue') })
   await ui.press({ key: KEY('continue') })

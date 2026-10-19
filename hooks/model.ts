@@ -179,9 +179,14 @@ export function counts(cases: readonly Case[]): Record<CaseState, number> {
   return out
 }
 
+/** 會搶焦點的案子：有真的案子時示範案子只是背景（教學模式）；只有示範資料時就是它們。 */
+export function liveCases(cases: readonly Case[]): Case[] {
+  return cases.some(c => !c.demo) ? cases.filter(c => !c.demo) : [...cases]
+}
+
 /** 現在該看的那一件：排序後第一件需要人或可做的；全部閒置就 null。 */
 export function focusCase(cases: readonly Case[]): Case | null {
-  const first = sorted(cases)[0]
+  const first = sorted(liveCases(cases))[0]
   return first && first.state !== 'idle' && first.state !== 'nocard' && first.state !== 'done' ? first : null
 }
 
@@ -205,6 +210,7 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
   const before = new Map(prev.cases.map(c => [c.statusPath, c]))
   const out: FeedEvent[] = []
   for (const c of cur.cases) {
+    if (c.demo) continue
     const p = before.get(c.statusPath)
     if (!p) { out.push({ at: cur.at, text: `${c.name} 加入工作桌`, tone: 'subtle' }); continue }
     if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) out.push({ at: cur.at, text: `${c.name} 等你：${fit(summary(c), 40)}`, tone: 'warning' })
@@ -217,7 +223,7 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
   return out
 }
 
-/** 示範資料：三種常見局面。 */
+/** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的案子當「其他案子」的背景（demoCases）。 */
 export function demoSnapshot(now: number): Snapshot {
   const agents: Record<string, AgentInfo> = { '/demo/beta': { name: 'desk-demo', state: 'working', status: 'busy', startedAt: now - 3 * 60_000 } }
   const card = (status: string, verify: string, ask: string, next: string, gate = '無') =>
@@ -239,4 +245,9 @@ export function demoSnapshot(now: number): Snapshot {
     containers: { total: 7, running: 7, down: [], unhealthy: [] },
     models: { session: 'claude-opus-5-5', effort: 'high', dispatch: { model: 'opus', effort: 'high' }, sync: { model: 'haiku', effort: '', fresh: true } },
   }
+}
+
+/** 教學模式的背景案子：標成示範，只能看、不搶焦點。 */
+export function demoCases(now: number): Case[] {
+  return demoSnapshot(now).cases.map(c => ({ ...c, demo: true }))
 }

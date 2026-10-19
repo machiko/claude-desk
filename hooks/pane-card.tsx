@@ -206,6 +206,8 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
 
 /** 現在這件的操作（footer 第一排）：填入決策、派工、停止、輸出、審查檔、PR、檢查、開卡片。現在該按的那顆不變淡。 */
 export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[] {
+  // 示範案子只能看：連 m 展開全部也沒有動作。
+  if (c.demo) return []
   const decisions = c.state === 'ask' ? parseDecisions(c.ask) : []
   const picks = view.picks[picksKey(c)] ?? {}
   const ready = allPicked(decisions, picks)

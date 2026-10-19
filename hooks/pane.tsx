@@ -213,16 +213,20 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
   const g = gridLayout(cases.map(c => c.name), ages, width)
   const heads = (cases.find(c => c.pipeline)?.pipeline?.stages ?? STAGES).map(st => st.label)
   const rows: any[] = []
-  if (narrow) rows.push(section(ui, WORD.others, width))
+  // 教學模式的背景是示範案子：標題寫明只能看。
+  const title = cases.some(c => c.demo) ? `${WORD.others}（示範，只能看）` : WORD.others
+  if (narrow) rows.push(section(ui, title, width))
   else {
-    const title = WORD.others
     const letters = heads.map(h => pad(h, STAGE_COL)).join('').trimEnd()
     if (g.lead >= displayWidth(title) + 1) rows.push(<Box flexDirection="row"><Text color={COLOR.dim} bold>{pad(title, g.lead)}</Text><Text color={COLOR.faint}>{letters}</Text></Box>)
     else { rows.push(section(ui, title, width)); rows.push(<Text color={COLOR.faint}>{' '.repeat(g.lead) + letters}</Text>) }
   }
+  // 數字鍵只給真的案子；示範案子（教學背景）只是畫面，不能選。
+  const real = cases.filter(c => !c.demo)
   cases.forEach((c, i) => {
     const meta = STATE[c.state]
-    const hot = i < 9 ? String(i + 1) : undefined
+    const n = real.indexOf(c)
+    const hot = n >= 0 && n < 9 ? String(n + 1) : undefined
     const glyph = c.state === 'running' ? SPINNER[view.tick % SPINNER.length] : meta.glyph
     const strip = stageStrip(c)
     const name = narrow ? fit(c.name, Math.max(4, width - 3 - 2 - 2 - 6)) : pad(fit(c.name, g.nameWidth), g.nameWidth)
@@ -231,13 +235,16 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
       : [<Text key="label" color={meta.color}>{narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)}</Text>]
     const age = !narrow && g.ageWidth ? ages[i]! : ''
     const used = 3 + 2 + (narrow ? displayWidth(name) : g.nameWidth) + 2 + (strip.length ? (narrow ? strip.length : (STAGES.length - 1) * STAGE_COL + 2) : displayWidth(narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)))
-    rows.push(
-      <Button plain key={`row-${c.statusPath}`} hotkey={hot} dimColor={c.state === 'idle' || c.state === 'nocard'} onPress={() => act.select(c.statusPath)}>
-        <Text color={meta.color}>{glyph}</Text>{' '}<Text color={COLOR.text} bold={c.state === 'ask' || c.state === 'reply'}>{name}</Text>
-        <Text>{'  '}</Text>
-        {cells}
-        {age ? <Text color={COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null}
-      </Button>,
+    const line = [
+      <Text key="g" color={meta.color}>{glyph}</Text>, ' ', <Text key="n" color={COLOR.text} bold={c.state === 'ask' || c.state === 'reply'}>{name}</Text>,
+      <Text key="gap">{'  '}</Text>,
+      ...cells,
+      age ? <Text key="age" color={COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null,
+    ]
+    rows.push(c.demo
+      // 示範案子：同樣的排版，前面空出數字鍵的位置，沒有按鈕。
+      ? <Box key={`demo-${c.statusPath}`} flexDirection="row"><Text>{'   '}</Text>{line}</Box>
+      : <Button plain key={`row-${c.statusPath}`} hotkey={hot} dimColor={c.state === 'idle' || c.state === 'nocard'} onPress={() => act.select(c.statusPath)}>{line}</Button>,
     )
     const note = summary(c)
     if (!narrow && note && (c.state === 'ask' || c.state === 'reply' || c.state === 'gate' || c.state === 'failed')) rows.push(<Box paddingLeft={5}><Text color={COLOR.dim} wrap="truncate-end">{fit(note, width - 5)}</Text></Box>)

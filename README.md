@@ -5,32 +5,33 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 > **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH findings for up to two rounds. The UI and prompts are in Traditional Chinese.
 
 ```
- desk 0.17.0  5 小時 剩 78%  本週 剩 31%            示範資料 · 20:00 更新
+ desk 0.18.0  5 小時 剩 78%  本週 剩 31%            教學模式 · 20:00 更新
  ──────────────────────────────────────────────────────────────────────
  現在
- ● 主工作區（release/v1.4）  等你 · 20 分鐘
-   ▶ 輪到你  按選項字母 → f 填入 → Enter 送出
-   檢查◆ 上線○
-   狀態    release/v1.4 與 origin 同步
+ ◆ 教學：會員折扣  關卡
+   ▶ 輪到你  看過規格（o 開卡片）後按 t 確認（實際：/desk:card spec
+             discount ok）
+   規格◆ 實作○ 檢查○ 審查○ 合併○ 上線○
+   狀態    規格草稿已寫好，等你確認
+   git     feature/discount · 與遠端一致、無未提交變更
 
-   CHANGELOG 日期要現在補還是發版時補？
-    a ○ 現在
-    b ○ 發版時
+   ◆ 規格  待確認規格（AC-1～AC-3）
    檢查    尚未執行
-           npm test
+           python3 -m unittest -q
 
- 其他案子           規格 實作 檢查 審查 合併 上線
- 1 ◆ 部署流程改版   ●    ◆    ○    ○    ○    ○                  5 小時
+ 其他案子（示範，只能看）       規格 實作 檢查 審查 合併 上線
+ 1 ● 主工作區（release/v1.4）   ·    ·    ◆    ·    ·    ○     20 分鐘
+      CHANGELOG 日期要現在補還是發版時補？
+ 2 ◆ 部署流程改版               ●    ◆    ○    ○    ○    ○      5 小時
       合併取捨已完成，請確認 node:22 釘版
- 2 ◐ 訂單匯出 CSV   ●    ◉    ○    ○    ○    ○                  3 分鐘
- 3 ○ 會員登入改版   ●    ○    ○    ○    ○    ○                    2 天
+ 3 ◐ 訂單匯出 CSV               ●    ◉    ○    ○    ○    ○      3 分鐘
+ 4 ○ 會員登入改版               ●    ○    ○    ○    ○    ○        2 天
  ──────────────────────────────────────────────────────────────────────
- f ✎ 填入決策  s ↻ 同步  v ▶ 檢查  o ↗ 開啟
+ s ↻ 同步  t ✓ 確認規格  o ↗ 開啟
  r ↻ 重新整理  x ▾ 展開  n → 下一件  m ⋯ 更多動作  i ? 說明
- ● 容器 7 · Opus 5.5 high · 派工 opus high · 同步 haiku・新對話 · 開發中 v1.4
 ```
 
-（`/desk demo` 的示範資料，72 欄寬。）
+（`/desk tutorial` 剛開始的畫面，72 欄寬。）
 
 ## 需要什麼
 
@@ -51,7 +52,7 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 
 ## 第一次使用：教學
 
-輸入 `/desk tutorial`。它會在 `~/.claude/desk-tutorial` 建一個小 repo 和一件案子「教學：會員折扣」，面板只顯示這一件，照現在卡第二列「▶ 輪到你」的指示把六段走完：
+輸入 `/desk tutorial`。它會在 `~/.claude/desk-tutorial` 建一個小 repo 和一件案子「教學：會員折扣」放在現在卡；「其他案子」是幾件示範案子（只能看），讓你看到多件案子同時進行時面板的樣子。照現在卡第二列「▶ 輪到你」的指示把六段走完：
 
 1. 規格：看過預先寫好的規格，按 `t` 確認（實際使用時是 `/desk:card spec <slug> ok`）。
 2. 實作：按兩次 `g`。教學裡的執行者和審查由腳本扮演，不花額度，也不需要信任資料夾。
@@ -92,8 +93,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk verify <案名>` | 執行卡片的完成檢查（第一次會先確認） |
 | `/desk open <案名>` | 用系統預設程式開卡片 |
 | `/desk bar` | 收起／顯示摘要列 |
-| `/desk demo` | 示範資料 |
-| `/desk tutorial` | 教學：在沙盒裡把六段走一遍（`/desk tutorial end` 結束並刪除沙盒） |
+| `/desk tutorial` | 教學：在沙盒裡把六段走一遍，旁邊配幾件示範案子（`/desk tutorial end` 結束並刪除沙盒） |
 | `/desk off` | 這個對話關閉工作桌 |
 | `/desk:card new <分支> <卡名> [base]` | 建 worktree、DESK 卡、登錄表列 |
 | `/desk:card spec <目標> [需求]` | 產生規格草稿並設 `spec：` 關卡；`… ok` 確認 |

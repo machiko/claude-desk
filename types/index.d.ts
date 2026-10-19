@@ -45,6 +45,8 @@ export type Case = {
   pr?: PrInfo
   /** git 看到分支 HEAD 已經在這個分支裡（例如 origin/main）；只在合併段才查。 */
   mergedInto?: string
+  /** 示範案子（教學模式的背景）：只能看，沒有動作、不會寫入。 */
+  demo?: boolean
   /** 包含目前 HEAD 的 v* tag（最舊的那個）。 */
   tag?: string
   chain?: ChainInfo
