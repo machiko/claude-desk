@@ -151,6 +151,8 @@ export async function updateDesk($: any, now: number): Promise<UpdateResult> {
     if (reasons.length) return { tone: 'warning', text: `desk 無法更新，什麼都沒動：${reasons.join('；')}` }
     const merged = await git($, inst.dir, ['merge', '--ff-only', '--quiet', latest.ref], UPDATE_TIMEOUT_MS)
     if (!merged.ok) return { tone: 'error', text: `desk 無法更新：更新本機資料夾失敗（${firstLine(merged.err)}）` }
+    // 讓 Claude Code 重讀資料夾的 marketplace 目錄；資料夾來源不一定需要，失敗不算數，版本以下面重讀的為準。
+    await run($, ['claude', 'plugin', 'marketplace', 'update', inst.marketplace], UPDATE_TIMEOUT_MS)
   } else {
     const market = await run($, ['claude', 'plugin', 'marketplace', 'update', inst.marketplace], UPDATE_TIMEOUT_MS)
     if (!market.ok) return { tone: 'error', text: `desk 無法更新：更新指令失敗（${firstLine(market.err)}）` }

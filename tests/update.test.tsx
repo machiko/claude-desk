@@ -103,7 +103,7 @@ test('update brings a local folder install up to the latest GitHub version', asy
   expect(out.text).toBe('desk 已更新版本：0.18.0 → 0.19.0，重新啟動 Claude Code 後生效')
   expect(w.installed).toBe('0.19.0')
   // 只快轉資料夾目前（預設）分支，再更新已安裝的 desk；不動其他分支、worktree，不 stash、不切換。
-  expect(changes).toEqual(['git merge --ff-only --quiet origin/main', 'update desk@claude-desk --scope user'])
+  expect(changes).toEqual(['git merge --ff-only --quiet origin/main', 'marketplace update claude-desk', 'update desk@claude-desk --scope user'])
   expect(calls.some(a => a.some(x => /^(stash|checkout|switch|reset|worktree|branch|push)$/.test(x)))).toBe(false)
 })
 
