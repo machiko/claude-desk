@@ -151,7 +151,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 - 介面、提示詞與卡片欄位都是繁體中文。
 - 預設的發版慣例：發版線是 `release/*` 分支、上線看 `v*` tag。用 main 直接發版也可以，只是「開發中版本」那一欄不會出現。
-- PR 狀態只讀 GitHub 與 Bitbucket；GitLab 等其他平台的合併靠 git 判斷，squash 合併在這種情況下看不出來，要自己在卡片寫回。
+- PR 狀態只讀 GitHub 與 Bitbucket；其他平台（或沒裝 `gh`）的合併靠 git 判斷，只認得 merge commit，squash、rebase、fast-forward 合併看不出來，要自己在卡片寫回。
 - 背景執行者的權限照你的 Claude Code 設定；desk 只在提示詞裡要求不 push、不開 PR、不碰正式環境，不是沙盒。
 
 ## 設定

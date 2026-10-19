@@ -114,7 +114,7 @@ export async function refresh($: any, options: PluginOptions) {
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying)
       // 合併段、沒有已合併的 PR：問 git 分支 HEAD 是不是已經在基準分支裡（GitLab、沒裝 gh、本機合併都靠這個）。
       const atMerge = !tutorial && stages(withState).current === 'merge' && withState.pr?.state !== 'MERGED'
-      const into = atMerge ? await mergedProbe($, withState, cardBase) : undefined
+      const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr) : undefined
       const merged = into ? { ...withState, mergedInto: into } : withState
       const piped = { ...merged, ...(short ? { statusShort: short } : {}), pipeline: stages(merged) }
       return { ...piped, state: finalState(piped) }

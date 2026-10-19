@@ -6,13 +6,14 @@ export const GH_READ = ['pr', 'list'] as const
 
 export type GhRepo = { owner: string; repo: string }
 
+/** 主機要剛好是 github.com（開頭、`//` 或 `@` 之後），notgithub.com 之類不算。 */
 export function githubRepoOf(remote: string): GhRepo | null {
-  const m = remote.trim().match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/)
+  const m = remote.trim().match(/^(?:[a-z+]+:\/\/)?(?:[^@/\s]+@)?github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i)
   return m ? { owner: m[1]!, repo: m[2]! } : null
 }
 
 export function ghPrArgs(r: GhRepo, branch: string): string[] {
-  return ['gh', ...GH_READ, '--repo', `${r.owner}/${r.repo}`, '--head', branch, '--state', 'all', '--limit', '5', '--json', 'number,state,baseRefName,url,statusCheckRollup']
+  return ['gh', ...GH_READ, '--repo', `${r.owner}/${r.repo}`, '--head', branch, '--state', 'all', '--limit', '5', '--json', 'number,state,baseRefName,url,headRepositoryOwner,statusCheckRollup']
 }
 
 const FAIL = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
@@ -29,9 +30,13 @@ export function ghCiOf(rollup: unknown): PrInfo['ci'] {
   return 'pass'
 }
 
-/** 最新那一個 PR；OPEN 優先。GitHub 的 CLOSED（沒合併就關掉）對應 DECLINED。CI 只看開著的。 */
-export function pickGhPr(data: unknown): PrInfo | null {
-  const list = (Array.isArray(data) ? data : []).filter((x: any) => typeof x?.number === 'number' && typeof x?.state === 'string')
+/**
+ * 最新那一個 PR；OPEN 優先，其餘取 gh 回傳的第一筆（gh 依建立時間新到舊排）。GitHub 的 CLOSED（沒合併就關掉）對應 DECLINED。
+ * CI 只看開著的。給了 owner 就只認從這個 owner 的 repo 開的 PR（fork 裡同名分支的不算）。
+ */
+export function pickGhPr(data: unknown, owner = ''): PrInfo | null {
+  const ours = (x: any) => !owner || !x?.headRepositoryOwner?.login || String(x.headRepositoryOwner.login).toLowerCase() === owner.toLowerCase()
+  const list = (Array.isArray(data) ? data : []).filter((x: any) => typeof x?.number === 'number' && typeof x?.state === 'string' && ours(x))
   const p: any = list.find((x: any) => x.state === 'OPEN') ?? list[0]
   if (!p) return null
   const state: PrInfo['state'] = p.state === 'OPEN' ? 'OPEN' : p.state === 'MERGED' ? 'MERGED' : 'DECLINED'

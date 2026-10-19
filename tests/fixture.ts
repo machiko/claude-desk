@@ -31,7 +31,7 @@ export function fixture(on: any) {
     toasts: [] as string[],
     logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
     launches: [] as any[],
-    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[] }>,
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string> }>,
     mcpCalls: [] as any[],
     /** gh pr list 的回應；null 模擬沒裝或沒登入。 */
     gh: [] as any[] | null,
@@ -72,6 +72,8 @@ export function fixture(on: any) {
       const g = data.git[e.argv[2]]
       if (!g) return { value: result(128, '', 'not a git repository') }
       const args = e.argv.slice(3).join(' ')
+      if (/^rev-parse \S+\^$/.test(args)) { const p = g.parents?.[args.slice(10, -1)]; return { value: p ? result(0, `${p}\n`) : result(128, '', 'bad revision') } }
+      if (args.startsWith('rev-list --first-parent')) return { value: result(0, g.firstParent ?? '') }
       if (args.startsWith('rev-parse')) return { value: result(0, `${g.branch}\n${g.head}\n`) }
       if (args.startsWith('tag --contains')) return { value: result(0, g.tag ? `${g.tag}\n` : '') }
       if (args.startsWith('tag --list')) return { value: result(0, 'v1.3.0\nv1.2.0\n') }

@@ -21,7 +21,7 @@
 | 2 實作 | 寫程式 | 你按 `g` | 執行者（背景 agent） | 交給下一段 | agent 執行中 |
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
 | 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0 | 卡片 `review：CRITICAL n、HIGH n…` |
-| 5 合併 | push、開 PR、CI、按合併 | 你 | CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 已在基準分支裡就算合併（squash 合併看不出來，要靠 PR 狀態） |
+| 5 合併 | push、開 PR、CI、按合併 | 你 | CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態） |
 | 6 上線 | 打 tag、部署、部署後步驟 | 你 | 你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。
