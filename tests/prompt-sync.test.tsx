@@ -406,6 +406,22 @@ test('prompts that are not typed by the person do not get the selected card', as
   await ui.unmount()
 })
 
+/** 隊友的訊息、引擎沒蓋章的通知（unclassified）與 isMeta 的提示：不認決策、不附選取的卡。 */
+test('teammate messages and unstamped notices neither lock a decision nor get the selected card', async ($, on) => {
+  const { data } = fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await $.prompt.submit({ text: '「Alpha」決策：A', origin: { kind: 'unclassified' } } as any)
+  expect(await ui.find({ key: `case-${CARD_A}-opt0A` })).toBeDefined()
+  expect(await screen(ui)).not.toContain(flat('決策已送出'))
+  await ui.press({ key: `row-${CARD_B}` })
+  await $.prompt.submit({ text: '隊友：看一下 Beta', origin: { kind: 'unclassified' } } as any)
+  expect(data.submitted.at(-1).context ?? []).toEqual([])
+  await $.prompt.submit({ text: '閒置通知', origin: { kind: 'composer' }, isMeta: true } as any)
+  expect(data.submitted.at(-1).context ?? []).toEqual([])
+  await ui.unmount()
+})
+
 /** 壓縮之後模型看不到之前附的卡：下一則重新附全文。 */
 test('after a compaction the selected card is attached in full again', async ($, on) => {
   const { data } = fixture(on)

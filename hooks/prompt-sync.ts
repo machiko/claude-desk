@@ -35,8 +35,11 @@ let touchTimer: Timer
 const QUEUED_GRACE_MS = 5_000
 /** 等著判斷「回合中送出的決策」的計時器；/desk off 時取消。 */
 let queuedTimer: Timer
-/** 只有人打的提示才附選取的卡、才認決策；排程、通知、其他 agent 送來的不算。 */
-const TYPED_ORIGINS = new Set(['composer', 'bridge', 'unclassified'])
+/**
+ * 只有人打的提示才附選取的卡、才認決策：composer（輸入框，直接送或排隊）與 bridge（Remote Control），而且不是 isMeta。
+ * unclassified 包括隊友的訊息、引擎沒蓋章的通知與同使用者 socket 的輸入，都不算；排程、通知、其他 agent 送來的也不算。
+ */
+const TYPED_ORIGINS = new Set(['composer', 'bridge'])
 
 /** 從面板送出、還在等對話寫回的決策（卡片路徑 → 紀錄）。 */
 export async function readSent($: any): Promise<Record<string, SentRecord>> {
@@ -114,7 +117,7 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   // 選取的案子是對話的主角：每次送出都附上它（卡片變了附全文，沒變附一句提醒），再點案名才取消。
   // 從面板填入的決策送出時記下來：面板鎖住那題，等對話寫回卡片。
   on('prompt.submit', async ($, e, next) => {
-    if ((e.origin && !TYPED_ORIGINS.has(e.origin.kind)) || !deps.isActive()) return next(e)
+    if ((e.origin && !TYPED_ORIGINS.has(e.origin.kind)) || e.isMeta || !deps.isActive()) return next(e)
     const which = await read($, selected).catch(() => null)
     const s = await read($, snapshot).catch(() => null)
     const c = which && s ? s.cases.find(x => x.statusPath === which) ?? null : null
