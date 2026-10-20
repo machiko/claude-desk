@@ -37,8 +37,8 @@ test('only the actions that make sense now are listed: passed stages drop their 
   expect(ids(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過' }), {})).toEqual(['open', 'sync'])
   // 上線段：上線確認
   expect(ids(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual(['open', 'ship', 'sync'])
-  // 完成：只剩開卡片
-  expect(ids(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual(['open'])
+  // 完成：開卡片與歸檔
+  expect(ids(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual(['archive', 'open'])
   // 執行中：停止與輸出，不能再派
   expect(ids(mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' } }))).toEqual(['logs', 'open', 'stop'])
   // 檢查未通過：可以讓 Agent 修，也可以重跑

@@ -39,6 +39,9 @@ export const isReleaseLine = (c: Pick<Case, 'git'>) => !!c.git && /^release\//.t
 export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate'>) =>
   !c.demo && !c.agent && c.pipeline?.current === 'spec' && parseGate(c.gate)?.kind === 'spec'
 
+/** 可以從面板歸檔：六段全過（finalState 已排除 Agent 在跑、等你），不是發版線，也不是示範案子。教學模式由呼叫端另外排除。 */
+export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo && c.state === 'done' && !isReleaseLine(c)
+
 /** 這次檢查還算數：跑的是卡片現在的指令，而且跑完後分支沒有新 commit。 */
 export function checkStands(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefined): boolean | null {
   if (!v || v.command !== c.verify) return null

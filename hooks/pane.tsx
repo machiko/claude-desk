@@ -57,6 +57,8 @@ export type PaneActions = {
   ship: (c: Case) => void
   /** 真實模式的 t：確認規格（按兩次），效果同 /desk:card spec <slug> ok。 */
   specOk: (c: Case) => void
+  /** 真實模式的歸檔（按兩次、沒有快捷鍵），效果同 /desk:card archive <slug>；不刪 worktree 與分支。 */
+  archive: (c: Case) => void
   /** 教學模式的 t：確認規格、合併、打 tag。 */
   tutorial: (c: Case) => void
   next: () => void

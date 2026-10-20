@@ -3,7 +3,7 @@
 import type { Case } from '../types'
 import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, isReleaseLine, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, isReleaseLine, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 
 export type Turn = {
@@ -17,7 +17,7 @@ export type Turn = {
 /** 畫面上才知道的事：完成檢查執行中、排隊中、派工中，以及現在是不是教學模式。 */
 export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean }
 
-export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'tutorial'
+export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
 
 const isRunning = (c: Case) => c.state === 'running'
 const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
@@ -101,5 +101,6 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (current === 'ship') out.add('ship')
   if (ctx.tutorial && tutorialStep(c)) out.add('tutorial')
   else if (!ctx.tutorial && awaitsSpecOk(c)) out.add('spec-ok')
+  if (!ctx.tutorial && canArchive(c)) out.add('archive')
   return out
 }

@@ -14,7 +14,7 @@ import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
-import { awaitsSpecOk, checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
+import { awaitsSpecOk, canArchive, checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
 import { nextStep } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -527,14 +527,39 @@ async function confirmShipped($: any, c: Case) {
   void refresh($, optionsRef!)
 }
 
+/** 在案子的 worktree 裡跑 /desk:card 用的那支腳本（cwd 讓它認得出同一個專案與登錄表）。 */
+async function runCardScript($: any, options: PluginOptions, c: Case, cmd: 'spec-ok' | 'archive') {
+  const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
+  return $.process.run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, cmd, slugOf(c)], { cwd: c.root, timeoutMs: 30_000, env })
+    .catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
+}
+
+/**
+ * 真實模式的歸檔：執行 /desk:card archive <slug> 用的同一支腳本；卡片與審查檔由腳本複製、登錄表由腳本改。
+ * 不刪 worktree 與分支，只把腳本印出的刪除指令放進提示。失敗就提示最後一行錯誤，案子留著。
+ */
+async function archiveCase($: any, options: PluginOptions, c: Case) {
+  const r = await runCardScript($, options, c, 'archive')
+  const now = await $.clock.now()
+  if (r.exitCode !== 0) {
+    const why = errorLine(r)
+    $.ui.toast(`${c.name}：歸檔失敗：${why}`, { timeoutMs: 10_000 })
+    await feedPush($, [{ at: now, text: `${c.name} 歸檔失敗：${why}`, tone: 'error' }])
+    void refresh($, options)
+    return
+  }
+  const removeCmd = String(r.stdout ?? '').split(/\r?\n/).map((l: string) => l.trim()).find((l: string) => /\bworktree remove\b/.test(l))
+  $.ui.toast(`${c.name}：已歸檔${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
+  await feedPush($, [{ at: now, text: `${c.name} 已歸檔（worktree 與分支保留）`, tone: 'success' }])
+  void refresh($, options)
+}
+
 /**
  * 真實模式的確認規格：執行 /desk:card spec <slug> ok 用的同一支腳本（在案子的 worktree 裡跑，認得出同一個專案），
  * 卡片由腳本改；只確認、不派工。腳本失敗（卡片已被改過、找不到卡）就提示最後一行錯誤，關卡留著。
  */
 async function confirmSpec($: any, options: PluginOptions, c: Case) {
-  const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
-  const r = await $.process.run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', slugOf(c)], { cwd: c.root, timeoutMs: 30_000, env })
-    .catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
+  const r = await runCardScript($, options, c, 'spec-ok')
   const now = await $.clock.now()
   if (r.exitCode !== 0) {
     const why = errorLine(r)
@@ -704,6 +729,7 @@ export const register: Register = (on, options) => {
       stop: c => void (async () => { if (await confirmed($, `${c.statusPath}\nstop`)) await stopAgent($, c) })(),
       ship: c => void (async () => { if (await confirmed($, `${c.statusPath}\nship`)) await confirmShipped($, c) })(),
       specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && await confirmed($, `${c.statusPath}\nspec-ok`)) await confirmSpec($, options, c) })(),
+      archive: c => void (async () => { if (!tutorial && canArchive(c) && await confirmed($, `${c.statusPath}\narchive`)) await archiveCase($, options, c) })(),
       tutorial: c => void tutorialAct($, options, c),
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),
