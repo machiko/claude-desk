@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 
 const card = (next: string, extra = '') => `<!-- DESK -->\n- 狀態：ok\n- 驗證：\`true\`\n- 等你：無\n- 下一步：${next}\n- 關卡：無\n${extra}<!-- /DESK -->`
@@ -70,6 +70,16 @@ test('what can be dispatched follows the card: running none, review needs a chec
   expect(dispatchable(mk('寫測試', { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }))).toEqual(['reply', 'sync'])
 })
 
+test('reply refusal names why: waiting agents can be answered, others say why not', () => {
+  const asks = { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }
+  expect(replyRefusal(mk('寫測試', asks))).toBe('')
+  expect(replyRefusal({ ...mk('寫測試', asks), gate: 'spec：待確認規格' })).toBe('')
+  expect(replyRefusal(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }))).toBe('Agent 仍在執行')
+  expect(replyRefusal(mk('寫測試'))).toBe('Agent 沒有在等你回覆')
+  expect(replyRefusal({ ...mk('寫測試', asks), manual: true })).toBe('登錄表設為 manual，只追蹤不派工')
+  expect(replyRefusal({ ...mk('寫測試', asks), demo: true })).toBe('示範案子只能看')
+})
+
 test('prompts carry the case, the card rules and the environment limits', () => {
   const c = mk('寫測試')
   const p = buildPrompt(c, 'continue')
@@ -118,4 +128,13 @@ test('prompts use the configured name, project rules and review words', () => {
   expect(buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }, s)).toContain('資安審查只看：金流與退款；')
   // 別的案子不帶這件案子的規則
   expect(buildPrompt({ ...c, root: '/p/b' }, 'continue', '', undefined, undefined, s)).not.toContain('只改 api/')
+})
+
+test('dispatch and reply refusals share the same reasons', () => {
+  const asks = { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } } as any
+  const busy = { '/p/a': { name: 'x', state: 'working', status: 'busy' } } as any
+  expect(dispatchRefusal({ ...mk('寫測試'), manual: true }, 'continue')).toBe(replyRefusal({ ...mk('寫測試', asks), manual: true }))
+  expect(dispatchRefusal(mk('寫測試', busy), 'continue')).toBe(replyRefusal(mk('寫測試', busy)))
+  expect(dispatchRefusal(mk('寫測試', asks), 'reply')).toBe('')
+  expect(dispatchRefusal(mk('寫測試'), 'reply')).toBe('Agent 沒有在等你回覆')
 })
