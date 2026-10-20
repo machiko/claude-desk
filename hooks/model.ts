@@ -9,11 +9,17 @@ import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
 /** 案子的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
 export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
 
-/** 指令失敗時給人看的那一行：stderr（沒有就 stdout）的最後一行。 */
-/** card.py 失敗時的原因：它把原因印在第一行，後面才接細節（例如整份登錄表）。 */
-export const reasonLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') =>
-  String(r?.stderr || r?.stdout || '').split(/\r?\n/).map(l => l.trim()).find(Boolean) || fallback
+/**
+ * card.py 失敗時的原因：它把原因印在第一行，後面才接細節（例如整份登錄表）。
+ * 未預期的 Python 例外則是 Traceback 開頭、例外印在最後一行，這時取最後一行。
+ */
+export function reasonLine(r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') {
+  const lines = String(r?.stderr || r?.stdout || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  const traceback = lines.some(l => l.startsWith('Traceback (most recent call last)'))
+  return (traceback ? lines.at(-1) : lines[0]) || fallback
+}
 
+/** 指令失敗時給人看的那一行：stderr（沒有就 stdout）的最後一行。 */
 export const errorLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') =>
   String(r?.stderr || r?.stdout || '').trim().split(/\r?\n/).pop() || fallback
 
