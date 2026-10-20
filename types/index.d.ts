@@ -75,6 +75,8 @@ export type Snapshot = {
   limits?: { kind: string; remaining: number; resetsAt?: string }[]
   /** desk 本身的版本；產品線上版（最新 v* tag）與開發中版本（release/* 分支）。 */
   versions?: { desk?: string; live?: string; dev?: string }
+  /** 自動檢查查到 GitHub 上有比已安裝更新的 desk：面板與摘要列顯示「有新版本 <latest>」。 */
+  update?: { latest: string }
   /** 這個對話的模型與 effort（最近一次請求）；派工與同步用的模型與 effort（dispatch.json）。 */
   /** 登錄表「## 提醒」：日期、事項、距今天數。 */
   reminders?: { date: string; text: string; days: number }[]
