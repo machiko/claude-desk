@@ -103,6 +103,27 @@ test('a failed spec confirmation shows the error and keeps the spec gate', async
   await ui.unmount()
 })
 
+test('a failed spec confirmation shows the exception line, not the Traceback header', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlySpec(data)
+  data.run = async (e: any) => e.argv.includes('spec-ok')
+    ? result(1, '', 'Traceback (most recent call last):\n  File "card.py", line 9, in <module>\n    main()\nUnicodeDecodeError: \'utf-8\' codec can\'t decode byte 0xff\n')
+    : result(0, '')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: KEY })
+  await ui.press({ key: KEY })
+  await clock.settle()
+  const exception = "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff"
+  expect(data.toasts.some(t => t.includes('確認規格失敗') && t.includes(exception))).toBe(true)
+  expect(data.toasts.some(t => t.includes('Traceback'))).toBe(false)
+  const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 確認規格失敗/.test(n.text) && n.props?.color === 'error')
+  expect(feed?.text).toContain('UnicodeDecodeError')
+  expect(feed?.text).not.toContain('Traceback')
+  expect(data.files[CARD_B]).toContain(SPEC_GATE)
+  await ui.unmount()
+})
+
 test('t does nothing outside the spec gate, while an agent runs, or on sample cases', async ($, on) => {
   const { data, clock } = fixture(on)
   const tButtons = async (ui: any) => (await ui.findAll({ type: 'Button' })).filter((b: any) => b.props?.hotkey === 't')

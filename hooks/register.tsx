@@ -527,13 +527,13 @@ async function confirmShipped($: any, c: Case) {
   void refresh($, optionsRef!)
 }
 
-/** 在案子的 worktree 裡跑 /desk:card 用的那支腳本（cwd 讓它認得出同一個專案與登錄表）。 */
 /** 卡片腳本改完登錄表或卡片後重新整理：已有一輪在跑（可能在腳本改之前就讀過）就等它結束再讀一輪。 */
 async function refreshAfterScript($: any, options: PluginOptions) {
   if (refreshing) await refreshing.catch(() => {})
   return refresh($, options)
 }
 
+/** 在案子的 worktree 裡跑 /desk:card 用的那支腳本（cwd 讓它認得出同一個專案與登錄表）。 */
 async function runCardScript($: any, options: PluginOptions, c: Case, cmd: 'spec-ok' | 'archive') {
   const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
   return $.process.run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, cmd, slugOf(c)], { cwd: c.root, timeoutMs: 30_000, env })

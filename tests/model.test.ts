@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { buildCase, sorted, counts, focusCase, summary, events, parseAgents, asksFor, fit, displayWidth, ago, demoSnapshot, errorLine, slugOf } from '../hooks/model'
+import { buildCase, sorted, counts, focusCase, summary, events, parseAgents, asksFor, fit, displayWidth, ago, demoSnapshot, errorLine, reasonLine, slugOf } from '../hooks/model'
 
 const row = (name: string) => ({ name, statusPath: `/p/${name}/.desk/CARD.md` })
 const card = (f: Partial<Record<'狀態' | '驗證' | '等你' | '下一步' | '關卡', string>>) =>
@@ -91,4 +91,14 @@ test('a case slug is its worktree folder, and a failed command reports its last 
   expect(errorLine({ stderr: '', stdout: 'only stdout\n' })).toBe('only stdout')
   expect(errorLine({ stderr: '  ', stdout: '' })).toBe('沒有輸出')
   expect(errorLine(null, 'claude stop 失敗')).toBe('claude stop 失敗')
+})
+
+test('a failed card script reports its reason line, or the exception line after a Traceback', () => {
+  expect(reasonLine({ stderr: '找不到案子：beta\n登錄表：\n  alpha\n  gamma\n' })).toBe('找不到案子：beta')
+  expect(reasonLine({ stderr: 'Traceback (most recent call last):\n  File "card.py", line 9, in <module>\n    main()\nPermissionError: [Errno 13] Permission denied: \'CARD.md\'\n\n' }))
+    .toBe("PermissionError: [Errno 13] Permission denied: 'CARD.md'")
+  expect(reasonLine({ stderr: '\n  \n  關卡不是 spec\n細節' })).toBe('關卡不是 spec')
+  expect(reasonLine({ stderr: '', stdout: 'only stdout\nmore\n' })).toBe('only stdout')
+  expect(reasonLine({ stderr: '  ', stdout: '' })).toBe('沒有輸出')
+  expect(reasonLine(null, '腳本失敗')).toBe('腳本失敗')
 })
