@@ -81,6 +81,56 @@ test('a new commit after review sends the case back to check, while old branch-n
   await ui.unmount()
 })
 
+/** AC-3 */
+test('the merge stage offers an open-PR button that only fills the prompt', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data)
+  judgedAt(data, 'c2')
+  const calls: any[] = []
+  data.exec = (e: any) => { calls.push(e); return null }
+
+  const ui = await mount($)
+  const button = await ui.find({ key: `${PREFIX}open-pr` })
+  await ui.press({ key: `${PREFIX}open-pr` })
+  data.fillable = false
+  await ui.press({ key: `${PREFIX}open-pr` })
+
+  expect(button?.text || button?.props?.label).toBe('⇡ 開 PR')
+  expect(data.fills).toEqual([
+    { text: 'push feature/b 並對 release/v1.4 開 PR', mode: 'replace' },
+    { text: 'push feature/b 並對 release/v1.4 開 PR', mode: 'replace' },
+  ])
+  expect(data.submitted).toHaveLength(0)
+  expect(data.toasts.some(t => t.includes('輸入框無法預填') && t.includes('push feature/b 並對 release/v1.4 開 PR'))).toBe(true)
+  expect(calls.some(e => e.argv[0] === 'git' && e.argv.includes('push'))).toBe(false)
+  expect(calls.some(e => e.argv[0] === 'gh' && e.argv.includes('create'))).toBe(false)
+  await ui.unmount()
+})
+
+/** AC-4 */
+test('a verdict the agent wrote itself counts but is marked self-review with w offered', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data)
+  // 這次接力只有派實作（g），審查結論是那個 Agent 自己寫進卡片的
+  data.store.chains = { [BETA]: { owner: 'other-session', startedAt: 0, round: 0 } }
+  data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' } }
+
+  const ui = await mount($)
+  const self = await screen(ui)
+  const selfW = await ui.find({ key: `${PREFIX}review` })
+  judgedAt(data, 'c2')
+  const independent = await refreshed($, ui)
+  const independentW = await ui.find({ key: `${PREFIX}review` })
+
+  expect(self).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
+  expect(self).toContain(flat('push 分支並開 PR（審查是自審，可按 w 派獨立審查）'))
+  expect(self).toContain(flat('自審'))
+  expect(selfW?.props?.hotkey).toBe('w')
+  expect(independent).not.toContain(flat('自審'))
+  expect(independentW).toBeUndefined()
+  await ui.unmount()
+})
+
 /** AC-5 */
 test('a stopped chain shows its reason and the key to press instead of the next stage', async ($, on) => {
   const { data } = fixture(on)

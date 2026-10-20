@@ -54,6 +54,8 @@ export function fixture(on: any) {
     submitted: [] as any[],
     asks: [] as string[],
     answer: '執行',
+    /** false 模擬輸入框無法預填。 */
+    fillable: true,
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
     store: {} as Record<string, unknown>,
     /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
@@ -128,7 +130,7 @@ export function fixture(on: any) {
     data.asks.push(String(q?.question ?? ''))
     return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: data.answer } } }
   })
-  on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: true } })
+  on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
   on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [] }))
   return { data, clock }
