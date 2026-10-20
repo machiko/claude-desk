@@ -200,7 +200,12 @@ test('an ask without options shows its text and offers no fill', async ($, on) =
   expect(await ui.find({ type: 'Text', text: /填入決策/ })).toBeUndefined()
   const hotkeys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props?.hotkey)
   expect(hotkeys.includes('f')).toBe(false)
-  expect(data.fills.length).toBe(0)
+  // 按 m 展開全部動作也一樣：沒有任何按鈕綁 f，所以按 f 不會填入
+  await ui.press({ key: 'more' })
+  expect((await ui.find({ key: 'more' }))?.text).toBe('▴ 精簡動作')
+  expect((await ui.findAll({ type: 'Button' })).some((b: any) => b.props?.hotkey === 'f')).toBe(false)
+  expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
+  await ui.press({ key: 'more' })
   // 摘要列也是那句話。
   const band = await $.ui.mount(BAND(160))
   const line = leaves(await band.drawn(), 'Text').map(text).join('')
