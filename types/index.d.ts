@@ -39,6 +39,8 @@ export type Case = {
   gate: string
   /** 卡片檔案最後寫入時間；讀不到為 null。 */
   updatedAt: number | null
+  /** 分支最後一次 commit 的時間（毫秒；不算只改卡片的 commit）；讀不到或教學模式就沒有。 */
+  commitAt?: number
   agent?: AgentInfo
   state: CaseState
   git?: { branch: string; head: string }
@@ -96,8 +98,10 @@ declare module 'claude-code' {
       snapshot: Snapshot | null
       isPaneOpen: boolean
       isBandHidden: boolean
-      /** 被選取的案子（卡片路徑）；送出提示時附上它的卡。 */
+      /** 被選取的案子（卡片路徑）：對話的主角，每次送出提示都附上它的卡；再點案名才取消。 */
       selected: string | null
+      /** 從面板送出的決策：卡片路徑 → 送出時的「等你」原文與時間；等你改了就失效。 */
+      sent: Record<string, { ask: string; at: number; during?: string; done?: boolean }>
       feed: FeedEvent[]
       picks: Picks
       verifies: Record<string, Verify>

@@ -13,6 +13,7 @@ import { caseActions, nowCardRows, picksKey, shortCommand } from './pane-card'
 import { noticeText } from './update'
 import type { Action } from './pane-card'
 import type { DispatchKind } from './dispatch'
+import type { SentRecord } from './turn'
 
 export { picksKey, shortCommand }
 
@@ -41,6 +42,8 @@ export type PaneView = {
   isHelp: boolean
   /** 展開全部動作（m）；平常只列現在這一段能做的。 */
   showAll: boolean
+  /** 從面板送出的決策（卡片路徑 → 送出時的「等你」）；等對話寫回卡片前那題鎖住。 */
+  sent: Record<string, SentRecord>
 }
 export type PaneActions = {
   select: (statusPath: string) => void
@@ -277,7 +280,7 @@ function feedRows(ui: any, view: PaneView, width: number): any[] {
 const HELP: [string, string][] = [
   ['1–9', '選其他案子'], ['n', '下一件（需要你的優先）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／審查／同步（按兩次確認）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）'], ['l', 'Agent 輸出'],
-  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理'], ['⇡ 更新版本', '把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
+  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新版本', '把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
   ['● ◉ ◆ ✕ ○ ·', '已過／進行中／等你／卡住／未到／不適用'], ['✓（綠）', '六段全過、已上線，可歸檔'],
 ]
@@ -354,8 +357,9 @@ function actionNode(ui: any, a: Action) {
 /** footer：細線（右端寫捲動位置）→ 現在這件的操作 → 狀態列（左）＋全域鍵（右）；放不下時全域鍵自己一列。 */
 function footerRows(ui: any, view: PaneView, act: PaneActions, width: number, focus: Case | null, hint: string): any[] {
   const { Box, Text } = ui
+  // 重新整理平常自動做（定時、回合結束、對話改了卡片），按鈕收進「更多動作」，把位置留給這一段的鍵。
   const globals: Action[] = [
-    { key: 'refresh', hotkey: 'r', label: `↻ ${WORD.refresh}`, isDim: true, onPress: act.refresh, width: 0 },
+    ...(view.showAll ? [{ key: 'refresh', hotkey: 'r', label: `↻ ${WORD.refresh}`, isDim: true, onPress: act.refresh, width: 0 }] : []),
     { key: 'expand', hotkey: 'x', label: view.isExpanded ? '▴ 收合' : '▾ 展開', isDim: true, onPress: act.expand, width: 0 },
     { key: 'next', hotkey: 'n', label: '→ 下一件', isDim: true, onPress: act.next, width: 0 },
     { key: 'more', hotkey: 'm', label: view.showAll ? '▴ 精簡動作' : '⋯ 更多動作', isDim: true, onPress: act.more, width: 0 },

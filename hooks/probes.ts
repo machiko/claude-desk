@@ -36,6 +36,8 @@ const risks = new Map<string, Risk>()
 const merges = new Map<string, string>()
 const mergeMisses = new Map<string, number>()
 const projects = new Map<string, Project>()
+/** 根目錄＋HEAD → 最近一次變更的時間；HEAD 不變它就不變。 */
+const commitTimes = new Map<string, number>()
 
 export async function home($: any): Promise<string> {
   const h = (await $.env.get('HOME').catch(() => null)) || (await $.env.get('USERPROFILE').catch(() => null)) || ''
@@ -96,6 +98,21 @@ export async function gitProbe($: any, root: string): Promise<{ git?: { branch: 
     if (tag) tags.set(head, tag)
   }
   return { git: { branch, head }, ...(tag ? { tag } : {}) }
+}
+
+/**
+ * 分支最後一次 commit 的時間（毫秒）。只改卡片的 commit 不算：卡片 commit 進版控時檔案時間不會變，會被誤判成卡片過期。
+ * 讀不到就 undefined（不提示）。
+ */
+export async function commitTime($: any, root: string, head: string): Promise<number | undefined> {
+  const key = `${root}\n${head}`
+  const known = commitTimes.get(key)
+  if (known) return known
+  const out = await git($, root, ['log', '-1', '--format=%ct', 'HEAD', '--', '.', ':(exclude).desk', ':(exclude).console'])
+  const sec = Number(out)
+  if (!out || !Number.isFinite(sec) || sec <= 0) return undefined
+  commitTimes.set(key, sec * 1000)
+  return sec * 1000
 }
 
 /** origin 是哪一家：Bitbucket 走 MCP、GitHub 走 gh CLI；其他（GitLab、自架）不查 PR，合併交給 git 判斷。 */

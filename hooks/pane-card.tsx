@@ -9,7 +9,7 @@ import { gitLine, isArmed } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
-import { needsPr, shipTurn, stageActions, turnOf } from './turn'
+import { cardBehind, needsPr, sentState, shipTurn, stageActions, turnOf } from './turn'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
 import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
@@ -28,7 +28,7 @@ export const picksKey = (c: Case) => `${c.statusPath}\n${c.ask}`
 
 /** 畫面上才知道、turnOf 需要的事。 */
 export function turnCtx(view: PaneView, c: Case): TurnCtx {
-  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, tutorial: !!view.s.tutorial }
+  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, tutorial: !!view.s.tutorial, sent: sentState(view.sent, c) }
 }
 
 const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '◐ 處理中', none: '— 沒有待辦' }
@@ -167,6 +167,8 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   }
   if (c.status) rows.push(...(view.isExpanded ? kvRows(ui, '狀態', c.status, width, true, COLOR.dim) : kvRows(ui, '狀態', c.statusShort ?? compactStatus(c.status), width, false, COLOR.text, 1)))
   if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState)}`, width, false, COLOR.dim, 1))
+  // 面板外有新的變更、卡片沒跟著寫：提示同步（新對話只讀卡片與 git，把五欄寫回）。
+  if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}前）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；Agent 在跑、等你時也不換成別的話）。
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
@@ -176,11 +178,18 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
     ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${afterDeploy}`, width, true, COLOR.attention)
     : kvRows(ui, '下一步', isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text, width, false, COLOR.attention, 1)))
 
+  // 決策送出了、對話還在處理：選項只顯示（標出選了哪個），不能再點，免得以為還沒送。
+  const isSent = turnCtx(view, c).sent === 'waiting'
   decisions.forEach((d, i) => {
     rows.push(<Text> </Text>)
-    rows.push(...wrappedRows(ui, `${decisions.length > 1 ? `${i + 1}. ` : ''}${d.title || '請選擇'}`, width, COLOR.attention, INDENT, true))
+    rows.push(...wrappedRows(ui, `${decisions.length > 1 ? `${i + 1}. ` : ''}${d.title || '請選擇'}`, width, isSent ? COLOR.dim : COLOR.attention, INDENT, true))
     for (const o of d.options) {
       const chosen = picks[String(i)] === o.key
+      if (isSent) {
+        const lead = ` ${o.key}  `
+        rows.push(<Box paddingLeft={INDENT + 1}><Text wrap="truncate-end"><Text color={COLOR.faint}>{chosen ? '◉' : '○'}</Text>{lead}<Text color={chosen ? COLOR.text : COLOR.faint}>{fit(o.text, Math.max(4, width - INDENT - 2 - displayWidth(lead)))}</Text></Text></Box>)
+        continue
+      }
       const hot = choices === 1 && /^[a-z]$/i.test(o.key) && !RESERVED.has(o.key.toLowerCase()) ? o.key.toLowerCase() : undefined
       const lead = hot ? ' ' : ` ${o.key}  `
       const room = Math.max(4, width - INDENT - 1 - (hot ? 3 : 0) - 1 - displayWidth(lead))
@@ -230,11 +239,14 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   const can = (id: ActionId) => !allowed || allowed.has(id)
   const prefix = `case-${c.statusPath}-`
   const out: Action[] = []
-  if (choiceCount(decisions) && can('fill')) out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
+  // 決策送出了、等對話寫回：連 m 展開全部也不給 f，免得重送。
+  if (choiceCount(decisions) && can('fill') && ctx.sent !== 'waiting') out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
   if (c.statusPath in view.launching) out.push(button({ key: prefix + 'launching', label: `${SPINNER[view.tick % SPINNER.length]} 派工中`, color: COLOR.running }))
   else for (const k of dispatchable(c).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
     const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
-    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k], isDim: !armed && leadKey !== DISPATCH_HOTKEY[k], label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${KIND_LABEL[k]}（${modelText(view, k)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
+    // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
+    const hint = k === 'sync' && cardBehind(c, view.now)
+    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${KIND_LABEL[k]}（${modelText(view, k)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
   }
   if (canStop(c) && can('stop')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nstop`, view.now)

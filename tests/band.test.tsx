@@ -85,11 +85,14 @@ test('the band follows the case selected in the pane and falls back when the sel
   expect(lead).toContain('Beta')
   expect(lead).toContain('規格●')
   expect(lead).toContain('輪到你：按 g 派 Agent：依審核修正')
+  // 選了的那件是對話的主角，前面標「已選」。
+  expect(lead).toContain('已選')
   // 再點 Beta 一次取消選取：回到 Alpha。
   await pane.press({ key: `case-${CARD_B}-name` })
   const back = await line()
   expect(back.startsWith('● Alpha')).toBe(true)
   expect(back.includes('Beta')).toBe(false)
+  expect(back.includes('已選')).toBe(false)
   await pane.unmount()
   await band.unmount()
 })
