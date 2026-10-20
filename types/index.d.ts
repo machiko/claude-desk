@@ -12,7 +12,7 @@ export type Verify = { command: string; at: number; ok: boolean; exitCode: numbe
 export type CaseState = 'ask' | 'reply' | 'gate' | 'running' | 'failed' | 'ready' | 'done' | 'idle' | 'nocard'
 
 /** 案子根目錄裡跑著的背景 agent（`claude agents --json --all`）。 */
-export type AgentInfo = { id?: string; name: string; sessionId?: string; state: string; status: string; waitingFor?: string; startedAt?: number; /** `claude logs` 的最後一句，進行中才讀。 */ last?: string; /** 這是工作桌派出去、做完後停在提問的那一次。 */ asks?: boolean }
+export type AgentInfo = { id?: string; name: string; sessionId?: string; state: string; status: string; waitingFor?: string; startedAt?: number; /** `claude logs` 的最後一句，進行中才讀。 */ last?: string; /** 這是工作桌派出去、做完後停在提問的那一次。 */ asks?: boolean; /** 工作桌派的那一次是什麼工作（對得上最後一次派工才有）。 */ kind?: ChainInfo['lastKind'] }
 
 export type StageId = 'spec' | 'build' | 'check' | 'review' | 'merge' | 'ship'
 /** done 過了・active 有人在做・wait 等你或等下一步・fail 卡住・todo 還沒到・na 這件案子不適用 */
@@ -23,7 +23,7 @@ export type ReviewVerdict = { critical: number; high: number; medium: number; lo
 /** 這個分支的 PR（Bitbucket 或 GitHub）：狀態與 CI。 */
 export type PrInfo = { id: number; state: 'OPEN' | 'MERGED' | 'DECLINED' | 'SUPERSEDED'; ci: 'none' | 'pending' | 'pass' | 'fail'; dest?: string; url?: string }
 /** 自動接力在這件案子的狀況，畫圖用。 */
-export type ChainInfo = { round: number; stopped?: string; passed?: boolean; needsHuman?: string; skippedReview?: boolean; /** 審查（或免審查過關）之後分支有新 commit：那次的結論不算數。 */ stale?: boolean; /** 卡片上的審查結論不是 desk 派的審查判的（例如實作的 Agent 自己寫的）。 */ selfReview?: boolean; lastKind?: 'continue' | 'sync' | 'review' | 'reply' | 'fix' | 'verify' }
+export type ChainInfo = { round: number; stopped?: string; passed?: boolean; needsHuman?: string; skippedReview?: boolean; /** 審查（或免審查過關）之後分支有新 commit：那次的結論不算數。 */ stale?: boolean; /** 卡片上的審查結論不是 desk 派的審查判的（例如實作的 Agent 自己寫的）。 */ selfReview?: boolean; lastKind?: 'continue' | 'sync' | 'review' | 'reply' | 'fix' | 'verify'; /** 這個對話的接力還沒處理剛做完的實作：檢查通過後會自動派審查，不用你按 w。 */ autoReview?: boolean }
 
 export type Case = {
   name: string
