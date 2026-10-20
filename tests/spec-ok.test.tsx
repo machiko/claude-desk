@@ -86,7 +86,7 @@ test('a failed spec confirmation shows the error and keeps the spec gate', async
   const { data, clock } = fixture(on)
   onlySpec(data)
   data.run = async (e: any) => e.argv.includes('spec-ok')
-    ? result(1, '', 'Traceback…\n關卡不是 spec：…（目前是「無」），不動卡片\n')
+    ? result(1, '', '關卡不是 spec：…（目前是「無」），不動卡片\n')
     : result(0, '')
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))

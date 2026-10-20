@@ -93,7 +93,7 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
   const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 已歸檔/.test(n.text) && n.props?.color === 'success')
   expect(feed).toBeDefined()
 
-  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  // 不手動重新整理：歸檔自己的那輪重新整理就要讓這件消失
   await clock.settle()
   expect(await ui.find({ key: `row-${CARD_B}` })).toBeUndefined()
   expect(await ui.find({ key: KEY })).toBeUndefined()
@@ -110,7 +110,8 @@ test('a failed archive shows the error and keeps the case', async ($, on) => {
   const { data, clock } = fixture(on)
   only(data)
   data.run = async (e: any) => e.argv.includes('archive')
-    ? result(1, '', 'Traceback…\n登錄表找不到「beta」\n')
+    // card.py 真的會印的格式：原因在第一行，後面接整份登錄表
+    ? result(1, '', '找不到唯一的案子「beta」（符合 0 件）。登錄表裡有：\n  Alpha  (/home/u/wt/alpha/.desk/CARD.md)\n  Gamma  (/home/u/wt/gamma/.desk/CARD.md)\n')
     : result(0, '')
   const ui = await mountBeta($)
   const registry = data.files[REGISTRY]
@@ -118,7 +119,8 @@ test('a failed archive shows the error and keeps the case', async ($, on) => {
   await ui.press({ key: KEY })
   await clock.settle()
   expect(archiveRuns(data)).toHaveLength(1)
-  expect(data.toasts.some(t => t.includes('歸檔失敗') && t.includes('登錄表找不到「beta」'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('歸檔失敗') && t.includes('找不到唯一的案子「beta」'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('歸檔失敗') && t.includes('Gamma'))).toBe(false)
   const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 歸檔失敗/.test(n.text) && n.props?.color === 'error')
   expect(feed).toBeDefined()
   expect(data.files[REGISTRY]).toBe(registry)
