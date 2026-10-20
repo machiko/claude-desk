@@ -140,7 +140,7 @@ export function asksFor(list: any[], launchName: string | undefined): AgentInfo 
 }
 
 /** 停下來等人的 agent：權限提示，或工作桌派出去的那次停在提問。 */
-const agentWaits = (a: AgentInfo | undefined) => !!a && (!!a.waitingFor || a.status === 'waiting' || !!a.asks)
+export const agentWaits = (a: AgentInfo | undefined) => !!a && (!!a.waitingFor || a.status === 'waiting' || !!a.asks)
 
 export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): CaseState {
   if (!c.hasCard) return 'nocard'

@@ -12,7 +12,7 @@ import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchable, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
 import { nextStep } from './chain'
@@ -421,7 +421,8 @@ export let optionsRef: PluginOptions | undefined
 async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}) {
   const text = opts.text ?? ''
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (!opts.auto && !dispatchable(c).includes(kind)) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${c.manual ? '登錄表設為 manual，只追蹤不派工' : c.state === 'running' ? 'Agent 仍在執行' : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'}）`); return }
+  const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
+  if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return }
   if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
@@ -481,9 +482,7 @@ async function reply($: any, options: PluginOptions, c: Case, text?: string) {
     if (!picked || picked === '取消') return
     answer = picked === '照卡片的下一步繼續' ? `照卡片的下一步繼續：${c.next || '依卡片'}` : picked
   }
-  const jobs = await loadJobs($)
-  const key = normalizeRoot(c.root)
-  if (jobs[key]?.last) await $.store.set(JOBS_KEY, { ...jobs, [key]: { ...jobs[key], last: { ...jobs[key]!.last!, answered: true } } })
+  // 不先把上一次派工標成已回覆：派出成功時 dispatch 會換上新的那筆；派工失敗時要留著，Agent 才仍算在等你、可以再回覆。
   await dispatch($, options, c, 'reply', { text: answer })
 }
 

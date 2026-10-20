@@ -128,3 +128,31 @@ test('cancelling the reply dialog dispatches nothing', async ($, on) => {
   expect((await ui.find({ key: KEY }))?.text).toBe('↩ 回覆')
   await ui.unmount()
 })
+
+test('a failed reply launch keeps the reply button so it can be retried', async ($, on) => {
+  const { data, clock } = fixture(on)
+  waiting(data)
+  data.answer = '照卡片的下一步繼續'
+  data.launch = async () => result(1, '', 'network down')
+  let ui = await pressReply($, data, clock)
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts.some(t => t.includes('回覆失敗'))).toBe(true)
+  await ui.unmount()
+  // 重新整理後 Agent 仍被認成在等你，回覆按鈕還在
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  ui = await $.ui.mount(PANE(80))
+  expect((await ui.find({ key: KEY }))?.text).toBe('↩ 回覆')
+  await ui.unmount()
+})
+
+test('an agent waiting while the card also asks you can still be answered with /desk reply', async ($, on) => {
+  const { data, clock } = fixture(on)
+  waiting(data)
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 等你: '要先發版嗎？A) 要 B) 不要' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const out: any = await $.command.run({ command: 'desk', args: 'reply Beta 先跑整套' } as any)
+  await clock.settle()
+  expect(String(out?.text ?? '')).not.toContain('沒有在等你回覆')
+  expect(data.launches).toHaveLength(1)
+  expect(prompt(data)).toContain('先跑整套')
+})

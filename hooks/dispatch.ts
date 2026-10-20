@@ -2,6 +2,7 @@
 import type { Case } from '../types'
 import { isReleaseLine } from './pipeline'
 import { named, parseGate } from './card'
+import { agentWaits } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHORT_ID = /^[0-9a-f]{8}$/i
@@ -175,12 +176,22 @@ export function dispatchable(c: Case): DispatchKind[] {
   return out
 }
 
-/** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡是什麼）。 */
+const MANUAL = '登錄表設為 manual，只追蹤不派工'
+const BUSY = 'Agent 仍在執行'
+
+/** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
 export function replyRefusal(c: Case): string {
   if (c.demo) return '示範案子只能看'
-  if (c.manual) return '登錄表設為 manual，只追蹤不派工'
-  if (c.state === 'reply') return ''
-  return c.state === 'running' || c.agent?.status === 'busy' ? 'Agent 仍在執行' : 'Agent 沒有在等你回覆'
+  if (c.manual) return MANUAL
+  if (c.state === 'reply' || agentWaits(c.agent)) return ''
+  return c.state === 'running' || c.agent?.status === 'busy' ? BUSY : 'Agent 沒有在等你回覆'
+}
+
+/** 手動派工不能派的原因；空字串代表可以派。回覆看 Agent 是否在等你，其他看 dispatchable。 */
+export function dispatchRefusal(c: Case, kind: DispatchKind): string {
+  if (kind === 'reply') return replyRefusal(c)
+  if (dispatchable(c).includes(kind)) return ''
+  return c.manual ? MANUAL : c.state === 'running' ? BUSY : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'
 }
 
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
