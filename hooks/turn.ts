@@ -3,7 +3,7 @@
 import type { Case } from '../types'
 import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, canArchive, isReleaseLine, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, isReleaseLine, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 
 export type Turn = {
@@ -26,6 +26,8 @@ const RUNNING_TEXT: Partial<Record<string, string>> = {
   continue: 'Agent 在寫程式（l 看輸出）', reply: 'Agent 在寫程式（l 看輸出）', fix: 'Agent 在修正（l 看輸出）',
   sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在審查 diff（新對話）', verify: '完成檢查在跑',
 }
+
+const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
 
 const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
 
@@ -54,7 +56,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 處理中：標籤已經說了「不用動手」，這句只講誰在做什麼。
   if (ctx.verifying) return { who: 'ai', text: '完成檢查在跑' }
   if (ctx.queued) return { who: 'ai', text: '完成檢查排隊中' }
-  if (isRunning(c)) return { who: 'ai', text: RUNNING_TEXT[c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue! }
+  if (isRunning(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: '手動案子：工作桌只追蹤，不派工' }
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
   if (c.state === 'failed') return c.chain?.stopped
@@ -64,7 +66,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (gate?.kind === 'unknown') return { who: 'you', text: `關卡「${gate.detail}」：開卡片（o）處理`, key: 'o' }
   switch (c.pipeline?.current) {
     case 'spec':
-      if (gate?.kind === 'spec' && c.agent) return { who: 'ai', text: RUNNING_TEXT[c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue! }
+      if (gate?.kind === 'spec' && c.agent) return { who: 'ai', text: runningText(c) }
       if (gate?.kind === 'spec') return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
       return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫規格與完成檢查` }
     case 'build':
@@ -75,6 +77,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 v 重新執行完成檢查' : '按 v 執行完成檢查', key: 'v' }
     case 'review':
       if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }
+      // 檢查剛通過、接力還沒派出審查（約兩秒）：不用你按 w。
+      if (c.chain?.autoReview && !c.chain.stopped && !c.chain.passed) return { who: 'ai', text: '接著自動審查' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）', key: 'w' }
     case 'merge': {
       const t = mergeTurn(c)

@@ -87,6 +87,7 @@ export async function refresh($: any, options: PluginOptions) {
     const launching = await read($, launchingAtom)
     const verifying = await read($, verifyingAtom)
     const settings = tutorial ? null : await loadSettings($, options)
+    const self = await me($)
     const cardBase = settings?.cardBase ?? ''
     const cases: Case[] = await Promise.all(rows.map(async row => {
       const [card, stat] = await Promise.all([
@@ -97,8 +98,10 @@ export async function refresh($: any, options: PluginOptions) {
       const last = jobs[normalizeRoot(base.root)]?.last
       let agent: AgentInfo | undefined = base.agent
       if (!agent && last && !last.answered) agent = asksFor(list, last.launchName) ?? undefined
-      if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy' }
+      if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy', ...(launchKinds[row.statusPath] ? { kind: launchKinds[row.statusPath] } : {}) }
       if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) agent = { ...agent, last: await lastLine($, agent.id) }
+      // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
+      if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
       const probe = await gitProbe($, base.root)
       const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr) : undefined
       const run = chains[normalizeRoot(base.root)]
@@ -106,8 +109,10 @@ export async function refresh($: any, options: PluginOptions) {
       // 卡片上有無阻擋的審查結論，但沒有任何 desk 派的審查判過它（沒有接力紀錄，或接力只派過實作）：自審。
       const verdict = parseVerdict(base.gate)
       const selfReview = !tutorial && !!verdict && blocking(verdict) === 0 && !run?.judgedHead && !run?.reviewHead
+      // 這個對話的接力還沒處理剛做完的實作：檢查通過後會自動派審查。
+      const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       const chain = run
-        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
+        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       const steps = deploySteps(card)
@@ -115,7 +120,7 @@ export async function refresh($: any, options: PluginOptions) {
       const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
-      const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying)
+      const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
       // 合併段、沒有已合併的 PR：問 git 分支 HEAD 是不是已經在基準分支裡（GitLab、沒裝 gh、本機合併都靠這個）。
       const atMerge = !tutorial && stages(withState).current === 'merge' && withState.pr?.state !== 'MERGED'
       const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr) : undefined
@@ -230,7 +235,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       acted = true
       continue
     }
-    if (!run || run.owner !== mine || !last || last.handled || agentBusy || c.agent?.asks || c.statusPath in verifies || checkQueue.some(q => q.statusPath === c.statusPath) || c.statusPath in (await read($, launchingAtom))) continue
+    if (!run || run.owner !== mine || !last || last.handled || agentBusy || c.agent?.asks || c.statusPath in verifies || checking === c.statusPath || isQueued(c.statusPath) || c.statusPath in (await read($, launchingAtom))) continue
     const verify = (await read($, verifiesAtom))[c.statusPath]
     const fresh = verify && verify.at >= last.startedAt ? verify : undefined
     const finished: DispatchKind | null = last.kind === 'sync' ? null : last.kind
@@ -351,13 +356,20 @@ function caseNamed(s: Snapshot | null, name: string): Case | null {
 /** 完成檢查：第一次跑某條指令先問；之後同一條直接跑。結果記在 $.store，重開也在。 */
 /** 排隊等著跑的檢查（同一時間只跑一個：測試共用主工作區的容器與資料庫，同時跑會互相干擾）。 */
 const checkQueue: { statusPath: string; auto: boolean }[] = []
+/**
+ * 正在跑檢查的那一件。判斷「有沒有人在跑」與佔位之間不能有 await：同一輪重新整理裡兩件的實作一起結束時，
+ * 接力會連著叫兩次 runVerify，讀 verifyingAtom 再寫回會兩件都以為沒人在跑。
+ */
+let checking: string | null = null
+const isQueued = (statusPath: string) => checkQueue.some(q => q.statusPath === statusPath)
+/** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，接力派審查的那一刻六段不退回實作。 */
+let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
 
 async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return }
-  const running = await read($, verifyingAtom)
-  if (c.statusPath in running) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return }
-  if (!fromQueue && checkQueue.some(q => q.statusPath === c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return }
+  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return }
+  if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return }
   const trusted = ((await $.store.get(TRUST_KEY).catch(() => null)) as Record<string, string> | null) ?? {}
   if (trusted[c.statusPath] !== c.verify) {
     if (auto) return
@@ -365,13 +377,36 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
     if (answer !== '執行') return
     await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
   }
+  // 問完之後再看一次：等你回答的這段時間，它可能已經被排進隊伍或開始跑了。
+  if (checking === c.statusPath || (!fromQueue && isQueued(c.statusPath))) return
   // 已經有別的檢查在跑：排隊，跑完一個再接下一個。
-  if (Object.keys(running).length > 0) {
-    if (!checkQueue.some(q => q.statusPath === c.statusPath)) checkQueue.push({ statusPath: c.statusPath, auto })
+  if (checking !== null) {
+    checkQueue.push({ statusPath: c.statusPath, auto })
     await update($, queueAtom, () => checkQueue.map(q => q.statusPath))
+    await restage($, c.statusPath)
     if (!auto) $.ui.toast(`${c.name}：已排隊，前面還有 ${checkQueue.length} 件`)
     return
   }
+  checking = c.statusPath
+  try { await executeVerify($, c, auto) }
+  catch (error) { await verifyBroke($, c, auto, error) }
+  // 不管跑成怎樣都放掉位子、接下一件：出錯也不能讓排隊的案子永遠等下去。
+  finally { checking = null; void nextInQueue($) }
+}
+
+/** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試執行中」、寫進動態；接力停下並寫明原因，不再自動重跑。 */
+async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
+  const reason = `檢查中斷：${plain(error instanceof Error ? error.message : String(error))}`
+  $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error' }])
+  await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
+  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? { ...r, stopped: reason } : r)
+  await restage($, c.statusPath)
+  await spin($, false)
+}
+
+/** 佔到位子之後真正跑檢查：容器沒起來就不跑；跑完記結果、更新六段。 */
+async function executeVerify($: any, c: Case, auto: boolean) {
   // 檢查要用的容器沒在跑：不執行，也不記成「未通過」，直接說要先啟動哪個。
   const box = await containers($, optionsRef!)
   const missing = missingServices(c.verify, box, (await loadSettings($, optionsRef!)).checkServices)
@@ -381,21 +416,14 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
     await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 檢查未執行：${reason}`, tone: 'warning' }])
     if (auto) await saveChain($, normalizeRoot(c.root), r => r ? { ...r, stopped: reason } : r)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
-    void nextInQueue($)
+    await restage($, c.statusPath)
     return
   }
   const startedAt = await $.clock.now()
   await update($, verifyingAtom, v => ({ ...v, [c.statusPath]: startedAt }))
+  await restage($, c.statusPath)
   await spin($, true)
-  const head = (await gitProbe($, c.root)).git?.head
-  let result: Verify
-  try {
-    const r = await $.process.run(['sh', '-c', c.verify], { cwd: c.root, timeoutMs: VERIFY_TIMEOUT_MS })
-    const lines = `${r.stdout}\n${r.stderr}`.split(/[\r\n]+/).map((l: string) => plain(l).trimEnd()).filter(Boolean)
-    result = { command: c.verify, at: await $.clock.now(), ok: r.exitCode === 0, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}) }
-  } catch (error) {
-    result = { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail: [plain(error instanceof Error ? error.message : String(error))], truncated: false, ...(head ? { head } : {}) }
-  }
+  const result = await verifyResult($, c)
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
@@ -404,12 +432,34 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
-  void nextInQueue($)
+}
+
+/** 在案子根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
+async function verifyResult($: any, c: Case): Promise<Verify> {
+  const head = (await gitProbe($, c.root)).git?.head
+  try {
+    const r = await $.process.run(['sh', '-c', c.verify], { cwd: c.root, timeoutMs: VERIFY_TIMEOUT_MS })
+    const lines = `${r.stdout}\n${r.stderr}`.split(/[\r\n]+/).map((l: string) => plain(l).trimEnd()).filter(Boolean)
+    return { command: c.verify, at: await $.clock.now(), ok: r.exitCode === 0, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}) }
+  } catch (error) {
+    return { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail: [plain(error instanceof Error ? error.message : String(error))], truncated: false, ...(head ? { head } : {}) }
+  }
+}
+
+/**
+ * 檢查開始、排隊、沒跑成，或剛派出 Agent 時重算那件的六段（`patch` 先套上新的 agent、state）：
+ * 不等下一輪重新整理，現在卡與其他案子表格立刻一致。
+ */
+async function restage($: any, statusPath: string, patch: (c: Case) => Case = c => c) {
+  const verifies = await read($, verifiesAtom)
+  const verifying = await read($, verifyingAtom)
+  const again = (c: Case) => ({ ...c, pipeline: pipeline(c, verifies[statusPath], statusPath in verifying, isQueued(statusPath)) })
+  await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => x.statusPath === statusPath ? again(patch(x)) : x) } : s)
 }
 
 /** 接著跑排隊中的下一件；用快照裡最新的卡片內容。 */
 async function nextInQueue($: any) {
-  if (Object.keys(await read($, verifyingAtom)).length > 0) return
+  if (checking !== null) return
   const next = checkQueue.shift()
   await update($, queueAtom, () => checkQueue.map(q => q.statusPath))
   if (!next) return
@@ -453,6 +503,8 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
   }
   const prompt = buildPrompt(c, kind, text, opts.fix, review, settings)
+  const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
+  launchKinds = { ...launchKinds, [c.statusPath]: doing }
   await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
   await spin($, true)
   try {
@@ -463,8 +515,8 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     if (kind === 'review' && head) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: head } : { reviewHead: head }) } : r)
     const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
-    const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy' }
-    await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => x.statusPath === c.statusPath ? { ...x, agent, state: 'running' as const } : x) } : s)
+    const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
+    await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
     await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`, tone: 'suggestion' }])
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
@@ -473,6 +525,7 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error' }])
     $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
   } finally {
+    launchKinds = Object.fromEntries(Object.entries(launchKinds).filter(([k]) => k !== c.statusPath))
     await update($, launchingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
     await spin($, false)
   }
@@ -620,6 +673,8 @@ export const register: Register = (on, options) => {
     await update($, verifyingAtom, () => ({}))
     await update($, launchingAtom, () => ({}))
     checkQueue.length = 0
+    checking = null
+    launchKinds = {}
     await update($, queueAtom, () => [])
     await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <案名> [回覆] 派工；verify|open <案名> 執行檢查／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範案子）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <案名>|bar|update|tutorial [end]|off]' })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }

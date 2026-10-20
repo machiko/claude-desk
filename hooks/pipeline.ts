@@ -1,6 +1,6 @@
 // 六段：規格 → 實作 → 檢查 → 審查 → 合併 → 上線。只從已經讀到的證據推算，不碰磁碟。
 // 證據由後往前看：最後一段有證據，它之前的都算過了；接著第一個還沒過的就是「現在」。
-import type { Case, PrInfo, ReviewVerdict, Stage, StageId, StageStatus, Pipeline, Verify } from '../types'
+import type { Case, ChainInfo, PrInfo, ReviewVerdict, Stage, StageId, StageStatus, Pipeline, Verify } from '../types'
 import { ARCHIVE_WORD, SHIPPED_WORD, parseGate, saysNone } from './card'
 
 export const STAGES: readonly { id: StageId; label: string }[] = [
@@ -57,7 +57,20 @@ export function checkStands(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefin
   return v.ok
 }
 
-export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pipeline {
+/**
+ * 正在跑的 Agent 在做什麼：工作桌派的那一次（含啟動中）帶著種類。對不上派工的（例如在面板外開的）當作在寫程式：
+ * 接力記的最後一種是上一次派工的，不是它的。
+ */
+export function runningKind(c: Pick<Case, 'agent'>): NonNullable<ChainInfo['lastKind']> | null {
+  if (!c.agent || c.agent.asks || c.agent.status === 'idle') return null
+  return c.agent.kind ?? 'continue'
+}
+
+/** 會改程式的 Agent（實作、修正、回覆後接著做）：它在跑時，之前的檢查結果不能讓六段往前走。審查、同步不改程式。 */
+const WRITES_CODE = new Set(['continue', 'fix', 'reply'])
+
+/** `verifying`：完成檢查正在跑；`queued`：完成檢查在排隊。兩者都讓六段停在檢查段。 */
+export function pipeline(c: Case, v: Verify | undefined, verifying = false, queued = false): Pipeline {
   const status: Record<StageId, StageStatus> = { spec: 'todo', build: 'todo', check: 'todo', review: 'todo', merge: 'todo', ship: 'todo' }
   const notes: Partial<Record<StageId, string>> = {}
   const gate = parseGate(c.gate)
@@ -65,7 +78,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
   const verdict = standingVerdict(c)
   const check = checkStands(c, v)
   const release = isReleaseLine(c)
-  const runningKind = c.agent && !c.agent.asks && c.agent.status !== 'idle' ? c.chain?.lastKind ?? 'continue' : null
+  const running = runningKind(c)
+  const coding = !!running && WRITES_CODE.has(running)
 
   const reviewed = (verdict && blocking(verdict) === 0) || (c.chain?.passed && !stale)
   // 按 u 確認上線後關卡清成無、PR 資訊過一小時也不顯示，靠確認時寫進卡片的狀態與下一步認得它已上線。
@@ -78,16 +92,18 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
   if (tagged && !(gate?.kind === 'release')) reached = INDEX.ship
   else if (c.pr?.state === 'MERGED' || tagged) reached = INDEX.merge
   else if (reviewed) reached = INDEX.review
-  else if (check === true && !runningKind) reached = INDEX.check
-  else if (check === false && !runningKind) reached = INDEX.build
+  else if (check === true && !coding) reached = INDEX.check
+  else if (check === false && !coding) reached = INDEX.build
   // 審查後有新 commit：程式已經寫了，退回檢查重來。
-  else if (stale && !runningKind) reached = INDEX.build
+  else if (stale && !coding) reached = INDEX.build
   else if (!saysNone(c.next) || c.agent || c.verify) reached = c.verify && saysNone(c.ask) && gate?.kind !== 'spec' ? INDEX.spec : -1
   // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
   if (reached === INDEX.review && c.mergedInto) reached = INDEX.merge
   // 接力停住、檢查又沒通過過：卡片上的審查結論（例如 Agent 自己寫的）不能讓它跳過檢查段。已合併、已打 tag 的不管。
   const held = !!c.chain?.stopped && check !== true && !release && !tagged && c.pr?.state !== 'MERGED' && !c.mergedInto
   if (held && reached > INDEX.build) reached = INDEX.build
+  // 完成檢查在跑或排隊：結果還沒出來，停在檢查段（之前在同一個 HEAD 通過過也一樣）；審查過了的不退。
+  if ((verifying || queued) && !coding && reached >= INDEX.spec && reached <= INDEX.check) reached = INDEX.build
   for (let i = 0; i <= reached; i++) status[STAGES[i]!.id] = 'done'
 
   const current = STAGES[reached + 1]?.id ?? null
@@ -100,7 +116,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
         else set('wait', '尚缺完成檢查')
         break
       case 'build':
-        if (runningKind === 'continue' || runningKind === 'fix' || runningKind === 'reply') set('active', c.chain?.round ? `修正第 ${c.chain.round} 輪` : 'Agent 處理中')
+        if (coding) set('active', c.chain?.round ? `修正第 ${c.chain.round} 輪` : 'Agent 處理中')
         else if (c.state === 'reply') set('wait', 'Agent 等待你回覆')
         else if (c.chain?.stopped) set('fail', c.chain.stopped)
         else if (c.manual) set('todo', '手動追蹤')
@@ -108,13 +124,14 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
         else set('wait', '可繼續實作')
         break
       case 'check':
-        if (verifying || runningKind === 'verify') set('active', '測試執行中')
+        if (verifying || running === 'verify') set('active', '測試執行中')
+        else if (queued) set('active', '排隊中')
         else if (check === false) set('fail', c.chain?.stopped ?? '檢查未通過')
         else if (held) set('fail', c.chain!.stopped!)
         else set('wait', stale ? '審查後有新 commit，需重新檢查' : '尚未執行檢查')
         break
       case 'review':
-        if (runningKind === 'review') set('active', '審查中')
+        if (running === 'review') set('active', '審查中')
         else if (verdict) set(c.chain?.stopped ? 'fail' : 'active', c.chain?.stopped ?? `CRITICAL ${verdict.critical}、HIGH ${verdict.high}，修正中`)
         else if (stale) set(c.chain?.stopped ? 'fail' : 'wait', c.chain?.stopped ?? '審查後有新 commit，待重新審查')
         else if (gate?.kind === 'review') set('wait', '審查結論缺少分級')
@@ -137,8 +154,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
   if (release) for (const id of ['spec', 'build', 'review', 'merge'] as StageId[]) status[id] = 'na'
   const stages: Stage[] = STAGES.map(s => ({ ...s, status: status[s.id] }))
   const effective = current && status[current] !== 'na' ? current : release ? (status.check === 'done' ? 'ship' : 'check') : null
-  if (release && effective === 'check' && !notes.check) notes.check = check === false ? '檢查未通過' : verifying ? '測試執行中' : '尚未執行檢查'
-  if (release && effective === 'check') status.check = check === false ? 'fail' : verifying ? 'active' : 'wait'
+  if (release && effective === 'check' && !notes.check) notes.check = check === false ? '檢查未通過' : verifying ? '測試執行中' : queued ? '排隊中' : '尚未執行檢查'
+  if (release && effective === 'check') status.check = check === false ? 'fail' : verifying || queued ? 'active' : 'wait'
   if (release && effective === 'ship') { status.ship = c.tag && gate?.kind !== 'release' ? 'done' : 'wait'; notes.ship = c.tag ? (gate?.kind === 'release' ? `${c.tag} 已打，待確認上線` : '') : '待打 tag' }
   const done = stages.every(s => status[s.id] === 'done' || status[s.id] === 'na')
   return { stages: STAGES.map(s => ({ ...s, status: status[s.id] })), current: done ? null : effective, note: effective ? notes[effective] ?? '' : '' }

@@ -46,7 +46,7 @@ test('only the actions that make sense now are listed: passed stages drop their 
 })
 
 test('processing lines say who is doing what, without repeating that it is in progress', () => {
-  const running = (lastKind?: any) => mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' }, ...(lastKind ? { chain: { round: 0, lastKind } } : {}) })
+  const running = (kind?: any) => mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy', ...(kind ? { kind } : {}) }, ...(kind ? { chain: { round: 0, lastKind: kind } } : {}) })
   expect(turnOf(running()).text).toBe('Agent 在寫程式（l 看輸出）')
   expect(turnOf(running('fix')).text).toBe('Agent 在修正（l 看輸出）')
   expect(turnOf(running('sync')).text).toBe('Agent 在同步卡片（l 看輸出）')
