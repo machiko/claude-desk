@@ -2,7 +2,7 @@
 // 只有 content（現在卡、其他案子進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
-import { displayWidth, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
+import { displayWidth, feedOf, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
 import { dueReminders, reminderWhen } from './extras'
@@ -265,9 +265,9 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
   return rows
 }
 
-function feedRows(ui: any, view: PaneView, width: number): any[] {
+function feedRows(ui: any, view: PaneView, focus: Case | null, width: number): any[] {
   const { Text } = ui
-  const list = view.feed.slice(0, FEED_ROWS)
+  const list = feedOf(view.feed, focus, view.s.cases).slice(0, FEED_ROWS)
   if (!list.length) return []
   return [
     <Text> </Text>,
@@ -303,7 +303,7 @@ function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): 
   const focus = focusOf(view)
   const others = sorted(s.cases).filter(c => c !== focus)
   const wide = view.columns >= WIDE
-  const tail = [...feedRows(ui, view, width), ...helpRows(ui, view, act, width)]
+  const tail = [...feedRows(ui, view, focus, width), ...helpRows(ui, view, act, width)]
   if (!wide) {
     return [
       label(ui, WORD.now),

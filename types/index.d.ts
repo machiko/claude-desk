@@ -89,7 +89,8 @@ export type Snapshot = {
   models?: { session?: string; effort?: string; dispatch?: { model: string; effort: string }; sync?: { model: string; effort: string; fresh: boolean } }
 }
 
-export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' | 'error' | 'subtle' | 'suggestion' }
+/** 一筆動態；card：屬於哪件（卡片路徑），版本更新這類不屬於任何一件的不填。 */
+export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' | 'error' | 'subtle' | 'suggestion'; card?: string }
 
 /** 決策的選擇：`案子路徑\n等你全文` → 決策序號 → 選項鍵。等你改寫就作廢。 */
 export type Picks = Record<string, Record<string, string>>

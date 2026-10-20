@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, FeedEvent, Snapshot } from '../types'
-import { liveCases, plain, rawAgents } from './model'
+import { keepFeed, liveCases, plain, rawAgents } from './model'
 import { logTail } from './probes'
 import type { DeskPaths } from './probes'
 import { CONFIRM_MS, confirmStep } from './extras'
@@ -27,7 +27,6 @@ export const JOBS_KEY = 'jobs'
 export const CHAIN_KEY = 'chains'
 export const SUMMARY_KEY = 'summaries'
 export const SUMMARY_KEEP = 60
-export const FEED_MAX = 12
 export const SPIN_MS = 400
 export const LAUNCH_TIMEOUT_MS = 60_000
 export const MIN_REFRESH_S = 10
@@ -39,7 +38,7 @@ const summarizing = new Set<string>()
 export async function feedPush($: any, items: FeedEvent[]) {
   if (!items.length) return
   const clean = items.map(e => ({ ...e, text: plain(e.text) }))
-  await update($, feedAtom, list => [...clean, ...list].slice(0, FEED_MAX))
+  await update($, feedAtom, list => keepFeed([...clean, ...list]))
 }
 
 export async function loadJobs($: any): Promise<Record<string, RootJobs>> {

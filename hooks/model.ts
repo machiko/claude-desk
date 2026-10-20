@@ -229,15 +229,36 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
   for (const c of cur.cases) {
     if (c.demo) continue
     const p = before.get(c.statusPath)
-    if (!p) { out.push({ at: cur.at, text: `${c.name} 加入工作桌`, tone: 'subtle' }); continue }
-    if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) out.push({ at: cur.at, text: `${c.name} 等你：${fit(summary(c), 40)}`, tone: 'warning' })
-    else if (c.state === 'reply' && p.state !== 'reply') out.push({ at: cur.at, text: `${c.name} Agent 等待你回覆`, tone: 'warning' })
-    else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) out.push({ at: cur.at, text: `${c.name} 進入關卡：${fit(summary(c), 40)}`, tone: 'warning' })
-    else if (c.state === 'running' && p.state !== 'running') out.push({ at: cur.at, text: `${c.name} 開始執行`, tone: 'suggestion' })
-    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply') out.push({ at: cur.at, text: `${c.name} Agent 已完成`, tone: 'subtle' })
-    else if (c.state === 'failed' && p.state !== 'failed') out.push({ at: cur.at, text: `${c.name} 檢查未通過`, tone: 'error' })
+    const push = (text: string, tone: FeedEvent['tone']) => out.push({ at: cur.at, text, tone, card: c.statusPath })
+    if (!p) { push(`${c.name} 加入工作桌`, 'subtle'); continue }
+    if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) push(`${c.name} 等你：${fit(summary(c), 40)}`, 'warning')
+    else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning')
+    else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning')
+    else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
+    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply') push(`${c.name} Agent 已完成`, 'subtle')
+    else if (c.state === 'failed' && p.state !== 'failed') push(`${c.name} 檢查未通過`, 'error')
   }
   return out
+}
+
+/** 每件（與不屬於任何一件的）各留最近幾筆動態：忙的那件不會把別件的擠掉。 */
+export const FEED_KEEP = 12
+
+/** 新的在前；每件各留最近 FEED_KEEP 筆。 */
+export function keepFeed(list: readonly FeedEvent[]): FeedEvent[] {
+  const seen = new Map<string, number>()
+  return list.filter(e => {
+    const key = e.card ?? ''
+    const n = (seen.get(key) ?? 0) + 1
+    seen.set(key, n)
+    return n <= FEED_KEEP
+  })
+}
+
+/** 「最近」只看現在這件：屬於它的、不屬於任何一件的（版本更新等），以及已經不在工作桌上的那件（剛歸檔）。 */
+export function feedOf(feed: readonly FeedEvent[], focus: Case | null, cases: readonly Case[]): FeedEvent[] {
+  const onDesk = new Set(cases.map(c => c.statusPath))
+  return feed.filter(e => !e.card || e.card === focus?.statusPath || !onDesk.has(e.card))
 }
 
 /** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的案子當「其他案子」的背景（demoCases）。 */

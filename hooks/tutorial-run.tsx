@@ -87,7 +87,7 @@ export async function finishSim($: any, options: PluginOptions) {
     if (typeof card === 'string') await $.fs.write(job.statusPath, cardAfter(card, job.work, day))
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (live()) await feedPush($, [{ at: await $.clock.now(), text: `教學 Agent 失敗：${message}`, tone: 'error' }])
+    if (live()) await feedPush($, [{ at: await $.clock.now(), text: `教學 Agent 失敗：${message}`, tone: 'error', card: job.statusPath }])
   } finally {
     if (sim?.token === job.token) sim = null
   }
@@ -142,19 +142,19 @@ export async function tutorialAct($: any, options: PluginOptions, c: Case) {
     // DESK_PROJECT_DIR 留空：card.py 不依 cwd 認專案，否則會疊上真實專案的 card 設定、讀到它的登錄表
     const r = await run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', TUTORIAL_SLUG], { DESK_SETTINGS: p.settings, DESK_PROJECT_DIR: '' })
     if (r.exitCode !== 0) return failed('確認規格', r)
-    await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success' }])
+    await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success', card: c.statusPath }])
   } else if (step === 'merge') {
     const r = await run(['git', '-C', p.main, ...GIT_TUTOR, 'merge', '--no-ff', '--quiet', '-m', `Merge ${TUTORIAL_BRANCH}`, TUTORIAL_BRANCH])
     if (r.exitCode !== 0) return failed('合併', r)
     tutorial = { ...tutorial, merged: true }
     await saveTutorial($)
-    await feedPush($, [{ at: now, text: `${c.name} 已合併到 ${TUTORIAL_RELEASE}`, tone: 'success' }])
+    await feedPush($, [{ at: now, text: `${c.name} 已合併到 ${TUTORIAL_RELEASE}`, tone: 'success', card: c.statusPath }])
   } else if (step === 'tag') {
     const r = await run(['git', '-C', p.main, 'tag', TUTORIAL_TAG])
     if (r.exitCode !== 0) return failed('打 tag', r)
     const text = await $.fs.read(c.statusPath).catch(() => null)
     if (typeof text === 'string') await $.fs.write(c.statusPath, cardAfterTag(text, day))
-    await feedPush($, [{ at: now, text: `${c.name} 已打 ${TUTORIAL_TAG}`, tone: 'success' }])
+    await feedPush($, [{ at: now, text: `${c.name} 已打 ${TUTORIAL_TAG}`, tone: 'success', card: c.statusPath }])
   } else return
   await refresh($, options)
 }
