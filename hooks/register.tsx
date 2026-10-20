@@ -365,38 +365,45 @@ const isQueued = (statusPath: string) => checkQueue.some(q => q.statusPath === s
 /** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，接力派審查的那一刻六段不退回實作。 */
 let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
 
-async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return }
-  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return }
-  if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return }
+/** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒授權、按了取消、已經在跑或在排）是 false。 */
+async function runVerify($: any, c: Case, auto = false, fromQueue = false): Promise<boolean> {
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
+  if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return false }
+  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return false }
+  if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return false }
   const trusted = ((await $.store.get(TRUST_KEY).catch(() => null)) as Record<string, string> | null) ?? {}
   if (trusted[c.statusPath] !== c.verify) {
-    if (auto) return
+    if (auto) return false
     const answer = await $.ui.ask(`在 ${c.root} 執行完成檢查：\n${c.verify}\n之後同一條指令不再問，自動接力也會用它。`, { header: `${c.name} 檢查`, options: ['執行', '取消'] }).catch(() => '')
-    if (answer !== '執行') return
+    if (answer !== '執行') return false
     await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
   }
   // 問完之後再看一次：等你回答的這段時間，它可能已經被排進隊伍或開始跑了。
-  if (checking === c.statusPath || (!fromQueue && isQueued(c.statusPath))) return
+  if (checking === c.statusPath || (!fromQueue && isQueued(c.statusPath))) return false
   // 已經有別的檢查在跑：排隊，跑完一個再接下一個。
   if (checking !== null) {
     checkQueue.push({ statusPath: c.statusPath, auto })
     await update($, queueAtom, () => checkQueue.map(q => q.statusPath))
     await restage($, c.statusPath)
     if (!auto) $.ui.toast(`${c.name}：已排隊，前面還有 ${checkQueue.length} 件`)
-    return
+    return true
   }
   checking = c.statusPath
   try { await executeVerify($, c, auto) }
-  catch (error) { await verifyBroke($, c, auto, error) }
+  catch (error) {
+    // 記錄出錯的那段自己也出錯（例如狀態層一直拒寫）：至少讓你看到，不變成沒人接的 rejection。
+    await verifyBroke($, c, auto, error).catch(again => $.ui.toast(`${c.name}：檢查中斷，原因也記不下來（${errorText(again)}）`, { timeoutMs: 10_000 }))
+  }
   // 不管跑成怎樣都放掉位子、接下一件：出錯也不能讓排隊的案子永遠等下去。
   finally { checking = null; void nextInQueue($) }
+  return true
 }
+
+const errorText = (error: unknown) => plain(error instanceof Error ? error.message : String(error))
 
 /** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試執行中」、寫進動態；接力停下並寫明原因，不再自動重跑。 */
 async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
-  const reason = `檢查中斷：${plain(error instanceof Error ? error.message : String(error))}`
+  const reason = `檢查中斷：${errorText(error)}`
   $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error' }])
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
@@ -464,8 +471,13 @@ async function nextInQueue($: any) {
   await update($, queueAtom, () => checkQueue.map(q => q.statusPath))
   if (!next) return
   const c = (await read($, snapshot))?.cases.find(x => x.statusPath === next.statusPath)
-  if (c) await runVerify($, c, next.auto, true)
-  else void nextInQueue($)
+  if (!c) { void nextInQueue($); return }
+  const took = await runVerify($, c, next.auto, true).catch(error => {
+    $.ui.toast(`${c.name}：排隊的檢查沒跑成（${errorText(error)}）`, { timeoutMs: 10_000 })
+    return false
+  })
+  // 輪到它卻沒接手（排隊期間卡片的檢查改了或清掉、還沒授權、按了取消）：這件不跑了，換下一件，後面的不用一直等。
+  if (!took) void nextInQueue($)
 }
 export let optionsRef: PluginOptions | undefined
 
