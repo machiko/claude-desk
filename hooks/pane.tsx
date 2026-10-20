@@ -267,7 +267,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
 
 function feedRows(ui: any, view: PaneView, focus: Case | null, width: number): any[] {
   const { Text } = ui
-  const list = feedOf(view.feed, focus, view.s.cases).slice(0, FEED_ROWS)
+  const list = feedOf(view.feed, focus).slice(0, FEED_ROWS)
   if (!list.length) return []
   return [
     <Text> </Text>,

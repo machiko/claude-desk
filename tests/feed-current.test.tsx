@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, text } from './fixture'
 import { setFields } from '../hooks/tutorial'
-import { events, feedOf, keepFeed } from '../hooks/model'
+import { events, feedOf, feedOnDesk, keepFeed } from '../hooks/model'
 import type { Case, FeedEvent } from '../types'
 
 const flat = (x: string) => x.replace(/\s+/g, '')
@@ -19,15 +19,23 @@ function twoCases(data: any) {
 
 test('feed keeps only the focused case and events that belong to no case', () => {
   const feed = [ev('Alpha 開始執行', CARD_A), ev('desk 有新版本 0.24.0'), ev('Beta 檢查通過', CARD_B)]
-  const cases = [kase(CARD_A), kase(CARD_B)]
-  expect(feedOf(feed, kase(CARD_B), cases).map(e => e.text)).toEqual(['desk 有新版本 0.24.0', 'Beta 檢查通過'])
-  expect(feedOf(feed, kase(CARD_A), cases).map(e => e.text)).toEqual(['Alpha 開始執行', 'desk 有新版本 0.24.0'])
+  expect(feedOf(feed, kase(CARD_B)).map(e => e.text)).toEqual(['desk 有新版本 0.24.0', 'Beta 檢查通過'])
+  expect(feedOf(feed, kase(CARD_A)).map(e => e.text)).toEqual(['Alpha 開始執行', 'desk 有新版本 0.24.0'])
 })
 
-test('feed still shows events of a case that has left the desk', () => {
-  // 歸檔後那件不在登錄表了：剛做的「已歸檔」照樣看得到。
-  const feed = [ev('Gamma 已歸檔', CARD_C), ev('Alpha 開始執行', CARD_A)]
-  expect(feedOf(feed, kase(CARD_B), [kase(CARD_A), kase(CARD_B)]).map(e => e.text)).toEqual(['Gamma 已歸檔'])
+test('a case that left the desk cannot crowd out the focused case', () => {
+  // Gamma 歸檔前記了好幾筆，歸檔那筆不掛在卡上；現在這件 Alpha 的那筆仍在前三列。
+  const gone = Array.from({ length: 5 }, (_, i) => ev(`Gamma 第 ${i} 筆`, CARD_C, NOW + 10 - i))
+  const feed = [ev('Gamma 已歸檔'), ...gone, ev('Alpha 開始執行', CARD_A, NOW)]
+  const shown = feedOf(feed, kase(CARD_A)).slice(0, 3).map(e => e.text)
+  expect(shown).toEqual(['Gamma 已歸檔', 'Alpha 開始執行'])
+})
+
+test('events of cases no longer on the desk are dropped from the feed', () => {
+  // 歸檔或換專案：不在這份登錄表的卡，動態清掉；不屬於任何一件的留著。
+  const feed = [ev('Gamma 檢查通過', CARD_C), ev('Gamma 已歸檔'), ev('Alpha 開始執行', CARD_A)]
+  expect(feedOnDesk(feed, [kase(CARD_A), kase(CARD_B)]).map(e => e.text)).toEqual(['Gamma 已歸檔', 'Alpha 開始執行'])
+  expect(feedOnDesk(feed, [])).toEqual([ev('Gamma 已歸檔')])
 })
 
 test('a busy case cannot push the focused case out of the feed', () => {
@@ -67,5 +75,31 @@ test('the recent feed shows only what happened to the case on the now card', asy
   drawn = await screen(ui)
   expect(drawn).toContain(flat('Alpha 等你'))
   expect(drawn).not.toContain(flat('Beta 進入關卡'))
+  await ui.unmount()
+})
+
+test('a case removed from the registry leaves nothing behind in the recent feed', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  data.gh = []
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '無' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  // Gamma 連續幾件事：等你、換題、進關卡；Alpha 只有一件。
+  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 等你: '要合併嗎？A) 要 B) 等' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 等你: '要打 tag 嗎？A) 要 B) 等' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 關卡: 'spec：待確認規格' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 等你: '無', 關卡: 'release：待上線' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  // Gamma 離開登錄表（歸檔、或換了專案）。
+  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  if (await ui.find({ key: `row-${CARD_A}` })) await ui.press({ key: `row-${CARD_A}` })
+  const drawn = await screen(ui)
+  expect(drawn).toContain(flat('Alpha 進入關卡'))
+  expect(drawn).not.toContain(flat('Gamma'))
   await ui.unmount()
 })

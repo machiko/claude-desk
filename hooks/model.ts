@@ -255,10 +255,15 @@ export function keepFeed(list: readonly FeedEvent[]): FeedEvent[] {
   })
 }
 
-/** 「最近」只看現在這件：屬於它的、不屬於任何一件的（版本更新等），以及已經不在工作桌上的那件（剛歸檔）。 */
-export function feedOf(feed: readonly FeedEvent[], focus: Case | null, cases: readonly Case[]): FeedEvent[] {
+/** 「最近」只看現在這件：屬於它的，與不屬於任何一件的（版本更新、某件已歸檔等）。 */
+export function feedOf(feed: readonly FeedEvent[], focus: Case | null): FeedEvent[] {
+  return feed.filter(e => !e.card || e.card === focus?.statusPath)
+}
+
+/** 已經不在工作桌上的那幾件（歸檔、換專案）的動態不會再顯示，清掉。 */
+export function feedOnDesk(feed: readonly FeedEvent[], cases: readonly Case[]): FeedEvent[] {
   const onDesk = new Set(cases.map(c => c.statusPath))
-  return feed.filter(e => !e.card || e.card === focus?.statusPath || !onDesk.has(e.card))
+  return feed.filter(e => !e.card || onDesk.has(e.card))
 }
 
 /** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的案子當「其他案子」的背景（demoCases）。 */
