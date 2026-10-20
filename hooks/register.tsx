@@ -14,7 +14,7 @@ import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
-import { awaitsSpecOk, canArchive, checkStands, finalState, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
+import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
 import { nextStep } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -103,7 +103,12 @@ export async function refresh($: any, options: PluginOptions) {
       const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr) : undefined
       const run = chains[normalizeRoot(base.root)]
       const stale = movedSince(run?.judgedHead, probe.git)
-      const chain = run ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(parseVerdict(base.gate) && !run.judgedHead && !run.reviewHead ? { selfReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) } : undefined
+      // 卡片上有無阻擋的審查結論，但沒有任何 desk 派的審查判過它（沒有接力紀錄，或接力只派過實作）：自審。
+      const verdict = parseVerdict(base.gate)
+      const selfReview = !tutorial && !!verdict && blocking(verdict) === 0 && !run?.judgedHead && !run?.reviewHead
+      const chain = run
+        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
+        : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       const steps = deploySteps(card)
       const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []

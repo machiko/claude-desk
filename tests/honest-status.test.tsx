@@ -124,17 +124,22 @@ test('the merge stage offers an open-PR button that only fills the prompt', asyn
 test('a verdict the agent wrote itself counts but is marked self-review with w offered', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data)
-  // 這次接力只有派實作（g），審查結論是那個 Agent 自己寫進卡片的
-  data.store.chains = { [BETA]: { owner: 'other-session', startedAt: 0, round: 0 } }
+  // 完全沒有接力紀錄（結論是在別的對話寫進卡片的），或這次接力只有派實作（g）：都不是 desk 派的審查
   data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' } }
 
   const ui = await mount($)
-  const self = await screen(ui)
+  const noChain = await screen(ui)
+  const noChainW = await ui.find({ key: `${PREFIX}review` })
+  data.store.chains = { [BETA]: { owner: 'other-session', startedAt: 0, round: 0 } }
+  const self = await refreshed($, ui)
   const selfW = await ui.find({ key: `${PREFIX}review` })
   judgedAt(data, 'c2')
   const independent = await refreshed($, ui)
   const independentW = await ui.find({ key: `${PREFIX}review` })
 
+  expect(noChain).toContain(flat('push 分支並開 PR（審查是自審，可按 w 派獨立審查）'))
+  expect(noChain).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
+  expect(noChainW?.props?.hotkey).toBe('w')
   expect(self).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
   expect(self).toContain(flat('push 分支並開 PR（審查是自審，可按 w 派獨立審查）'))
   expect(self).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
