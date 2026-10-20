@@ -57,10 +57,13 @@ export function checkStands(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefin
   return v.ok
 }
 
-/** 正在跑的 Agent 在做什麼：工作桌派的那一次帶著種類；對不上就看接力記的最後一種，都沒有當作在寫程式。 */
-export function runningKind(c: Pick<Case, 'agent' | 'chain'>): NonNullable<ChainInfo['lastKind']> | null {
+/**
+ * 正在跑的 Agent 在做什麼：工作桌派的那一次（含啟動中）帶著種類。對不上派工的（例如在面板外開的）當作在寫程式：
+ * 接力記的最後一種是上一次派工的，不是它的。
+ */
+export function runningKind(c: Pick<Case, 'agent'>): NonNullable<ChainInfo['lastKind']> | null {
   if (!c.agent || c.agent.asks || c.agent.status === 'idle') return null
-  return c.agent.kind ?? c.chain?.lastKind ?? 'continue'
+  return c.agent.kind ?? 'continue'
 }
 
 /** 會改程式的 Agent（實作、修正、回覆後接著做）：它在跑時，之前的檢查結果不能讓六段往前走。審查、同步不改程式。 */

@@ -31,7 +31,10 @@ function twoCases(data: any, clock: any) {
   }
 }
 
-/** 完成檢查由測試放行：每次 sh 先掛著，resolve 才算跑完；記下同時在跑的最多幾件。 */
+/**
+ * 完成檢查由測試放行：每次 sh 先掛著，resolve 才算跑完；記下同時在跑的最多幾件。
+ * 測試結束前要 `drain` 放行剩下的：掛著不放的檢查過了時限會在已收掉的環境裡接著跑。
+ */
 function heldChecks(data: any) {
   const pending: { cwd: string; done: (ok: boolean) => void }[] = []
   const stats = { running: 0, max: 0, cwds: [] as string[] }
@@ -41,8 +44,13 @@ function heldChecks(data: any) {
     stats.cwds.push(String(e.init?.cwd))
     pending.push({ cwd: String(e.init?.cwd), done: ok => { stats.running--; resolve(result(ok ? 0 : 1, ok ? 'all green\n' : 'boom\n')) } })
   })
-  const pass = (root: string) => { const i = pending.findIndex(p => p.cwd === root); pending.splice(i, 1)[0]!.done(true) }
-  return { stats, pass }
+  const pass = (root: string) => {
+    const i = pending.findIndex(p => p.cwd === root)
+    if (i < 0) throw new Error(`沒有在跑的檢查：${root}`)
+    pending.splice(i, 1)[0]!.done(true)
+  }
+  const drain = async (clock: any) => { while (pending.length) { pending.shift()!.done(true); await clock.settle() } }
+  return { stats, pass, drain }
 }
 
 const finish = (data: any, root: string) => { data.agents = data.agents.map((a: any) => a.cwd === root ? { ...a, status: 'idle', state: 'done' } : a) }
@@ -129,7 +137,7 @@ test('a running review shows the review stage active, not build', async ($, on) 
 test('a running or queued check shows the check stage active', async ($, on) => {
   const { data, clock } = fixture(on)
   twoCases(data, clock)
-  const { stats } = heldChecks(data)
+  const { stats, drain } = heldChecks(data)
   await goBoth($, clock)
   await finishBoth($, data, clock)
   expect(stats.cwds).toEqual([ALPHA])
@@ -147,6 +155,7 @@ test('a running or queued check shows the check stage active', async ($, on) => 
   expect(stageLabel(pipeline(betaCase(), undefined, false, true))).toBe('檢查・排隊中')
   expect(stageLabel(pipeline(betaCase(), passedAt('b1'), false, true))).toBe('檢查・排隊中')
   await ui.unmount()
+  await drain(clock)
 })
 
 /** AC-3 */
@@ -276,5 +285,67 @@ test('two cases chained together show their own stages at every step', async ($,
   ])
   expect(data.launches.length).toBe(4)
   expect(data.toasts.filter(t => t.includes('審查通過')).length).toBe(2)
+  await ui.unmount()
+})
+
+test('a check that breaks midway still lets the queued case run', async ($, on) => {
+  const { data, clock } = fixture(on)
+  twoCases(data, clock)
+  const { stats, pass, drain } = heldChecks(data)
+  // Alpha 的檢查跑完、記結果時出錯：寫檢查結果的那一次被拒
+  let broken = false
+  on('state.set', (next: any, e: any) => {
+    if (!broken || e?.key !== 'verifies') return next(e)
+    broken = false
+    return { deny: '狀態寫不進去' }
+  })
+  await goBoth($, clock)
+  await finishBoth($, data, clock)
+  broken = true
+  pass(ALPHA)
+  await clock.settle()
+  await step(clock)
+
+  expect(broken).toBe(false)
+  expect(stats.cwds).toEqual([ALPHA, BETA])
+  const ui = await $.ui.mount(PANE(100))
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const alpha = await bothViews(ui, CARD_A)
+  expect(alpha.card).not.toContain('檢查◉')
+  expect(JSON.stringify(await ui.drawn())).toContain('Alpha 檢查中斷')
+  // Alpha 停下等人處理，不會被接力一再重跑
+  expect(stats.cwds.filter(c => c === ALPHA).length).toBe(1)
+  await ui.unmount()
+  await drain(clock)
+})
+
+test('an agent desk cannot match to a dispatch counts as writing code', async ($, on) => {
+  const { data, clock } = fixture(on)
+  twoCases(data, clock)
+  // 上一次派的是審查、檢查在這個 HEAD 通過過；現在跑著的 Agent 不是那一次（例如在面板外開的）
+  const stranger = betaCase({ agent: { id: 'x1', name: 'someone-else', state: 'working', status: 'busy' }, chain: { round: 0, lastKind: 'review' } })
+  expect(stageLabel(pipeline(stranger, passedAt('b1')))).toBe('實作・Agent 處理中')
+
+  // 派工啟動中的佔位帶著這次派的種類：按下派審查、Agent 還沒起來的那段，六段不退回實作
+  data.store.verifies = { [CARD_A]: passedAt('a1') }
+  let release = () => {}
+  const launch = data.launch
+  data.launch = (e: any) => new Promise(resolve => { release = () => resolve(launch(e)) })
+  const ui = await $.ui.mount(PANE(100))
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const before = await bothViews(ui, CARD_A)
+  const going = $.command.run({ command: 'desk', args: 'review Alpha' } as any)
+  await clock.settle()
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const launching = await bothViews(ui, CARD_A)
+  release()
+  await going
+  await step(clock)
+
+  expect(data.launches.length).toBe(1)
+  expect(data.toasts).toContain('Alpha：審查已派出')
+  expect(before.card).toBe('規格● 實作● 檢查● 審查◆ 合併○ 上線○')
+  expect(launching.card).toBe('規格● 實作● 檢查● 審查◉ 合併○ 上線○')
+  expect(launching.row).toBe(glyphsOf(launching.card))
   await ui.unmount()
 })

@@ -98,7 +98,7 @@ export async function refresh($: any, options: PluginOptions) {
       const last = jobs[normalizeRoot(base.root)]?.last
       let agent: AgentInfo | undefined = base.agent
       if (!agent && last && !last.answered) agent = asksFor(list, last.launchName) ?? undefined
-      if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy' }
+      if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy', ...(launchKinds[row.statusPath] ? { kind: launchKinds[row.statusPath] } : {}) }
       if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) agent = { ...agent, last: await lastLine($, agent.id) }
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
@@ -362,6 +362,8 @@ const checkQueue: { statusPath: string; auto: boolean }[] = []
  */
 let checking: string | null = null
 const isQueued = (statusPath: string) => checkQueue.some(q => q.statusPath === statusPath)
+/** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，接力派審查的那一刻六段不退回實作。 */
+let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
 
 async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
@@ -386,8 +388,21 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false) {
     return
   }
   checking = c.statusPath
-  try { await executeVerify($, c, auto) } finally { checking = null }
-  void nextInQueue($)
+  try { await executeVerify($, c, auto) }
+  catch (error) { await verifyBroke($, c, auto, error) }
+  // 不管跑成怎樣都放掉位子、接下一件：出錯也不能讓排隊的案子永遠等下去。
+  finally { checking = null; void nextInQueue($) }
+}
+
+/** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試執行中」、寫進動態；接力停下並寫明原因，不再自動重跑。 */
+async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
+  const reason = `檢查中斷：${plain(error instanceof Error ? error.message : String(error))}`
+  $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error' }])
+  await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
+  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? { ...r, stopped: reason } : r)
+  await restage($, c.statusPath)
+  await spin($, false)
 }
 
 /** 佔到位子之後真正跑檢查：容器沒起來就不跑；跑完記結果、更新六段。 */
@@ -488,6 +503,8 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
   }
   const prompt = buildPrompt(c, kind, text, opts.fix, review, settings)
+  const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
+  launchKinds = { ...launchKinds, [c.statusPath]: doing }
   await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
   await spin($, true)
   try {
@@ -498,7 +515,7 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     if (kind === 'review' && head) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: head } : { reviewHead: head }) } : r)
     const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
-    const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: opts.fix ? 'fix' : kind }
+    const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
     await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`, tone: 'suggestion' }])
@@ -508,6 +525,7 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error' }])
     $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
   } finally {
+    launchKinds = Object.fromEntries(Object.entries(launchKinds).filter(([k]) => k !== c.statusPath))
     await update($, launchingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
     await spin($, false)
   }
@@ -656,6 +674,7 @@ export const register: Register = (on, options) => {
     await update($, launchingAtom, () => ({}))
     checkQueue.length = 0
     checking = null
+    launchKinds = {}
     await update($, queueAtom, () => [])
     await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <案名> [回覆] 派工；verify|open <案名> 執行檢查／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範案子）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <案名>|bar|update|tutorial [end]|off]' })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
