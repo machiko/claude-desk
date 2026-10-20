@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
-import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain } from './model'
+import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, slugOf } from './model'
 import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
@@ -517,7 +517,7 @@ async function confirmShipped($: any, c: Case) {
   const text = await $.fs.read(c.statusPath).catch(() => null)
   const d = new Date(await $.clock.now())
   const two = (n: number) => String(n).padStart(2, '0')
-  const next = typeof text === 'string' ? confirmShip(text, `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, `${two(d.getHours())}:${two(d.getMinutes())}`, c.tag ?? '', isReleaseLine(c) ? '等下一版開發' : `${ARCHIVE_WORD}：${CARD_CMD} archive ${c.root.split('/').filter(Boolean).pop() ?? ''}`, (await loadSettings($, optionsRef!)).user) : null
+  const next = typeof text === 'string' ? confirmShip(text, `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, `${two(d.getHours())}:${two(d.getMinutes())}`, c.tag ?? '', isReleaseLine(c) ? '等下一版開發' : `${ARCHIVE_WORD}：${CARD_CMD} archive ${slugOf(c)}`, (await loadSettings($, optionsRef!)).user) : null
   if (!next) { $.ui.toast(`${c.name}：卡片關卡已不是 release，沒有改動`); void refresh($, optionsRef!); return }
   const ok = await $.fs.write(c.statusPath, next).then(() => true).catch(() => false)
   if (!ok) { $.ui.toast(`${c.name}：寫入卡片失敗`); return }
@@ -531,13 +531,12 @@ async function confirmShipped($: any, c: Case) {
  * 卡片由腳本改；只確認、不派工。腳本失敗（卡片已被改過、找不到卡）就提示最後一行錯誤，關卡留著。
  */
 async function confirmSpec($: any, options: PluginOptions, c: Case) {
-  const slug = c.root.split('/').filter(Boolean).pop() ?? ''
   const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
-  const r = await $.process.run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', slug], { cwd: c.root, timeoutMs: 30_000, env })
+  const r = await $.process.run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', slugOf(c)], { cwd: c.root, timeoutMs: 30_000, env })
     .catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
   const now = await $.clock.now()
   if (r.exitCode !== 0) {
-    const why = String(r.stderr || r.stdout || '').trim().split(/\r?\n/).pop() || '沒有輸出'
+    const why = errorLine(r)
     $.ui.toast(`${c.name}：確認規格失敗：${why}`, { timeoutMs: 10_000 })
     await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error' }])
     void refresh($, options)
@@ -553,7 +552,7 @@ async function stopAgent($: any, c: Case) {
   if (!c.agent?.id || !last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：只能停止 desk 派出去的 Agent`); return }
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
-  if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${String(r?.stderr ?? '').trim().split(/\r?\n/).pop() || 'claude stop 失敗'}）`); return }
+  if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${errorLine(r, 'claude stop 失敗')}）`); return }
   await saveChain($, normalizeRoot(c.root), run => run ? { ...run, stopped: '你手動停止了 Agent' } : run)
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止 Agent（對話保留，可再派工接續）`, tone: 'warning' }])
   $.ui.toast(`${c.name}：已停止 Agent`)

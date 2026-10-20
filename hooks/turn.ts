@@ -1,6 +1,7 @@
 // 輪到誰、該做什麼：依六段與案子狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case } from '../types'
+import { slugOf } from './model'
 import { CARD_CMD, parseGate, saysNone } from './card'
 import { awaitsSpecOk, isReleaseLine, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
@@ -18,7 +19,6 @@ export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boole
 
 export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'tutorial'
 
-const slugOf = (c: Case) => c.root.split('/').filter(Boolean).pop() ?? ''
 const isRunning = (c: Case) => c.state === 'running'
 /** Agent 在跑時，依最後一次派的是什麼說它在做什麼。 */
 const RUNNING_TEXT: Partial<Record<string, string>> = {

@@ -1,7 +1,7 @@
 // 現在卡：一列一個元素（content 會捲動，列數要算得出來），操作按鈕另外列成清單交給常駐的 footer 排。
 import type { Case, Verify } from '../types'
 import { allPicked, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
-import { ago, displayWidth, fit, hhmm, pad, summary } from './model'
+import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
 import { awaitsSpecOk, stageParts } from './pipeline'
@@ -53,7 +53,6 @@ function turnRows(ui: any, t: Turn, width: number): any[] {
 /** footer 上的一個操作：按鈕，或一段文字（例如「派工中」）。width 是畫出來約佔的格數，用來排列。 */
 export type Action = { key: string; label: string; hotkey?: string; isDim?: boolean; isLead?: boolean; isBoxed?: boolean; onPress?: () => void; color?: string; width: number }
 
-const slugOf = (c: Case) => c.root.split('/').filter(Boolean).pop() ?? ''
 /** 上線確認只在最後一段：已經有 tag 包含這個 commit、關卡是 release：…（部署完由你按）。 */
 export const canShip = (c: Case) => c.pipeline?.current === 'ship' && !!c.tag && parseGate(c.gate)?.kind === 'release'
 /** 只有 desk 派出去、正在跑的那個才能從面板停止。 */

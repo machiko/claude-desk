@@ -6,6 +6,13 @@ import { parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyComm
 import { STATE } from './theme'
 import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
 
+/** 案子的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
+export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
+
+/** 指令失敗時給人看的那一行：stderr（沒有就 stdout）的最後一行。 */
+export const errorLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') =>
+  String(r?.stderr || r?.stdout || '').trim().split(/\r?\n/).pop() || fallback
+
 export const STALE_MS = 3 * 24 * 60 * 60_000
 
 /**

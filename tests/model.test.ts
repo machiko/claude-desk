@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { buildCase, sorted, counts, focusCase, summary, events, parseAgents, asksFor, fit, displayWidth, ago, demoSnapshot } from '../hooks/model'
+import { buildCase, sorted, counts, focusCase, summary, events, parseAgents, asksFor, fit, displayWidth, ago, demoSnapshot, errorLine, slugOf } from '../hooks/model'
 
 const row = (name: string) => ({ name, statusPath: `/p/${name}/.desk/CARD.md` })
 const card = (f: Partial<Record<'狀態' | '驗證' | '等你' | '下一步' | '關卡', string>>) =>
@@ -83,3 +83,12 @@ test('width helpers and ago', () => {
   expect(demo.cases.map(c => c.state)).toEqual(['ask', 'running', 'idle', 'gate'])
 })
 const now_ = () => Date.parse('2030-01-05T12:00:00Z')
+
+test('a case slug is its worktree folder, and a failed command reports its last line', () => {
+  expect(slugOf({ root: '/home/u/wt/spec-ok-button/' })).toBe('spec-ok-button')
+  expect(slugOf({ root: '/' })).toBe('')
+  expect(errorLine({ stderr: 'warn\n找不到卡片：beta\n', stdout: 'x' })).toBe('找不到卡片：beta')
+  expect(errorLine({ stderr: '', stdout: 'only stdout\n' })).toBe('only stdout')
+  expect(errorLine({ stderr: '  ', stdout: '' })).toBe('沒有輸出')
+  expect(errorLine(null, 'claude stop 失敗')).toBe('claude stop 失敗')
+})
