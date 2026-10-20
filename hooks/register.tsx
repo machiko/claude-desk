@@ -4,8 +4,8 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
-import { parseRegistry, parseDecisions, decisionAnswer, decisionName, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
-import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
+import { parseRegistry, parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
+import { buildCase, caseNamed, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
 import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
@@ -22,13 +22,12 @@ import type { ChainRun } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialDecision, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, VERIFY_TIMEOUT_MS, cardContext, cardKey, cardReminder, confirmed, decisionContext, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
+import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, VERIFY_TIMEOUT_MS, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
-import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, updateDesk } from './update'
-import type { UpdateCheck } from './update'
-import { touchesDesk } from './touch'
+import { noticeOf } from './update'
+import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
 import { sentState } from './turn'
-import type { SentRecord } from '../types'
+import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 
 const PANE = 'desk'
 const DEMO_ONLY = '示範案子只能看；請照教學那件的指示操作'
@@ -50,7 +49,6 @@ const logsOpenAtom = atom({ plugin: 'desk', key: 'logsOpen' } as const, null)
 const logViewAtom = atom({ plugin: 'desk', key: 'logView' } as const, {})
 const helpAtom = atom({ plugin: 'desk', key: 'isHelp' } as const, false)
 const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, false)
-const sentAtom = atom({ plugin: 'desk', key: 'sent' } as const, {})
 /** 最近一次畫面 content 最多能捲到第幾列；捲動 hook 用它夾住位置（模組變數，重載後下一次畫就補上）。 */
 let maxOffset = 0
 
@@ -65,18 +63,6 @@ let turnModel: { model?: string; effort?: string } = {}
 let forcePr = false
 /** 登錄表與每張卡片的路徑（上一輪讀到的）：對話改到它們就馬上重讀。 */
 let knownPaths: string[] = []
-/** 上一次附在提示裡的卡片指紋：卡片沒變就只附一句提醒，不重複全文。 */
-let lastAttached = ''
-/** 對話改了卡片、跑了卡片腳本或 git 之後多久重讀：同一串工具呼叫只讀一次。 */
-const TOUCH_DELAY_MS = 800
-/** 稍後重讀（對話改了卡片之後）的計時器；/desk off 時取消。 */
-let touchTimer: Timer
-/** 回合進行中送出的決策：回合結束後這麼久都沒有新回合開始，就當作提示已經交給那個回合，直接判斷。 */
-const QUEUED_GRACE_MS = 5_000
-/** 等著判斷「回合中送出的決策」的計時器；/desk off 時取消。 */
-let queuedTimer: Timer
-/** 只有人打的提示才附選取的卡、才認決策；排程、通知、其他 agent 送來的不算。 */
-const TYPED_ORIGINS = new Set(['composer', 'bridge', 'unclassified'])
 
 const refreshMs = (options: PluginOptions) => {
   const n = Number(options.refreshSeconds)
@@ -171,68 +157,12 @@ export async function refresh($: any, options: PluginOptions) {
     await spin($, cases.some(c => c.state === 'running'))
     await autoChain($, options, cur)
     void summarizeStatuses($, options, cur, summaries)
-    if (settings && settings.updateCheck !== 'off') void autoUpdateCheck($, now)
+    if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
     await update($, snapshot, prev => prev ? { ...prev, error: message } : { at: 0, cases: [], error: message, contextPercent: null })
   }).finally(() => { refreshing = null })
   return refreshing
-}
-
-async function loadUpdateCheck($: any): Promise<UpdateCheck | null> {
-  return parseCheck(await $.store.get(UPDATE_KEY).catch(() => null))
-}
-
-let checkingUpdate = false
-/**
- * desk 新版本的自動檢查：距離上次查到結果超過 24 小時才查（時間存 $.store，重開也算）。只提示、不安裝；
- * 同一個版號只在「最近」記一筆、跳一次 toast。查失敗不出聲、不記時間，下一輪再查。
- */
-async function autoUpdateCheck($: any, now: number) {
-  if (checkingUpdate || tutorial) return
-  const prev = await loadUpdateCheck($)
-  if (prev && now - prev.at < UPDATE_EVERY_MS) return
-  checkingUpdate = true
-  try {
-    const found = await checkLatest($, now)
-    const fresh = isNewer(found.latest, found.current) && prev?.notified !== found.latest
-    const next: UpdateCheck = { ...found, ...(fresh ? { notified: found.latest } : prev?.notified ? { notified: prev.notified } : {}) }
-    await $.store.set(UPDATE_KEY, next)
-    await showNotice($, next)
-    if (fresh) {
-      await feedPush($, [{ at: now, text: `desk ${noticeText(found.latest)}`, tone: 'suggestion' }])
-      $.ui.toast(`desk ${noticeText(found.latest)}`, { timeoutMs: 8000 })
-    }
-  } catch { /* 查失敗不提示，下一輪再查 */ } finally { checkingUpdate = false }
-}
-
-async function showNotice($: any, check: UpdateCheck) {
-  await update($, snapshot, s => {
-    if (!s) return s
-    const notice = noticeOf(check, s.versions?.desk)
-    const { update: _old, ...rest } = s
-    return notice ? { ...rest, update: notice } : rest
-  })
-}
-
-let updating = false
-/** 手動更新（/desk update、面板按鈕）：結果記進「最近」並跳 toast；查到的版號給自動檢查沿用。 */
-async function runUpdate($: any): Promise<string> {
-  if (updating) return 'desk 正在更新中，請稍候。'
-  updating = true
-  try {
-    const now = await $.clock.now()
-    const r = await updateDesk($, now)
-    if (r.check) {
-      const prev = await loadUpdateCheck($)
-      const check: UpdateCheck = { ...r.check, ...(prev?.notified ? { notified: prev.notified } : {}) }
-      await $.store.set(UPDATE_KEY, check)
-      await showNotice($, check)
-    }
-    await feedPush($, [{ at: now, text: r.text, tone: r.tone }])
-    $.ui.toast(r.text, { timeoutMs: r.tone === 'success' ? 10_000 : 8000 })
-    return r.text
-  } finally { updating = false }
 }
 
 /** 讀不到登錄表時面板上的說明：選項指定的、這個專案還沒建的、目前資料夾不在 git repo 裡。 */
@@ -347,9 +277,8 @@ async function stop($: any) {
   generation++
   refreshTimer?.cancel(); refreshTimer = undefined
   spinTimer?.cancel(); spinTimer = undefined
-  touchTimer?.cancel(); touchTimer = undefined
   soonTimer?.cancel(); soonTimer = undefined
-  queuedTimer?.cancel(); queuedTimer = undefined
+  cancelPromptSync()
   $.ui.status(undefined)
   await update($, snapshot, () => null)
   await $.ui.close({ id: PANE }).catch(() => {})
@@ -369,14 +298,6 @@ async function togglePane($: any) {
   const pane = ((await $.ui.panes().catch(() => [])) as { id: string; isPlaced: boolean; isShown: boolean }[]).find(p => p.id === PANE)
   if (pane?.isPlaced && pane.isShown) { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}) }
   else await openPane($)
-}
-
-function caseNamed(s: Snapshot | null, name: string): Case | null {
-  if (!s) return null
-  const q = name.trim()
-  // 示範案子只能看，指令找不到它們。
-  const real = s.cases.filter(c => !c.demo)
-  return real.find(c => c.name === q) ?? real.find(c => c.name.includes(q)) ?? null
 }
 
 /** 完成檢查：第一次跑某條指令先問；之後同一條直接跑。結果記在 $.store，重開也在。 */
@@ -598,7 +519,7 @@ async function fillDecision($: any, c: Case) {
   const decisions = parseDecisions(c.ask)
   const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
   if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按數字鍵）`); return }
-  if (sentState(await read($, sentAtom), c) === 'waiting') { $.ui.toast(`${c.name}：決策已送出，等對話寫回卡片`); return }
+  if (sentState(await readSent($), c) === 'waiting') { $.ui.toast(`${c.name}：決策已送出，等對話寫回卡片`); return }
   const answer = decisionAnswer(decisions, picks)
   if (tutorial) { await tutorialDecision($, c, answer); return }
   const text = decisionPrompt(c.name, answer)
@@ -636,7 +557,7 @@ async function confirmShipped($: any, c: Case) {
 }
 
 /** 卡片或登錄表剛被改過（卡片腳本、對話、回合結束）後重新整理：已有一輪在跑（可能在改之前就讀過）就等它結束再讀一輪。 */
-async function refreshAfterWrite($: any, options: PluginOptions) {
+export async function refreshAfterWrite($: any, options: PluginOptions) {
   if (refreshing) await refreshing.catch(() => {})
   return refresh($, options)
 }
@@ -699,58 +620,6 @@ async function stopAgent($: any, c: Case) {
   void refresh($, optionsRef!)
 }
 
-/** 對話改了卡片、跑了卡片腳本或 git：稍等一下再重讀，同一串工具呼叫只讀一次。 */
-function touchSoon($: any, options: PluginOptions) {
-  touchTimer?.cancel()
-  touchTimer = $.clock.after(TOUCH_DELAY_MS, () => { touchTimer = undefined; void refreshAfterWrite($, options) })
-}
-
-/**
- * 判斷送出的決策寫回了沒（面板重讀過之後）：卡片「等你」改了就清掉；沒改就標成「沒寫回」（不再鎖），讀到的是新的才提醒一次。
- * 只判斷 isDue 挑出來的那幾筆，其他照舊。重讀失敗時照樣解鎖，只是不提醒，免得一直鎖著。
- */
-async function judgeSent($: any, endedAt: number, isDue: (r: SentRecord) => boolean) {
-  const s = await read($, snapshot)
-  if (!s) return
-  const isFresh = !s.error && s.at >= endedAt
-  let unwritten: string[] = []
-  await update($, sentAtom, all => {
-    unwritten = []
-    const next: Record<string, SentRecord> = {}
-    for (const [path, r] of Object.entries(all)) {
-      const c = s.cases.find(x => x.statusPath === path)
-      if (!c) { if (!isFresh) next[path] = r; continue }
-      if (!sentState(all, c)) continue
-      if (r.done || !isDue(r)) { next[path] = r; continue }
-      next[path] = { ask: r.ask, done: true }
-      if (isFresh) unwritten.push(c.name)
-    }
-    return next
-  })
-  for (const name of unwritten) $.ui.toast(`${name}：決策已送出，但卡片的「等你」沒有改；按 o 開卡片改掉，或請對話寫回`, { timeoutMs: 10_000 })
-}
-
-/**
- * 回合結束：判斷這個回合處理的決策。回合進行中才送出的那筆，提示可能排到下一個回合，也可能當輪就交給了模型：
- * 之後有新回合開始（turn.start 記在 by），留給那個回合；過一下都沒有，就當作這個回合處理過了，直接判斷。
- */
-async function settleSent($: any, turnId: string | undefined, endedAt: number) {
-  const isQueuedHere = (r: SentRecord) => !r.by && !!turnId && r.during === turnId
-  await judgeSent($, endedAt, r => (r.by ? r.by === turnId : !isQueuedHere(r)))
-  if (!Object.values(await read($, sentAtom)).some(r => !r.done && isQueuedHere(r))) return
-  queuedTimer?.cancel()
-  queuedTimer = $.clock.after(QUEUED_GRACE_MS, () => {
-    queuedTimer = undefined
-    void judgeSent($, endedAt, isQueuedHere).catch(async (error: unknown) => {
-      await feedPush($, [{ at: endedAt, text: `決策狀態更新失敗：${error instanceof Error ? error.message : String(error)}`, tone: 'error' }])
-    })
-  })
-}
-
-/** 輸入框打的 ! 指令記進對話的那一列（<bash-input>／<bash-stdout>）。 */
-const BANG_ROW = /<bash-(?:input|stdout|stderr)>/
-const rowText = (message: any) => typeof message?.content === 'string' ? message.content
-  : Array.isArray(message?.content) ? message.content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : ''
 
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
 
@@ -758,16 +627,14 @@ export const register: Register = (on, options) => {
   optionsRef = options
   on('session.start', async ($, e, next) => {
     active = false
-    lastAttached = ''
-    queuedTimer?.cancel(); queuedTimer = undefined
     setTutorial(null)
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined
     spinTimer?.cancel(); spinTimer = undefined
     await update($, verifyingAtom, () => ({}))
     await update($, launchingAtom, () => ({}))
-    // 新對話（含 /clear）沒看過之前送出的決策：不帶著鎖進來。
-    await update($, sentAtom, () => ({}))
+    // 新對話（含 /clear）：重附卡片全文，之前送出的決策不帶著鎖進來。
+    await resetPromptSync($)
     checkQueue.length = 0
     checking = null
     launchKinds = {}
@@ -782,27 +649,6 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // 選取的案子是對話的主角：每次送出都附上它（卡片變了附全文，沒變附一句提醒），再點案名才取消。
-  // 從面板填入的決策送出時記下來：面板鎖住那題，等對話寫回卡片。
-  on('prompt.submit', async ($, e, next) => {
-    if ((e.origin && !TYPED_ORIGINS.has(e.origin.kind)) || !active) return next(e)
-    const which = await read($, selected).catch(() => null)
-    const s = await read($, snapshot).catch(() => null)
-    const c = which && s ? s.cases.find(x => x.statusPath === which) ?? null : null
-    const name = !tutorial && s ? decisionName(String(e.text ?? '')) : null
-    const decided = name && s ? s.cases.find(x => !x.demo && x.name === name && x.state === 'ask') ?? null : null
-    if (!c && !decided) return next(e)
-    const key = c ? cardKey(c) : ''
-    // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
-    const extra = [...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...(decided ? [decisionContext(decided, decided !== c)] : [])]
-    if (decided) await update($, sentAtom, v => ({ ...v, [decided.statusPath]: { ask: decided.ask, ...(e.turnId ? { during: e.turnId } : {}) } }))
-    const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })
-    if (result.drop) { if (decided) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== decided.statusPath))) }
-    // 斜線指令（skill 等）附了卡也不算附過：有些指令不進模型，下一則照樣附全文，最多重複一次。
-    else if (c && !e.command) lastAttached = key
-    return result
-  })
-
   // 主對話每次送請求時記下模型與 effort，面板的「模型」一列就跟著 /model 與 effort 的切換走。
   on('turn.step', async function* ($, e, next) {
     if (!e.agentId) {
@@ -815,48 +661,7 @@ export const register: Register = (on, options) => {
     return yield* next(e)
   })
 
-  // 回合結束：重讀（等進行中那輪讀完再讀，才看得到這個回合寫的卡），再看送出的決策寫回了沒。
-  on('turn.complete', async ($, e, next) => {
-    if (!e.agentId && active) {
-      const endedAt = await $.clock.now()
-      void refreshAfterWrite($, options).catch(() => {}).then(() => settleSent($, e.turnId, endedAt)).catch(async (error: unknown) => {
-        await feedPush($, [{ at: endedAt, text: `決策狀態更新失敗：${error instanceof Error ? error.message : String(error)}`, tone: 'error' }])
-      })
-    }
-    return next(e)
-  })
-
-  // 回合中送出的決策：之後開始的第一個回合就是處理它的那個（排隊的提示），記下來等它結束再判斷。
-  on('turn.start', async ($, e, next) => {
-    if (!e.agentId && active) {
-      await update($, sentAtom, v => Object.fromEntries(Object.entries(v).map(([k, r]) => [k, r.during && !r.by && !r.done ? { ...r, by: e.turnId } : r]))).catch(() => {})
-    }
-    return next(e)
-  })
-
-  // /clear、壓縮之後模型看不到之前附的卡：下一則提示重新附全文。
-  on('session.compact', async ($, e, next) => { if (!e.agentId) lastAttached = ''; return next(e) })
-  on('session.end', async ($, e, next) => { lastAttached = ''; return next(e) })
-
-  // 對話（或它派的 subagent）改了卡片、登錄表，跑了卡片腳本或會移動分支的 git：馬上重讀，不等回合結束。
-  on('tool.call', async ($, e, next) => {
-    const result = await next(e)
-    try { if (active && touchesDesk(e as any, knownPaths)) touchSoon($, options) } catch { /* 只是提早重讀，失敗就等定時更新 */ }
-    return result
-  })
-
-  // 輸入框的 ! 指令與斜線指令（例如 ! git commit、/desk:card）：結果記進對話後重讀。
-  on('session.append', { door: 'command' }, async ($, e, next) => {
-    const result = await next(e)
-    if (active && !e.agentId) touchSoon($, options)
-    return result
-  })
-  // 實機（v2.1.302）的 ! 指令兩列都走 door command（上面那個就會重讀）；萬一改記成一般提示列，看內容認出來。
-  on('session.append', { door: 'prompt' }, async ($, e, next) => {
-    const result = await next(e)
-    try { if (active && !e.agentId && BANG_ROW.test(rowText(e.message))) touchSoon($, options) } catch { /* 只是提早重讀 */ }
-    return result
-  })
+  registerPromptSync(on, { isActive: () => active, isTutorial: () => !!tutorial, knownPaths: () => knownPaths, options })
 
   on('command.run', { command: 'desk' }, async ($, e) => {
     const arg = e.args.trim()
@@ -907,7 +712,7 @@ export const register: Register = (on, options) => {
     const verifying = await read($, verifyingAtom)
     const queue = await read($, queueAtom)
     const launching = await read($, launchingAtom)
-    const sent = await read($, sentAtom)
+    const sent = await readSent($)
     const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, tutorial: !!s.tutorial, sent: sentState(sent, c) })
     const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf, await read($, selected)), columns, () => {})
     const below = await next(e).catch(() => null)
@@ -932,7 +737,7 @@ export const register: Register = (on, options) => {
       logView: await read($, logViewAtom),
       isHelp: await read($, helpAtom),
       showAll: await read($, showAllAtom),
-      sent: await read($, sentAtom),
+      sent: await readSent($),
     }
     const act: PaneActions = {
       select: path => void (async () => { await update($, selected, v => (v === path ? null : path)); await update($, contentOffset, () => 0) })(),
