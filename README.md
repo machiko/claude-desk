@@ -54,7 +54,7 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 
 輸入 `/desk tutorial`。它會在 `~/.claude/desk-tutorial` 建一個小 repo 和一件案子「教學：會員折扣」放在現在卡；「其他案子」是幾件示範案子（只能看），讓你看到多件案子同時進行時面板的樣子。照現在卡第二列「▶ 輪到你」的指示把六段走完：
 
-1. 規格：看過預先寫好的規格，按 `t` 確認（實際使用時是 `/desk:card spec <slug> ok`）。
+1. 規格：看過預先寫好的規格，按 `t` 確認（實際使用時按兩次 `t`，或輸入 `/desk:card spec <slug> ok`）。
 2. 實作：按兩次 `g`。教學裡的 Agent 和審查由腳本扮演，不花額度，也不需要信任資料夾。
 3. 檢查：自動執行，會真的跑 `python3 -m unittest`。
 4. 審查：第一輪會挑出一條 HIGH，自動修正、重新檢查、複審；過關後留一條 MEDIUM 讓你決定。
@@ -74,7 +74,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
    ```
 
 2. 在 repo 裡開一件案子：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。
-3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後輸入 `/desk:card spec order-export ok`。
+3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後在面板按兩次 `t` 確認（或輸入 `/desk:card spec order-export ok`）。
 4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派 Agent）。
 
 背景 Agent 只會在「信任過的 repo」裡啟動：第一次用某個 repo 前，先在那個 repo 根目錄開一次 `claude`，信任提示選 Yes。
@@ -113,7 +113,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | v | 完成檢查 |
 | u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡並記 History |
 | o／e／p | 開卡片／審查檔／PR |
-| t | 教學模式的下一步：確認規格、合併、打 tag |
+| t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
 | r／x／n／m／i | 重新整理／展開全文／下一件／更多動作／說明 |
 
 ## DESK 卡

@@ -74,7 +74,7 @@ test('a tag containing an unreviewed, unmerged branch head does not mark the cas
   expect(screen).not.toContain('已上線')
   expect(screen).not.toContain('可歸檔')
   expect(screen).not.toContain('archive beta')
-  expect(await ui.find({ type: 'Text', text: '看過規格後輸入 /desk:card spec beta ok' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /看過規格（o 開卡片）後按 t 確認/ })).toBeDefined()
   await ui.unmount()
   const band = await bandText($)
   expect(band).not.toContain('歸檔')

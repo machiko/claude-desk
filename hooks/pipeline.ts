@@ -32,6 +32,13 @@ export const standingVerdict = (c: Pick<Case, 'gate' | 'chain'>): ReviewVerdict 
 /** 發版線（release/…）本身：規格、實作、審查、合併不適用，只看檢查與上線。 */
 export const isReleaseLine = (c: Pick<Case, 'git'>) => !!c.git && /^release\//.test(c.git.branch)
 
+/**
+ * 真實模式可以按 t 確認規格：停在規格段、關卡是 spec：…、沒有 Agent 在跑或停著等回覆，也不是示範案子。
+ * 有關卡時 state 是 gate 而不是 running，所以直接看 agent。
+ */
+export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate'>) =>
+  !c.demo && !c.agent && c.pipeline?.current === 'spec' && parseGate(c.gate)?.kind === 'spec'
+
 /** 這次檢查還算數：跑的是卡片現在的指令，而且跑完後分支沒有新 commit。 */
 export function checkStands(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefined): boolean | null {
   if (!v || v.command !== c.verify) return null

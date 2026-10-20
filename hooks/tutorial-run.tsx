@@ -4,6 +4,7 @@ import { atom, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { home, loadSettings } from './probes'
+import { errorLine } from './model'
 import { REVIEW_FILE, normalizeRoot } from './dispatch'
 import type { DispatchKind, FixReason } from './dispatch'
 import { CODE_V1, CODE_V2, CODE_V3, REVIEW_1, REVIEW_2, REVIEW_3, SIM_MS, TEST_V1, TEST_V2, TUTORIAL_BRANCH, TUTORIAL_CHECK, TUTORIAL_INTRO, TUTORIAL_RELEASE, TUTORIAL_SLUG, TUTORIAL_TAG, cardAfter, cardAfterDecision, cardAfterTag, cardText, gitCommit, isTutorialDir, registryText, settingsText, setupScript, tutorialPaths, tutorialStep } from './tutorial'
@@ -135,7 +136,7 @@ export async function tutorialAct($: any, options: PluginOptions, c: Case) {
   const p = tutorialPaths(await home($))
   const now = await $.clock.now()
   const day = new Date(now).toISOString().slice(0, 10)
-  const failed = (what: string, r: any) => $.ui.toast(`${what}失敗：${String(r?.stderr || r?.stdout || '').trim().split(/\r?\n/).pop() || '沒有輸出'}`, { timeoutMs: 10_000 })
+  const failed = (what: string, r: any) => $.ui.toast(`${what}失敗：${errorLine(r)}`, { timeoutMs: 10_000 })
   const run = (argv: string[], env?: Record<string, string>) => $.process.run(argv, { timeoutMs: 30_000, ...(env ? { env } : {}) }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
   if (step === 'spec-ok') {
     // DESK_PROJECT_DIR 留空：card.py 不依 cwd 認專案，否則會疊上真實專案的 card 設定、讀到它的登錄表
@@ -165,7 +166,7 @@ export async function tutorialStart($: any, options: PluginOptions): Promise<str
   if (tutorial) { await update($, selected, () => p.card); await refresh($, options); await openPane($); return TUTORIAL_INTRO }
   if (await $.fs.exists(p.dir).catch(() => false)) return `${p.dir} 已經存在（上一次的教學沒有清掉）。先輸入 /desk tutorial end 清除，再輸入 /desk tutorial 重新開始。`
   const r = await $.process.run(['sh', '-c', setupScript(p.main, p.wt)], { timeoutMs: 60_000 }).catch((e: unknown) => ({ exitCode: 1, stderr: String(e), stdout: '' }))
-  if (r.exitCode !== 0) return `建立教學沙盒失敗：${String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || '沒有輸出'}（需要 git）`
+  if (r.exitCode !== 0) return `建立教學沙盒失敗：${errorLine(r)}（需要 git）`
   const day = new Date(await $.clock.now()).toISOString().slice(0, 10)
   await $.fs.write(p.card, cardText(day))
   await $.fs.write(p.registry, registryText(p.card))
