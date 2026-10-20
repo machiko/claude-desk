@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, NOW, leaves, text } from './fixture'
+import { fixture, PANE, BAND, CARD_A, NOW, leaves, text } from './fixture'
 
 test('the now card shows the case that needs a person; the list holds the rest with digit hotkeys', async ($, on) => {
   const { data } = fixture(on)
@@ -177,5 +177,58 @@ test('the status shows one short line by default and the full clauses when expan
   await ui.press({ key: 'expand' })
   expect(await ui.find({ type: 'Text', text: '第四件事' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '第一件事（細節 abc1234def）' })).toBeDefined()
+  await ui.unmount()
+})
+
+const ASK = (data: any, ask: string) => { data.files[CARD_A] = data.files[CARD_A]!.replace(/- 等你：.*/, `- 等你：${ask}`) }
+/** 畫面上的字（換行處接起來）都找得到。 */
+const shows = async (ui: any, ...parts: string[]) => { const all = leaves(await ui.drawn(), 'Text').map(text).join(''); return parts.every(p => all.includes(p)) }
+const GH_LOGIN = '在對話輸入 `! gh auth login` 登入 GitHub，好了說一聲'
+
+test('an ask without options shows its text and offers no fill', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  ASK(data, GH_LOGIN)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(100))
+  // 「▶ 輪到你」那句就是卡片上的原句，案子仍是等你。
+  expect(await ui.find({ type: 'Text', text: '▶ 輪到你  ' })).toBeDefined()
+  expect(await shows(ui, 'gh auth login', '好了說一聲')).toBe(true)
+  expect(await ui.find({ type: 'Text', text: '  等你' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /按選項字母/ })).toBeUndefined()
+  expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /填入決策/ })).toBeUndefined()
+  const hotkeys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props?.hotkey)
+  expect(hotkeys.includes('f')).toBe(false)
+  expect(data.fills.length).toBe(0)
+  // 摘要列也是那句話。
+  const band = await $.ui.mount(BAND(160))
+  const line = leaves(await band.drawn(), 'Text').map(text).join('')
+  expect(line.startsWith('● Alpha')).toBe(true)
+  expect(line).toContain('輪到你：在對話輸入 `! gh auth login` 登入 GitHub，好了說一聲')
+  expect(line.includes('按選項字母')).toBe(false)
+  await band.unmount()
+  await ui.unmount()
+})
+
+test('a mixed ask lets you fill the decision and only shows the plain line', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  ASK(data, `${GH_LOGIN}；要 push 嗎？A) 要 B) 等`)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(100))
+  expect(await ui.find({ type: 'Text', text: /按選項字母/ })).toBeDefined()
+  // 沒選項那條只顯示文字，沒有選項按鈕。
+  expect(await shows(ui, 'gh auth login', '好了說一聲')).toBe(true)
+  expect((await ui.findAll({ type: 'Button' })).some((b: any) => String(b.key ?? '').startsWith(`case-${CARD_A}-opt0`))).toBe(false)
+  // 有選項那條照舊可以按字母。
+  expect((await ui.find({ key: `case-${CARD_A}-opt1A` }))?.props?.hotkey).toBe('a')
+  expect((await ui.find({ key: `case-${CARD_A}-opt1B` }))?.props?.hotkey).toBe('b')
+  const fill = `case-${CARD_A}-fill`
+  expect((await ui.find({ key: fill }))?.text).toBe('✎ 填入決策')
+  await ui.press({ key: `case-${CARD_A}-opt1A` })
+  expect((await ui.find({ key: fill }))?.text).toBe('✎ 填入決策：A')
+  await ui.press({ key: fill })
+  expect(data.fills[0]).toEqual({ text: '「Alpha」決策：A', mode: 'replace' })
   await ui.unmount()
 })

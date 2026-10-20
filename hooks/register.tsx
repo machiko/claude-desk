@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
-import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
+import { parseRegistry, parseDecisions, decisionAnswer, allPicked, choiceCount, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
 import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, slugOf } from './model'
 import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
@@ -489,6 +489,8 @@ async function reply($: any, options: PluginOptions, c: Case, text?: string) {
 async function fillDecision($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const decisions = parseDecisions(c.ask)
+  // 等你只是一句話（沒有選項）：沒有可填的答案。
+  if (!choiceCount(decisions)) return
   const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
   if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按數字鍵）`); return }
   const answer = decisionAnswer(decisions, picks)
@@ -662,7 +664,7 @@ export const register: Register = (on, options) => {
     const queue = await read($, queueAtom)
     const launching = await read($, launchingAtom)
     const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, tutorial: !!s.tutorial })
-    const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf), columns, () => {})
+    const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf, await read($, selected)), columns, () => {})
     const below = await next(e).catch(() => null)
     const { Box } = ui as any
     return isEmpty(below) ? mine : <Box flexDirection="column">{mine}{below}</Box>

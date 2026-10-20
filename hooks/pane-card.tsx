@@ -1,6 +1,6 @@
 // 現在卡：一列一個元素（content 會捲動，列數要算得出來），操作按鈕另外列成清單交給常駐的 footer 排。
 import type { Case, Verify } from '../types'
-import { allPicked, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
+import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
 import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
@@ -128,17 +128,25 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   const meta = STATE[c.state]
   const spin = c.state === 'running' ? SPINNER[view.tick % SPINNER.length] : meta.glyph
   const age = ago(c.updatedAt, view.now)
-  const decisions = c.state === 'ask' ? parseDecisions(c.ask) : []
+  const parsed = c.state === 'ask' ? parseDecisions(c.ask) : []
+  // 等你沒有任何選項時，「▶ 輪到你」那列已經是原句，不再列一次；有選項時，沒選項那條只顯示文字。
+  const choices = choiceCount(parsed)
+  const decisions = choices ? parsed : []
   const picks = view.picks[picksKey(c)] ?? {}
   const gate = parseGate(c.gate)
   const prefix = `case-${c.statusPath}-`
   const tailText = `  ${meta.label}${age ? ` · ${age}` : ''}`
+  const title = <Text bold color={COLOR.text} wrap="truncate-end">{fit(c.name, Math.max(4, width - 2 - displayWidth(tailText)))}</Text>
+  // 你在清單上選的那件：再點一次案名取消選取，現在卡與摘要列回到工作桌自己挑的那件。
+  const isPicked = view.selected === c.statusPath
   const rows: any[] = []
 
   rows.push(
     <Box flexDirection="row">
       <Text color={meta.color}>{spin} </Text>
-      <Box flexGrow={1} flexShrink={1} overflow="hidden"><Text bold color={COLOR.text} wrap="truncate-end">{fit(c.name, Math.max(4, width - 2 - displayWidth(tailText)))}</Text></Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">{isPicked
+        ? <Button plain key={prefix + 'name'} onPress={() => act.select(c.statusPath)}>{title}</Button>
+        : title}</Box>
       <Text color={meta.color} bold>{`  ${meta.label}`}</Text>
       {age ? <Text color={COLOR.faint}>{` · ${age}`}</Text> : null}
     </Box>,
@@ -173,12 +181,12 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
     rows.push(...wrappedRows(ui, `${decisions.length > 1 ? `${i + 1}. ` : ''}${d.title || '請選擇'}`, width, COLOR.attention, INDENT, true))
     for (const o of d.options) {
       const chosen = picks[String(i)] === o.key
-      const hot = /^[a-z]$/i.test(o.key) && !RESERVED.has(o.key.toLowerCase()) ? o.key.toLowerCase() : undefined
-      const lead = decisions.length === 1 && hot ? ' ' : ` ${o.key}  `
-      const room = Math.max(4, width - INDENT - 1 - (decisions.length === 1 && hot ? 3 : 0) - 1 - displayWidth(lead))
+      const hot = choices === 1 && /^[a-z]$/i.test(o.key) && !RESERVED.has(o.key.toLowerCase()) ? o.key.toLowerCase() : undefined
+      const lead = hot ? ' ' : ` ${o.key}  `
+      const room = Math.max(4, width - INDENT - 1 - (hot ? 3 : 0) - 1 - displayWidth(lead))
       rows.push(
         <Box paddingLeft={INDENT + 1}>
-          <Button plain key={prefix + 'opt' + i + o.key} hotkey={decisions.length === 1 ? hot : undefined} dimColor={!chosen} onPress={() => act.pick(c, i, o.key)}>
+          <Button plain key={prefix + 'opt' + i + o.key} hotkey={hot} dimColor={!chosen} onPress={() => act.pick(c, i, o.key)}>
             <Text color={chosen ? COLOR.attention : COLOR.dim}>{chosen ? '◉' : '○'}</Text>{lead}<Text color={chosen ? COLOR.text : COLOR.dim}>{fit(o.text, room)}</Text>
           </Button>
         </Box>,
@@ -222,7 +230,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   const can = (id: ActionId) => !allowed || allowed.has(id)
   const prefix = `case-${c.statusPath}-`
   const out: Action[] = []
-  if (decisions.length && can('fill')) out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
+  if (choiceCount(decisions) && can('fill')) out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
   if (c.statusPath in view.launching) out.push(button({ key: prefix + 'launching', label: `${SPINNER[view.tick % SPINNER.length]} 派工中`, color: COLOR.running }))
   else for (const k of dispatchable(c).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
     const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
