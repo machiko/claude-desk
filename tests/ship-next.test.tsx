@@ -80,3 +80,16 @@ test('a tag containing an unreviewed, unmerged branch head does not mark the cas
   expect(band).not.toContain('歸檔')
   expect(band).toContain('規格')
 })
+
+test('after the merge the next step stays the ship step while an Agent runs on the case', async ($, on) => {
+  const { data } = fixture(on)
+  only(data, PASSED)
+  data.agents = [{ id: 'bbbbbbbb', kind: 'background', cwd: BETA, state: 'working', status: 'busy', name: 'desk-sync', sessionId: 'bbbbbbbb-0000-4000-8000-000000000000', startedAt: 0 }]
+  data.gh = PR_MERGED
+  data.files[CARD_B] += '\n## 部署步驟（合併後）\n1. php artisan migrate\n'
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  expect(await ui.find({ type: 'Text', text: '全部做完後：打 tag 發版' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /全部做完後：.*Agent/ })).toBeUndefined()
+  await ui.unmount()
+})

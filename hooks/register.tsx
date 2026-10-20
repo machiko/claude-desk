@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
-import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, CARD_CMD } from './card'
+import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
 import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain } from './model'
 import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
@@ -517,7 +517,7 @@ async function confirmShipped($: any, c: Case) {
   const text = await $.fs.read(c.statusPath).catch(() => null)
   const d = new Date(await $.clock.now())
   const two = (n: number) => String(n).padStart(2, '0')
-  const next = typeof text === 'string' ? confirmShip(text, `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, `${two(d.getHours())}:${two(d.getMinutes())}`, c.tag ?? '', isReleaseLine(c) ? '等下一版開發' : `可歸檔：${CARD_CMD} archive ${c.root.split('/').filter(Boolean).pop() ?? ''}`, (await loadSettings($, optionsRef!)).user) : null
+  const next = typeof text === 'string' ? confirmShip(text, `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, `${two(d.getHours())}:${two(d.getMinutes())}`, c.tag ?? '', isReleaseLine(c) ? '等下一版開發' : `${ARCHIVE_WORD}：${CARD_CMD} archive ${c.root.split('/').filter(Boolean).pop() ?? ''}`, (await loadSettings($, optionsRef!)).user) : null
   if (!next) { $.ui.toast(`${c.name}：卡片關卡已不是 release，沒有改動`); void refresh($, optionsRef!); return }
   const ok = await $.fs.write(c.statusPath, next).then(() => true).catch(() => false)
   if (!ok) { $.ui.toast(`${c.name}：寫入卡片失敗`); return }

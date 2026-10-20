@@ -26,6 +26,12 @@ const RUNNING_TEXT: Partial<Record<string, string>> = {
   sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在審查 diff（新對話）', verify: '完成檢查在跑',
 }
 
+/** 上線段該做的事：還沒打 tag 就打 tag；tag 打了、關卡是 release 就部署後按 u。面板合併後的下一步也用它。 */
+export function shipTurn(c: Case): Turn {
+  if (c.tag && parseGate(c.gate)?.kind === 'release') return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線`, key: 'u' }
+  return { who: 'you', text: '打 tag 發版' }
+}
+
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (c.demo) return { who: 'none', text: '示範案子：只能看，照教學那件的指示操作' }
   if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
@@ -65,8 +71,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       if (c.pr.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
       return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
     case 'ship':
-      if (c.tag && gate?.kind === 'release') return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線`, key: 'u' }
-      return { who: 'you', text: '打 tag 發版' }
+      return shipTurn(c)
     default:
       return { who: 'none', text: '沒有待辦' }
   }
