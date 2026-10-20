@@ -13,7 +13,10 @@ function world(data: any, w: World) {
   const calls: string[][] = []
   const changes: string[] = []
   let merged = false
+  /** 本機資料夾目前的 HEAD：快轉到 GitHub 的版本、reset --keep 退回。 */
+  const folder = { head: 'aaaa111' }
   const dir = w.kind === 'folder' ? FOLDER : MARKET_DIR
+  data.deskVersion = w.installed
   data.exec = (e: any) => {
     const argv: string[] = e.argv
     if (argv[0] === 'claude' && argv[1] === 'plugin') {
@@ -45,13 +48,15 @@ function world(data: any, w: World) {
       if (args.startsWith('status --porcelain')) return result(0, w.dirty ? ' M hooks/pane.tsx\n' : '')
       if (args === 'rev-parse --abbrev-ref HEAD') return result(0, `${w.branch ?? 'main'}\n`)
       if (args === 'rev-list --count origin/main..HEAD') return result(0, `${w.ahead ?? 0}\n`)
-      if (args.startsWith('merge')) { changes.push(`git ${args}`); merged = true; return result(0) }
+      if (args === 'rev-parse HEAD') return result(0, `${folder.head}\n`)
+      if (args.startsWith('merge')) { changes.push(`git ${args}`); merged = true; folder.head = 'bbbb222'; return result(0) }
+      if (args.startsWith('reset --keep')) { changes.push(`git ${args}`); merged = false; folder.head = argv[argv.length - 1]!; return result(0) }
       changes.push(`git ${args}`)
       return result(0)
     }
     return null
   }
-  return { calls, changes, w }
+  return { calls, changes, w, folder }
 }
 
 const feedTexts = async ($: any, ui: any) => (await ui.findAll({ type: 'Text' })).map((n: any) => n.text).join('\n')
@@ -134,15 +139,21 @@ test('update leaves everything unchanged and shows the error when GitHub cannot 
   const { data, clock } = fixture(on)
   world(data, { kind: 'github', installed: '0.18.0', latest: '0.18.0' })
   await openDesk($, clock)
-  for (const extra of [{ fetchFails: true }, { updateFails: true }] as Partial<World>[]) {
-    const { changes, w } = world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0', ...extra })
+  const runs: Partial<World>[] = [{ fetchFails: true }, { updateFails: true }, { kind: 'folder', fetchFails: true }, { kind: 'folder', updateFails: true }]
+  for (const extra of runs) {
+    const { changes, w, folder } = world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0', ...extra })
     const out = await $.command.run({ command: 'desk', args: 'update' } as any) as any
     expect(out.text).toMatch(/^desk 無法更新：/)
     expect(out.text).toContain(extra.fetchFails ? 'Could not resolve host: github.com' : 'network down')
     expect(out.text).not.toContain('second line')
     expect(out.text).not.toContain('more detail')
     expect(w.installed).toBe('0.18.0')
-    expect(changes.filter(c => !c.startsWith('marketplace update'))).toEqual([])
+    // 本機資料夾：更新指令失敗時已經快轉過，要退回原本的 HEAD（資料夾維持原狀）。
+    expect(folder.head).toBe('aaaa111')
+    if (extra.kind === 'folder' && extra.updateFails) {
+      expect(changes.filter(c => c.startsWith('git '))).toEqual(['git merge --ff-only --quiet origin/main', 'git reset --keep --quiet aaaa111'])
+      expect(out.text).toContain('本機資料夾已退回原本的版本')
+    } else expect(changes.filter(c => !c.startsWith('marketplace update'))).toEqual([])
     const ui = await $.ui.mount(PANE(100))
     const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /desk 無法更新/.test(n.text) && n.props?.color === 'error')
     expect(feed).toBeDefined()
@@ -234,6 +245,22 @@ test('auto check remembers the last check across restarts', async ($, on) => {
   expect(data.toasts).toEqual([])
   const band = await $.ui.mount(BAND(100))
   expect(await band.find({ type: 'Text', text: '有新版本 0.19.0' })).toBeDefined()
+  await band.unmount()
+})
+
+test('auto check does not show a notice once the loaded desk is already the latest version', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const { calls } = world(data, { kind: 'github', installed: '0.19.0', latest: '0.19.0' })
+  // 0.18.0 時查到 0.19.0 存了起來；之後在工作桌以外升到 0.19.0 再重開（不到 24 小時，不會重查）。
+  data.store.updateCheck = { at: NOW - 60 * 60_000, latest: '0.19.0', current: '0.18.0', notified: '0.19.0' }
+  await openDesk($, clock)
+  expect(calls.filter(a => a[3] === 'fetch').length).toBe(0)
+  const pane = await $.ui.mount(PANE(100))
+  expect(await pane.find({ type: 'Text', text: ' 0.19.0' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /有新版本/ })).toBeUndefined()
+  await pane.unmount()
+  const band = await $.ui.mount(BAND(100))
+  expect(await band.find({ type: 'Text', text: /有新版本/ })).toBeUndefined()
   await band.unmount()
 })
 

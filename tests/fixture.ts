@@ -61,8 +61,10 @@ export function fixture(on: any) {
     repos: { [SESSION_ROOT]: `${SESSION_ROOT}/.git` } as Record<string, string>,
     /** 先問這個：回傳結果就用它（update 測試模擬 claude plugin 與 desk 的 git）；null 交給下面的預設。 */
     exec: null as null | ((e: any) => Promise<any> | any),
+    /** 載入中的 desk 版號（plugin 自己的 plugin.json）。 */
+    deskVersion: '9.9.9',
   }
-  on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: '{"version":"9.9.9"}' } : { deny: 'ENOENT' })
+  on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ version: data.deskVersion }) } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
   on('fs.exists', (_: any, e: any) => ({ value: data.files[e.path] !== undefined }))
   on('fs.write', (_: any, e: any) => { data.files[e.path] = e.text; data.writes.push(e.path); return { value: undefined } })

@@ -88,7 +88,6 @@ export async function refresh($: any, options: PluginOptions) {
     const verifying = await read($, verifyingAtom)
     const settings = tutorial ? null : await loadSettings($, options)
     const cardBase = settings?.cardBase ?? ''
-    const notice = settings && settings.updateCheck !== 'off' ? noticeOf(await loadUpdateCheck($)) : undefined
     const cases: Case[] = await Promise.all(rows.map(async row => {
       const [card, stat] = await Promise.all([
         $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
@@ -121,8 +120,10 @@ export async function refresh($: any, options: PluginOptions) {
     }))
     const usage = await $.session.usage().catch(() => null)
     const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
+    const deskVersions = await versions($, cases)
+    const notice = settings && settings.updateCheck !== 'off' ? noticeOf(await loadUpdateCheck($), deskVersions.desk) : undefined
     // 教學模式：示範案子接在後面當「其他案子」的背景（只能看）；版本、轉圈等仍只看真的案子。
-    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: await versions($, cases), models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
+    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
@@ -173,9 +174,9 @@ async function autoUpdateCheck($: any, now: number) {
 }
 
 async function showNotice($: any, check: UpdateCheck) {
-  const notice = noticeOf(check)
   await update($, snapshot, s => {
     if (!s) return s
+    const notice = noticeOf(check, s.versions?.desk)
     const { update: _old, ...rest } = s
     return notice ? { ...rest, update: notice } : rest
   })

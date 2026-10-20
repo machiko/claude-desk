@@ -38,9 +38,14 @@ export const noticeText = (latest: string) => `有新版本 ${latest}`
 export const updatedText = (from: string, to: string) => `desk 已更新版本：${from} → ${to}，重新啟動 Claude Code 後生效`
 export const upToDateText = (version: string) => `desk 已是最新版本（${version}）`
 
-/** 面板與摘要列要不要顯示「有新版本」：查到的比已安裝的新才顯示。 */
-export function noticeOf(check: UpdateCheck | null): { latest: string } | undefined {
-  return check && isNewer(check.latest, check.current) ? { latest: check.latest } : undefined
+/**
+ * 面板與摘要列要不要顯示「有新版本」：查到的比已安裝的新才顯示。已安裝的取「上次查的時候」與「現在載入中的」較新的那個，
+ * 在工作桌以外更新過（claude plugin update、別的專案 /desk update）再重開，就不會拿過時的版號比。
+ */
+export function noticeOf(check: UpdateCheck | null, loaded = ''): { latest: string } | undefined {
+  if (!check) return undefined
+  const current = isNewer(loaded, check.current) ? loaded : check.current
+  return isNewer(check.latest, current) ? { latest: check.latest } : undefined
 }
 
 export function parseCheck(v: unknown): UpdateCheck | null {
@@ -135,7 +140,8 @@ export async function checkLatest($: any, now: number): Promise<UpdateCheck> {
 
 /**
  * 手動更新（`/desk update`、面板按鈕）：已是最新就不動；GitHub 安裝更新 marketplace 再更新 plugin；
- * 本機資料夾先確認能乾淨快轉（不行就什麼都不動），快轉預設分支後更新 plugin。結果帶回這次查到的版號給自動檢查沿用。
+ * 本機資料夾先確認能乾淨快轉（不行就什麼都不動），記下原本的 HEAD 再快轉預設分支、更新 plugin；
+ * 更新指令失敗就把資料夾退回原本的 HEAD，維持原狀。結果帶回這次查到的版號給自動檢查沿用。
  */
 export async function updateDesk($: any, now: number): Promise<UpdateResult> {
   let inst: Install | null
@@ -145,24 +151,39 @@ export async function updateDesk($: any, now: number): Promise<UpdateResult> {
   try { latest = await latestOf($, inst) } catch (error) { return { tone: 'error', text: `desk 無法更新：${message(error)}` } }
   const from = inst.version
   if (!isNewer(latest.version, from)) return { tone: 'subtle', text: upToDateText(from), check: { at: now, latest: latest.version, current: from } }
-  if (inst.kind === 'folder') {
-    let reasons: string[]
-    try { reasons = await folderBlockers($, inst.dir, latest.ref, latest.branch) } catch (error) { return { tone: 'error', text: `desk 無法更新：${message(error)}` } }
-    if (reasons.length) return { tone: 'warning', text: `desk 無法更新，什麼都沒動：${reasons.join('；')}` }
-    const merged = await git($, inst.dir, ['merge', '--ff-only', '--quiet', latest.ref], UPDATE_TIMEOUT_MS)
-    if (!merged.ok) return { tone: 'error', text: `desk 無法更新：更新本機資料夾失敗（${firstLine(merged.err)}）` }
-    // 讓 Claude Code 重讀資料夾的 marketplace 目錄；資料夾來源不一定需要，失敗不算數，版本以下面重讀的為準。
-    await run($, ['claude', 'plugin', 'marketplace', 'update', inst.marketplace], UPDATE_TIMEOUT_MS)
-  } else {
+  if (inst.kind === 'github') {
     const market = await run($, ['claude', 'plugin', 'marketplace', 'update', inst.marketplace], UPDATE_TIMEOUT_MS)
     if (!market.ok) return { tone: 'error', text: `desk 無法更新：更新指令失敗（${firstLine(market.err)}）` }
+    const done = await installLatest($, inst, latest.version)
+    return 'failed' in done ? { tone: 'error', text: `desk 無法更新：${done.failed}` } : updated(from, done.version, now)
   }
-  const updated = await run($, ['claude', 'plugin', 'update', inst.id, ...(inst.scope ? ['--scope', inst.scope] : [])], UPDATE_TIMEOUT_MS)
-  if (!updated.ok) return { tone: 'error', text: `desk 無法更新：更新指令失敗（${firstLine(updated.err)}）` }
-  const after = await findInstall($).catch(() => null)
-  const to = after?.version ?? latest.version
-  if (!isNewer(to, from)) return { tone: 'error', text: `desk 無法更新：更新指令跑完了，但已安裝的版本仍是 ${from}` }
-  return { tone: 'success', text: updatedText(from, to), check: { at: now, latest: to, current: to } }
+  let reasons: string[]
+  try { reasons = await folderBlockers($, inst.dir, latest.ref, latest.branch) } catch (error) { return { tone: 'error', text: `desk 無法更新：${message(error)}` } }
+  if (reasons.length) return { tone: 'warning', text: `desk 無法更新，什麼都沒動：${reasons.join('；')}` }
+  const before = firstLine((await git($, inst.dir, ['rev-parse', 'HEAD'])).out)
+  if (!before) return { tone: 'error', text: `desk 無法更新：讀不到本機資料夾 ${inst.dir} 目前的版本` }
+  const merged = await git($, inst.dir, ['merge', '--ff-only', '--quiet', latest.ref], UPDATE_TIMEOUT_MS)
+  if (!merged.ok) return { tone: 'error', text: `desk 無法更新：更新本機資料夾失敗（${firstLine(merged.err)}）` }
+  // 讓 Claude Code 重讀資料夾的 marketplace 目錄；資料夾來源不一定需要，失敗不算數，版本以 plugin update 之後重讀的為準。
+  await run($, ['claude', 'plugin', 'marketplace', 'update', inst.marketplace], UPDATE_TIMEOUT_MS)
+  const done = await installLatest($, inst, latest.version)
+  if (!('failed' in done)) return updated(from, done.version, now)
+  const back = await git($, inst.dir, ['reset', '--keep', '--quiet', before], UPDATE_TIMEOUT_MS)
+  await run($, ['claude', 'plugin', 'marketplace', 'update', inst.marketplace], UPDATE_TIMEOUT_MS)
+  return back.ok
+    ? { tone: 'error', text: `desk 無法更新：${done.failed}；本機資料夾已退回原本的版本` }
+    : { tone: 'error', text: `desk 無法更新：${done.failed}；本機資料夾已快轉但退回失敗（${firstLine(back.err)}），請在 ${inst.dir} 執行 git reset --keep ${before}` }
 }
+
+/** `claude plugin update`，再重讀已安裝的版號確認真的變新了（讀不到就當作是 GitHub 上的那版）。 */
+async function installLatest($: any, inst: Install, expected: string): Promise<{ version: string } | { failed: string }> {
+  const r = await run($, ['claude', 'plugin', 'update', inst.id, ...(inst.scope ? ['--scope', inst.scope] : [])], UPDATE_TIMEOUT_MS)
+  if (!r.ok) return { failed: `更新指令失敗（${firstLine(r.err)}）` }
+  const version = (await findInstall($).catch(() => null))?.version ?? expected
+  return isNewer(version, inst.version) ? { version } : { failed: `更新指令跑完了，但已安裝的版本仍是 ${inst.version}` }
+}
+
+const updated = (from: string, to: string, now: number): UpdateResult =>
+  ({ tone: 'success', text: updatedText(from, to), check: { at: now, latest: to, current: to } })
 
 const message = (error: unknown) => firstLine(error instanceof Error ? error.message : String(error))
