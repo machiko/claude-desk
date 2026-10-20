@@ -6,7 +6,7 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
 import { buildCase, caseNamed, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
-import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
+import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
@@ -22,7 +22,7 @@ import type { ChainRun } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialDecision, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, VERIFY_TIMEOUT_MS, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
+import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
 import { noticeOf } from './update'
 import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
@@ -386,18 +386,6 @@ async function executeVerify($: any, c: Case, auto: boolean) {
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
-}
-
-/** 在案子根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
-async function verifyResult($: any, c: Case): Promise<Verify> {
-  const head = (await gitProbe($, c.root)).git?.head
-  try {
-    const r = await $.process.run(['sh', '-c', c.verify], { cwd: c.root, timeoutMs: VERIFY_TIMEOUT_MS })
-    const lines = `${r.stdout}\n${r.stderr}`.split(/[\r\n]+/).map((l: string) => plain(l).trimEnd()).filter(Boolean)
-    return { command: c.verify, at: await $.clock.now(), ok: r.exitCode === 0, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}) }
-  } catch (error) {
-    return { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail: [plain(error instanceof Error ? error.message : String(error))], truncated: false, ...(head ? { head } : {}) }
-  }
 }
 
 /**

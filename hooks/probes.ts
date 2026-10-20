@@ -1,9 +1,9 @@
 // 探測：git、tag、PR（Bitbucket／GitHub）、合併、風險、Agent 記錄、容器、版本、模型。都是讀，不寫卡片；
 // 唯一的寫入是審查存底（archiveReview）。快取放在這個模組裡，重新載入就清空。
 import type { PluginOptions } from 'claude-code'
-import type { Case, PrInfo, Snapshot } from '../types'
+import type { Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
-import { lastMeaningful } from './model'
+import { lastMeaningful, plain } from './model'
 import { REVIEW_FILE, SECURITY_FILE, modelFor, parseSettings } from './dispatch'
 import type { DispatchSettings } from './dispatch'
 import { READ_TOOL, ciOf, mcpJson, pickPr, prQuery, repoOf, statusQuery } from './bitbucket'
@@ -317,4 +317,19 @@ export async function logTail($: any, id: string | undefined, n = 10): Promise<s
   if (!id) return []
   const r = await $.process.run(['claude', 'logs', id], { timeoutMs: LOGS_TIMEOUT_MS }).catch(() => null)
   return r && r.exitCode === 0 ? logLines(String(r.stdout), n) : []
+}
+
+/** 完成檢查最長跑多久。 */
+export const VERIFY_TIMEOUT_MS = 600_000
+
+/** 在案子根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
+export async function verifyResult($: any, c: Case): Promise<Verify> {
+  const head = (await gitProbe($, c.root)).git?.head
+  try {
+    const r = await $.process.run(['sh', '-c', c.verify], { cwd: c.root, timeoutMs: VERIFY_TIMEOUT_MS })
+    const lines = `${r.stdout}\n${r.stderr}`.split(/[\r\n]+/).map((l: string) => plain(l).trimEnd()).filter(Boolean)
+    return { command: c.verify, at: await $.clock.now(), ok: r.exitCode === 0, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}) }
+  } catch (error) {
+    return { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail: [plain(error instanceof Error ? error.message : String(error))], truncated: false, ...(head ? { head } : {}) }
+  }
 }

@@ -29,7 +29,6 @@ export const SUMMARY_KEY = 'summaries'
 export const SUMMARY_KEEP = 60
 export const FEED_MAX = 12
 export const SPIN_MS = 400
-export const VERIFY_TIMEOUT_MS = 600_000
 export const LAUNCH_TIMEOUT_MS = 60_000
 export const MIN_REFRESH_S = 10
 export const MAX_REFRESH_S = 600
