@@ -27,6 +27,15 @@ function judgedAt(data: any, head: string) {
   data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head } }
 }
 
+const checkAt = (head: string): Verify => ({ command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head })
+
+/** 六段現在那一段與它的註記（面板不畫註記，只在狀態列用 stageLabel 顯示）：Beta 審查過關、HEAD 在 c2。 */
+function noteOf(chain: Case['chain'], v?: Verify): string {
+  const card = `<!-- DESK -->\n- 狀態：ok\n- 檢查：\`npm test\`\n- 等你：無\n- 下一步：開 PR\n${PASSED}\n<!-- /DESK -->`
+  const c: Case = { ...buildCase({ name: 'Beta', statusPath: CARD_B }, card, 1, {}, undefined), git: { branch: 'feature/b', head: 'c2' }, chain }
+  return stageLabel(pipeline(c, v))
+}
+
 async function mount($: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   return $.ui.mount(PANE(100))
@@ -73,11 +82,13 @@ test('a new commit after review sends the case back to check, while old branch-n
 
   expect(moved).toContain(flat('▶ 輪到你  審查後有新 commit：按 v 重新執行完成檢查'))
   expect(moved).toContain(flat('實作● 檢查◆'))
+  expect(noteOf({ round: 0, passed: true, stale: true }, checkAt('c1'))).toBe('檢查・審查後有新 commit，需重新檢查')
   expect(moved).not.toContain(flat('push 分支並開 PR'))
   expect(same).toContain(flat('▶ 輪到你  push 分支並開 PR'))
   expect(same).not.toContain(flat('審查後有新 commit'))
   expect(legacy).toContain(flat('▶ 輪到你  push 分支並開 PR'))
   expect(legacy).not.toContain(flat('審查後有新 commit'))
+  expect(noteOf({ round: 0, passed: true }, checkAt('feature/b'))).toBe('合併・可開 PR')
   expect(checkStands({ verify: 'npm test', git }, oldCheck)).toBe(true)
   expect(checkStands({ verify: 'npm test', git }, { ...oldCheck, head: 'c1' })).toBeNull()
   await ui.unmount()
@@ -124,21 +135,14 @@ test('a verdict the agent wrote itself counts but is marked self-review with w o
   const independent = await refreshed($, ui)
   const independentW = await ui.find({ key: `${PREFIX}review` })
 
-  // 六段註記：直接看合併段的註記（面板只在狀態列顯示它）
-  const merged = (chain: Case['chain']) => {
-    const c: Case = { ...buildCase({ name: 'Beta', statusPath: CARD_B }, `<!-- DESK -->\n- 狀態：ok\n- 檢查：\`npm test\`\n- 等你：無\n- 下一步：開 PR\n${PASSED}\n<!-- /DESK -->`, 1, {}, undefined), git: { branch: 'feature/b', head: 'c2' }, chain }
-    const v: Verify = { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' }
-    return stageLabel(pipeline(c, v))
-  }
-
   expect(self).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
   expect(self).toContain(flat('push 分支並開 PR（審查是自審，可按 w 派獨立審查）'))
   expect(self).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
-  expect(merged({ round: 0, selfReview: true })).toBe('合併・可開 PR（自審）')
+  expect(noteOf({ round: 0, selfReview: true }, checkAt('c2'))).toBe('合併・可開 PR（自審）')
   expect(selfW?.props?.hotkey).toBe('w')
   expect(independent).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'))
   expect(independent).not.toContain(flat('自審'))
-  expect(merged({ round: 0, passed: true })).toBe('合併・可開 PR')
+  expect(noteOf({ round: 0, passed: true }, checkAt('c2'))).toBe('合併・可開 PR')
   expect(independentW).toBeUndefined()
   await ui.unmount()
 })
@@ -155,6 +159,7 @@ test('a stopped chain shows its reason and the key to press instead of the next 
 
   expect(shown).toContain(flat(`▶ 輪到你  接力已暫停（${UNAUTHORIZED}）`))
   expect(shown).toContain(flat('實作● 檢查✕ 審查'))
+  expect(noteOf({ round: 0, stopped: UNAUTHORIZED })).toBe(`檢查・${UNAUTHORIZED}`)
   expect(shown).not.toContain(flat('push 分支並開 PR'))
   expect(shown).not.toContain(flat('✓ 完成'))
   expect(leaves(verify, 'Text').some((t: any) => t.props?.bold)).toBe(true)
