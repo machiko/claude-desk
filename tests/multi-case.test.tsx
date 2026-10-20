@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, BAND, CARD_A, CARD_B, REGISTRY, result } from './fixture'
+import { fixture, PANE, BAND, CARD_A, CARD_B, CARD_C, REGISTRY, result } from './fixture'
 import { pipeline, stageLabel } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { turnOf } from '../hooks/turn'
@@ -7,6 +7,7 @@ import type { Case, Verify } from '../types'
 
 const ALPHA = '/home/u/wt/alpha'
 const BETA = '/home/u/wt/beta'
+const GAMMA = '/home/u/wt/gamma'
 const ROOT: Record<string, string> = { [CARD_A]: ALPHA, [CARD_B]: BETA }
 const NAME: Record<string, string> = { [CARD_A]: 'Alpha', [CARD_B]: 'Beta' }
 const GLYPHS = /[●◉◆✕○·]/g
@@ -348,4 +349,53 @@ test('an agent desk cannot match to a dispatch counts as writing code', async ($
   expect(launching.card).toBe('規格● 實作● 檢查● 審查◉ 合併○ 上線○')
   expect(launching.row).toBe(glyphsOf(launching.card))
   await ui.unmount()
+})
+
+test('a queued check that can no longer run lets the one behind it go next', async ($, on) => {
+  const { data, clock } = fixture(on)
+  twoCases(data, clock)
+  // 第三件 Gamma：檢查已授權，手動按檢查時排在 Beta 後面
+  data.files[REGISTRY] += `\n| Gamma | \`${CARD_C}\` |`
+  data.files[CARD_C] = data.files[CARD_C]!.replace('- 驗證：無', '- 驗證：`node test.mjs`')
+  data.git[GAMMA] = { branch: 'feature/gamma', head: 'c1' }
+  data.store.trustedVerify = { ...(data.store.trustedVerify as object), [CARD_C]: 'node test.mjs' }
+  const { stats, pass, drain } = heldChecks(data)
+  await goBoth($, clock)
+  await finishBoth($, data, clock)
+  await $.command.run({ command: 'desk', args: 'verify Gamma' } as any)
+  await clock.settle()
+  // 排隊期間 Beta 卡片的檢查指令改了、還沒授權：輪到它時接力不會自動跑
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 驗證：`node test.mjs`', '- 驗證：`node other.mjs`')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  pass(ALPHA)
+  await clock.settle()
+
+  expect(stats.cwds).toEqual([ALPHA, GAMMA])
+  expect(stats.max).toBe(1)
+  await drain(clock)
+})
+
+test('a check whose error report also fails still lets the queued case run', async ($, on) => {
+  const { data, clock } = fixture(on)
+  twoCases(data, clock)
+  const { stats, pass, drain } = heldChecks(data)
+  // 寫檢查結果被拒，接著清「測試執行中」也被拒：記錄出錯的那段自己也出錯
+  let refuse: string[] = []
+  on('state.set', (next: any, e: any) => {
+    if (refuse[0] !== e?.key) return next(e)
+    refuse = refuse.slice(1)
+    return { deny: '狀態寫不進去' }
+  })
+  await goBoth($, clock)
+  await finishBoth($, data, clock)
+  refuse = ['verifies', 'verifying']
+  pass(ALPHA)
+  await clock.settle()
+  await step(clock)
+
+  expect(refuse).toEqual([])
+  expect(stats.cwds).toEqual([ALPHA, BETA])
+  expect(data.toasts.some(t => t.startsWith('Alpha：檢查中斷'))).toBe(true)
+  await drain(clock)
 })
