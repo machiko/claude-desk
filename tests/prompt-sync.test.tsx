@@ -422,6 +422,21 @@ test('after a compaction the selected card is attached in full again', async ($,
   await ui.unmount()
 })
 
+/** 斜線指令送出時照樣附卡，但不算附過（有些指令不進模型）：下一則一般提示仍附全文。 */
+test('a slash command does not use up the full card for the next prompt', async ($, on) => {
+  const { data } = fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  await $.prompt.submit({ text: '/desk:card spec beta', command: { name: 'desk:card', args: 'spec beta' } } as any)
+  expect((data.submitted.at(-1).context ?? []).join('')).toContain('- 下一步：依審核修正')
+  await $.prompt.submit({ text: '這件下一步是什麼？' } as any)
+  const context = (data.submitted.at(-1).context ?? []).join('')
+  expect(context).toContain('- 下一步：依審核修正')
+  expect(context).not.toContain('沒有變動')
+  await ui.unmount()
+})
+
 /** /desk off 之後，對話剛改的卡片不會再把面板與狀態列叫回來。 */
 test('turning the desk off cancels a pending reread', async ($, on) => {
   const { data, clock } = fixture(on)

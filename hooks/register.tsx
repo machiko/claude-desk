@@ -798,7 +798,8 @@ export const register: Register = (on, options) => {
     if (decided) await update($, sentAtom, v => ({ ...v, [decided.statusPath]: { ask: decided.ask, ...(e.turnId ? { during: e.turnId } : {}) } }))
     const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })
     if (result.drop) { if (decided) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== decided.statusPath))) }
-    else if (c) lastAttached = key
+    // 斜線指令（skill 等）附了卡也不算附過：有些指令不進模型，下一則照樣附全文，最多重複一次。
+    else if (c && !e.command) lastAttached = key
     return result
   })
 
@@ -850,7 +851,7 @@ export const register: Register = (on, options) => {
     if (active && !e.agentId) touchSoon($, options)
     return result
   })
-  // ! 指令的那一列走哪個 door 文件沒寫：記成一般提示列時，看內容認出來。
+  // 實機（v2.1.302）的 ! 指令兩列都走 door command（上面那個就會重讀）；萬一改記成一般提示列，看內容認出來。
   on('session.append', { door: 'prompt' }, async ($, e, next) => {
     const result = await next(e)
     try { if (active && !e.agentId && BANG_ROW.test(rowText(e.message))) touchSoon($, options) } catch { /* 只是提早重讀 */ }
