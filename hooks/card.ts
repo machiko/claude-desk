@@ -98,6 +98,9 @@ export function parseDecisions(ask: string): Decision[] {
   })
 }
 
+/** 有選項可選的決策數；沒有選項的那句話只顯示，不能選、也不填入。 */
+export const choiceCount = (decisions: Decision[]) => decisions.filter(d => d.options.length > 0).length
+
 /** 數字鍵依序作答：第一個還沒選的決策選第 n 個選項；null 表示沒有可選。 */
 export function pickByDigit(decisions: Decision[], picks: Record<string, string>, digit: number): Record<string, string> | null {
   const index = decisions.findIndex((d, i) => d.options.length > 0 && !picks[String(i)])
@@ -114,12 +117,12 @@ export function unpick(decisions: Decision[], picks: Record<string, string>): Re
   return Object.fromEntries(Object.entries(picks).filter(([k]) => k !== last))
 }
 
-/** 已選的答案，`1A 2B`；只有一個決策時只寫 `A`。 */
+/** 已選的答案，`1A 2B`；只有一個可選的決策時只寫 `A`。 */
 export function decisionAnswer(decisions: Decision[], picks: Record<string, string>): string {
   const parts = decisions.map((d, i) => {
     const key = picks[String(i)]
     if (!key) return ''
-    return decisions.length > 1 ? `${i + 1}${/^\d/.test(key) ? '-' : ''}${key}` : key
+    return choiceCount(decisions) > 1 ? `${i + 1}${/^\d/.test(key) ? '-' : ''}${key}` : key
   }).filter(Boolean)
   return parts.join(' ')
 }

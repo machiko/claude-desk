@@ -662,7 +662,7 @@ export const register: Register = (on, options) => {
     const queue = await read($, queueAtom)
     const launching = await read($, launchingAtom)
     const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, tutorial: !!s.tutorial })
-    const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf), columns, () => {})
+    const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf, await read($, selected)), columns, () => {})
     const below = await next(e).catch(() => null)
     const { Box } = ui as any
     return isEmpty(below) ? mine : <Box flexDirection="column">{mine}{below}</Box>

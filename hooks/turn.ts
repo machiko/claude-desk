@@ -2,7 +2,7 @@
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case } from '../types'
 import { slugOf } from './model'
-import { CARD_CMD, parseGate, saysNone } from './card'
+import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, isReleaseLine, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 
@@ -20,6 +20,7 @@ export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boole
 export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'tutorial'
 
 const isRunning = (c: Case) => c.state === 'running'
+const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
 /** Agent 在跑時，依最後一次派的是什麼說它在做什麼。 */
 const RUNNING_TEXT: Partial<Record<string, string>> = {
   continue: 'Agent 在寫程式（l 看輸出）', reply: 'Agent 在寫程式（l 看輸出）', fix: 'Agent 在修正（l 看輸出）',
@@ -39,7 +40,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
   const lesson = ctx.tutorial && !isRunning(c) && !ctx.verifying && !ctx.queued ? tutorialTurn(c) : null
   if (lesson) return { who: 'you', ...lesson }
-  if (c.state === 'ask') return { who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' }
+  // 等你沒有選項（例如請你登入）：直接說那句話，沒有字母可按、也沒有東西可填。
+  if (c.state === 'ask') return hasChoice(c) ? { who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' } : { who: 'you', text: c.ask }
   if (c.state === 'reply') return { who: 'you', text: '按 y 回覆 Agent 的提問', key: 'y' }
   // 處理中：標籤已經說了「不用動手」，這句只講誰在做什麼。
   if (ctx.verifying) return { who: 'ai', text: '完成檢查在跑' }
@@ -89,7 +91,7 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.agent?.id) out.add('logs')
   if (c.reviewTop?.length) out.add('review-file')
   if (c.pr?.url) out.add('pr')
-  if (c.state === 'ask') out.add('fill')
+  if (c.state === 'ask' && hasChoice(c)) out.add('fill')
   if (c.state === 'reply') out.add('reply')
   if (isRunning(c)) { out.add('stop'); return out }
   if (c.state !== 'done') out.add('sync')

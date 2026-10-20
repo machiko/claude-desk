@@ -1,4 +1,4 @@
-// 摘要列：輸入框上方一行。左邊是「進行中的那件」（沒有就是現在該看的那件）與它的六段，右邊是在等你的那件。
+// 摘要列：輸入框上方一行。左邊是面板上選的那件（沒選就是進行中的那件，再沒有就是現在該看的那件）與它的六段，右邊是在等你的那件。
 // 版面先算好（純函式，可測），再畫；放不下時依序：段名縮成字形 → 拿掉備註 → 案名截斷 → 拿掉右邊。
 import type { Case, Snapshot, StageStatus } from '../types'
 import { displayWidth, fit, focusCase, liveCases, summary } from './model'
@@ -18,14 +18,16 @@ export type BandLayout = { lead: BandPart[]; wait: BandPart | null; notice: Band
 const NARROW = 48
 const width = (parts: BandPart[]) => parts.reduce((n, p) => n + displayWidth(p.text), 0)
 
-function leadCase(s: Snapshot): Case | null {
+function leadCase(s: Snapshot, selected: string | null): Case | null {
+  const picked = selected ? s.cases.find(c => c.statusPath === selected) : undefined
+  if (picked) return picked
   const running = liveCases(s.cases).filter(c => c.state === 'running').sort((a, b) => (b.agent?.startedAt ?? 0) - (a.agent?.startedAt ?? 0))
   return running[0] ?? focusCase(s.cases) ?? (s.tutorial ? s.cases[0] ?? null : null)
 }
 
 const NEEDS_YOU = new Set(['ask', 'reply', 'gate', 'failed'])
 
-export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxOf: (c: Case) => TurnCtx = () => ({})): BandLayout {
+export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxOf: (c: Case) => TurnCtx = () => ({}), selected: string | null = null): BandLayout {
   const narrow = columns < NARROW
   const button = narrow ? '⌗' : paneOpen ? `⌗ ${WORD.brand} ▾` : `⌗ ${WORD.brand} ▸`
   const buttonWidth = displayWidth(button) + 1
@@ -34,8 +36,8 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   // 有新版本的提示放在面板按鈕左邊；放了之後左邊還留得下 24 格才放，其餘照原本由寬到窄擠。
   const notice = update && columns - buttonWidth - 1 - updateWidth >= 24 ? update : null
   const room = columns - buttonWidth - 1 - (notice ? updateWidth : 0)
-  const lead = leadCase(s)
-  const runningMore = s.cases.filter(c => c.state === 'running').length - 1
+  const lead = leadCase(s, selected)
+  const runningMore = s.cases.filter(c => c.state === 'running' && c !== lead).length
   const waiting = liveCases(s.cases).filter(c => NEEDS_YOU.has(c.state) && c !== lead)
   const demo: BandPart[] = s.demo ? [{ text: '示範  ', color: COLOR.faint }] : s.tutorial ? [{ text: '教學  ', color: COLOR.faint }] : []
 

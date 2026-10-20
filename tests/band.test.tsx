@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, BAND, leaves, text } from './fixture'
+import { fixture, BAND, PANE, CARD_B, leaves, text } from './fixture'
 import { displayWidth } from '../hooks/model'
 import { layoutBand } from '../hooks/band'
 import { demoSnapshot } from '../hooks/model'
@@ -65,5 +65,31 @@ test('plain /desk opens or focuses the panel (never closes it, never the bar); /
   expect(third.text).toBe('工作桌已收起。')
   const band = await $.ui.mount(BAND(80))
   expect(await band.find({ key: 'pane' })).toBeDefined()
+  await band.unmount()
+})
+
+test('the band follows the case selected in the pane and falls back when the selection is cleared', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const band = await $.ui.mount(BAND(160))
+  const pane = await $.ui.mount(PANE(100))
+  const line = async () => leaves(await band.drawn(), 'Text').map(text).join('')
+  // 預設：最需要你的那件（Alpha 等你）。
+  expect((await line()).startsWith('● Alpha')).toBe(true)
+  // 點 Beta：摘要列馬上換成 Beta 的名稱、六段與輪到你那句；Alpha 在等你，右側照舊提示。
+  await pane.press({ key: `row-${CARD_B}` })
+  const picked = await line()
+  expect(picked.includes('Alpha 等你')).toBe(true)
+  const lead = picked.slice(0, picked.indexOf('● Alpha'))
+  expect(lead).toContain('Beta')
+  expect(lead).toContain('規格●')
+  expect(lead).toContain('輪到你：按 g 派 Agent：依審核修正')
+  // 再點 Beta 一次取消選取：回到 Alpha。
+  await pane.press({ key: `case-${CARD_B}-name` })
+  const back = await line()
+  expect(back.startsWith('● Alpha')).toBe(true)
+  expect(back.includes('Beta')).toBe(false)
+  await pane.unmount()
   await band.unmount()
 })
