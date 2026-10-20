@@ -173,9 +173,16 @@ export function stageLabel(p: Pipeline): string {
 
 export type { PrInfo }
 
-/** 六段都過了（每段 done 或不適用）、沒有人要做的事：案子算「完成」。等你、執行中、卡住等狀態不受影響。 */
+/** 合併段過了（PR 已合併、git 看到已併進基準分支，或已打 tag）：之後只剩上線與歸檔。發版線沒有合併段，不算。 */
+export const isMerged = (c: Pick<Case, 'pipeline'>) => !!c.pipeline?.stages.some(s => s.id === 'merge' && s.status === 'done')
+
+/**
+ * 六段都過了（每段 done 或不適用）、沒有人要做的事：案子算「完成」。等你、執行中等狀態不受影響。
+ * 合併之後接力停住或完成檢查沒過，分支已經進了基準分支，不再算未通過：照上線段走。
+ */
 export function finalState(c: Pick<Case, 'state' | 'pipeline'>): Case['state'] {
   const p = c.pipeline
-  if (!p || p.current !== null || (c.state !== 'ready' && c.state !== 'idle')) return c.state
-  return p.stages.every(s => s.status === 'done' || s.status === 'na') ? 'done' : c.state
+  const state = c.state === 'failed' && isMerged(c) ? 'ready' : c.state
+  if (!p || p.current !== null || (state !== 'ready' && state !== 'idle')) return state
+  return p.stages.every(s => s.status === 'done' || s.status === 'na') ? 'done' : state
 }

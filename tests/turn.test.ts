@@ -35,8 +35,8 @@ test('only the actions that make sense now are listed: passed stages drop their 
   expect(ids(mk({}))).toEqual(['continue', 'open', 'sync'])
   // 審查過了（有結論、零擋）、還沒有 PR：沒有 v、沒有 w，多了開 PR（只預填輸入框）
   expect(ids(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過' }), {})).toEqual(['open', 'open-pr', 'sync'])
-  // 上線段：上線確認
-  expect(ids(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual(['open', 'ship', 'sync'])
+  // 上線段：上線確認；合併過了不再同步
+  expect(ids(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual(['open', 'ship'])
   // 完成：開卡片與歸檔
   expect(ids(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual(['archive', 'open'])
   // 執行中：停止與輸出，不能再派
