@@ -4,7 +4,7 @@ import { allPicked, decisionAnswer, parseDecisions, parseGate, splitClauses, ARC
 import { ago, displayWidth, fit, hhmm, pad, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
-import { stageParts } from './pipeline'
+import { awaitsSpecOk, stageParts } from './pipeline'
 import { gitLine, isArmed } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
@@ -240,6 +240,10 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)
     out.push(button({ key: prefix + 'ship', hotkey: 'u', isBoxed: armed, isLead: armed || leadKey === 'u', label: armed ? '再按 u 確認已上線（清除 release 關卡）' : '✓ 上線確認', onPress: () => act.ship(c) }))
+  }
+  if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {
+    const armed = isArmed(view.armed, `${c.statusPath}\nspec-ok`, view.now)
+    out.push(button({ key: prefix + 'spec-ok', hotkey: 't', isBoxed: armed || leadKey === 't', isLead: armed || leadKey === 't', isDim: !armed && leadKey !== 't', label: armed ? '再按 t 確認規格' : '✓ 確認規格', onPress: () => act.specOk(c) }))
   }
   const lesson = view.s.tutorial ? tutorialStep(c) : null
   if (lesson && can('tutorial')) out.push(button({ key: prefix + 'tutorial', hotkey: 't', isLead: leadKey === 't', isBoxed: leadKey === 't', isDim: leadKey !== 't', label: TUTORIAL_STEP_LABEL[lesson], onPress: () => act.tutorial(c) }))

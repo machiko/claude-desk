@@ -18,7 +18,7 @@ const ids = (c: Case, ctx = {}) => [...stageActions(c, ctx)].sort()
 
 test('each stage says whose turn it is and what to press, in plain words', () => {
   expect(turnOf(mk({ check: '無' }))).toEqual({ who: 'you', text: '輸入 /desk:card spec age-group 寫規格與完成檢查' })
-  expect(turnOf(mk({ gate: 'spec：待確認規格' })).text).toBe('看過規格後輸入 /desk:card spec age-group ok')
+  expect(turnOf(mk({ gate: 'spec：待確認規格' }))).toEqual({ who: 'you', text: '看過規格（o 開卡片）後按 t 確認（或輸入 /desk:card spec age-group ok）', key: 't' })
   expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派 Agent：依規格實作', key: 'g' })
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
   expect(turnOf(mk({}), { verifying: true }).who).toBe('ai')

@@ -14,7 +14,7 @@ import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchable, launchName, modelFor, normalizeRoot } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
-import { checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
+import { awaitsSpecOk, checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
 import { nextStep } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -526,6 +526,27 @@ async function confirmShipped($: any, c: Case) {
   void refresh($, optionsRef!)
 }
 
+/**
+ * 真實模式的確認規格：執行 /desk:card spec <slug> ok 用的同一支腳本（在案子的 worktree 裡跑，認得出同一個專案），
+ * 卡片由腳本改；只確認、不派工。腳本失敗（卡片已被改過、找不到卡）就提示最後一行錯誤，關卡留著。
+ */
+async function confirmSpec($: any, options: PluginOptions, c: Case) {
+  const slug = c.root.split('/').filter(Boolean).pop() ?? ''
+  const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
+  const r = await $.process.run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', slug], { cwd: c.root, timeoutMs: 30_000, env })
+    .catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
+  const now = await $.clock.now()
+  if (r.exitCode !== 0) {
+    const why = String(r.stderr || r.stdout || '').trim().split(/\r?\n/).pop() || '沒有輸出'
+    $.ui.toast(`${c.name}：確認規格失敗：${why}`, { timeoutMs: 10_000 })
+    await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error' }])
+    void refresh($, options)
+    return
+  }
+  await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success' }])
+  void refresh($, options)
+}
+
 /** 停止 desk 自己派出去、正在跑的那個背景 agent（名字要對得上這件案子最後一次派工），接力一併暫停。 */
 async function stopAgent($: any, c: Case) {
   const last = (await loadJobs($))[normalizeRoot(c.root)]?.last
@@ -676,6 +697,7 @@ export const register: Register = (on, options) => {
       })(),
       stop: c => void (async () => { if (await confirmed($, `${c.statusPath}\nstop`)) await stopAgent($, c) })(),
       ship: c => void (async () => { if (await confirmed($, `${c.statusPath}\nship`)) await confirmShipped($, c) })(),
+      specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && await confirmed($, `${c.statusPath}\nspec-ok`)) await confirmSpec($, options, c) })(),
       tutorial: c => void tutorialAct($, options, c),
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),

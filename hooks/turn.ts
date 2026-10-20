@@ -2,7 +2,7 @@
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case } from '../types'
 import { CARD_CMD, parseGate, saysNone } from './card'
-import { isReleaseLine, standingVerdict } from './pipeline'
+import { awaitsSpecOk, isReleaseLine, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 
 export type Turn = {
@@ -16,7 +16,7 @@ export type Turn = {
 /** 畫面上才知道的事：完成檢查執行中、排隊中、派工中，以及現在是不是教學模式。 */
 export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean }
 
-export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'tutorial'
+export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'tutorial'
 
 const slugOf = (c: Case) => c.root.split('/').filter(Boolean).pop() ?? ''
 const isRunning = (c: Case) => c.state === 'running'
@@ -54,7 +54,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (gate?.kind === 'unknown') return { who: 'you', text: `關卡「${gate.detail}」：開卡片（o）處理`, key: 'o' }
   switch (c.pipeline?.current) {
     case 'spec':
-      if (gate?.kind === 'spec') return { who: 'you', text: `看過規格後輸入 ${CARD_CMD} spec ${slugOf(c)} ok` }
+      if (gate?.kind === 'spec' && c.agent) return { who: 'ai', text: RUNNING_TEXT[c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue! }
+      if (gate?.kind === 'spec') return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
       return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫規格與完成檢查` }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
@@ -97,5 +98,6 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (current === 'review' && !standingVerdict(c)) out.add('review')
   if (current === 'ship') out.add('ship')
   if (ctx.tutorial && tutorialStep(c)) out.add('tutorial')
+  else if (!ctx.tutorial && awaitsSpecOk(c)) out.add('spec-ok')
   return out
 }
