@@ -27,6 +27,9 @@ const RUNNING_TEXT: Partial<Record<string, string>> = {
   sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在審查 diff（新對話）', verify: '完成檢查在跑',
 }
 
+/** 接力停住、檢查段因此標 ✕：說停住的原因，按 v 重跑檢查。 */
+const heldAtCheck = (c: Case) => !!c.chain?.stopped && c.pipeline?.current === 'check' && c.pipeline.stages.some(s => s.id === 'check' && s.status === 'fail')
+
 /** 上線段該做的事：還沒打 tag 就打 tag；tag 打了、關卡是 release 就部署後按 u。面板合併後的下一步也用它。 */
 export function shipTurn(c: Case): Turn {
   if (c.tag && parseGate(c.gate)?.kind === 'release') return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線`, key: 'u' }
@@ -63,6 +66,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
+      if (heldAtCheck(c)) return { who: 'you', text: `接力已暫停（${c.chain!.stopped}）`, key: 'v' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 v 重新執行完成檢查' : '按 v 執行完成檢查', key: 'v' }
     case 'review':
       if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }

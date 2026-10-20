@@ -42,10 +42,18 @@ export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate
 /** 可以從面板歸檔：六段全過（finalState 已排除 Agent 在跑、等你），不是發版線，也不是示範案子。教學模式由呼叫端另外排除。 */
 export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo && c.state === 'done' && !isReleaseLine(c)
 
+/**
+ * 記下的 HEAD 之後分支有沒有新 commit。0.21.1 以前存的是分支名稱（gitProbe 讀錯），那種紀錄沒有 commit 可比，當作沒有。
+ */
+export function movedSince(recorded: string | undefined, git: { branch: string; head: string } | undefined): boolean {
+  if (!recorded || !git?.head) return false
+  return recorded !== git.head && recorded !== git.branch
+}
+
 /** 這次檢查還算數：跑的是卡片現在的指令，而且跑完後分支沒有新 commit。 */
 export function checkStands(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefined): boolean | null {
   if (!v || v.command !== c.verify) return null
-  if (c.git?.head && v.head && v.head !== c.git.head) return null
+  if (movedSince(v.head, c.git)) return null
   return v.ok
 }
 
@@ -77,6 +85,9 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
   else if (!saysNone(c.next) || c.agent || c.verify) reached = c.verify && saysNone(c.ask) && gate?.kind !== 'spec' ? INDEX.spec : -1
   // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
   if (reached === INDEX.review && c.mergedInto) reached = INDEX.merge
+  // 接力停住、檢查又沒通過過：卡片上的審查結論（例如 Agent 自己寫的）不能讓它跳過檢查段。已合併、已打 tag 的不管。
+  const held = !!c.chain?.stopped && check !== true && !release && !tagged && c.pr?.state !== 'MERGED' && !c.mergedInto
+  if (held && reached > INDEX.build) reached = INDEX.build
   for (let i = 0; i <= reached; i++) status[STAGES[i]!.id] = 'done'
 
   const current = STAGES[reached + 1]?.id ?? null
@@ -99,6 +110,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
       case 'check':
         if (verifying || runningKind === 'verify') set('active', '測試執行中')
         else if (check === false) set('fail', c.chain?.stopped ?? '檢查未通過')
+        else if (held) set('fail', c.chain!.stopped!)
         else set('wait', stale ? '審查後有新 commit，需重新檢查' : '尚未執行檢查')
         break
       case 'review':

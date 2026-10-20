@@ -54,7 +54,7 @@ export type Case = {
   /** 狀態的一句摘要（haiku 濃縮，或規則精簡）。 */
   statusShort?: string
   /** git status：領先、落後、未提交、未追蹤。 */
-  gitState?: { ahead: number; behind: number; changed: number; untracked: number }
+  gitState?: { ahead: number; behind: number; changed: number; untracked: number; upstream?: boolean }
   /** 卡片「## 部署…」段落的步驟。 */
   deploySteps?: string[]
   /** 審查檔的 CRITICAL、HIGH 前三條。 */

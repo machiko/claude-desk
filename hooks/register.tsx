@@ -14,7 +14,7 @@ import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
-import { awaitsSpecOk, canArchive, checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
+import { awaitsSpecOk, canArchive, checkStands, finalState, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
 import { nextStep } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -102,7 +102,7 @@ export async function refresh($: any, options: PluginOptions) {
       const probe = await gitProbe($, base.root)
       const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr) : undefined
       const run = chains[normalizeRoot(base.root)]
-      const stale = !!run?.judgedHead && !!probe.git?.head && probe.git.head !== run.judgedHead
+      const stale = movedSince(run?.judgedHead, probe.git)
       const chain = run ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       const steps = deploySteps(card)
@@ -437,7 +437,9 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   if (kind === 'review') {
     const run = (await loadChains($))[rootKey]
     const round = opts.auto ? run?.round ?? 0 : 0
-    const base = opts.security ? run?.securityHead : run?.reviewHead
+    // 舊紀錄存的是分支名稱，拿來 diff 會是空的：當作沒有基準，整條分支重審。
+    const recorded = opts.security ? run?.securityHead : run?.reviewHead
+    const base = recorded && recorded !== c.git?.branch ? recorded : undefined
     const paths = await deskPaths($, options)
     const pitfalls = paths.pitfalls
     const template = settings.review.template || `${$.plugin.root}/templates/review.md`
