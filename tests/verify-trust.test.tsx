@@ -262,3 +262,70 @@ test('pressing v without a paused chain only runs the check', async ($, on) => {
   expect(data.store.chains).toEqual(stopped)
   expect(data.asks.length).toBe(0)
 })
+
+const HELD = '容器 app 未啟動，請先在主工作區執行 docker compose up -d app'
+const handledJob = { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'continue', startedAt: 0, fresh: false, owner: 'fixture-session', handled: true } }
+
+/** 審查 MEDIUM：停在檢查段時派了同步、又按 k 停掉：暫停原因換成手動停止，按 v 只跑檢查，不說「流程繼續」。 */
+test('stopping an agent on a chain paused at the check drops the pause so v only runs the check', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: HELD, heldAtCheck: true } }
+  data.store.jobs = { [ROOT]: handledJob }
+  const realRun = data.run
+  data.run = async (e: any) => e.argv[0] === 'claude' && e.argv[1] === 'stop' ? result(0, '') : realRun(e)
+  const h = helpers($, data, clock)
+  const chain = () => (data.store.chains as any)[ROOT]
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'sync Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(1)
+
+  let ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `${PREFIX}stop` })
+  await ui.press({ key: `${PREFIX}stop` })
+  await clock.settle()
+  await ui.unmount()
+  expect(chain().stopped).toBe('你手動停止了 Agent')
+  expect(chain().heldAtCheck).toBeUndefined()
+
+  data.agents = []
+  await h.refresh()
+  ui = await $.ui.mount(PANE(160))
+  const before = flat(text(await ui.drawn()))
+  await ui.unmount()
+  expect(before).not.toContain(flat('排除後按 v 重跑檢查，流程接著走'))
+
+  await h.verify()
+  expect(sh(data)).toBe(1)
+  expect(data.launches.length).toBe(1)
+  expect(chain().stopped).toBe('你手動停止了 Agent')
+  ui = await $.ui.mount(PANE(160))
+  const after = flat(text(await ui.drawn()))
+  await ui.unmount()
+  expect(after).not.toContain(flat('流程繼續'))
+})
+
+/** 審查 MEDIUM：別的對話開的流程停在檢查段：這個對話按 v 接不下去，「▶ 輪到你」說要去哪裡接，鍵是 g。 */
+test('a chain paused at the check by another conversation says where it resumes instead of promising v', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs', '/elsewhere': 'x' }
+  const h = helpers($, data, clock)
+  const screen = async () => { const ui = await $.ui.mount(PANE(160)); const s = flat(text(await ui.drawn())); const go = await ui.find({ key: `${PREFIX}continue` }); await ui.unmount(); return { s, go } }
+  const ELSEWHERE = '：這個流程是別的對話開的，到那個對話按 v 才會接著走；或在這裡按 g 重開一輪'
+
+  data.store.chains = { [ROOT]: { owner: 'other-session', startedAt: 0, round: 0, stopped: HELD, heldAtCheck: true } }
+  await h.refresh()
+  let shown = await screen()
+  expect(shown.s).toContain(flat(`▶ 輪到你  流程已暫停（${HELD}）${ELSEWHERE}`))
+  expect(shown.s).not.toContain(flat('排除後按 v 重跑檢查，流程接著走'))
+  expect(leaves(shown.go, 'Text').some((t: any) => t.props?.bold)).toBe(true)
+
+  data.store.chains = { [ROOT]: { owner: 'other-session', startedAt: 0, round: 0, stopped: CHANGED, heldAtCheck: true } }
+  await h.refresh()
+  shown = await screen()
+  expect(shown.s).toContain(flat(`▶ 輪到你  流程已暫停（完成檢查的指令改過、還沒經你核准）${ELSEWHERE}`))
+  expect(shown.s).not.toContain(flat(`▶ 輪到你  ${CHANGED}`))
+})

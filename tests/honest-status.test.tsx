@@ -156,7 +156,7 @@ test('a verdict the agent wrote itself counts but is marked self-review with w o
 test('a stopped chain shows its reason and the key to press instead of the next stage', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data)
-  data.store.chains = { [BETA]: { owner: 'other-session', startedAt: 0, round: 0, stopped: UNAPPROVED, heldAtCheck: true } }
+  data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: UNAPPROVED, heldAtCheck: true } }
 
   const ui = await mount($)
   const shown = await screen(ui)

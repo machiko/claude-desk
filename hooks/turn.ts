@@ -5,7 +5,7 @@ import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, isReleaseLine, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
-import { CHECK_CHANGED, CHECK_UNAPPROVED } from './chain'
+import { CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 
 export type Turn = {
   /** you：輪到你動手；ai：AI 或機器處理中，等著就好；none：沒有要做的事。 */
@@ -65,12 +65,17 @@ export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !(!c.pr &
 function checkHold(c: Case): Turn | null {
   const why = c.chain?.heldAtCheck ? c.chain.stopped : undefined
   if (!why) return null
+  // 別的對話開的流程：這裡按 v 只會跑檢查、接不下去；說去哪裡接，或在這裡重開一輪。
+  if (c.chain!.foreign) {
+    const short = why === CHECK_CHANGED ? CHECK_CHANGED_WHY : why === CHECK_UNAPPROVED ? CHECK_UNAPPROVED_WHY : why
+    return { who: 'you', text: `流程已暫停（${short}）：這個流程是別的對話開的，到那個對話按 v 才會接著走；或在這裡按 g 重開一輪`, key: 'g' }
+  }
   const text = why === CHECK_CHANGED || why === CHECK_UNAPPROVED ? why : `流程已暫停（${why}）：排除後按 v 重跑檢查，流程接著走`
   return { who: 'you', text, key: 'v' }
 }
 
 /** 接力停住、檢查段因此標 ✕：說停住的原因，按 v 重跑檢查。 */
-const heldAtCheck = (c: Case) => !!c.chain?.stopped && c.pipeline?.current === 'check' && c.pipeline.stages.some(s => s.id === 'check' && s.status === 'fail')
+const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current === 'check' && c.pipeline.stages.some(s => s.id === 'check' && s.status === 'fail')
 
 /** 上線段該做的事：還沒打 tag 就打 tag；tag 打了、關卡是 release 就部署後按 u。面板合併後的下一步也用它。 */
 export function shipTurn(c: Case): Turn {
@@ -113,7 +118,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
-      if (heldAtCheck(c)) return { who: 'you', text: `接力已暫停（${c.chain!.stopped}）`, key: 'v' }
+      if (checkStageFailed(c)) return { who: 'you', text: `接力已暫停（${c.chain!.stopped}）`, key: 'v' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 v 重新執行完成檢查' : '按 v 執行完成檢查', key: 'v' }
     case 'review':
       if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }

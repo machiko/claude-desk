@@ -15,7 +15,7 @@ import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
-import { nextStep } from './chain'
+import { nextStep, paused } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
 import type { ChainRun } from './chain'
@@ -117,7 +117,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 這個對話的接力還沒處理剛做完的實作：檢查通過後會自動派審查。
       const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       const chain = run
-        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
+        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
@@ -204,7 +204,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     if (step.kind === 'verify') { void runVerify($, c, true); continue }
     await markHandled()
     if (step.kind === 'stop') {
-      await saveChain($, key, r => r ? { ...r, stopped: step.reason, ...(step.atCheck ? { heldAtCheck: true } : {}) } : r)
+      await saveChain($, key, r => r ? paused(r, step.reason, step.atCheck) : r)
       await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error' }])
       $.ui.toast(`${c.name}：流程已暫停，${step.reason}`, { timeoutMs: 10_000 })
       notify($, `${c.name}：流程已暫停，${step.reason}`)
@@ -363,7 +363,7 @@ async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
   $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error' }])
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? { ...r, stopped: reason, heldAtCheck: true } : r)
+  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
   await restage($, c.statusPath)
   await spin($, false)
 }
@@ -377,7 +377,7 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
     const reason = `容器 ${missing.join('、')} 未啟動，請先在主工作區執行 docker compose up -d ${missing.join(' ')}`
     $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
     await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 檢查未執行：${reason}`, tone: 'warning' }])
-    if (auto) await saveChain($, normalizeRoot(c.root), r => r ? { ...r, stopped: reason, heldAtCheck: true } : r)
+    if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
     return false
@@ -656,7 +656,7 @@ async function stopAgent($: any, c: Case) {
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${errorLine(r, 'claude stop 失敗')}）`); return }
-  await saveChain($, normalizeRoot(c.root), run => run ? { ...run, stopped: '你手動停止了 Agent' } : run)
+  await saveChain($, normalizeRoot(c.root), run => run ? paused(run, '你手動停止了 Agent') : run)
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止 Agent（對話保留，可再派工接續）`, tone: 'warning' }])
   $.ui.toast(`${c.name}：已停止 Agent`)
   void refresh($, optionsRef!)

@@ -7,9 +7,12 @@ import type { Risk } from './risk'
 
 export const MAX_FIX_ROUNDS = 2
 
-/** 實作做完、要自動執行的完成檢查不是你核准過的那條：不跑，停下來等你按 v 看過。 */
-export const CHECK_CHANGED = '完成檢查的指令改過、還沒經你核准：按 v 看指令並核准，核准後流程接著走'
-export const CHECK_UNAPPROVED = '完成檢查的指令還沒經你核准：按 v 看指令並核准，核准後流程接著走'
+/** 實作做完、要自動執行的完成檢查不是你核准過的那條：不跑，停下來等你按 v 看過。`_WHY` 是不帶按鍵說明的原因。 */
+export const CHECK_CHANGED_WHY = '完成檢查的指令改過、還沒經你核准'
+export const CHECK_UNAPPROVED_WHY = '完成檢查的指令還沒經你核准'
+const APPROVE_HINT = '：按 v 看指令並核准，核准後流程接著走'
+export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
+export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
 
 export type ChainRun = {
   owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
@@ -34,6 +37,15 @@ export type ChainStep =
   | { kind: 'stop'; reason: string; atCheck?: boolean }
   | { kind: 'pass'; skipped?: boolean; needsHuman?: string }
   | null
+
+/**
+ * 流程暫停：寫下原因；只有停在檢查段的原因帶 heldAtCheck（按 v 跑完會接著走），
+ * 其他原因（例如你手動停止了 Agent）把之前留下的 heldAtCheck 拿掉。
+ */
+export function paused(run: ChainRun, reason: string, atCheck = false): ChainRun {
+  const { heldAtCheck: _, ...rest } = run
+  return { ...rest, stopped: reason, ...(atCheck ? { heldAtCheck: true } : {}) }
+}
 
 /** `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。 */
 export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean }
