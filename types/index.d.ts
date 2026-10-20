@@ -41,6 +41,8 @@ export type Case = {
   updatedAt: number | null
   /** 分支最後一次 commit 的時間（毫秒；不算只改卡片的 commit）；讀不到或教學模式就沒有。 */
   commitAt?: number
+  /** 那次 commit 改到的檔案最後被修改的時間（不晚於 commit）：先寫卡、測試跑很久才 commit 時，程式其實比卡片早改好。 */
+  changedAt?: number
   agent?: AgentInfo
   state: CaseState
   git?: { branch: string; head: string }
@@ -92,6 +94,12 @@ export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' 
 /** 決策的選擇：`案子路徑\n等你全文` → 決策序號 → 選項鍵。等你改寫就作廢。 */
 export type Picks = Record<string, Record<string, string>>
 
+/**
+ * 從面板填入、送出的決策。ask：送出當下卡片「等你」的原文（等你改了就失效）；during：送出時正在跑的回合；
+ * by：送出之後才開始的回合（排隊的提示由它處理）；done：處理它的回合結束了，卡片卻沒寫回。
+ */
+export type SentRecord = { ask: string; during?: string; by?: string; done?: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
     desk: {
@@ -100,8 +108,8 @@ declare module 'claude-code' {
       isBandHidden: boolean
       /** 被選取的案子（卡片路徑）：對話的主角，每次送出提示都附上它的卡；再點案名才取消。 */
       selected: string | null
-      /** 從面板送出的決策：卡片路徑 → 送出時的「等你」原文與時間；等你改了就失效。 */
-      sent: Record<string, { ask: string; at: number; during?: string; done?: boolean }>
+      /** 從面板送出的決策：卡片路徑 → 送出時的「等你」原文與由哪個回合處理；等你改了就失效。 */
+      sent: Record<string, SentRecord>
       feed: FeedEvent[]
       picks: Picks
       verifies: Record<string, Verify>

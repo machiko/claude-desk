@@ -1,6 +1,6 @@
 // 輪到誰、該做什麼：依六段與案子狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
-import type { Case } from '../types'
+import type { Case, SentRecord } from '../types'
 import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, isReleaseLine, runningKind, standingVerdict } from './pipeline'
@@ -17,11 +17,6 @@ export type Turn = {
 /** 畫面上才知道的事：完成檢查執行中、排隊中、派工中、決策送出了沒，以及現在是不是教學模式。 */
 export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean; sent?: SentState }
 
-/**
- * 從面板填入、送出的決策：送出當下卡片「等你」的原文；during＝送出時正在跑的回合（排隊進去的，等下一個回合）；
- * done＝處理它的回合已經結束。
- */
-export type SentRecord = { ask: string; at: number; during?: string; done?: boolean }
 /** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
 export type SentState = 'waiting' | 'unwritten'
 
@@ -37,10 +32,13 @@ export const BEHIND_MS = 60_000
 /** commit 之後等多久才提示：對話常常先 commit 再寫卡，給它時間寫完。 */
 export const SETTLE_MS = 2 * 60_000
 
-/** 卡片可能過期：分支最後一次 commit（不算只改卡片的）比卡片新、已經放了一陣子，而且沒有 Agent 在跑。按 s 同步。 */
-export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'updatedAt' | 'state' | 'agent'>, now: number) =>
+/**
+ * 卡片可能過期：分支最後一次 commit（不算只改卡片的）改到的程式比卡片新、commit 已經放了一陣子，而且沒有 Agent 在跑。按 s 同步。
+ * 比的是那次 commit 改到的檔案最後被改的時間，不是 commit 時間：先寫卡、跑完測試才 commit 時，卡片並沒有過期。
+ */
+export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'changedAt' | 'updatedAt' | 'state' | 'agent'>, now: number) =>
   !c.demo && !c.manual && !c.agent && c.state !== 'running' && c.state !== 'nocard' && c.state !== 'done'
-  && typeof c.commitAt === 'number' && c.updatedAt !== null && c.commitAt - c.updatedAt > BEHIND_MS && now - c.commitAt > SETTLE_MS
+  && typeof c.commitAt === 'number' && c.updatedAt !== null && (c.changedAt ?? c.commitAt) - c.updatedAt > BEHIND_MS && now - c.commitAt > SETTLE_MS
 
 export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
 

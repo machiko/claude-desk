@@ -28,6 +28,7 @@ import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText
 import type { UpdateCheck } from './update'
 import { touchesDesk } from './touch'
 import { sentState } from './turn'
+import type { SentRecord } from '../types'
 
 const PANE = 'desk'
 const DEMO_ONLY = '示範案子只能看；請照教學那件的指示操作'
@@ -70,6 +71,10 @@ let lastAttached = ''
 const TOUCH_DELAY_MS = 800
 /** 稍後重讀（對話改了卡片之後）的計時器；/desk off 時取消。 */
 let touchTimer: Timer
+/** 回合進行中送出的決策：回合結束後這麼久都沒有新回合開始，就當作提示已經交給那個回合，直接判斷。 */
+const QUEUED_GRACE_MS = 5_000
+/** 等著判斷「回合中送出的決策」的計時器；/desk off 時取消。 */
+let queuedTimer: Timer
 /** 只有人打的提示才附選取的卡、才認決策；排程、通知、其他 agent 送來的不算。 */
 const TYPED_ORIGINS = new Set(['composer', 'bridge', 'unclassified'])
 
@@ -130,10 +135,10 @@ export async function refresh($: any, options: PluginOptions) {
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
-      const commitAt = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
+      const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
       const steps = deploySteps(card)
       const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []
-      const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commitAt ? { commitAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
+      const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -344,6 +349,7 @@ async function stop($: any) {
   spinTimer?.cancel(); spinTimer = undefined
   touchTimer?.cancel(); touchTimer = undefined
   soonTimer?.cancel(); soonTimer = undefined
+  queuedTimer?.cancel(); queuedTimer = undefined
   $.ui.status(undefined)
   await update($, snapshot, () => null)
   await $.ui.close({ id: PANE }).catch(() => {})
@@ -700,28 +706,51 @@ function touchSoon($: any, options: PluginOptions) {
 }
 
 /**
- * 回合結束、面板重讀過之後處理送出的決策：卡片「等你」改了就清掉；沒改就標成「沒寫回」（不再鎖），讀到的是新的才提醒一次。
- * 在這個回合進行中才送出（排隊）的那筆，留給下一個回合。重讀失敗時照樣解鎖，只是不提醒，免得一直鎖著。
+ * 判斷送出的決策寫回了沒（面板重讀過之後）：卡片「等你」改了就清掉；沒改就標成「沒寫回」（不再鎖），讀到的是新的才提醒一次。
+ * 只判斷 isDue 挑出來的那幾筆，其他照舊。重讀失敗時照樣解鎖，只是不提醒，免得一直鎖著。
  */
-async function settleSent($: any, turnId: string | undefined, endedAt: number) {
+async function judgeSent($: any, endedAt: number, isDue: (r: SentRecord) => boolean) {
   const s = await read($, snapshot)
-  const all = await read($, sentAtom)
-  if (!s || !Object.keys(all).length) return
+  if (!s) return
   const isFresh = !s.error && s.at >= endedAt
-  const unwritten: string[] = []
-  const next: typeof all = {}
-  for (const [path, r] of Object.entries(all)) {
-    const c = s.cases.find(x => x.statusPath === path)
-    if (!c) { if (!isFresh) next[path] = r; continue }
-    if (!sentState(all, c)) continue
-    if (r.done) { next[path] = r; continue }
-    if (turnId && r.during === turnId) { const { during: _queued, ...rest } = r; next[path] = rest; continue }
-    next[path] = { ...r, done: true }
-    if (isFresh) unwritten.push(c.name)
-  }
-  await update($, sentAtom, () => next)
+  let unwritten: string[] = []
+  await update($, sentAtom, all => {
+    unwritten = []
+    const next: Record<string, SentRecord> = {}
+    for (const [path, r] of Object.entries(all)) {
+      const c = s.cases.find(x => x.statusPath === path)
+      if (!c) { if (!isFresh) next[path] = r; continue }
+      if (!sentState(all, c)) continue
+      if (r.done || !isDue(r)) { next[path] = r; continue }
+      next[path] = { ask: r.ask, done: true }
+      if (isFresh) unwritten.push(c.name)
+    }
+    return next
+  })
   for (const name of unwritten) $.ui.toast(`${name}：決策已送出，但卡片的「等你」沒有改；按 o 開卡片改掉，或請對話寫回`, { timeoutMs: 10_000 })
 }
+
+/**
+ * 回合結束：判斷這個回合處理的決策。回合進行中才送出的那筆，提示可能排到下一個回合，也可能當輪就交給了模型：
+ * 之後有新回合開始（turn.start 記在 by），留給那個回合；過一下都沒有，就當作這個回合處理過了，直接判斷。
+ */
+async function settleSent($: any, turnId: string | undefined, endedAt: number) {
+  const isQueuedHere = (r: SentRecord) => !r.by && !!turnId && r.during === turnId
+  await judgeSent($, endedAt, r => (r.by ? r.by === turnId : !isQueuedHere(r)))
+  if (!Object.values(await read($, sentAtom)).some(r => !r.done && isQueuedHere(r))) return
+  queuedTimer?.cancel()
+  queuedTimer = $.clock.after(QUEUED_GRACE_MS, () => {
+    queuedTimer = undefined
+    void judgeSent($, endedAt, isQueuedHere).catch(async (error: unknown) => {
+      await feedPush($, [{ at: endedAt, text: `決策狀態更新失敗：${error instanceof Error ? error.message : String(error)}`, tone: 'error' }])
+    })
+  })
+}
+
+/** 輸入框打的 ! 指令記進對話的那一列（<bash-input>／<bash-stdout>）。 */
+const BANG_ROW = /<bash-(?:input|stdout|stderr)>/
+const rowText = (message: any) => typeof message?.content === 'string' ? message.content
+  : Array.isArray(message?.content) ? message.content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : ''
 
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
 
@@ -730,12 +759,15 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     active = false
     lastAttached = ''
+    queuedTimer?.cancel(); queuedTimer = undefined
     setTutorial(null)
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined
     spinTimer?.cancel(); spinTimer = undefined
     await update($, verifyingAtom, () => ({}))
     await update($, launchingAtom, () => ({}))
+    // 新對話（含 /clear）沒看過之前送出的決策：不帶著鎖進來。
+    await update($, sentAtom, () => ({}))
     checkQueue.length = 0
     checking = null
     launchKinds = {}
@@ -763,8 +795,7 @@ export const register: Register = (on, options) => {
     const key = c ? cardKey(c) : ''
     // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
     const extra = [...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...(decided ? [decisionContext(decided, decided !== c)] : [])]
-    const at = await $.clock.now()
-    if (decided) await update($, sentAtom, v => ({ ...v, [decided.statusPath]: { ask: decided.ask, at, ...(e.turnId ? { during: e.turnId } : {}) } }))
+    if (decided) await update($, sentAtom, v => ({ ...v, [decided.statusPath]: { ask: decided.ask, ...(e.turnId ? { during: e.turnId } : {}) } }))
     const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })
     if (result.drop) { if (decided) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== decided.statusPath))) }
     else if (c) lastAttached = key
@@ -794,6 +825,14 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // 回合中送出的決策：之後開始的第一個回合就是處理它的那個（排隊的提示），記下來等它結束再判斷。
+  on('turn.start', async ($, e, next) => {
+    if (!e.agentId && active) {
+      await update($, sentAtom, v => Object.fromEntries(Object.entries(v).map(([k, r]) => [k, r.during && !r.by && !r.done ? { ...r, by: e.turnId } : r]))).catch(() => {})
+    }
+    return next(e)
+  })
+
   // /clear、壓縮之後模型看不到之前附的卡：下一則提示重新附全文。
   on('session.compact', async ($, e, next) => { if (!e.agentId) lastAttached = ''; return next(e) })
   on('session.end', async ($, e, next) => { lastAttached = ''; return next(e) })
@@ -809,6 +848,12 @@ export const register: Register = (on, options) => {
   on('session.append', { door: 'command' }, async ($, e, next) => {
     const result = await next(e)
     if (active && !e.agentId) touchSoon($, options)
+    return result
+  })
+  // ! 指令的那一列走哪個 door 文件沒寫：記成一般提示列時，看內容認出來。
+  on('session.append', { door: 'prompt' }, async ($, e, next) => {
+    const result = await next(e)
+    try { if (active && !e.agentId && BANG_ROW.test(rowText(e.message))) touchSoon($, options) } catch { /* 只是提早重讀 */ }
     return result
   })
 

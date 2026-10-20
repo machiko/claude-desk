@@ -31,7 +31,7 @@ export function fixture(on: any) {
     toasts: [] as string[],
     logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
     launches: [] as any[],
-    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number }>,
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number; /** 那次 commit 改到的檔案（相對路徑；修改時間放 mtimes）。 */ commitFiles?: string[] }>,
     mcpCalls: [] as any[],
     /** gh pr list 的回應；null 模擬沒裝或沒登入。 */
     gh: [] as any[] | null,
@@ -84,7 +84,7 @@ export function fixture(on: any) {
       const args = e.argv.slice(3).join(' ')
       if (/^rev-parse \S+\^$/.test(args)) { const p = g.parents?.[args.slice(10, -1)]; return { value: p ? result(0, `${p}\n`) : result(128, '', 'bad revision') } }
       if (args.startsWith('rev-list --first-parent')) return { value: result(0, g.firstParent ?? '') }
-      if (args.startsWith('log -1 --format=%ct')) return { value: result(0, g.commitAt ? `${Math.floor(g.commitAt / 1000)}\n` : '') }
+      if (args.startsWith('log -1 --format=%ct')) return { value: result(0, g.commitAt ? `${Math.floor(g.commitAt / 1000)}\n${g.commitFiles?.length ? `\n${g.commitFiles.join('\n')}\n` : ''}` : '') }
       // 照真實 git 回答：--abbrev-ref 會套用到它後面每一個參數。
       if (args === 'rev-parse --abbrev-ref HEAD HEAD') return { value: result(0, `${g.branch}\n${g.branch}\n`) }
       if (args === 'rev-parse HEAD --abbrev-ref HEAD') return { value: result(0, `${g.head}\n${g.branch}\n`) }

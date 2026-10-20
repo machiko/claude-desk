@@ -1,7 +1,7 @@
 // 面板分三區：header（desk 版本、額度、更新時間；到期提醒與容器異常）與 footer（現在這件的操作、全域鍵、容器與模型）常駐，
 // 只有 content（現在卡、其他案子進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
-import type { Case, FeedEvent, Picks, Snapshot, Verify } from '../types'
+import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
 import { displayWidth, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
@@ -13,7 +13,6 @@ import { caseActions, nowCardRows, picksKey, shortCommand } from './pane-card'
 import { noticeText } from './update'
 import type { Action } from './pane-card'
 import type { DispatchKind } from './dispatch'
-import type { SentRecord } from './turn'
 
 export { picksKey, shortCommand }
 

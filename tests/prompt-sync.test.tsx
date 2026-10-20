@@ -17,8 +17,9 @@ function countReads(data: any) {
   data.exec = (e: any) => { if (e.argv[0] === 'claude' && e.argv[1] === 'agents') box.n++; return null }
   return box
 }
-/** 回合結束由引擎發；測試裡補一個最底下的回答。 */
+/** 回合開始、結束由引擎發；測試裡補一個最底下的回答。 */
 const turnEnds = (on: any) => on('turn.complete', () => ({ text: '' }))
+const turnStarts = (on: any) => on('turn.start', (_: any, e: any) => ({ turnId: e.turnId }))
 const turnDone = (turnId = 't1') => ({ answer: '', durationMs: 4000, isAborted: false, turnId, reason: 'answer' }) as any
 
 // ── 對話改了卡片、跑了指令：面板馬上重讀 ──
@@ -79,6 +80,20 @@ test('a ! command typed at the prompt rereads the desk', async ($, on) => {
   expect(reads.n).toBe(before + 1)
 })
 
+/** ! 指令的那一列若記成一般提示列：看內容認出來，一樣重讀；一般打字的提示不重讀。 */
+test('a ! command recorded as a prompt row rereads the desk; a typed prompt row does not', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const reads = countReads(data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const before = reads.n
+  await $.session.append({ message: { type: 'user', content: '幫我看一下 CI' }, door: 'prompt', origin: { kind: 'composer' }, uuid: 'u-2' } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(reads.n).toBe(before)
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<bash-input>git commit -m wip</bash-input>' }] }, door: 'prompt', origin: { kind: 'composer' }, uuid: 'u-3' } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(reads.n).toBe(before + 1)
+})
+
 test('touchesDesk: card and registry edits, card script, branch-moving git; nothing else', () => {
   const known = [REGISTRY, CARD_A, CARD_B]
   expect(touchesDesk({ tool: 'Edit', file_path: CARD_A }, known)).toBe(true)
@@ -101,13 +116,14 @@ test('touchesDesk: card and registry edits, card script, branch-moving git; noth
 
 // ── 決策送出後：鎖住那題，等對話寫回卡片 ──
 
-async function sendDecision($: any, data: any) {
+/** 從面板選 A、按 f 填入並送出；給 turnId 代表送出時有回合正在跑。 */
+async function sendDecision($: any, data: any, turnId?: string) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `case-${CARD_A}-opt0A` })
   await ui.press({ key: `case-${CARD_A}-fill` })
   expect(data.fills[0].text).toBe('「Alpha」決策：A')
-  await $.prompt.submit({ text: data.fills[0].text } as any)
+  await $.prompt.submit({ text: data.fills[0].text, ...(turnId ? { turnId } : {}) } as any)
   return ui
 }
 
@@ -141,7 +157,6 @@ test('once the card is written back the pane drops the question', async ($, on) 
   expect(all).not.toContain(flat('決策已送出'))
   expect(all).not.toContain(flat('要 push 嗎'))
   expect(data.toasts.some((t: string) => t.includes('沒有改'))).toBe(false)
-  expect(data.store.sent ?? {}).toEqual({})
   await ui.unmount()
 })
 
@@ -192,6 +207,70 @@ test('a decision queued during a running turn is judged when the next turn ends'
   await clock.settle()
   expect(data.toasts.filter((t: string) => t.includes('沒有改')).length).toBe(1)
   await ui.unmount()
+})
+
+/** 回合中送出、提示當輪就交給了模型（之後沒有新回合）：那個回合結束一下子之後就判斷，不會一直鎖著。 */
+test('a decision delivered into the running turn is judged shortly after that turn ends', async ($, on) => {
+  const { data, clock } = fixture(on)
+  turnEnds(on)
+  const ui = await sendDecision($, data, 't1')
+  await $.turn.complete(turnDone('t1'))
+  await clock.settle()
+  expect(await screen(ui)).toContain(flat('決策已送出，等對話處理並寫回卡片'))
+  await clock.advance(6000); await clock.settle()
+  expect(data.toasts.filter((t: string) => t.includes('Alpha：決策已送出，但卡片的「等你」沒有改')).length).toBe(1)
+  expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeDefined()
+  await ui.unmount()
+})
+
+/** 回合中送出、排到下一個回合：下一個回合馬上開始（比面板重讀完還早），就等它結束，不因為過了一陣子就先判斷。 */
+test('a decision queued behind a running turn waits for the turn that picks it up', async ($, on) => {
+  const { data, clock } = fixture(on)
+  turnEnds(on); turnStarts(on)
+  const ui = await sendDecision($, data, 't1')
+  await $.turn.complete(turnDone('t1'))
+  await $.turn.start({ text: data.fills[0].text, turnId: 't2' } as any)
+  await clock.settle()
+  await clock.advance(10_000); await clock.settle()
+  expect(data.toasts.some((t: string) => t.includes('沒有改'))).toBe(false)
+  expect(await screen(ui)).toContain(flat('決策已送出，等對話處理並寫回卡片'))
+  await $.turn.complete(turnDone('t2'))
+  await clock.settle()
+  expect(data.toasts.filter((t: string) => t.includes('沒有改')).length).toBe(1)
+  await ui.unmount()
+})
+
+/** 下一個回合在面板重讀完之後才開始（仍在幾秒內）：一樣留給那個回合判斷。 */
+test('a turn starting a moment after the last one still picks up the queued decision', async ($, on) => {
+  const { data, clock } = fixture(on)
+  turnEnds(on); turnStarts(on)
+  const ui = await sendDecision($, data, 't1')
+  await $.turn.complete(turnDone('t1'))
+  await clock.settle()
+  await clock.advance(2000)
+  await $.turn.start({ text: data.fills[0].text, turnId: 't2' } as any)
+  await clock.advance(10_000); await clock.settle()
+  expect(data.toasts.some((t: string) => t.includes('沒有改'))).toBe(false)
+  expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
+  await ui.unmount()
+})
+
+/** 新對話（/clear）沒看過之前送出的決策：不帶著鎖進來，那題可以再送。 */
+test('a new conversation does not inherit a decision lock', async ($, on) => {
+  const { data } = fixture(on)
+  // 開新對話由引擎發；測試裡補最底下的回答（含 /desk 指令的註冊）。
+  on('command.register', (_: any, e: any) => ({ value: { command: e.name } }))
+  on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
+  const ui = await sendDecision($, data)
+  expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
+  await ui.unmount()
+  await $.session.start({ cwd: '/home/u', surface: null, isInteractive: true } as any)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const again = await $.ui.mount(PANE(80))
+  await again.press({ key: `case-${CARD_A}-opt0A` })
+  expect(await again.find({ key: `case-${CARD_A}-fill` })).toBeDefined()
+  expect(await screen(again)).not.toContain(flat('決策已送出'))
+  await again.unmount()
 })
 
 /** 填入決策不會把那件設成選取的主角：決策那則附上卡片，之後的提示不再附。 */
@@ -254,6 +333,35 @@ test('no sync hint when the card is newer than the latest commit', async ($, on)
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_B}` })
   expect(await screen(ui)).not.toContain(flat('按 s 同步'))
+  await ui.unmount()
+})
+
+/** 先寫卡、跑完測試才 commit（卡片可能也在那次 commit 裡）：commit 改到的程式都比卡片早改好，不算卡片過期。 */
+test('no sync hint when the latest commit only records code written before the card', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  data.mtimes[CARD_B] = NOW - 30 * 60_000
+  data.mtimes[`${BETA}/hooks/a.ts`] = NOW - 40 * 60_000
+  data.git[BETA] = { branch: 'feature/b', head: 'h2-code-before-card', commitAt: NOW - 10 * 60_000, commitFiles: ['hooks/a.ts', 'hooks/gone.ts'] }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await screen(ui)).not.toContain(flat('按 s 同步'))
+  await ui.unmount()
+})
+
+/** commit 裡有程式是寫完卡片之後才改的：仍然提示同步。 */
+test('a commit with code edited after the card still suggests a sync', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  data.mtimes[CARD_B] = NOW - 2 * 3_600_000
+  data.mtimes[`${BETA}/hooks/a.ts`] = NOW - 3 * 3_600_000
+  data.mtimes[`${BETA}/hooks/b.ts`] = NOW - 30 * 60_000
+  data.git[BETA] = { branch: 'feature/b', head: 'h2-code-after-card', commitAt: NOW - 10 * 60_000, commitFiles: ['hooks/a.ts', 'hooks/b.ts'] }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await screen(ui)).toContain(flat('比卡片新：按 s 同步'))
   await ui.unmount()
 })
 

@@ -37,7 +37,11 @@ const merges = new Map<string, string>()
 const mergeMisses = new Map<string, number>()
 const projects = new Map<string, Project>()
 /** 根目錄＋HEAD → 最近一次變更的時間；HEAD 不變它就不變。 */
-const commitTimes = new Map<string, number>()
+const commitTimes = new Map<string, CommitTimes>()
+/** 一次 commit 改到超過這麼多檔案就不逐一看修改時間，直接用 commit 時間。 */
+const MAX_STAT_FILES = 50
+
+export type CommitTimes = { at: number; changedAt: number }
 
 export async function home($: any): Promise<string> {
   const h = (await $.env.get('HOME').catch(() => null)) || (await $.env.get('USERPROFILE').catch(() => null)) || ''
@@ -101,18 +105,27 @@ export async function gitProbe($: any, root: string): Promise<{ git?: { branch: 
 }
 
 /**
- * 分支最後一次 commit 的時間（毫秒）。只改卡片的 commit 不算：卡片 commit 進版控時檔案時間不會變，會被誤判成卡片過期。
- * 讀不到就 undefined（不提示）。
+ * 分支最近一次變更：commit 時間，以及那次 commit 改到的檔案最後被改的時間（不晚於 commit；讀不到檔案或檔案太多就用 commit 時間）。
+ * 只改卡片的 commit 不算，commit 裡的卡片也不算：卡片 commit 進版控時檔案時間不會變，會被誤判成卡片過期。
+ * 讀不到就 undefined（不提示）。依 HEAD 快取。
  */
-export async function commitTime($: any, root: string, head: string): Promise<number | undefined> {
+export async function commitTime($: any, root: string, head: string): Promise<CommitTimes | undefined> {
   const key = `${root}\n${head}`
   const known = commitTimes.get(key)
   if (known) return known
-  const out = await git($, root, ['log', '-1', '--format=%ct', 'HEAD', '--', '.', ':(exclude).desk', ':(exclude).console'])
-  const sec = Number(out)
+  const out = await git($, root, ['log', '-1', '--format=%ct', '--name-only', 'HEAD', '--', '.', ':(exclude).desk', ':(exclude).console'])
+  const [first = '', ...rest] = (out ?? '').split('\n')
+  const sec = Number(first.trim())
   if (!out || !Number.isFinite(sec) || sec <= 0) return undefined
-  commitTimes.set(key, sec * 1000)
-  return sec * 1000
+  const at = sec * 1000
+  const files = rest.map(f => f.trim()).filter(Boolean)
+  const stats = files.length && files.length <= MAX_STAT_FILES
+    ? await Promise.all(files.map(f => ($.fs.stat(`${root}/${f}`) as Promise<{ mtimeMs?: number }>).catch(() => null)))
+    : []
+  const times = stats.map(s => s?.mtimeMs).filter((t): t is number => typeof t === 'number')
+  const r = { at, changedAt: times.length ? Math.min(at, Math.max(...times)) : at }
+  commitTimes.set(key, r)
+  return r
 }
 
 /** origin 是哪一家：Bitbucket 走 MCP、GitHub 走 gh CLI；其他（GitLab、自架）不查 PR，合併交給 git 判斷。 */
