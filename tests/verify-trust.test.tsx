@@ -133,7 +133,7 @@ test('a check command changed by the agent pauses the chain with a reason you ca
   expect(data.launches.length).toBe(1)
 
   // Agent 把檢查指令改了
-  h.setCheck('node test.mjs && rm -rf /tmp/x')
+  h.setCheck('node test.mjs --all')
   await h.finish()
 
   // 不執行改過的指令，流程暫停

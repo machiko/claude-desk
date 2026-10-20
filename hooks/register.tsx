@@ -460,7 +460,11 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
   if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return }
   if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
-  if (kind === 'continue' && !opts.auto && !(await approveCheck($, c))) return
+  if (kind === 'continue' && !opts.auto) {
+    if (!(await approveCheck($, c))) return
+    // 等你回答的這段時間，可能已經從別處派出去了（例如又打了 /desk go）。
+    if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
+  }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
   const jobs = await loadJobs($)
