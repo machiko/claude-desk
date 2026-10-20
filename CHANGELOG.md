@@ -1,6 +1,6 @@
 # Changelog
 
-## 未發布
+## 0.19.0
 
 - `/desk update` 與面板 footer 的「⇡ 更新版本」按鈕（只用點的、不綁快捷鍵）：把 desk 自己更新到 GitHub 上的最新版本，提示只講版號（例如「desk 已更新版本：0.18.0 → 0.19.0，重新啟動 Claude Code 後生效」）。GitHub marketplace 與本機資料夾安裝都支援；本機資料夾有未提交改動、不在預設分支、有 GitHub 上沒有的 commit，或連不到 GitHub 時什麼都不動並說明原因。
 - 每 24 小時自動檢查一次新版本（跨重開有效），有就在面板與摘要列顯示「有新版本 x.y.z」，同一版只提示一次；只提示不安裝，查失敗不出聲。`dispatch.json` 的 `"updateCheck": "off"` 可關掉。
