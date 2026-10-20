@@ -34,7 +34,8 @@ test('without a PR, git sees the reviewed branch inside main and moves on to shi
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /合併後打 tag 發版/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '打 tag 發版' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /合併後打 tag/ })).toBeUndefined()
   await ui.unmount()
 })
 

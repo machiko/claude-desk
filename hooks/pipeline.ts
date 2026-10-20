@@ -49,11 +49,17 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
   const release = isReleaseLine(c)
   const runningKind = c.agent && !c.agent.asks && c.agent.status !== 'idle' ? c.chain?.lastKind ?? 'continue' : null
 
+  const reviewed = (verdict && blocking(verdict) === 0) || (c.chain?.passed && !stale)
+  // 按 u 確認上線後關卡清成無、PR 資訊過一小時也不顯示，靠確認時寫進卡片的狀態與下一步認得它已上線。
+  const confirmed = !!c.tag && (c.status.includes(`${c.tag} 已上線`) || /^可歸檔/.test(c.next))
+  // tag 只在走到上線段後才算數：從打了 tag 的 main 剛開的分支，HEAD 也被 tag 包含。發版線沒有審查與合併段，照算。
+  const tagged = !!c.tag && (release || c.pr?.state === 'MERGED' || !!reviewed || gate?.kind === 'release' || confirmed)
+
   // 由後往前找最遠的「過了」證據。
   let reached = -1
-  if (c.tag && !(gate?.kind === 'release')) reached = INDEX.ship
-  else if (c.pr?.state === 'MERGED' || c.tag) reached = INDEX.merge
-  else if ((verdict && blocking(verdict) === 0) || (c.chain?.passed && !stale)) reached = INDEX.review
+  if (tagged && !(gate?.kind === 'release')) reached = INDEX.ship
+  else if (c.pr?.state === 'MERGED' || tagged) reached = INDEX.merge
+  else if (reviewed) reached = INDEX.review
   else if (check === true && !runningKind) reached = INDEX.check
   else if (check === false && !runningKind) reached = INDEX.build
   // 審查後有新 commit：程式已經寫了，退回檢查重來。

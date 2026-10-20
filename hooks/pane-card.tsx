@@ -144,7 +144,8 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
       {age ? <Text color={COLOR.faint}>{` · ${age}`}</Text> : null}
     </Box>,
   )
-  rows.push(...turnRows(ui, turnOf(c, turnCtx(view, c)), width))
+  const turn = turnOf(c, turnCtx(view, c))
+  rows.push(...turnRows(ui, turn, width))
   // 完成的案子：六段全部轉綠，後面接「✓ 完成 <tag>」。六段的備註（例如「可繼續實作」）由上一列的話取代。
   const isDone = c.state === 'done'
   if (c.pipeline) rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end">{stageParts(c.pipeline, width < 30).map((p, i) => <Text key={`st${i}`} color={isDone ? COLOR.good : STAGE_COLOR[p.status]}>{(i && width >= 30 ? ' ' : '') + p.text}</Text>)}{isDone ? <Text color={COLOR.good} bold>{`   ✓ 完成${c.tag ? ` ${c.tag}` : ''}`}</Text> : null}</Text></Box>)
@@ -161,9 +162,12 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (c.status) rows.push(...(view.isExpanded ? kvRows(ui, '狀態', c.status, width, true, COLOR.dim) : kvRows(ui, '狀態', c.statusShort ?? compactStatus(c.status), width, false, COLOR.text, 1)))
   if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState)}`, width, false, COLOR.dim, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
+  // 合併之後：六段全過才叫你歸檔，還在上線段就跟「▶ 輪到你」同一句（打 tag、部署後按 u）。
+  const archive = `${CARD_CMD} archive ${slugOf(c)}`
+  const afterDeploy = isDone ? archive : turn.key === 'u' ? '按 u 確認上線' : turn.text
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
-    ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${CARD_CMD} archive ${slugOf(c)}`, width, true, COLOR.attention)
-    : kvRows(ui, '下一步', `已合併，可歸檔：${CARD_CMD} archive ${slugOf(c)}`, width, false, COLOR.attention, 1)))
+    ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${afterDeploy}`, width, true, COLOR.attention)
+    : kvRows(ui, '下一步', isDone ? `已合併，可歸檔：${archive}` : turn.text, width, false, COLOR.attention, 1)))
 
   decisions.forEach((d, i) => {
     rows.push(<Text> </Text>)

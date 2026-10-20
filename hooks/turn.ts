@@ -66,7 +66,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
     case 'ship':
       if (c.tag && gate?.kind === 'release') return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線`, key: 'u' }
-      return { who: 'you', text: '合併後打 tag 發版' }
+      return { who: 'you', text: '打 tag 發版' }
     default:
       return { who: 'none', text: '沒有待辦' }
   }

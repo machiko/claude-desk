@@ -38,7 +38,9 @@ test('stages follow the evidence from the back', () => {
   expect(pipeline(mk({}, { pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).note).toBe('待打 tag')
   expect(glyphs(mk({ 關卡: 'release：v1.4.0 可上線' }, { tag: 'v1.4.0' }))).toBe('●●●●●◆')
   expect(pipeline(mk({ 關卡: 'release：v1.4.0 可上線' }, { tag: 'v1.4.0' }), undefined).note).toBe('v1.4.0 已打，待確認上線')
-  expect(pipeline(mk({}, { tag: 'v1.4.0' }), undefined).current).toBeNull()
+  // 只有 tag、沒有合併／審查過關／release 關卡：不算上線（剛從打了 tag 的 main 開的分支）
+  expect(glyphs(mk({}, { tag: 'v1.4.0' }))).toBe('●◆○○○○')
+  expect(pipeline(mk({}, { tag: 'v1.4.0', pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).current).toBeNull()
 })
 
 test('a review with blocking issues stays in review while the chain fixes it, and fails once it stopped', () => {
@@ -87,4 +89,15 @@ test('a branch already inside its base counts as merged only once it reached the
   // 剛開的分支（HEAD 還是 base 的 commit）不算合併
   expect(glyphs(mk({}, { mergedInto: 'origin/main' }))).toBe('●◆○○○○')
   expect(glyphs(mk({}, { mergedInto: 'origin/main' }), ok())).toBe('●●●◆○○')
+})
+
+test('a tag counts as shipped once the PR is merged, the review passed, or the gate is release', () => {
+  const passed = { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }
+  expect(glyphs(mk({ 檢查: '無' }, { tag: 'v0.19.0' }))).toBe('◆○○○○○')
+  expect(pipeline(mk({ 關卡: 'spec：待確認規格' }, { tag: 'v0.19.0' }), undefined).note).toBe('規格待確認')
+  expect(pipeline(mk({}, { tag: 'v0.19.0', mergedInto: 'origin/main' }), undefined).current).toBe('build')
+  expect(pipeline(mk(passed, { tag: 'v0.19.0' }), undefined).current).toBeNull()
+  expect(pipeline(mk(passed, { tag: 'v0.19.0', mergedInto: 'origin/main' }), undefined).current).toBeNull()
+  expect(pipeline(mk({}, { tag: 'v0.19.0', pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).current).toBeNull()
+  expect(pipeline(mk({ 關卡: 'release：v0.19.0 可上線' }, { tag: 'v0.19.0' }), undefined).current).toBe('ship')
 })
