@@ -98,7 +98,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   else if (stale && !coding) reached = INDEX.build
   else if (!saysNone(c.next) || c.agent || c.verify) reached = c.verify && saysNone(c.ask) && gate?.kind !== 'spec' ? INDEX.spec : -1
   // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
-  if (reached === INDEX.review && c.mergedInto) reached = INDEX.merge
+  // 審查後又有 commit（stale）再合併的也算：審查過、整個分支也進了基準分支。
+  if (c.mergedInto && (reached === INDEX.review || stale)) reached = Math.max(reached, INDEX.merge)
   // 接力停住、檢查又沒通過過：卡片上的審查結論（例如 Agent 自己寫的）不能讓它跳過檢查段。已合併、已打 tag 的不管。
   const held = !!c.chain?.stopped && check !== true && !release && !tagged && c.pr?.state !== 'MERGED' && !c.mergedInto
   if (held && reached > INDEX.build) reached = INDEX.build

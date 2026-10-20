@@ -129,7 +129,8 @@ export async function refresh($: any, options: PluginOptions) {
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
       // 合併段、沒有已合併的 PR：問 git 分支 HEAD 是不是已經在基準分支裡（GitLab、沒裝 gh、本機合併都靠這個）。
-      const atMerge = !tutorial && stages(withState).current === 'merge' && withState.pr?.state !== 'MERGED'
+      // 審查後又有 commit 的（六段退回檢查）也要問：可能是改完直接合併了。
+      const atMerge = !tutorial && (stages(withState).current === 'merge' || !!withState.chain?.stale) && withState.pr?.state !== 'MERGED'
       const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr) : undefined
       const merged = into ? { ...withState, mergedInto: into } : withState
       const piped = { ...merged, ...(short ? { statusShort: short } : {}), pipeline: stages(merged) }
@@ -183,14 +184,22 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const last = jobs[key]?.last
     const agentBusy = !!c.agent && !c.agent.asks
     // 已經合併：不再自動檢查、審查或修正（之後的 commit 進不了這次合併）。
-    if (isMerged(c)) continue
-    if (run?.passed && c.chain?.stale && run.owner === mine && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !(c.statusPath in (await read($, launchingAtom)))) {
+    const merged = isMerged(c)
+    if (!merged && run?.passed && c.chain?.stale && run.owner === mine && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !(c.statusPath in (await read($, launchingAtom)))) {
       await recheck($, key, run, last, mine, s.at)
       await feedPush($, [{ at: s.at, text: `${c.name} 審查通過後有新 commit，自動重新檢查與審查`, tone: 'suggestion' }])
       acted = true
       continue
     }
     if (!run || run.owner !== mine || !last || last.handled || agentBusy || c.agent?.asks || c.statusPath in verifies || checking === c.statusPath || isQueued(c.statusPath) || c.statusPath in (await read($, launchingAtom))) continue
+    const markHandled = async () => { const all = await loadJobs($); if (all[key]?.last) await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...all[key]!.last!, handled: true } } }) }
+    // 合併前派出、合併後才結束的那次：照樣收尾（審查檔歸檔、標成已處理），但不接著派任何工作。
+    if (merged) {
+      if (last.kind === 'review' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
+      await markHandled()
+      acted = true
+      continue
+    }
     const verify = (await read($, verifiesAtom))[c.statusPath]
     const fresh = verify && verify.at >= last.startedAt ? verify : undefined
     const finished: DispatchKind | null = last.kind === 'sync' ? null : last.kind
@@ -202,7 +211,6 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     if (finished === 'review' && step.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
     // 這次審查看的是派審查時的 HEAD；之後有新 commit，結論就不算數。
     if (finished === 'review') await saveChain($, key, r => r ? { ...r, judgedHead: (last.security ? r.securityHead : r.reviewHead) ?? c.git?.head ?? r.judgedHead } : r)
-    const markHandled = async () => { const all = await loadJobs($); if (all[key]?.last) await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...all[key]!.last!, handled: true } } }) }
     if (step.kind === 'verify') { void runVerify($, c, true); continue }
     await markHandled()
     if (step.kind === 'stop') {
