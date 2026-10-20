@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 
 const card = (next: string, extra = '') => `<!-- DESK -->\n- 狀態：ok\n- 驗證：\`true\`\n- 等你：無\n- 下一步：${next}\n- 關卡：無\n${extra}<!-- /DESK -->`
@@ -68,6 +68,16 @@ test('what can be dispatched follows the card: running none, review needs a chec
   expect(dispatchable({ ...mk('寫測試'), git: { branch: 'release/v1.4', head: 'h' } })).toEqual(['continue', 'sync'])
   expect(dispatchable(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }))).toEqual([])
   expect(dispatchable(mk('寫測試', { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }))).toEqual(['reply', 'sync'])
+})
+
+test('reply refusal names why: waiting agents can be answered, others say why not', () => {
+  const asks = { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }
+  expect(replyRefusal(mk('寫測試', asks))).toBe('')
+  expect(replyRefusal({ ...mk('寫測試', asks), gate: 'spec：待確認規格' })).toBe('')
+  expect(replyRefusal(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }))).toBe('Agent 仍在執行')
+  expect(replyRefusal(mk('寫測試'))).toBe('Agent 沒有在等你回覆')
+  expect(replyRefusal({ ...mk('寫測試', asks), manual: true })).toBe('登錄表設為 manual，只追蹤不派工')
+  expect(replyRefusal({ ...mk('寫測試', asks), demo: true })).toBe('示範案子只能看')
 })
 
 test('prompts carry the case, the card rules and the environment limits', () => {

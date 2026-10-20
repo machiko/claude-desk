@@ -175,6 +175,14 @@ export function dispatchable(c: Case): DispatchKind[] {
   return out
 }
 
+/** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡是什麼）。 */
+export function replyRefusal(c: Case): string {
+  if (c.demo) return '示範案子只能看'
+  if (c.manual) return '登錄表設為 manual，只追蹤不派工'
+  if (c.state === 'reply') return ''
+  return c.state === 'running' || c.agent?.status === 'busy' ? 'Agent 仍在執行' : 'Agent 沒有在等你回覆'
+}
+
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
   const scope = r?.base && r.recheck

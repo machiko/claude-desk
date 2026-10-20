@@ -12,7 +12,7 @@ import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchable, launchName, modelFor, normalizeRoot } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchable, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
 import { nextStep } from './chain'
@@ -473,6 +473,8 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  const why = replyRefusal(c)
+  if (why) { $.ui.toast(`${c.name}：目前無法回覆（${why}）`); return }
   let answer = text?.trim() ?? ''
   if (!answer) {
     const picked = await $.ui.ask(`Agent 提問：${c.agent?.last || '（無法讀取問題，請開啟卡片或用 claude logs 查看）'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
@@ -482,7 +484,7 @@ async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   const jobs = await loadJobs($)
   const key = normalizeRoot(c.root)
   if (jobs[key]?.last) await $.store.set(JOBS_KEY, { ...jobs, [key]: { ...jobs[key], last: { ...jobs[key]!.last!, answered: true } } })
-  await dispatch($, options, { ...c, state: 'ready' }, 'reply', { text: answer })
+  await dispatch($, options, c, 'reply', { text: answer })
 }
 
 async function fillDecision($: any, c: Case) {
@@ -627,11 +629,17 @@ export const register: Register = (on, options) => {
     const m = arg.match(/^(verify|open|go|continue|sync|review|reply)\s+(\S+)\s*(.*)$/)
     if (m) {
       const s = await read($, snapshot) ?? (await refresh($, options), await read($, snapshot))
-      const c = caseNamed(s, m[2]!)
+      // 回覆示範案子要說清楚是示範案子，不只是找不到。
+      const c = caseNamed(s, m[2]!) ?? (m[1] === 'reply' ? s?.cases.find(x => x.demo && x.name.includes(m[2]!)) ?? null : null)
       if (!c) return { text: `找不到案子「${m[2]}」。` }
       if (m[1] === 'verify') { void runVerify($, c); return { text: `${c.name}：完成檢查已開始。` } }
       if (m[1] === 'open') { await openCard($, c); return { text: `${c.name}：已開啟 ${c.statusPath}` } }
-      if (m[1] === 'reply') { void reply($, options, c, m[3]); return { text: `${c.name}：回覆派送中。` } }
+      if (m[1] === 'reply') {
+        const why = replyRefusal(c)
+        if (why) return { text: `${c.name}：目前無法回覆（${why}）。` }
+        void reply($, options, c, m[3])
+        return { text: `${c.name}：回覆派送中。` }
+      }
       const kind = KIND_ARG[m[1]!]!
       void dispatch($, options, c, kind)
       return { text: `${c.name}：${KIND_LABEL[kind]}派送中。` }
