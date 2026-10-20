@@ -40,7 +40,7 @@ test('review top lists CRITICAL and HIGH only', () => {
 test('git status v2 counts ahead, behind, changed, untracked', () => {
   const out = '# branch.oid abc\n# branch.head feature/x\n# branch.upstream origin/feature/x\n# branch.ab +3 -1\n1 .M N... 100644 100644 100644 a b app/X.php\n2 R. N... 100644 100644 100644 a b R100 y z\n? notes.md\n? .codex/'
   const g = parseGitStatus(out)
-  expect(g).toEqual({ ahead: 3, behind: 1, changed: 2, untracked: 2 })
+  expect(g).toEqual({ ahead: 3, behind: 1, changed: 2, untracked: 2, upstream: true })
   expect(gitLine(g)).toBe('領先 3 · 落後 1 · 未提交 2 檔 · 未追蹤 2 檔')
   expect(gitLine({ ahead: 0, behind: 0, changed: 0, untracked: 0 })).toBe('與遠端一致、無未提交變更')
 })

@@ -84,9 +84,10 @@ export async function deskPaths($: any, options: PluginOptions): Promise<DeskPat
 
 /** 分支、HEAD、包含 HEAD 的最舊 v* tag（依 HEAD 快取）。不是 git 資料夾就全空。 */
 export async function gitProbe($: any, root: string): Promise<{ git?: { branch: string; head: string }; tag?: string }> {
-  const out = await git($, root, ['rev-parse', '--abbrev-ref', 'HEAD', 'HEAD'])
+  // --abbrev-ref 會套用到它後面每一個參數，所以 commit 要寫在它前面。
+  const out = await git($, root, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD'])
   if (!out) return {}
-  const [branch, head] = out.split(/\r?\n/)
+  const [head, branch] = out.split(/\r?\n/)
   if (!branch || !head) return {}
   // 只快取「找到 tag」：tag 打了不會消失；「還沒有 tag」每次重查，否則之後才打的 tag 永遠看不到。
   let tag = tags.get(head) ?? ''

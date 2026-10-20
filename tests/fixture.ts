@@ -31,7 +31,7 @@ export function fixture(on: any) {
     toasts: [] as string[],
     logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
     launches: [] as any[],
-    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string> }>,
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean }>,
     mcpCalls: [] as any[],
     /** gh pr list 的回應；null 模擬沒裝或沒登入。 */
     gh: [] as any[] | null,
@@ -54,6 +54,8 @@ export function fixture(on: any) {
     submitted: [] as any[],
     asks: [] as string[],
     answer: '執行',
+    /** false 模擬輸入框無法預填。 */
+    fillable: true,
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
     store: {} as Record<string, unknown>,
     /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
@@ -82,7 +84,11 @@ export function fixture(on: any) {
       const args = e.argv.slice(3).join(' ')
       if (/^rev-parse \S+\^$/.test(args)) { const p = g.parents?.[args.slice(10, -1)]; return { value: p ? result(0, `${p}\n`) : result(128, '', 'bad revision') } }
       if (args.startsWith('rev-list --first-parent')) return { value: result(0, g.firstParent ?? '') }
+      // 照真實 git 回答：--abbrev-ref 會套用到它後面每一個參數。
+      if (args === 'rev-parse --abbrev-ref HEAD HEAD') return { value: result(0, `${g.branch}\n${g.branch}\n`) }
+      if (args === 'rev-parse HEAD --abbrev-ref HEAD') return { value: result(0, `${g.head}\n${g.branch}\n`) }
       if (args.startsWith('rev-parse')) return { value: result(0, `${g.branch}\n${g.head}\n`) }
+      if (args.startsWith('status --porcelain=v2')) return { value: result(0, `# branch.oid ${g.head}\n# branch.head ${g.branch}\n${g.upstream === false ? '' : `# branch.upstream origin/${g.branch}\n# branch.ab +0 -0\n`}`) }
       if (args.startsWith('tag --contains')) return { value: result(0, g.tag ? `${g.tag}\n` : '') }
       if (args.startsWith('tag --list')) return { value: result(0, 'v1.3.0\nv1.2.0\n') }
       if (args.startsWith('remote get-url')) return { value: result(0, `${g.remote ?? 'git@bitbucket.org:acme/shop.git'}\n`) }
@@ -124,7 +130,7 @@ export function fixture(on: any) {
     data.asks.push(String(q?.question ?? ''))
     return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: data.answer } } }
   })
-  on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: true } })
+  on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
   on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [] }))
   return { data, clock }

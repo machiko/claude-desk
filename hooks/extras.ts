@@ -69,11 +69,12 @@ export function reviewTop(text: string | null, n = 3): string[] {
   return out.slice(0, n)
 }
 
-/** `git status --porcelain=v2 --branch`：領先、落後、未提交、未追蹤。 */
-export type GitState = { ahead: number; behind: number; changed: number; untracked: number }
+/** `git status --porcelain=v2 --branch`：領先、落後、未提交、未追蹤，以及有沒有遠端分支（upstream）。 */
+export type GitState = { ahead: number; behind: number; changed: number; untracked: number; /** false：分支從沒 push 過。沒填（舊資料）當作有。 */ upstream?: boolean }
 export function parseGitStatus(text: string): GitState {
-  const st: GitState = { ahead: 0, behind: 0, changed: 0, untracked: 0 }
+  const st: GitState = { ahead: 0, behind: 0, changed: 0, untracked: 0, upstream: false }
   for (const l of String(text ?? '').split(/\r?\n/)) {
+    if (l.startsWith('# branch.upstream ')) { st.upstream = true; continue }
     const ab = l.match(/^# branch\.ab \+(\d+) -(\d+)/)
     if (ab) { st.ahead = Number(ab[1]); st.behind = Number(ab[2]); continue }
     if (/^[12u] /.test(l)) st.changed++
@@ -82,7 +83,7 @@ export function parseGitStatus(text: string): GitState {
   return st
 }
 export function gitLine(g: GitState): string {
-  const parts = [g.ahead ? `領先 ${g.ahead}` : '', g.behind ? `落後 ${g.behind}` : '', g.changed ? `未提交 ${g.changed} 檔` : '', g.untracked ? `未追蹤 ${g.untracked} 檔` : ''].filter(Boolean)
+  const parts = [g.upstream === false ? '未 push（沒有遠端分支）' : '', g.ahead ? `領先 ${g.ahead}` : '', g.behind ? `落後 ${g.behind}` : '', g.changed ? `未提交 ${g.changed} 檔` : '', g.untracked ? `未追蹤 ${g.untracked} 檔` : ''].filter(Boolean)
   return parts.length ? parts.join(' · ') : '與遠端一致、無未提交變更'
 }
 

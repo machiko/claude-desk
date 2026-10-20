@@ -17,7 +17,7 @@ export type Turn = {
 /** 畫面上才知道的事：完成檢查執行中、排隊中、派工中，以及現在是不是教學模式。 */
 export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean }
 
-export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
+export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
 
 const isRunning = (c: Case) => c.state === 'running'
 const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
@@ -26,6 +26,14 @@ const RUNNING_TEXT: Partial<Record<string, string>> = {
   continue: 'Agent 在寫程式（l 看輸出）', reply: 'Agent 在寫程式（l 看輸出）', fix: 'Agent 在修正（l 看輸出）',
   sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在審查 diff（新對話）', verify: '完成檢查在跑',
 }
+
+const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
+
+/** 合併段還沒有可用的 PR：要你 push 並開 PR（高風險要先看過資安審查的不算）。 */
+export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !(!c.pr && c.chain?.needsHuman) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
+
+/** 接力停住、檢查段因此標 ✕：說停住的原因，按 v 重跑檢查。 */
+const heldAtCheck = (c: Case) => !!c.chain?.stopped && c.pipeline?.current === 'check' && c.pipeline.stages.some(s => s.id === 'check' && s.status === 'fail')
 
 /** 上線段該做的事：還沒打 tag 就打 tag；tag 打了、關卡是 release 就部署後按 u。面板合併後的下一步也用它。 */
 export function shipTurn(c: Case): Turn {
@@ -63,21 +71,28 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
+      if (heldAtCheck(c)) return { who: 'you', text: `接力已暫停（${c.chain!.stopped}）`, key: 'v' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 v 重新執行完成檢查' : '按 v 執行完成檢查', key: 'v' }
     case 'review':
       if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）', key: 'w' }
-    case 'merge':
-      if (!c.pr && c.chain?.needsHuman) return { who: 'you', text: '高風險改動：看過資安審查（e）後再開 PR', key: 'e' }
-      if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') return { who: 'you', text: 'push 分支並開 PR' }
-      if (c.pr.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 在跑' }
-      if (c.pr.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
-      return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
+    case 'merge': {
+      const t = mergeTurn(c)
+      return c.chain?.selfReview && t.who === 'you' ? { ...t, text: t.text + SELF_REVIEW } : t
+    }
     case 'ship':
       return shipTurn(c)
     default:
       return { who: 'none', text: '沒有待辦' }
   }
+}
+
+function mergeTurn(c: Case): Turn {
+  if (!c.pr && c.chain?.needsHuman) return { who: 'you', text: '高風險改動：看過資安審查（e）後再開 PR', key: 'e' }
+  if (needsPr(c)) return { who: 'you', text: 'push 分支並開 PR' }
+  if (c.pr!.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 在跑' }
+  if (c.pr!.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
+  return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
 }
 
 /**
@@ -98,6 +113,9 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (current === 'build' || c.state === 'failed') out.add('continue')
   if (current === 'check' || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
   if (current === 'review' && !standingVerdict(c)) out.add('review')
+  // 自審的結論照算，但留著 w 讓你派獨立審查。
+  if (current === 'merge' && c.chain?.selfReview) out.add('review')
+  if (needsPr(c)) out.add('open-pr')
   if (current === 'ship') out.add('ship')
   if (ctx.tutorial && tutorialStep(c)) out.add('tutorial')
   else if (!ctx.tutorial && awaitsSpecOk(c)) out.add('spec-ok')

@@ -9,7 +9,7 @@ import { gitLine, isArmed } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
-import { shipTurn, stageActions, turnOf } from './turn'
+import { needsPr, shipTurn, stageActions, turnOf } from './turn'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
 import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
@@ -198,7 +198,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (gate) {
     rows.push(<Text> </Text>)
     const head = `◆ ${GATE_LABEL[gate.kind]}`
-    const [first, ...rest] = wrapText(`${head}  ${gate.detail}`, width - INDENT)
+    const [first, ...rest] = wrapText(`${head}  ${gate.detail}${gate.kind === 'review' && c.chain?.selfReview ? '（自審）' : ''}`, width - INDENT)
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.attention} bold>{head}</Text><Text color={COLOR.text}>{(first ?? '').slice(head.length)}</Text></Text></Box>)
     rows.push(...rest.map(line => <Box paddingLeft={INDENT}><Text color={COLOR.text} wrap="truncate-end">{line}</Text></Box>))
   }
@@ -243,6 +243,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (c.agent?.id && can('logs')) out.push(button({ key: prefix + 'logs', hotkey: 'l', isDim: true, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : '≡ 輸出', onPress: () => act.logs(c) }))
   if (c.reviewTop?.length && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
+  if (needsPr(c) && can('open-pr')) out.push(button({ key: prefix + 'open-pr', isLead: !leadKey, isDim: !!leadKey, label: '⇡ 開 PR', onPress: () => act.fillPr(c) }))
   if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} 檢查中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
   if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)

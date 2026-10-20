@@ -6,7 +6,7 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
 import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
-import { archiveReview, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
+import { archiveReview, baseRefs, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
@@ -14,7 +14,7 @@ import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
-import { awaitsSpecOk, canArchive, checkStands, finalState, isReleaseLine, parseVerdict, pipeline } from './pipeline'
+import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
 import { nextStep } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -102,8 +102,13 @@ export async function refresh($: any, options: PluginOptions) {
       const probe = await gitProbe($, base.root)
       const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr) : undefined
       const run = chains[normalizeRoot(base.root)]
-      const stale = !!run?.judgedHead && !!probe.git?.head && probe.git.head !== run.judgedHead
-      const chain = run ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) } : undefined
+      const stale = movedSince(run?.judgedHead, probe.git)
+      // 卡片上有無阻擋的審查結論，但沒有任何 desk 派的審查判過它（沒有接力紀錄，或接力只派過實作）：自審。
+      const verdict = parseVerdict(base.gate)
+      const selfReview = !tutorial && !!verdict && blocking(verdict) === 0 && !run?.judgedHead && !run?.reviewHead
+      const chain = run
+        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
+        : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       const steps = deploySteps(card)
       const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []
@@ -437,7 +442,9 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   if (kind === 'review') {
     const run = (await loadChains($))[rootKey]
     const round = opts.auto ? run?.round ?? 0 : 0
-    const base = opts.security ? run?.securityHead : run?.reviewHead
+    // 舊紀錄存的是分支名稱，拿來 diff 會是空的：當作沒有基準，整條分支重審。
+    const recorded = opts.security ? run?.securityHead : run?.reviewHead
+    const base = recorded && recorded !== c.git?.branch ? recorded : undefined
     const paths = await deskPaths($, options)
     const pitfalls = paths.pitfalls
     const template = settings.review.template || `${$.plugin.root}/templates/review.md`
@@ -484,6 +491,15 @@ async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   }
   // 不先把上一次派工標成已回覆：派出成功時 dispatch 會換上新的那筆；派工失敗時要留著，Agent 才仍算在等你、可以再回覆。
   await dispatch($, options, c, 'reply', { text: answer })
+}
+
+/** 合併段的「⇡ 開 PR」：只把要主對話做的事預填進輸入框，不自動送出；desk 自己不 push、不開 PR。 */
+async function fillPrRequest($: any, options: PluginOptions, c: Case) {
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  const [target] = await baseRefs($, c, (await loadSettings($, options)).cardBase ?? '')
+  const text = `push ${c.git?.branch ?? '分支'} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR`
+  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
+  if (!filled.isFilled) $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入：${text}`)
 }
 
 async function fillDecision($: any, c: Case) {
@@ -740,6 +756,7 @@ export const register: Register = (on, options) => {
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),
       openPr: c => void (c.pr?.url ? openPath($, c.pr.url, ' PR') : undefined),
+      fillPr: c => void fillPrRequest($, options, c),
       next: () => void (async () => {
         const cur = await read($, snapshot)
         if (!cur) return
