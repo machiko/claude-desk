@@ -3,8 +3,8 @@ import { pipeline, parseVerdict, checkStands, stageParts, standingVerdict } from
 import { buildCase } from '../hooks/model'
 import type { Case, Verify } from '../types'
 
-const card = (f: Partial<Record<'檢查' | '等你' | '下一步' | '關卡', string>>) =>
-  `<!-- DESK -->\n- 狀態：ok\n- 檢查：${f.檢查 ?? '`npm test`'}\n- 等你：${f.等你 ?? '無'}\n- 下一步：${f.下一步 ?? '做事'}\n- 關卡：${f.關卡 ?? '無'}\n<!-- /DESK -->`
+const card = (f: Partial<Record<'狀態' | '檢查' | '等你' | '下一步' | '關卡', string>>) =>
+  `<!-- DESK -->\n- 狀態：${f.狀態 ?? 'ok'}\n- 檢查：${f.檢查 ?? '`npm test`'}\n- 等你：${f.等你 ?? '無'}\n- 下一步：${f.下一步 ?? '做事'}\n- 關卡：${f.關卡 ?? '無'}\n<!-- /DESK -->`
 const mk = (f: Parameters<typeof card>[0] = {}, extra: Partial<Case> = {}): Case => ({ ...buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card(f), 1, {}, undefined), git: { branch: 'feature/a', head: 'h1' }, ...extra })
 const ok = (head = 'h1'): Verify => ({ command: 'npm test', at: 1, ok: true, exitCode: 0, tail: [], truncated: false, head })
 const glyphs = (c: Case, v?: Verify) => stageParts(pipeline(c, v), true).map(p => p.text).join('')
@@ -38,7 +38,9 @@ test('stages follow the evidence from the back', () => {
   expect(pipeline(mk({}, { pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).note).toBe('待打 tag')
   expect(glyphs(mk({ 關卡: 'release：v1.4.0 可上線' }, { tag: 'v1.4.0' }))).toBe('●●●●●◆')
   expect(pipeline(mk({ 關卡: 'release：v1.4.0 可上線' }, { tag: 'v1.4.0' }), undefined).note).toBe('v1.4.0 已打，待確認上線')
-  expect(pipeline(mk({}, { tag: 'v1.4.0' }), undefined).current).toBeNull()
+  // 只有 tag、沒有合併／審查過關／release 關卡：不算上線（剛從打了 tag 的 main 開的分支）
+  expect(glyphs(mk({}, { tag: 'v1.4.0' }))).toBe('●◆○○○○')
+  expect(pipeline(mk({}, { tag: 'v1.4.0', pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).current).toBeNull()
 })
 
 test('a review with blocking issues stays in review while the chain fixes it, and fails once it stopped', () => {
@@ -87,4 +89,23 @@ test('a branch already inside its base counts as merged only once it reached the
   // 剛開的分支（HEAD 還是 base 的 commit）不算合併
   expect(glyphs(mk({}, { mergedInto: 'origin/main' }))).toBe('●◆○○○○')
   expect(glyphs(mk({}, { mergedInto: 'origin/main' }), ok())).toBe('●●●◆○○')
+})
+
+test('a tag counts as shipped once the PR is merged, the review passed, or the gate is release', () => {
+  const passed = { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }
+  expect(glyphs(mk({ 檢查: '無' }, { tag: 'v0.19.0' }))).toBe('◆○○○○○')
+  expect(pipeline(mk({ 關卡: 'spec：待確認規格' }, { tag: 'v0.19.0' }), undefined).note).toBe('規格待確認')
+  expect(pipeline(mk({}, { tag: 'v0.19.0', mergedInto: 'origin/main' }), undefined).current).toBe('build')
+  expect(pipeline(mk(passed, { tag: 'v0.19.0' }), undefined).current).toBeNull()
+  expect(pipeline(mk(passed, { tag: 'v0.19.0', mergedInto: 'origin/main' }), undefined).current).toBeNull()
+  expect(pipeline(mk({}, { tag: 'v0.19.0', pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).current).toBeNull()
+  expect(pipeline(mk({ 關卡: 'release：v0.19.0 可上線' }, { tag: 'v0.19.0' }), undefined).current).toBe('ship')
+})
+
+test('a confirmed ship stays shipped after the release gate is cleared and the PR is no longer shown', () => {
+  // 按 u 之後：關卡清成無、看不到 PR，只剩卡片上確認時寫的狀態與下一步
+  expect(pipeline(mk({ 狀態: 'v0.19.0 已上線（工作桌確認）', 下一步: '等下一版開發' }, { tag: 'v0.19.0' }), undefined).current).toBeNull()
+  expect(pipeline(mk({ 下一步: '可歸檔：/desk:card archive a' }, { tag: 'v0.19.0' }), undefined).current).toBeNull()
+  // 寫的是別的版號：不算這個 tag 已上線
+  expect(glyphs(mk({ 狀態: 'v0.18.0 已上線（工作桌確認）' }, { tag: 'v0.19.0' }))).toBe('●◆○○○○')
 })

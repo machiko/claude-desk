@@ -1,6 +1,6 @@
 // 現在卡：一列一個元素（content 會捲動，列數要算得出來），操作按鈕另外列成清單交給常駐的 footer 排。
 import type { Case, Verify } from '../types'
-import { allPicked, decisionAnswer, parseDecisions, parseGate, splitClauses, CARD_CMD, GATE_LABEL } from './card'
+import { allPicked, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
 import { ago, displayWidth, fit, hhmm, pad, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
@@ -9,7 +9,7 @@ import { gitLine, isArmed } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
-import { stageActions, turnOf } from './turn'
+import { shipTurn, stageActions, turnOf } from './turn'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
 import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
@@ -161,9 +161,13 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (c.status) rows.push(...(view.isExpanded ? kvRows(ui, '狀態', c.status, width, true, COLOR.dim) : kvRows(ui, '狀態', c.statusShort ?? compactStatus(c.status), width, false, COLOR.text, 1)))
   if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState)}`, width, false, COLOR.dim, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
+  // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；Agent 在跑、等你時也不換成別的話）。
+  const archive = `${CARD_CMD} archive ${slugOf(c)}`
+  const ship = shipTurn(c)
+  const afterDeploy = isDone ? archive : ship.key === 'u' ? '按 u 確認上線' : ship.text
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
-    ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${CARD_CMD} archive ${slugOf(c)}`, width, true, COLOR.attention)
-    : kvRows(ui, '下一步', `已合併，可歸檔：${CARD_CMD} archive ${slugOf(c)}`, width, false, COLOR.attention, 1)))
+    ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${afterDeploy}`, width, true, COLOR.attention)
+    : kvRows(ui, '下一步', isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text, width, false, COLOR.attention, 1)))
 
   decisions.forEach((d, i) => {
     rows.push(<Text> </Text>)

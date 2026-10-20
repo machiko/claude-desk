@@ -1,7 +1,7 @@
 // 六段：規格 → 實作 → 檢查 → 審查 → 合併 → 上線。只從已經讀到的證據推算，不碰磁碟。
 // 證據由後往前看：最後一段有證據，它之前的都算過了；接著第一個還沒過的就是「現在」。
 import type { Case, PrInfo, ReviewVerdict, Stage, StageId, StageStatus, Pipeline, Verify } from '../types'
-import { parseGate, saysNone } from './card'
+import { ARCHIVE_WORD, SHIPPED_WORD, parseGate, saysNone } from './card'
 
 export const STAGES: readonly { id: StageId; label: string }[] = [
   { id: 'spec', label: '規格' },
@@ -49,11 +49,17 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
   const release = isReleaseLine(c)
   const runningKind = c.agent && !c.agent.asks && c.agent.status !== 'idle' ? c.chain?.lastKind ?? 'continue' : null
 
+  const reviewed = (verdict && blocking(verdict) === 0) || (c.chain?.passed && !stale)
+  // 按 u 確認上線後關卡清成無、PR 資訊過一小時也不顯示，靠確認時寫進卡片的狀態與下一步認得它已上線。
+  const confirmed = !!c.tag && (c.status.includes(`${c.tag} ${SHIPPED_WORD}`) || c.next.startsWith(ARCHIVE_WORD))
+  // tag 只在走到上線段後才算數：從打了 tag 的 main 剛開的分支，HEAD 也被 tag 包含。發版線沒有審查與合併段，照算。
+  const tagged = !!c.tag && (release || c.pr?.state === 'MERGED' || !!reviewed || gate?.kind === 'release' || confirmed)
+
   // 由後往前找最遠的「過了」證據。
   let reached = -1
-  if (c.tag && !(gate?.kind === 'release')) reached = INDEX.ship
-  else if (c.pr?.state === 'MERGED' || c.tag) reached = INDEX.merge
-  else if ((verdict && blocking(verdict) === 0) || (c.chain?.passed && !stale)) reached = INDEX.review
+  if (tagged && !(gate?.kind === 'release')) reached = INDEX.ship
+  else if (c.pr?.state === 'MERGED' || tagged) reached = INDEX.merge
+  else if (reviewed) reached = INDEX.review
   else if (check === true && !runningKind) reached = INDEX.check
   else if (check === false && !runningKind) reached = INDEX.build
   // 審查後有新 commit：程式已經寫了，退回檢查重來。

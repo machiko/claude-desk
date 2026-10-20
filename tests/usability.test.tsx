@@ -61,17 +61,26 @@ test('logs open the last lines of the executor output', async ($, on) => {
   await ui.unmount()
 })
 
-test('merged PR shows deploy steps and the archive command', async ($, on) => {
+test('deploy steps end with the next ship action and point to archive only once the case is done', async ($, on) => {
   const { data } = fixture(on)
   data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1' }
   data.prs = [{ id: 7, state: 'MERGED', dest: 'release/v1.4', url: 'https://bitbucket.org/x/7' }]
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無') + '\n## 部署步驟（合併後）\n1. php artisan migrate\n2. 跑回填 --dry-run\n'
+  // (a) 還沒有 tag：做完部署步驟之後要打 tag，不是歸檔
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_A}` })
   expect(await ui.find({ type: 'Text', text: '1. php artisan migrate' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '全部做完後：/desk:card archive alpha' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '2. 跑回填 --dry-run' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '全部做完後：打 tag 發版' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /archive alpha/ })).toBeUndefined()
   expect(await ui.find({ key: `case-${CARD_A}-pr` })).toBeDefined()
+  // (b) tag 已打、六段全綠：結尾才指向歸檔
+  data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1', tag: 'v1.4.0' }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  expect(await ui.find({ type: 'Text', text: /✓ 完成 v1\.4\.0/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '1. php artisan migrate' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '全部做完後：/desk:card archive alpha' })).toBeDefined()
   await ui.unmount()
 })
 

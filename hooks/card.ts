@@ -141,6 +141,9 @@ export function projectRoot(statusPath: string): string {
  */
 /** 開卡、規格、歸檔的指令（plugin 內附的 skill，名稱帶 plugin 前綴）。 */
 export const CARD_CMD = '/desk:card'
+/** 上線確認寫進卡片的字：狀態「<tag> 已上線（工作桌確認）」、下一步「可歸檔：…」；六段也靠它們認得已確認上線。 */
+export const SHIPPED_WORD = '已上線'
+export const ARCHIVE_WORD = '可歸檔'
 
 /** 人名放進中文句子：英文名前後加空格（「要 Alex 決定」），中文不加（「要使用者決定」）。 */
 export const named = (user: string) => /^[\x00-\x7F]+$/.test(user) ? ` ${user} ` : user
@@ -151,7 +154,7 @@ export function confirmShip(text: string, date: string, time: string, tag: strin
   const gate = m[2]!.match(/^- 關卡：(.*)$/m)
   if (!gate || parseGate(gate[1])?.kind !== 'release') return null
   let body = m[2]!.replace(/^- 關卡：.*$/m, '- 關卡：無')
-    .replace(/^- 狀態：.*$/m, () => `- 狀態：${tag || '這一版'} 已上線（工作桌確認）`)
+    .replace(/^- 狀態：.*$/m, () => `- 狀態：${tag || '這一版'} ${SHIPPED_WORD}（工作桌確認）`)
     .replace(/^- 下一步：.*$/m, () => `- 下一步：${nextStep}`)
   if (m[1] === 'CARD') body = body.replace(/^- 更新：.*?rev (\d+).*$/m, (_l, rev) => `- 更新：${date} ${time} · rev ${Number(rev) + 1} · desk 上線確認`)
   const start = m.index + m[0].indexOf(m[2]!)
