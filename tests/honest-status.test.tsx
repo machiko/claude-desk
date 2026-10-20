@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_B, REGISTRY, leaves, text } from './fixture'
 import { gitLine, parseGitStatus } from '../hooks/extras'
-import { checkStands } from '../hooks/pipeline'
+import { checkStands, pipeline, stageLabel } from '../hooks/pipeline'
+import { buildCase } from '../hooks/model'
+import type { Case, Verify } from '../types'
 
 const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
@@ -122,11 +124,21 @@ test('a verdict the agent wrote itself counts but is marked self-review with w o
   const independent = await refreshed($, ui)
   const independentW = await ui.find({ key: `${PREFIX}review` })
 
+  // 六段註記：直接看合併段的註記（面板只在狀態列顯示它）
+  const merged = (chain: Case['chain']) => {
+    const c: Case = { ...buildCase({ name: 'Beta', statusPath: CARD_B }, `<!-- DESK -->\n- 狀態：ok\n- 檢查：\`npm test\`\n- 等你：無\n- 下一步：開 PR\n${PASSED}\n<!-- /DESK -->`, 1, {}, undefined), git: { branch: 'feature/b', head: 'c2' }, chain }
+    const v: Verify = { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' }
+    return stageLabel(pipeline(c, v))
+  }
+
   expect(self).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
   expect(self).toContain(flat('push 分支並開 PR（審查是自審，可按 w 派獨立審查）'))
-  expect(self).toContain(flat('自審'))
+  expect(self).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
+  expect(merged({ round: 0, selfReview: true })).toBe('合併・可開 PR（自審）')
   expect(selfW?.props?.hotkey).toBe('w')
+  expect(independent).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'))
   expect(independent).not.toContain(flat('自審'))
+  expect(merged({ round: 0, passed: true })).toBe('合併・可開 PR')
   expect(independentW).toBeUndefined()
   await ui.unmount()
 })

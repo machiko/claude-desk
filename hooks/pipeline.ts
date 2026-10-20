@@ -126,6 +126,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false): Pip
         else if (c.pr.ci === 'fail') set('fail', 'CI 失敗')
         else if (c.pr.ci === 'pending') set('active', 'CI 執行中')
         else set('wait', '可合併')
+        // 審查結論是 Agent 自己寫的：照算，但註記標出來。
+        if (c.chain?.selfReview && notes.merge) notes.merge += '（自審）'
         break
       case 'ship':
         set('wait', c.tag ? `${c.tag} 已打，待確認上線` : '待打 tag')
