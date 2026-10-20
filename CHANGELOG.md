@@ -1,6 +1,6 @@
 # Changelog
 
-## 未發布
+## 0.21.1
 
 - 修復「✓ 確認規格」與「⌫ 歸檔」遇到卡片腳本拋出 Python 例外時，提示只寫「Traceback (most recent call last):」看不出原因：現在顯示例外那一行；一般失敗仍顯示腳本印的原因。
 
