@@ -10,6 +10,10 @@ import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
 export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
 
 /** 指令失敗時給人看的那一行：stderr（沒有就 stdout）的最後一行。 */
+/** card.py 失敗時的原因：它把原因印在第一行，後面才接細節（例如整份登錄表）。 */
+export const reasonLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') =>
+  String(r?.stderr || r?.stdout || '').split(/\r?\n/).map(l => l.trim()).find(Boolean) || fallback
+
 export const errorLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') =>
   String(r?.stderr || r?.stdout || '').trim().split(/\r?\n/).pop() || fallback
 

@@ -73,7 +73,7 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 
 - 開卡：`/desk:card new <分支> <卡名> [base]`（建 worktree＋DESK 卡＋登錄表列）。
 - 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時只能同步不能派實作）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡，就能按 `g`。審查會逐條對照驗收情境。
-- 歸檔：上線後 `/desk:card archive <slug>`（卡與審查檔複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。
+- 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡與審查檔複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。
 
 ## 常見狀況
 
