@@ -39,7 +39,12 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   const lead = leadCase(s, selected)
   const runningMore = s.cases.filter(c => c.state === 'running' && c !== lead).length
   const waiting = liveCases(s.cases).filter(c => NEEDS_YOU.has(c.state) && c !== lead)
-  const demo: BandPart[] = s.demo ? [{ text: '示範  ', color: COLOR.faint }] : s.tutorial ? [{ text: '教學  ', color: COLOR.faint }] : []
+  // 你在面板選的那件是對話的主角：前面標「已選」，提醒提示都會附上它的卡。
+  const isPicked = !!selected && lead?.statusPath === selected
+  const demo: BandPart[] = [
+    ...(s.demo ? [{ text: '示範  ', color: COLOR.faint }] : s.tutorial ? [{ text: '教學  ', color: COLOR.faint }] : []),
+    ...(isPicked ? [{ text: '已選  ', color: COLOR.dim }] : []),
+  ]
 
   if (!lead) {
     const quiet = s.cases.length ? `○ ${s.cases.length} 件都閒置` : '尚無案子'

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, BAND, CARD_A, NOW, leaves, text } from './fixture'
+import { fixture, PANE, BAND, CARD_A, CARD_B, NOW, leaves, text } from './fixture'
 
 test('the now card shows the case that needs a person; the list holds the rest with digit hotkeys', async ($, on) => {
   const { data } = fixture(on)
@@ -17,7 +17,7 @@ test('the now card shows the case that needs a person; the list holds the rest w
   await ui.unmount()
 })
 
-test('picking options lights them, fill puts the answer in the prompt and selects the case', async ($, on) => {
+test('picking options lights them and fill puts the answer in the prompt', async ($, on) => {
   const { data } = fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
@@ -74,20 +74,46 @@ test('a declined verify runs nothing', async ($, on) => {
   await ui.unmount()
 })
 
-test('selecting a row moves it to the now card and attaches its card to the next prompt once', async ($, on) => {
+/** 選了案子之後，每次送出都以它為主：卡片沒變只附一句提醒，變了附全文；再點案名才取消。 */
+test('a selected case stays the subject of every prompt until its name is clicked again', async ($, on) => {
   const { data } = fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
-  await ui.press({ key: 'row-/home/u/wt/beta/.desk/CARD.md' })
+  await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /^Beta$/ })).toBeDefined()
   expect(await ui.find({ key: `row-${CARD_A}` })).toBeDefined()
   const seen = data.submitted
+
   await $.prompt.submit({ text: '請看一下' } as any)
-  expect(seen.length).toBe(1)
   expect(seen[0].context?.[0]).toContain('案子「Beta」')
+  expect(seen[0].context?.[0]).toContain('預設以它為主')
   expect(seen[0].context?.[0]).toContain('- 下一步：依審核修正')
+
   await $.prompt.submit({ text: '再一次' } as any)
-  expect(seen[1].context ?? []).toEqual([])
+  expect(seen[1].context?.[0]).toContain('案子「Beta」')
+  expect(seen[1].context?.[0]).toContain('沒有變動')
+  expect(seen[1].context?.[0]).not.toContain('- 下一步')
+
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 下一步：依審核修正', '- 下一步：補測試')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.prompt.submit({ text: '卡片改了' } as any)
+  expect(seen[2].context?.[0]).toContain('- 下一步：補測試')
+
+  await ui.press({ key: `case-${CARD_B}-name` })
+  await $.prompt.submit({ text: '取消選取後' } as any)
+  expect(seen[3].context ?? []).toEqual([])
+  await ui.unmount()
+})
+
+test('a selected case that leaves the registry is no longer attached', async ($, on) => {
+  const { data } = fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(72))
+  await ui.press({ key: `row-${CARD_B}` })
+  data.files['/home/u/.claude/handoffs/shop/projects-scope.md'] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |`
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.prompt.submit({ text: 'Beta 歸檔了' } as any)
+  expect(data.submitted[0].context ?? []).toEqual([])
   await ui.unmount()
 })
 

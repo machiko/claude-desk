@@ -1,9 +1,9 @@
 // 探測：git、tag、PR（Bitbucket／GitHub）、合併、風險、Agent 記錄、容器、版本、模型。都是讀，不寫卡片；
 // 唯一的寫入是審查存底（archiveReview）。快取放在這個模組裡，重新載入就清空。
 import type { PluginOptions } from 'claude-code'
-import type { Case, PrInfo, Snapshot } from '../types'
+import type { Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
-import { lastMeaningful } from './model'
+import { lastMeaningful, plain } from './model'
 import { REVIEW_FILE, SECURITY_FILE, modelFor, parseSettings } from './dispatch'
 import type { DispatchSettings } from './dispatch'
 import { READ_TOOL, ciOf, mcpJson, pickPr, prQuery, repoOf, statusQuery } from './bitbucket'
@@ -36,6 +36,12 @@ const risks = new Map<string, Risk>()
 const merges = new Map<string, string>()
 const mergeMisses = new Map<string, number>()
 const projects = new Map<string, Project>()
+/** 根目錄＋HEAD → 最近一次變更的時間；HEAD 不變它就不變。 */
+const commitTimes = new Map<string, CommitTimes>()
+/** 一次 commit 改到超過這麼多檔案就不逐一看修改時間，直接用 commit 時間。 */
+const MAX_STAT_FILES = 50
+
+export type CommitTimes = { at: number; changedAt: number }
 
 export async function home($: any): Promise<string> {
   const h = (await $.env.get('HOME').catch(() => null)) || (await $.env.get('USERPROFILE').catch(() => null)) || ''
@@ -96,6 +102,30 @@ export async function gitProbe($: any, root: string): Promise<{ git?: { branch: 
     if (tag) tags.set(head, tag)
   }
   return { git: { branch, head }, ...(tag ? { tag } : {}) }
+}
+
+/**
+ * 分支最近一次變更：commit 時間，以及那次 commit 改到的檔案最後被改的時間（不晚於 commit；讀不到檔案或檔案太多就用 commit 時間）。
+ * 只改卡片的 commit 不算，commit 裡的卡片也不算：卡片 commit 進版控時檔案時間不會變，會被誤判成卡片過期。
+ * 讀不到就 undefined（不提示）。依 HEAD 快取。
+ */
+export async function commitTime($: any, root: string, head: string): Promise<CommitTimes | undefined> {
+  const key = `${root}\n${head}`
+  const known = commitTimes.get(key)
+  if (known) return known
+  const out = await git($, root, ['log', '-1', '--format=%ct', '--name-only', 'HEAD', '--', '.', ':(exclude).desk', ':(exclude).console'])
+  const [first = '', ...rest] = (out ?? '').split('\n')
+  const sec = Number(first.trim())
+  if (!out || !Number.isFinite(sec) || sec <= 0) return undefined
+  const at = sec * 1000
+  const files = rest.map(f => f.trim()).filter(Boolean)
+  const stats = files.length && files.length <= MAX_STAT_FILES
+    ? await Promise.all(files.map(f => ($.fs.stat(`${root}/${f}`) as Promise<{ mtimeMs?: number }>).catch(() => null)))
+    : []
+  const times = stats.map(s => s?.mtimeMs).filter((t): t is number => typeof t === 'number')
+  const r = { at, changedAt: times.length ? Math.min(at, Math.max(...times)) : at }
+  commitTimes.set(key, r)
+  return r
 }
 
 /** origin 是哪一家：Bitbucket 走 MCP、GitHub 走 gh CLI；其他（GitLab、自架）不查 PR，合併交給 git 判斷。 */
@@ -287,4 +317,19 @@ export async function logTail($: any, id: string | undefined, n = 10): Promise<s
   if (!id) return []
   const r = await $.process.run(['claude', 'logs', id], { timeoutMs: LOGS_TIMEOUT_MS }).catch(() => null)
   return r && r.exitCode === 0 ? logLines(String(r.stdout), n) : []
+}
+
+/** 完成檢查最長跑多久。 */
+export const VERIFY_TIMEOUT_MS = 600_000
+
+/** 在案子根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
+export async function verifyResult($: any, c: Case): Promise<Verify> {
+  const head = (await gitProbe($, c.root)).git?.head
+  try {
+    const r = await $.process.run(['sh', '-c', c.verify], { cwd: c.root, timeoutMs: VERIFY_TIMEOUT_MS })
+    const lines = `${r.stdout}\n${r.stderr}`.split(/[\r\n]+/).map((l: string) => plain(l).trimEnd()).filter(Boolean)
+    return { command: c.verify, at: await $.clock.now(), ok: r.exitCode === 0, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}) }
+  } catch (error) {
+    return { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail: [plain(error instanceof Error ? error.message : String(error))], truncated: false, ...(head ? { head } : {}) }
+  }
 }

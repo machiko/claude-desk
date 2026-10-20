@@ -20,7 +20,7 @@ test('header and footer stay while only the content scrolls, and the footer says
   expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: / ↑\d+$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ' 9.9.9' })).toBeDefined() // header 還在
-  expect(await ui.find({ key: 'refresh' })).toBeDefined() // footer 還在
+  expect(await ui.find({ key: 'more' })).toBeDefined() // footer 還在（r 收進「更多動作」，改看 m）
   expect(await ui.find({ key: `case-${CARD_A}-open` })).toBeDefined() // 現在這件的操作在 footer，捲走內容熱鍵照樣能按
   expect(rowsOf(await ui.drawn())).toBeLessThanOrEqual(16)
 

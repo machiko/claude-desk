@@ -130,6 +130,15 @@ export function decisionAnswer(decisions: Decision[], picks: Record<string, stri
 export const allPicked = (decisions: Decision[], picks: Record<string, string>) =>
   decisions.length > 0 && decisions.every((d, i) => d.options.length === 0 || !!picks[String(i)])
 
+/** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件案子的決策。 */
+export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`
+
+/** 送出的提示是不是某件案子的決策（以「「案名」決策：」開頭）：回傳案名，不是就 null。 */
+export function decisionName(text: string): string | null {
+  const m = String(text ?? '').match(/^\s*「(.+?)」決策：/)
+  return m ? m[1]! : null
+}
+
 /** 案子根目錄：卡片所在資料夾；資料夾名以 `.` 開頭（.desk、.console）就再上一層。 */
 export function projectRoot(statusPath: string): string {
   const parts = statusPath.replace(/\\/g, '/').split('/')

@@ -4,9 +4,9 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
-import { parseRegistry, parseDecisions, decisionAnswer, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
-import { buildCase, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
-import { archiveReview, baseRefs, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions } from './probes'
+import { parseRegistry, parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
+import { buildCase, caseNamed, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
+import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
@@ -22,10 +22,12 @@ import type { ChainRun } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialDecision, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, VERIFY_TIMEOUT_MS, cardContext, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
+import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
-import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, updateDesk } from './update'
-import type { UpdateCheck } from './update'
+import { noticeOf } from './update'
+import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
+import { sentState } from './turn'
+import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 
 const PANE = 'desk'
 const DEMO_ONLY = '示範案子只能看；請照教學那件的指示操作'
@@ -59,6 +61,8 @@ let launchSeq = 0
 /** 這個對話最近一次請求的模型與 effort（turn.step 帶的）；重新載入後要等下一次請求。 */
 let turnModel: { model?: string; effort?: string } = {}
 let forcePr = false
+/** 登錄表與每張卡片的路徑（上一輪讀到的）：對話改到它們就馬上重讀。 */
+let knownPaths: string[] = []
 
 const refreshMs = (options: PluginOptions) => {
   const n = Number(options.refreshSeconds)
@@ -76,6 +80,7 @@ export async function refresh($: any, options: PluginOptions) {
     const text = path ? await $.fs.read(path).catch(() => null) : null
     const error = text !== null ? null : tutorial ? `無法讀取教學的登錄表 ${path}；輸入 /desk tutorial end 回到你的案子` : registryError(paths!)
     const rows = parseRegistry(text ?? '', await home($))
+    knownPaths = [...(path ? [path] : []), ...rows.map(r => r.statusPath)]
     // 教學不看真的背景 agent，只看模擬的那一個。
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
     const list = agentsOut && agentsOut.exitCode === 0 ? rawAgents(agentsOut.stdout) : []
@@ -115,9 +120,11 @@ export async function refresh($: any, options: PluginOptions) {
         ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
+      // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
+      const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
       const steps = deploySteps(card)
       const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []
-      const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
+      const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -135,6 +142,8 @@ export async function refresh($: any, options: PluginOptions) {
     // 教學模式：示範案子接在後面當「其他案子」的背景（只能看）；版本、轉圈等仍只看真的案子。
     const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
+    // 選取的案子已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
+    if (!error && rows.length) await update($, selected, v => (v && !cur.cases.some(c => c.statusPath === v) ? null : v))
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
     await update($, snapshot, () => cur)
@@ -148,68 +157,12 @@ export async function refresh($: any, options: PluginOptions) {
     await spin($, cases.some(c => c.state === 'running'))
     await autoChain($, options, cur)
     void summarizeStatuses($, options, cur, summaries)
-    if (settings && settings.updateCheck !== 'off') void autoUpdateCheck($, now)
+    if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
     await update($, snapshot, prev => prev ? { ...prev, error: message } : { at: 0, cases: [], error: message, contextPercent: null })
   }).finally(() => { refreshing = null })
   return refreshing
-}
-
-async function loadUpdateCheck($: any): Promise<UpdateCheck | null> {
-  return parseCheck(await $.store.get(UPDATE_KEY).catch(() => null))
-}
-
-let checkingUpdate = false
-/**
- * desk 新版本的自動檢查：距離上次查到結果超過 24 小時才查（時間存 $.store，重開也算）。只提示、不安裝；
- * 同一個版號只在「最近」記一筆、跳一次 toast。查失敗不出聲、不記時間，下一輪再查。
- */
-async function autoUpdateCheck($: any, now: number) {
-  if (checkingUpdate || tutorial) return
-  const prev = await loadUpdateCheck($)
-  if (prev && now - prev.at < UPDATE_EVERY_MS) return
-  checkingUpdate = true
-  try {
-    const found = await checkLatest($, now)
-    const fresh = isNewer(found.latest, found.current) && prev?.notified !== found.latest
-    const next: UpdateCheck = { ...found, ...(fresh ? { notified: found.latest } : prev?.notified ? { notified: prev.notified } : {}) }
-    await $.store.set(UPDATE_KEY, next)
-    await showNotice($, next)
-    if (fresh) {
-      await feedPush($, [{ at: now, text: `desk ${noticeText(found.latest)}`, tone: 'suggestion' }])
-      $.ui.toast(`desk ${noticeText(found.latest)}`, { timeoutMs: 8000 })
-    }
-  } catch { /* 查失敗不提示，下一輪再查 */ } finally { checkingUpdate = false }
-}
-
-async function showNotice($: any, check: UpdateCheck) {
-  await update($, snapshot, s => {
-    if (!s) return s
-    const notice = noticeOf(check, s.versions?.desk)
-    const { update: _old, ...rest } = s
-    return notice ? { ...rest, update: notice } : rest
-  })
-}
-
-let updating = false
-/** 手動更新（/desk update、面板按鈕）：結果記進「最近」並跳 toast；查到的版號給自動檢查沿用。 */
-async function runUpdate($: any): Promise<string> {
-  if (updating) return 'desk 正在更新中，請稍候。'
-  updating = true
-  try {
-    const now = await $.clock.now()
-    const r = await updateDesk($, now)
-    if (r.check) {
-      const prev = await loadUpdateCheck($)
-      const check: UpdateCheck = { ...r.check, ...(prev?.notified ? { notified: prev.notified } : {}) }
-      await $.store.set(UPDATE_KEY, check)
-      await showNotice($, check)
-    }
-    await feedPush($, [{ at: now, text: r.text, tone: r.tone }])
-    $.ui.toast(r.text, { timeoutMs: r.tone === 'success' ? 10_000 : 8000 })
-    return r.text
-  } finally { updating = false }
 }
 
 /** 讀不到登錄表時面板上的說明：選項指定的、這個專案還沒建的、目前資料夾不在 git repo 裡。 */
@@ -324,6 +277,8 @@ async function stop($: any) {
   generation++
   refreshTimer?.cancel(); refreshTimer = undefined
   spinTimer?.cancel(); spinTimer = undefined
+  soonTimer?.cancel(); soonTimer = undefined
+  cancelPromptSync()
   $.ui.status(undefined)
   await update($, snapshot, () => null)
   await $.ui.close({ id: PANE }).catch(() => {})
@@ -343,14 +298,6 @@ async function togglePane($: any) {
   const pane = ((await $.ui.panes().catch(() => [])) as { id: string; isPlaced: boolean; isShown: boolean }[]).find(p => p.id === PANE)
   if (pane?.isPlaced && pane.isShown) { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}) }
   else await openPane($)
-}
-
-function caseNamed(s: Snapshot | null, name: string): Case | null {
-  if (!s) return null
-  const q = name.trim()
-  // 示範案子只能看，指令找不到它們。
-  const real = s.cases.filter(c => !c.demo)
-  return real.find(c => c.name === q) ?? real.find(c => c.name.includes(q)) ?? null
 }
 
 /** 完成檢查：第一次跑某條指令先問；之後同一條直接跑。結果記在 $.store，重開也在。 */
@@ -439,18 +386,6 @@ async function executeVerify($: any, c: Case, auto: boolean) {
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
-}
-
-/** 在案子根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
-async function verifyResult($: any, c: Case): Promise<Verify> {
-  const head = (await gitProbe($, c.root)).git?.head
-  try {
-    const r = await $.process.run(['sh', '-c', c.verify], { cwd: c.root, timeoutMs: VERIFY_TIMEOUT_MS })
-    const lines = `${r.stdout}\n${r.stderr}`.split(/[\r\n]+/).map((l: string) => plain(l).trimEnd()).filter(Boolean)
-    return { command: c.verify, at: await $.clock.now(), ok: r.exitCode === 0, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}) }
-  } catch (error) {
-    return { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail: [plain(error instanceof Error ? error.message : String(error))], truncated: false, ...(head ? { head } : {}) }
-  }
 }
 
 /**
@@ -572,11 +507,12 @@ async function fillDecision($: any, c: Case) {
   const decisions = parseDecisions(c.ask)
   const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
   if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按數字鍵）`); return }
+  if (sentState(await readSent($), c) === 'waiting') { $.ui.toast(`${c.name}：決策已送出，等對話寫回卡片`); return }
   const answer = decisionAnswer(decisions, picks)
   if (tutorial) { await tutorialDecision($, c, answer); return }
-  const filled = await $.prompt.fill({ text: `「${c.name}」決策：${answer}`, mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) { $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入「${c.name}」決策：${answer}`); return }
-  await update($, selected, () => c.statusPath)
+  const text = decisionPrompt(c.name, answer)
+  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
+  if (!filled.isFilled) { $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入${text}`); return }
   $.ui.toast(`${c.name}：決策已填入，按 Esc 回到輸入框再按 Enter 送出；此案子的卡片會一併附上`, { timeoutMs: 6000 })
 }
 
@@ -608,8 +544,8 @@ async function confirmShipped($: any, c: Case) {
   void refresh($, optionsRef!)
 }
 
-/** 卡片腳本改完登錄表或卡片後重新整理：已有一輪在跑（可能在腳本改之前就讀過）就等它結束再讀一輪。 */
-async function refreshAfterScript($: any, options: PluginOptions) {
+/** 卡片或登錄表剛被改過（卡片腳本、對話、回合結束）後重新整理：已有一輪在跑（可能在改之前就讀過）就等它結束再讀一輪。 */
+export async function refreshAfterWrite($: any, options: PluginOptions) {
   if (refreshing) await refreshing.catch(() => {})
   return refresh($, options)
 }
@@ -632,13 +568,13 @@ async function archiveCase($: any, options: PluginOptions, c: Case) {
     const why = reasonLine(r)
     $.ui.toast(`${c.name}：歸檔失敗：${why}`, { timeoutMs: 10_000 })
     await feedPush($, [{ at: now, text: `${c.name} 歸檔失敗：${why}`, tone: 'error' }])
-    void refreshAfterScript($, options)
+    void refreshAfterWrite($, options)
     return
   }
   const removeCmd = String(r.stdout ?? '').split(/\r?\n/).map((l: string) => l.trim()).find((l: string) => /\bworktree remove\b/.test(l))
   $.ui.toast(`${c.name}：已歸檔${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
   await feedPush($, [{ at: now, text: `${c.name} 已歸檔（worktree 與分支保留）`, tone: 'success' }])
-  void refreshAfterScript($, options)
+  void refreshAfterWrite($, options)
 }
 
 /**
@@ -652,11 +588,11 @@ async function confirmSpec($: any, options: PluginOptions, c: Case) {
     const why = reasonLine(r)
     $.ui.toast(`${c.name}：確認規格失敗：${why}`, { timeoutMs: 10_000 })
     await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error' }])
-    void refreshAfterScript($, options)
+    void refreshAfterWrite($, options)
     return
   }
   await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success' }])
-  void refreshAfterScript($, options)
+  void refreshAfterWrite($, options)
 }
 
 /** 停止 desk 自己派出去、正在跑的那個背景 agent（名字要對得上這件案子最後一次派工），接力一併暫停。 */
@@ -672,6 +608,7 @@ async function stopAgent($: any, c: Case) {
   void refresh($, optionsRef!)
 }
 
+
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
 
 export const register: Register = (on, options) => {
@@ -684,6 +621,8 @@ export const register: Register = (on, options) => {
     spinTimer?.cancel(); spinTimer = undefined
     await update($, verifyingAtom, () => ({}))
     await update($, launchingAtom, () => ({}))
+    // 新對話（含 /clear）：重附卡片全文，之前送出的決策不帶著鎖進來。
+    await resetPromptSync($)
     checkQueue.length = 0
     checking = null
     launchKinds = {}
@@ -698,17 +637,6 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('prompt.submit', async ($, e, next) => {
-    if (e.origin?.kind === 'plugin' || !active) return next(e)
-    const which = await read($, selected).catch(() => null)
-    const s = await read($, snapshot).catch(() => null)
-    const c = which && s ? s.cases.find(x => x.statusPath === which) ?? null : null
-    if (!c) return next(e)
-    const result = await next({ ...e, context: [...(e.context ?? []), cardContext(c)] })
-    if (!result.drop) await update($, selected, v => (v === which ? null : v))
-    return result
-  })
-
   // 主對話每次送請求時記下模型與 effort，面板的「模型」一列就跟著 /model 與 effort 的切換走。
   on('turn.step', async function* ($, e, next) {
     if (!e.agentId) {
@@ -721,10 +649,7 @@ export const register: Register = (on, options) => {
     return yield* next(e)
   })
 
-  on('turn.complete', async ($, e, next) => {
-    if (!e.agentId && active) void refresh($, options)
-    return next(e)
-  })
+  registerPromptSync(on, { isActive: () => active, isTutorial: () => !!tutorial, knownPaths: () => knownPaths, options })
 
   on('command.run', { command: 'desk' }, async ($, e) => {
     const arg = e.args.trim()
@@ -775,7 +700,8 @@ export const register: Register = (on, options) => {
     const verifying = await read($, verifyingAtom)
     const queue = await read($, queueAtom)
     const launching = await read($, launchingAtom)
-    const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, tutorial: !!s.tutorial })
+    const sent = await readSent($)
+    const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, tutorial: !!s.tutorial, sent: sentState(sent, c) })
     const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf, await read($, selected)), columns, () => {})
     const below = await next(e).catch(() => null)
     const { Box } = ui as any
@@ -799,6 +725,7 @@ export const register: Register = (on, options) => {
       logView: await read($, logViewAtom),
       isHelp: await read($, helpAtom),
       showAll: await read($, showAllAtom),
+      sent: await readSent($),
     }
     const act: PaneActions = {
       select: path => void (async () => { await update($, selected, v => (v === path ? null : path)); await update($, contentOffset, () => 0) })(),

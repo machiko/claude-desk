@@ -268,3 +268,12 @@ export function demoSnapshot(now: number): Snapshot {
 export function demoCases(now: number): Case[] {
   return demoSnapshot(now).cases.map(c => ({ ...c, demo: true }))
 }
+
+/** 指令裡的案名找案子：先全名、再部分符合；示範案子只能看，指令找不到它們。 */
+export function caseNamed(s: Snapshot | null, name: string): Case | null {
+  if (!s) return null
+  const q = name.trim()
+  // 示範案子只能看，指令找不到它們。
+  const real = s.cases.filter(c => !c.demo)
+  return real.find(c => c.name === q) ?? real.find(c => c.name.includes(q)) ?? null
+}

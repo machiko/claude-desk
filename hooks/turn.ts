@@ -1,6 +1,6 @@
 // 輪到誰、該做什麼：依六段與案子狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
-import type { Case } from '../types'
+import type { Case, SentRecord } from '../types'
 import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, isReleaseLine, runningKind, standingVerdict } from './pipeline'
@@ -14,8 +14,31 @@ export type Turn = {
   key?: string
 }
 
-/** 畫面上才知道的事：完成檢查執行中、排隊中、派工中，以及現在是不是教學模式。 */
-export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean }
+/** 畫面上才知道的事：完成檢查執行中、排隊中、派工中、決策送出了沒，以及現在是不是教學模式。 */
+export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean; sent?: SentState }
+
+/** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
+export type SentState = 'waiting' | 'unwritten'
+
+/** 這件案子的決策送出了沒：卡片「等你」跟送出時一樣才算；寫回卡片（等你改了）就回到平常。 */
+export function sentState(sent: Readonly<Record<string, SentRecord>>, c: Pick<Case, 'statusPath' | 'ask' | 'state'>): SentState | undefined {
+  const r = sent[c.statusPath]
+  if (!r || c.state !== 'ask' || r.ask !== c.ask) return undefined
+  return r.done ? 'unwritten' : 'waiting'
+}
+
+/** 最後一次 commit 比卡片新多少才提示同步：Agent 先寫卡再 commit 時差幾秒，不算。 */
+export const BEHIND_MS = 60_000
+/** commit 之後等多久才提示：對話常常先 commit 再寫卡，給它時間寫完。 */
+export const SETTLE_MS = 2 * 60_000
+
+/**
+ * 卡片可能過期：分支最後一次 commit（不算只改卡片的）改到的程式比卡片新、commit 已經放了一陣子，而且沒有 Agent 在跑。按 s 同步。
+ * 比的是那次 commit 改到的檔案最後被改的時間，不是 commit 時間：先寫卡、跑完測試才 commit 時，卡片並沒有過期。
+ */
+export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'changedAt' | 'updatedAt' | 'state' | 'agent'>, now: number) =>
+  !c.demo && !c.manual && !c.agent && c.state !== 'running' && c.state !== 'nocard' && c.state !== 'done'
+  && typeof c.commitAt === 'number' && c.updatedAt !== null && (c.changedAt ?? c.commitAt) - c.updatedAt > BEHIND_MS && now - c.commitAt > SETTLE_MS
 
 export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
 
@@ -50,6 +73,9 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
   const lesson = ctx.tutorial && !isRunning(c) && !ctx.verifying && !ctx.queued ? tutorialTurn(c) : null
   if (lesson) return { who: 'you', ...lesson }
+  // 決策從面板送出了：等對話寫回卡片，不要再叫你按字母；回合結束卻沒寫回，說清楚怎麼辦。
+  if (c.state === 'ask' && ctx.sent === 'waiting') return { who: 'ai', text: '決策已送出，等對話處理並寫回卡片' }
+  if (c.state === 'ask' && ctx.sent === 'unwritten') return { who: 'you', text: '決策已送出，但卡片的「等你」沒有改：按 o 開卡片改掉，或重新選擇後按 f 再送一次', key: 'o' }
   // 等你沒有選項（例如請你登入）：直接說那句話，沒有字母可按、也沒有東西可填。
   if (c.state === 'ask') return hasChoice(c) ? { who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' } : { who: 'you', text: c.ask }
   if (c.state === 'reply') return { who: 'you', text: '按 y 回覆 Agent 的提問', key: 'y' }
@@ -110,7 +136,7 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.agent?.id) out.add('logs')
   if (c.reviewTop?.length) out.add('review-file')
   if (c.pr?.url) out.add('pr')
-  if (c.state === 'ask' && hasChoice(c)) out.add('fill')
+  if (c.state === 'ask' && hasChoice(c) && ctx.sent !== 'waiting') out.add('fill')
   if (c.state === 'reply') out.add('reply')
   if (isRunning(c)) { out.add('stop'); return out }
   if (c.state !== 'done') out.add('sync')
