@@ -3,7 +3,7 @@
 import type { Case, SentRecord } from '../types'
 import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, canArchive, isReleaseLine, runningKind, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, isMerged, isReleaseLine, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 
@@ -37,8 +37,8 @@ export const SETTLE_MS = 2 * 60_000
  * 卡片可能過期：分支最後一次 commit（不算只改卡片的）改到的程式比卡片新、commit 已經放了一陣子，而且沒有 Agent 在跑。按 s 同步。
  * 比的是那次 commit 改到的檔案最後被改的時間，不是 commit 時間：先寫卡、跑完測試才 commit 時，卡片並沒有過期。
  */
-export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'changedAt' | 'updatedAt' | 'state' | 'agent'>, now: number) =>
-  !c.demo && !c.manual && !c.agent && c.state !== 'running' && c.state !== 'nocard' && c.state !== 'done'
+export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'changedAt' | 'updatedAt' | 'state' | 'agent' | 'pipeline'>, now: number) =>
+  !c.demo && !c.manual && !c.agent && c.state !== 'running' && c.state !== 'nocard' && c.state !== 'done' && !isMerged(c)
   && typeof c.commitAt === 'number' && c.updatedAt !== null && (c.changedAt ?? c.commitAt) - c.updatedAt > BEHIND_MS && now - c.commitAt > SETTLE_MS
 
 export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
@@ -145,8 +145,9 @@ function mergeTurn(c: Case): Turn {
 }
 
 /**
- * 這一刻該出現的動作：只列現在可以做、而且有意義的。開卡片永遠在；同步在沒有人執行時都在。
+ * 這一刻該出現的動作：只列現在可以做、而且有意義的。開卡片永遠在；同步在沒有人執行、還沒合併時都在。
  * 已經過了的段落不再出現它的鍵（檢查過了沒有 v、審查過了沒有 w）；之後有新 commit，六段會退回去，鍵也會回來。
+ * 合併之後只剩上線、歸檔、開卡片與 PR：不再繼續、審查、同步、檢查。
  */
 export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.demo) return new Set()
@@ -158,13 +159,15 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.state === 'ask' && hasChoice(c) && ctx.sent !== 'waiting') out.add('fill')
   if (c.state === 'reply') out.add('reply')
   if (isRunning(c)) { out.add('stop'); return out }
-  if (c.state !== 'done') out.add('sync')
-  if (current === 'build' || c.state === 'failed') out.add('continue')
-  if (current === 'check' || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
-  if (current === 'review' && !standingVerdict(c)) out.add('review')
-  // 自審的結論照算，但留著 w 讓你派獨立審查。
-  if (current === 'merge' && c.chain?.selfReview) out.add('review')
-  if (needsPr(c)) out.add('open-pr')
+  if (!isMerged(c)) {
+    if (c.state !== 'done') out.add('sync')
+    if (current === 'build' || c.state === 'failed') out.add('continue')
+    if (current === 'check' || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
+    if (current === 'review' && !standingVerdict(c)) out.add('review')
+    // 自審的結論照算，但留著 w 讓你派獨立審查。
+    if (current === 'merge' && c.chain?.selfReview) out.add('review')
+    if (needsPr(c)) out.add('open-pr')
+  }
   if (current === 'ship') out.add('ship')
   if (ctx.tutorial && tutorialStep(c)) out.add('tutorial')
   else if (!ctx.tutorial && awaitsSpecOk(c)) out.add('spec-ok')

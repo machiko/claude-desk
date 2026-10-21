@@ -98,7 +98,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   else if (stale && !coding) reached = INDEX.build
   else if (!saysNone(c.next) || c.agent || c.verify) reached = c.verify && saysNone(c.ask) && gate?.kind !== 'spec' ? INDEX.spec : -1
   // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
-  if (reached === INDEX.review && c.mergedInto) reached = INDEX.merge
+  // 審查後又有 commit（stale）再合併的也算：審查過、整個分支也進了基準分支。
+  if (c.mergedInto && (reached === INDEX.review || stale)) reached = Math.max(reached, INDEX.merge)
   // 接力停住、檢查又沒通過過：卡片上的審查結論（例如 Agent 自己寫的）不能讓它跳過檢查段。已合併、已打 tag 的不管。
   const held = !!c.chain?.stopped && check !== true && !release && !tagged && c.pr?.state !== 'MERGED' && !c.mergedInto
   if (held && reached > INDEX.build) reached = INDEX.build
@@ -173,9 +174,16 @@ export function stageLabel(p: Pipeline): string {
 
 export type { PrInfo }
 
-/** 六段都過了（每段 done 或不適用）、沒有人要做的事：案子算「完成」。等你、執行中、卡住等狀態不受影響。 */
+/** 合併段過了（PR 已合併、git 看到已併進基準分支，或已打 tag）：之後只剩上線與歸檔。發版線沒有合併段，不算。 */
+export const isMerged = (c: Pick<Case, 'pipeline'>) => !!c.pipeline?.stages.some(s => s.id === 'merge' && s.status === 'done')
+
+/**
+ * 六段都過了（每段 done 或不適用）、沒有人要做的事：案子算「完成」。等你、執行中等狀態不受影響。
+ * 合併之後接力停住或完成檢查沒過，分支已經進了基準分支，不再算未通過：照上線段走。
+ */
 export function finalState(c: Pick<Case, 'state' | 'pipeline'>): Case['state'] {
   const p = c.pipeline
-  if (!p || p.current !== null || (c.state !== 'ready' && c.state !== 'idle')) return c.state
-  return p.stages.every(s => s.status === 'done' || s.status === 'na') ? 'done' : c.state
+  const state = c.state === 'failed' && isMerged(c) ? 'ready' : c.state
+  if (!p || p.current !== null || (state !== 'ready' && state !== 'idle')) return state
+  return p.stages.every(s => s.status === 'done' || s.status === 'na') ? 'done' : state
 }
