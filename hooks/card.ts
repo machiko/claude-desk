@@ -56,12 +56,27 @@ export function parseGate(value: string | undefined): Gate | null {
 
 export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '審查', release: '上線', unknown: '關卡' }
 
-/** 驗證欄裡反引號內的那一條指令；沒有反引號就整行。 */
+/**
+ * 這段文字像不像一條可執行指令：整段被 `<` `>` 包住的是範本佔位；第一個 token 要是 ASCII 的指令字（程式名、路徑、`FOO=1` 這種環境變數），
+ * 中文或全形標點開頭的是說明句。只看第一個 token，後面的參數可以有中文（例如 `--grep "訂單匯出"`）。
+ */
+export function looksLikeCommand(text: string): boolean {
+  const raw = text.trim()
+  if (!raw || (raw.startsWith('<') && raw.endsWith('>'))) return false
+  return /^[A-Za-z0-9_.\/~$=@:+-]+$/.test(raw.split(/\s+/)[0]!)
+}
+
+/**
+ * 檢查欄（舊卡「驗證」欄）裡反引號內的那一條指令。沒有反引號、`<…>` 範本佔位、反引號裡是說明句時回空字串：
+ * 工作桌把空字串當「缺完成檢查」，不派實作也不執行。所有讀 verify 的地方都只看這個結果，不另外判斷。
+ */
 export function verifyCommand(value: string | undefined): string {
   const raw = (value ?? '').trim()
   if (!raw || saysNone(raw)) return ''
   const m = raw.match(/`([^`]+)`/)
-  return (m ? m[1]! : raw).trim()
+  if (!m) return ''
+  const cmd = m[1]!.trim()
+  return looksLikeCommand(cmd) ? cmd : ''
 }
 
 /** 卡片「## 規格」段的內文（含 ### 小節）；沒有這段就 null。規則與 card.py 的 spec_section 相同。 */

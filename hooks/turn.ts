@@ -55,6 +55,8 @@ const RUNNING_TEXT: Partial<Record<string, string>> = {
 const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
 
 const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
+/** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
+const MISSING_CHECK = '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 
 /** 合併段還沒有可用的 PR：要你 push 並開 PR（高風險要先看過資安審查的不算）。 */
 export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !(!c.pr && c.chain?.needsHuman) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
@@ -123,7 +125,9 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
       // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
       if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
-      return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} ${c.specGap ? '寫驗收情境與實作計畫' : '寫規格與完成檢查'}` }
+      if (c.specGap) return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫驗收情境與實作計畫` }
+      // 規格沒問題（或舊卡沒有規格段），停在這段只因為檢查欄空白、還是 `<…>` 範本佔位或說明文字：請人填一條真的指令。
+      return { who: 'you', text: MISSING_CHECK, key: 'o' }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       if (idleNext(c.next)) return { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }

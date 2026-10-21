@@ -17,7 +17,8 @@ const passed: Verify = { command: '`npm test`'.slice(1, -1), at: 1, ok: true, ex
 const ids = (c: Case, ctx = {}) => [...stageActions(c, ctx)].sort()
 
 test('each stage says whose turn it is and what to press, in plain words', () => {
-  expect(turnOf(mk({ check: '無' }))).toEqual({ who: 'you', text: '輸入 /desk:card spec age-group 寫規格與完成檢查' })
+  expect(turnOf(mk({ check: '無' }))).toEqual({ who: 'you', text: '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令', key: 'o' })
+  expect(turnOf(mk({ check: '`<完成檢查：修之前會紅、修好會綠的一條指令>`' }))).toEqual({ who: 'you', text: '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令', key: 'o' })
   expect(turnOf(mk({ gate: 'spec：待確認規格' }))).toEqual({ who: 'you', text: '看過規格（o 開卡片）後按 t 確認（或輸入 /desk:card spec age-group ok）', key: 't' })
   expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派 Agent：依規格實作', key: 'g' })
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
