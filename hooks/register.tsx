@@ -502,8 +502,8 @@ async function nextInQueue($: any) {
     $.ui.toast(`${c.name}：排隊的檢查沒跑成（${errorText(error)}）`, { timeoutMs: 10_000 })
     return false
   })
-  // 輪到它卻沒接手（排隊期間卡片的檢查改了或清掉、還沒授權、按了取消）：這件不跑了，換下一件，後面的不用一直等。
-  if (!took) void nextInQueue($)
+  // 輪到它卻沒接手（排隊期間卡片的檢查改了或清掉、還沒授權、按了取消）：這件不跑了，六段不再寫「排隊中」，換下一件，後面的不用一直等。
+  if (!took) { await restage($, next.statusPath); void nextInQueue($) }
 }
 export let optionsRef: PluginOptions | undefined
 
