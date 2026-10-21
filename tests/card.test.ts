@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { parseRegistry, parseCard, parseDecisions, pickByDigit, unpick, decisionAnswer, allPicked, parseGate, verifyCommand, projectRoot, splitClauses, saysNone } from '../hooks/card'
+import { parseRegistry, parseCard, parseDecisions, pickByDigit, unpick, decisionAnswer, allPicked, parseGate, verifyCommand, projectRoot, splitClauses, saysNone, filledAc, hasSpec } from '../hooks/card'
+import SPEC_CASES from './spec-cases.mjs'
 
 test('registry rows are any table line with a name and a backticked path; ~ expands', () => {
   const text = `# 登錄\n\n## 任務\n| Project | STATUS path | Scope |\n| --- | --- | --- |\n| 主工作區 | \`~/Workspace/app/.desk/CARD.md\` | 發版 |\n| 會員登入 | \`/abs/wt/.console/STATUS.md\` | |\n\n文字 | 不是列 |`
@@ -66,4 +67,12 @@ test('gate, verify command, none words and project root', () => {
   expect(projectRoot('/a/b/.console/STATUS.md')).toBe('/a/b')
   expect(projectRoot('/a/b/STATUS.md')).toBe('/a/b')
   expect(projectRoot('C:\\x\\y\\.desk\\CARD.md')).toBe('C:/x/y')
+})
+
+test('filled AC follows the same shared spec cases as card.py', () => {
+  // 與 card.py 的 filled_ac 同一份範例（skills/card/tests/test_card.py 的 test_filled_ac_matches_shared_spec_cases）
+  expect(SPEC_CASES.length).toBeGreaterThan(0)
+  for (const c of SPEC_CASES as { name: string; card: string; hasSpec: boolean; ac: string[] }[]) {
+    expect({ name: c.name, hasSpec: hasSpec(c.card), ac: filledAc(c.card) }).toEqual({ name: c.name, hasSpec: c.hasSpec, ac: c.ac })
+  }
 })

@@ -11,6 +11,7 @@ import tempfile
 import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts', 'card.py')
+SPEC_CASES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'tests', 'spec-cases.mjs')
 TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'templates', 'DESK-template.md')
 
 
@@ -40,17 +41,34 @@ KEY_CASES = [
 ]
 
 
+def load_card():
+    """把 card.py 當模組載入（不跑子指令）。"""
+    os.environ['DESK_PROJECT_DIR'] = ''
+    try:
+        spec = importlib.util.spec_from_file_location('card_under_test', SCRIPT)
+        card = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(card)
+    finally:
+        os.environ.pop('DESK_PROJECT_DIR', None)
+    return card
+
+
 class ProjectKeyTest(unittest.TestCase):
     def test_same_keys_as_the_panel(self):
-        os.environ['DESK_PROJECT_DIR'] = ''
-        try:
-            spec = importlib.util.spec_from_file_location('card_under_test', SCRIPT)
-            card = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(card)
-        finally:
-            os.environ.pop('DESK_PROJECT_DIR', None)
+        card = load_card()
         for common, key in KEY_CASES:
             self.assertEqual(card.project_key(common), key, common)
+
+
+class SpecRulesTest(unittest.TestCase):
+    def test_filled_ac_matches_shared_spec_cases(self):
+        # 與 hooks/card.ts 的 filledAc 同一份範例（tests/card.test.ts 的 filled AC follows the same shared spec cases as card.py）
+        card = load_card()
+        # 跟 TS 測試共用的 .mjs：行首的 `export default` 之後是純 JSON（註解裡的不算）
+        cases = json.loads(read(SPEC_CASES).split('\nexport default ', 1)[1])
+        self.assertTrue(cases)
+        for c in cases:
+            self.assertEqual(card.filled_ac(c['card']), c['ac'], c['name'])
 
 
 class CardScriptTest(unittest.TestCase):
