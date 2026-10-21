@@ -76,3 +76,12 @@ test('agent push: an open PR with new commits asks to push, not to merge', () =>
   }
   expect(turnOf(inSync)).toEqual({ who: 'you', text: '合併 PR（p 開啟）', key: 'p' })
 })
+
+test('idle next: the now card asks for v instead of g', () => {
+  const c = mk({ next: '等自動檢查與審查；過了開 PR' })
+  expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(ids(c)).toEqual(['open', 'sync', 'verify'])
+  // 有實作的下一步照舊
+  expect(turnOf(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual({ who: 'you', text: '按 g 派 Agent：等檢查；補 AC-3 的測試', key: 'g' })
+  expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open', 'sync'])
+})

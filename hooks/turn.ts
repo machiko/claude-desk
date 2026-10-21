@@ -6,6 +6,7 @@ import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './ca
 import { awaitsSpecOk, canArchive, isMerged, isReleaseLine, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
+import { idleNext } from './dispatch'
 
 export type Turn = {
   /** you：輪到你動手；ai：AI 或機器處理中，等著就好；none：沒有要做的事。 */
@@ -125,6 +126,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} ${c.specGap ? '寫驗收情境與實作計畫' : '寫規格與完成檢查'}` }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
+      if (idleNext(c.next)) return { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
       if (checkStageFailed(c)) return { who: 'you', text: `流程已暫停（${c.chain!.stopped}）`, key: 'v' }
@@ -172,8 +174,9 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (isRunning(c)) { out.add('stop'); return out }
   if (!isMerged(c)) {
     if (c.state !== 'done') out.add('sync')
-    if (current === 'build' || c.state === 'failed') out.add('continue')
-    if (current === 'check' || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
+    const idleBuild = current === 'build' && !!idleNext(c.next)
+    if ((current === 'build' && !idleBuild) || c.state === 'failed') out.add('continue')
+    if (current === 'check' || idleBuild || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
     if (current === 'review' && !standingVerdict(c)) out.add('review')
     // 自審的結論照算，但留著 w 讓你派獨立審查。
     if (current === 'merge' && c.chain?.selfReview) out.add('review')
