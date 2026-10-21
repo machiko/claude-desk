@@ -330,3 +330,24 @@ test('a chain paused at the check by another conversation says where it resumes 
   expect(shown.s).toContain(flat(`▶ 輪到你  流程已暫停（完成檢查的指令改過、還沒經你核准）${ELSEWHERE}`))
   expect(shown.s).not.toContain(flat(`▶ 輪到你  ${CHANGED}`))
 })
+
+/** 流程停在檢查段後，Agent 把卡片的檢查整條清掉：不能再說「按 v 看指令並核准」（按 v 只會說卡片尚缺完成檢查），改叫你填檢查。 */
+test('a chain paused at the check whose check was then cleared asks for a check, not v', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: CHANGED, heldAtCheck: true } }
+  data.store.jobs = { [ROOT]: handledJob }
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 驗證：.*$/m, '- 驗證：無')
+
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  const shown = flat(text(await ui.drawn()))
+  const o = await ui.find({ key: `${PREFIX}open` })
+  await ui.unmount()
+
+  expect(shown).toContain(flat('▶ 輪到你  卡片尚缺完成檢查：開卡片（o）'))
+  expect(shown).not.toContain(flat('按 v 看指令並核准'))
+  expect(leaves(o, 'Text').some((t: any) => t.props?.bold)).toBe(true)
+})
