@@ -88,7 +88,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk` | 開啟面板並把鍵盤焦點移過去；第一次會開始定時更新 |
 | `/desk close` | 收起面板（面板有焦點時按 Esc 也可以） |
 | `/desk refresh` | 立刻重讀 |
-| `/desk go\|sync\|review <案名>` | 派工：繼續（開始一輪接力）、同步、審查 |
+| `/desk go\|sync\|review <案名>` | 派工：繼續（開始一輪流程；完成檢查還沒核准過會先問）、同步、審查 |
 | `/desk reply <案名> [回覆]` | 回覆停下來問的 Agent |
 | `/desk verify <案名>` | 執行卡片的完成檢查（第一次會先確認） |
 | `/desk open <案名>` | 用系統預設程式開卡片 |
@@ -110,7 +110,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | y | 回覆停下來問的 Agent |
 | k | 停止 desk 派出去的 Agent（按兩次確認；對話保留） |
 | l | 展開 Agent 最近 10 行輸出 |
-| v | 完成檢查 |
+| v | 完成檢查；流程停在檢查段（指令改過、容器沒啟動、檢查中斷）時，跑完流程接著走 |
 | u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡並記 History |
 | o／e／p | 開卡片／審查檔／PR |
 | t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |

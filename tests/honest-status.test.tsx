@@ -8,7 +8,7 @@ import type { Case, Verify } from '../types'
 const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'
-const UNAUTHORIZED = '完成檢查尚未授權：請先按 v 執行一次，之後才會自動執行'
+const UNAPPROVED = '完成檢查的指令改過、還沒經你核准：按 v 看指令並核准，核准後流程接著走'
 const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 
@@ -156,15 +156,15 @@ test('a verdict the agent wrote itself counts but is marked self-review with w o
 test('a stopped chain shows its reason and the key to press instead of the next stage', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data)
-  data.store.chains = { [BETA]: { owner: 'other-session', startedAt: 0, round: 0, stopped: UNAUTHORIZED } }
+  data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: UNAPPROVED, heldAtCheck: true } }
 
   const ui = await mount($)
   const shown = await screen(ui)
   const verify = await ui.find({ key: `${PREFIX}verify` })
 
-  expect(shown).toContain(flat(`▶ 輪到你  接力已暫停（${UNAUTHORIZED}）`))
+  expect(shown).toContain(flat(`▶ 輪到你  ${UNAPPROVED}`))
   expect(shown).toContain(flat('實作● 檢查✕ 審查'))
-  expect(noteOf({ round: 0, stopped: UNAUTHORIZED })).toBe(`檢查・${UNAUTHORIZED}`)
+  expect(noteOf({ round: 0, stopped: UNAPPROVED })).toBe(`檢查・${UNAPPROVED}`)
   expect(shown).not.toContain(flat('push 分支並開 PR'))
   expect(shown).not.toContain(flat('✓ 完成'))
   expect(leaves(verify, 'Text').some((t: any) => t.props?.bold)).toBe(true)

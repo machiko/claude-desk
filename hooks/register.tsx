@@ -15,7 +15,7 @@ import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
-import { nextStep } from './chain'
+import { nextStep, paused } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
 import type { ChainRun } from './chain'
@@ -117,7 +117,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 這個對話的接力還沒處理剛做完的實作：檢查通過後會自動派審查。
       const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       const chain = run
-        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
+        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
@@ -175,7 +175,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
   const jobs = await loadJobs($)
   const chains = await loadChains($)
   const verifies = await read($, verifyingAtom)
-  const trusted = ((await $.store.get(TRUST_KEY).catch(() => null)) as Record<string, string> | null) ?? {}
+  const trusted = await trustedChecks($)
   let acted = false
   for (const c of s.cases) {
     const key = normalizeRoot(c.root)
@@ -194,7 +194,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const finished: DispatchKind | null = last.kind === 'sync' ? null : last.kind
     const settings = finished ? await loadSettings($, options) : undefined
     const risk = settings ? await riskOf($, c, settings.riskHigh, settings.cardBase) : undefined
-    const step = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security })
+    const step = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted })
     if (!step) continue
     acted = true
     if (finished === 'review' && step.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
@@ -204,10 +204,10 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     if (step.kind === 'verify') { void runVerify($, c, true); continue }
     await markHandled()
     if (step.kind === 'stop') {
-      await saveChain($, key, r => r ? { ...r, stopped: step.reason } : r)
-      await feedPush($, [{ at: s.at, text: `${c.name} 自動接力已暫停：${step.reason}`, tone: 'error' }])
-      $.ui.toast(`${c.name}：自動接力已暫停，${step.reason}`, { timeoutMs: 10_000 })
-      notify($, `${c.name}：自動接力已暫停，${step.reason}`)
+      await saveChain($, key, r => r ? paused(r, step.reason, step.atCheck) : r)
+      await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error' }])
+      $.ui.toast(`${c.name}：流程已暫停，${step.reason}`, { timeoutMs: 10_000 })
+      notify($, `${c.name}：流程已暫停，${step.reason}`)
     } else if (step.kind === 'pass') {
       const judged = step.skipped ? fresh?.head ?? c.git?.head : undefined
       await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(judged ? { judgedHead: judged } : {}) } : r)
@@ -312,13 +312,18 @@ const isQueued = (statusPath: string) => checkQueue.some(q => q.statusPath === s
 /** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，接力派審查的那一刻六段不退回實作。 */
 let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
 
-/** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒授權、按了取消、已經在跑或在排）是 false。 */
+/** 這個對話核准過的完成檢查：卡片路徑 → 指令全文。 */
+async function trustedChecks($: any): Promise<Record<string, string>> {
+  return ((await $.store.get(TRUST_KEY).catch(() => null)) as Record<string, string> | null) ?? {}
+}
+
+/** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒核准、按了取消、已經在跑或在排）是 false。 */
 async function runVerify($: any, c: Case, auto = false, fromQueue = false): Promise<boolean> {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
   if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return false }
   if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return false }
   if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return false }
-  const trusted = ((await $.store.get(TRUST_KEY).catch(() => null)) as Record<string, string> | null) ?? {}
+  const trusted = await trustedChecks($)
   if (trusted[c.statusPath] !== c.verify) {
     if (auto) return false
     const answer = await $.ui.ask(`在 ${c.root} 執行完成檢查：\n${c.verify}\n之後同一條指令不再問，自動接力也會用它。`, { header: `${c.name} 檢查`, options: ['執行', '取消'] }).catch(() => '')
@@ -336,7 +341,11 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false): Prom
     return true
   }
   checking = c.statusPath
-  try { await executeVerify($, c, auto) }
+  try {
+    const ran = await executeVerify($, c, auto)
+    // 你按 v 跑完的：流程停在檢查段就接著走。
+    if (ran && !auto) await resumeAtCheck($, c)
+  }
   catch (error) {
     // 記錄出錯的那段自己也出錯（例如狀態層一直拒寫）：至少讓你看到，不變成沒人接的 rejection。
     await verifyBroke($, c, auto, error).catch(again => $.ui.toast(`${c.name}：檢查中斷，原因也記不下來（${errorText(again)}）`, { timeoutMs: 10_000 }))
@@ -354,13 +363,13 @@ async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
   $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error' }])
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? { ...r, stopped: reason } : r)
+  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
   await restage($, c.statusPath)
   await spin($, false)
 }
 
-/** 佔到位子之後真正跑檢查：容器沒起來就不跑；跑完記結果、更新六段。 */
-async function executeVerify($: any, c: Case, auto: boolean) {
+/** 佔到位子之後真正跑檢查：容器沒起來就不跑；跑完記結果、更新六段。回傳有沒有跑完、記下結果。 */
+async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   // 檢查要用的容器沒在跑：不執行，也不記成「未通過」，直接說要先啟動哪個。
   const box = await containers($, optionsRef!)
   const missing = missingServices(c.verify, box, (await loadSettings($, optionsRef!)).checkServices)
@@ -368,10 +377,10 @@ async function executeVerify($: any, c: Case, auto: boolean) {
     const reason = `容器 ${missing.join('、')} 未啟動，請先在主工作區執行 docker compose up -d ${missing.join(' ')}`
     $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
     await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 檢查未執行：${reason}`, tone: 'warning' }])
-    if (auto) await saveChain($, normalizeRoot(c.root), r => r ? { ...r, stopped: reason } : r)
+    if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
-    return
+    return false
   }
   const startedAt = await $.clock.now()
   await update($, verifyingAtom, v => ({ ...v, [c.statusPath]: startedAt }))
@@ -386,6 +395,31 @@ async function executeVerify($: any, c: Case, auto: boolean) {
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
+  return true
+}
+
+/**
+ * 流程停在檢查段（指令未核准、容器沒啟動、檢查中斷），你排除後按 v 跑完了：解除暫停，
+ * 讓接力把剛跑完的結果當成這次實作的檢查往下走（通過派審查、沒過派修正，輪數照算）。別的對話開的流程不動。
+ */
+async function resumeAtCheck($: any, c: Case) {
+  const key = normalizeRoot(c.root)
+  const run = (await loadChains($))[key]
+  if (!run?.stopped || !run.heldAtCheck || run.owner !== (await me($))) return
+  await saveChain($, key, r => {
+    if (!r) return r
+    const { stopped: _s, heldAtCheck: _h, ...rest } = r
+    return rest
+  })
+  // 停下時接力已把那次實作記成處理過（指令未核准的那種）：改回未處理，接力才會接手。
+  const all = await loadJobs($)
+  const last = all[key]?.last
+  if (last?.handled) {
+    const { handled: _, ...open } = last
+    await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: open } })
+  }
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 流程繼續：檢查跑完了，接著自動往下走`, tone: 'suggestion' }])
+  refreshSoon($, optionsRef!)
 }
 
 /**
@@ -426,6 +460,11 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
   if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return }
   if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
+  if (kind === 'continue' && !opts.auto) {
+    if (!(await approveCheck($, c))) return
+    // 等你回答的這段時間，可能已經從別處派出去了（例如又打了 /desk go）。
+    if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
+  }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
   const jobs = await loadJobs($)
@@ -476,6 +515,21 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     await update($, launchingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
     await spin($, false)
   }
+}
+
+const APPROVE = '核准並派工'
+
+/**
+ * 按 g 開始一輪流程：這張卡的完成檢查還沒核准過（或指令改過），先問；做完實作會自動執行它，流程不用停下等你按 v。
+ * 回傳能不能派：核准或早就核准過是 true；取消或關掉對話框是 false，什麼都不記。
+ */
+async function approveCheck($: any, c: Case): Promise<boolean> {
+  const trusted = await trustedChecks($)
+  if (!c.verify || trusted[c.statusPath] === c.verify) return true
+  const answer = await $.ui.ask(`在 ${c.root} 派實作。做完會自動執行這條完成檢查：\n${c.verify}\n核准後這張卡同一條指令不再問；不核准就不派工。`, { header: `${c.name} 核准檢查`, options: [APPROVE, '取消'] }).catch(() => '')
+  if (answer !== APPROVE) return false
+  await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
+  return true
 }
 
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
@@ -602,7 +656,7 @@ async function stopAgent($: any, c: Case) {
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${errorLine(r, 'claude stop 失敗')}）`); return }
-  await saveChain($, normalizeRoot(c.root), run => run ? { ...run, stopped: '你手動停止了 Agent' } : run)
+  await saveChain($, normalizeRoot(c.root), run => run ? paused(run, '你手動停止了 Agent') : run)
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止 Agent（對話保留，可再派工接續）`, tone: 'warning' }])
   $.ui.toast(`${c.name}：已停止 Agent`)
   void refresh($, optionsRef!)

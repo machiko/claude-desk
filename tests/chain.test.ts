@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { nextStep, MAX_FIX_ROUNDS } from '../hooks/chain'
+import { nextStep, MAX_FIX_ROUNDS, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
 
 const run = (round = 0, extra = {}) => ({ owner: 'me', startedAt: 1, round, ...extra })
 const v = (critical: number, high: number, medium = 0) => ({ critical, high, medium, low: 0 })
@@ -7,7 +7,8 @@ const v = (critical: number, high: number, medium = 0) => ({ critical, high, med
 test('after implementation: check, then review when green, fix when red, stop after two rounds', () => {
   expect(MAX_FIX_ROUNDS).toBe(2)
   expect(nextStep(run(), 'continue', null, null, true)).toEqual({ kind: 'verify' })
-  expect(nextStep(run(), 'continue', null, null, false)?.kind).toBe('stop')
+  expect(nextStep(run(), 'continue', null, null, false)).toEqual({ kind: 'stop', reason: CHECK_UNAPPROVED, atCheck: true })
+  expect(nextStep(run(), 'continue', null, null, false, { changed: true })).toEqual({ kind: 'stop', reason: CHECK_CHANGED, atCheck: true })
   expect(nextStep(run(), 'continue', true, null, true)).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
   expect(nextStep(run(0), 'continue', false, null, true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'check' })
   expect(nextStep(run(2), 'continue', false, null, true)).toEqual({ kind: 'stop', reason: '修了 2 輪檢查仍未通過' })
