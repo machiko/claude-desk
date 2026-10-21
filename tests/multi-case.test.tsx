@@ -313,6 +313,8 @@ test('a check that breaks midway still lets the queued case run', async ($, on) 
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const alpha = await bothViews(ui, CARD_A)
   expect(alpha.card).not.toContain('檢查◉')
+  // 「最近」只放現在這件：換回 Alpha 才看得到它的檢查中斷
+  await focus(ui, CARD_A)
   expect(JSON.stringify(await ui.drawn())).toContain('Alpha 檢查中斷')
   // Alpha 停下等人處理，不會被接力一再重跑
   expect(stats.cwds.filter(c => c === ALPHA).length).toBe(1)
