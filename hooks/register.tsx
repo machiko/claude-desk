@@ -416,6 +416,8 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
  * 讓接力把剛跑完的結果當成這次實作的檢查往下走（通過派審查、沒過派修正，輪數照算）。別的對話開的流程不動。
  */
 async function resumeAtCheck($: any, c: Case) {
+  // 已經合併：不再接力，檢查結果記下就好，流程與派工紀錄都不動。
+  if (isMerged(c)) return
   const key = normalizeRoot(c.root)
   const run = (await loadChains($))[key]
   if (!run?.stopped || !run.heldAtCheck || run.owner !== (await me($))) return

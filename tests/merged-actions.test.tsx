@@ -252,3 +252,31 @@ test('a branch merged only through git stays merged after main is merged back in
   for (const k of NOT_AFTER_MERGE) expect(await ui.find({ key: `case-${CARD_B}-${k}` })).toBeUndefined()
   await ui.unmount()
 })
+
+/** 已合併、流程停在檢查段時用指令跑檢查：只記檢查結果，不寫「流程繼續」，流程與派工紀錄維持原樣（合併後不再接力）。 */
+test('running the check on a merged case paused at the check does not claim the chain goes on', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/alpha'
+  data.git[root] = { branch: 'feature/alpha', head: 'h1' }
+  data.prs = [{ id: 7, state: 'MERGED', dest: 'main', url: 'https://bitbucket.org/x/7' }]
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const held = { owner: 'fixture-session', startedAt: 0, round: 0, stopped: '容器 app 未啟動，請先在主工作區執行 docker compose up -d app', heldAtCheck: true }
+  data.store.chains = { [root]: held }
+  data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'continue', startedAt: 0, fresh: false, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+  let feed: { text: string }[] = []
+  on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed') feed = e.value; return next(e) })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  await $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
+  await clock.settle(); await clock.advance(2500); await clock.settle()
+
+  expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(1)
+  expect(feed.some(e => e.text.includes('檢查通過'))).toBe(true)
+  expect(feed.some(e => e.text.includes('流程繼續'))).toBe(false)
+  expect(data.launches.length).toBe(0)
+  expect((data.store.chains as any)[root]).toEqual(held)
+  expect((data.store.jobs as any)[root].last.handled).toBe(true)
+})
