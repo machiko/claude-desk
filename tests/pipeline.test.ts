@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { pipeline, parseVerdict, checkStands, stageParts, standingVerdict } from '../hooks/pipeline'
-import { buildCase } from '../hooks/model'
+import { awaitsSpecOk, finalState, pipeline, parseVerdict, checkStands, stageParts, standingVerdict } from '../hooks/pipeline'
+import { dispatchable, dispatchRefusal } from '../hooks/dispatch'
+import { buildCase, stateOf } from '../hooks/model'
+import { stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
 
 const card = (f: Partial<Record<'狀態' | '檢查' | '等你' | '下一步' | '關卡', string>>) =>
@@ -108,4 +110,80 @@ test('a confirmed ship stays shipped after the release gate is cleared and the P
   expect(pipeline(mk({ 下一步: '可歸檔：/desk:card archive a' }, { tag: 'v0.19.0' }), undefined).current).toBeNull()
   // 寫的是別的版號：不算這個 tag 已上線
   expect(glyphs(mk({ 狀態: 'v0.18.0 已上線（工作桌確認）' }, { tag: 'v0.19.0' }))).toBe('●◆○○○○')
+})
+
+// 規格段：範本（則欄是 <…> 或空白）與填好的各一份；附在卡片區塊後面。
+const TEMPLATE_SPEC = '## 規格\n\n- 目標：<一句話>\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | <前提> | <操作> | <看得到的結果> | `<測試名稱>` |\n| AC-2 | | | | |\n\n## Scope\n'
+const FILLED_SPEC = TEMPLATE_SPEC.replace('| AC-1 | <前提> | <操作> | <看得到的結果> | `<測試名稱>` |', '| AC-1 | 一般會員、金額 100 | 計算折扣 | 回傳 100 | `test_x`（新） |')
+const withSpec = (spec: string, f: Parameters<typeof card>[0] = {}, extra: Partial<Case> = {}): Case => ({ ...buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, `${card(f)}\n\n${spec}`, 1, {}, undefined), git: { branch: 'feature/a', head: 'h1' }, ...extra })
+const flow = (c: Case, v?: Verify) => ({ ...c, pipeline: pipeline(c, v) })
+
+test('spec template without AC stays at spec stage', () => {
+  const c = withSpec(TEMPLATE_SPEC)
+  expect(c.specGap).toBe(true)
+  const p = pipeline(c, undefined)
+  expect(p.current).toBe('spec')
+  expect(p.note).toBe('尚缺驗收情境')
+  expect(glyphs(c)).toBe('◆○○○○○')
+  expect(turnOf(flow(c))).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+  // 完成檢查通過、失敗或審查後有新 commit，都不能讓它跳過規格段
+  expect(pipeline(c, ok()).current).toBe('spec')
+  expect(pipeline(c, { ...ok(), ok: false }).current).toBe('spec')
+  expect(pipeline({ ...c, chain: { round: 0, stale: true } }, undefined).current).toBe('spec')
+  // 關卡無：自動流程因為規格沒有驗收情境停下（例如免審查過關後又有新 commit），或檢查沒過：
+  // 狀態不是 failed，▶ 一樣叫你寫規格，不叫你按 g（g 會被拒）
+  const settle = (x: Case, v?: Verify) => { const s = { ...x, state: stateOf(x, v) }; const p = { ...s, pipeline: pipeline(s, v) }; return { ...p, state: finalState(p) } }
+  const stopped = settle({ ...c, chain: { round: 0, stale: true, passed: true, skippedReview: true, stopped: '規格沒有驗收情境：先輸入 /desk:card spec a' } })
+  const red = settle(c, { ...ok(), ok: false })
+  for (const x of [stopped, red]) {
+    expect(x.pipeline.current).toBe('spec')
+    expect(x.state).toBe('ready')
+    expect(turnOf(x)).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+    expect(dispatchable(x)).toEqual(['sync'])
+  }
+})
+
+test('filled AC or no spec section passes spec stage', () => {
+  const filled = withSpec(FILLED_SPEC)
+  expect(filled.specGap).toBeUndefined()
+  expect(pipeline(filled, undefined).current).toBe('build')
+  expect(glyphs(filled)).toBe('●◆○○○○')
+  expect(turnOf(flow(filled))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', key: 'g' })
+  // 沒有「## 規格」段的舊卡：跟現在一樣
+  const old = mk()
+  expect(old.specGap).toBeUndefined()
+  expect(pipeline(old, undefined).current).toBe('build')
+  expect(turnOf(flow(old))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', key: 'g' })
+})
+
+test('later evidence is not pulled back by empty spec', () => {
+  expect(pipeline(withSpec(TEMPLATE_SPEC, { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可' }), undefined).current).toBe('merge')
+  expect(pipeline(withSpec(TEMPLATE_SPEC, {}, { pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).current).toBe('ship')
+  expect(pipeline(withSpec(TEMPLATE_SPEC, { 關卡: 'release：v1.4.0 可上線' }, { tag: 'v1.4.0' }), undefined).current).toBe('ship')
+  // 六段走完（current 是 null）的範本規格卡：派工端也不退回規格段、不叫你寫規格
+  const shipped = flow(withSpec(TEMPLATE_SPEC, { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可' }, { tag: 'v1.4.0' }))
+  expect(shipped.pipeline.current).toBeNull()
+  expect(dispatchable(shipped)).toContain('continue')
+  expect(dispatchRefusal({ ...shipped, state: 'done' }, 'continue')).toBe('卡片狀態不符')
+  expect(dispatchRefusal({ ...shipped, state: 'done' }, 'review')).not.toContain('/desk:card spec')
+})
+
+test('spec gate without AC asks to write the spec, not confirm', () => {
+  const c = flow(withSpec(TEMPLATE_SPEC, { 關卡: 'spec：待確認規格' }))
+  expect(c.pipeline.current).toBe('spec')
+  expect(c.pipeline.note).toBe('尚缺驗收情境')
+  expect(turnOf(c)).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+  expect(awaitsSpecOk(c)).toBe(false)
+  expect(stageActions(c).has('spec-ok')).toBe(false)
+  expect(dispatchable(c)).toEqual(['sync'])
+  expect(dispatchRefusal(c, 'continue')).toContain('/desk:card spec')
+  expect(dispatchRefusal(c, 'review')).toContain('/desk:card spec')
+  // Agent 在跑時說 Agent 在做什麼，不說輪到你
+  expect(turnOf({ ...c, agent: { name: 'x', state: 'working', status: 'working' } }).who).toBe('ai')
+  // 填好 AC 的 spec 關卡照舊：按 t 確認
+  const filled = flow(withSpec(FILLED_SPEC, { 關卡: 'spec：待確認規格' }))
+  expect(filled.pipeline.note).toBe('規格待確認')
+  expect(turnOf(filled).key).toBe('t')
+  expect(awaitsSpecOk(filled)).toBe(true)
+  expect(stageActions(filled).has('spec-ok')).toBe(true)
 })

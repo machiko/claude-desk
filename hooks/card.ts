@@ -64,6 +64,25 @@ export function verifyCommand(value: string | undefined): string {
   return (m ? m[1]! : raw).trim()
 }
 
+/** 卡片「## 規格」段的內文（含 ### 小節）；沒有這段就 null。規則與 card.py 的 spec_section 相同。 */
+function specSection(text: string): string | null {
+  const lines = lf(text).split('\n')
+  const start = lines.findIndex(l => /^## 規格\s*$/.test(l))
+  if (start < 0) return null
+  const end = lines.findIndex((l, i) => i > start && /^## (?!#)/.test(l))
+  return lines.slice(start + 1, end < 0 ? undefined : end).join('\n')
+}
+
+export const hasSpec = (text: string) => specSection(text) !== null
+
+/** 有內容的驗收情境（「則」欄不是空白也不是 `<…>` 佔位）；規則與 card.py 的 filled_ac 相同。 */
+export function filledAc(text: string): string[] {
+  return (specSection(text) ?? '').split('\n').flatMap(line => {
+    const cols = line.trim().replace(/^\|+|\|+$/g, '').split('|').map(c => c.trim())
+    return cols.length >= 4 && /^AC-\d+$/.test(cols[0]!) && cols[3] && !cols[3].startsWith('<') ? [cols[0]!] : []
+  })
+}
+
 /** 以 `；` 切子句，括號內的 `；` 不切。 */
 export function splitClauses(text: string): string[] {
   const out: string[] = []

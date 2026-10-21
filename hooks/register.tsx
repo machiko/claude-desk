@@ -12,7 +12,7 @@ import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
 import { nextStep, paused } from './chain'
@@ -189,6 +189,17 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const run = chains[key]
     const last = jobs[key]?.last
     const agentBusy = !!c.agent && !c.agent.asks
+    // 規格沒有驗收情境、六段停在規格段：跟面板一樣不重新檢查、不派審查或修正，流程停下寫原因（停過就不再寫）。
+    // 停下後也要跳過：下面審查通過後有新 commit 的重新檢查不看 stopped。
+    if (run && run.owner === mine && specBlocks(c)) {
+      if (!run.stopped) {
+        const reason = specGapReason(c)
+        await saveChain($, key, r => r ? paused(r, reason) : r)
+        await feedPush($, [{ at: s.at, text: `${c.name} 流程停下：${reason}`, tone: 'warning', card: c.statusPath }])
+        acted = true
+      }
+      continue
+    }
     // 已經合併：不再自動檢查、審查或修正（之後的 commit 進不了這次合併）。
     const merged = isMerged(c)
     if (!merged && run?.passed && c.chain?.stale && run.owner === mine && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !(c.statusPath in (await read($, launchingAtom)))) {

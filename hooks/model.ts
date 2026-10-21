@@ -2,7 +2,7 @@
 // 純函式；register.tsx 負責讀。
 import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '../types'
 import type { RegistryRow } from './card'
-import { parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
+import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
 import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
 import { isDeskLaunch } from './dispatch'
@@ -210,6 +210,7 @@ export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: n
     name: row.name, statusPath: row.statusPath, root, hasCard: card !== null, ...(row.manual ? { manual: true } : {}),
     status: plain(card?.['狀態'] ?? ''), verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: plain(card?.['關卡'] ?? ''),
     updatedAt: mtime, ...(agent ? { agent } : {}),
+    ...(cardText !== null && hasSpec(cardText) && !filledAc(cardText).length ? { specGap: true as const } : {}),
   }
   return { ...base, state: stateOf(base, verify) }
 }

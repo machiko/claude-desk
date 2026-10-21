@@ -33,11 +33,11 @@ export const standingVerdict = (c: Pick<Case, 'gate' | 'chain'>): ReviewVerdict 
 export const isReleaseLine = (c: Pick<Case, 'git'>) => !!c.git && /^release\//.test(c.git.branch)
 
 /**
- * 真實模式可以按 t 確認規格：停在規格段、關卡是 spec：…、沒有 Agent 在跑或停著等回覆，也不是示範任務。
+ * 真實模式可以按 t 確認規格：停在規格段、關卡是 spec：…、認得到填好的驗收情境、沒有 Agent 在跑或停著等回覆，也不是示範任務。
  * 有關卡時 state 是 gate 而不是 running，所以直接看 agent。
  */
-export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate'>) =>
-  !c.demo && !c.agent && c.pipeline?.current === 'spec' && parseGate(c.gate)?.kind === 'spec'
+export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate' | 'specGap'>) =>
+  !c.demo && !c.agent && !c.specGap && c.pipeline?.current === 'spec' && parseGate(c.gate)?.kind === 'spec'
 
 /** 可以從面板歸檔：六段全過（finalState 已排除 Agent 在跑、等你），不是發版線，也不是示範任務。教學模式由呼叫端另外排除。 */
 export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo && c.state === 'done' && !isReleaseLine(c)
@@ -100,6 +100,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
   // 審查後又有 commit（stale）再合併的也算：審查過、整個分支也進了基準分支。
   if (c.mergedInto && (reached === INDEX.review || stale)) reached = Math.max(reached, INDEX.merge)
+  // 規格段還是範本（認不到填好的 AC）：檢查結果、審查後的新 commit 都不能讓它跳過規格段；審查過、已合併、有 tag 的照舊。
+  if (c.specGap && reached < INDEX.review) reached = -1
   // 流程停住、檢查又沒通過過：卡片上的審查結論（例如 Agent 自己寫的）不能讓它跳過檢查段。已合併、已打 tag 的不管。
   const held = !!c.chain?.stopped && check !== true && !release && !tagged && c.pr?.state !== 'MERGED' && !c.mergedInto
   if (held && reached > INDEX.build) reached = INDEX.build
@@ -113,6 +115,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
     switch (current) {
       case 'spec':
         if (!saysNone(c.ask)) set('wait', '待你決定')
+        else if (c.specGap) set('wait', '尚缺驗收情境')
         else if (gate?.kind === 'spec') set('wait', '規格待確認')
         else set('wait', '尚缺完成檢查')
         break
@@ -180,10 +183,12 @@ export const isMerged = (c: Pick<Case, 'pipeline'>) => !!c.pipeline?.stages.some
 /**
  * 六段都過了（每段 done 或不適用）、沒有人要做的事：任務算「完成」。等你、執行中等狀態不受影響。
  * 合併之後流程停住或完成檢查沒過，分支已經進了基準分支，不再算未通過：照上線段走。
+ * 規格段還是範本、六段停在規格段：流程停住或檢查沒過也不算未通過（按 g 修不了），要先寫規格。
  */
-export function finalState(c: Pick<Case, 'state' | 'pipeline'>): Case['state'] {
+export function finalState(c: Pick<Case, 'state' | 'pipeline' | 'specGap'>): Case['state'] {
   const p = c.pipeline
-  const state = c.state === 'failed' && isMerged(c) ? 'ready' : c.state
+  const specHeld = !!c.specGap && p?.current === 'spec'
+  const state = c.state === 'failed' && (isMerged(c) || specHeld) ? 'ready' : c.state
   if (!p || p.current !== null || (state !== 'ready' && state !== 'idle')) return state
   return p.stages.every(s => s.status === 'done' || s.status === 'na') ? 'done' : state
 }

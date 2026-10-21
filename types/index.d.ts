@@ -59,6 +59,8 @@ export type Case = {
   statusShort?: string
   /** git status：領先、落後、未提交、未追蹤。 */
   gitState?: { ahead: number; behind: number; changed: number; untracked: number; upstream?: boolean }
+  /** 卡片有「## 規格」段，卻認不到填好的驗收情境（AC-n）：停在規格段、不能派實作。沒有規格段的舊卡不算。 */
+  specGap?: true
   /** 卡片「## 部署…」段落的步驟。 */
   deploySteps?: string[]
   /** 審查檔的 CRITICAL、HIGH 前三條。 */

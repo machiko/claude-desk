@@ -73,6 +73,13 @@ export function cardText(date: string): string {
 | AC-2 | 金卡會員、金額 1000 | 計算折扣 | 回傳 900 | \`test_gold_member_gets_ten_percent_off\`（新） |
 | AC-3 | 任何會員、金額 -1 | 計算折扣 | 丟出 ValueError | \`test_negative_total_is_rejected\`（新） |
 
+### 實作計畫
+
+| 檔案 | 改什麼 |
+| --- | --- |
+| \`discount.py\` | 新增 discount(total, level)：金卡打九折、一般會員原價、金額為負丟出 ValueError |
+| \`test_discount.py\` | AC-1～AC-3 的三個測試 |
+
 ## Decisions
 
 - D-01 ${date} 教學：用 Python 標準函式庫 unittest，不裝任何套件

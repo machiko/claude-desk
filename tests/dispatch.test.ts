@@ -1,9 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
+import { pipeline } from '../hooks/pipeline'
 
 const card = (next: string, extra = '') => `<!-- DESK -->\n- 狀態：ok\n- 驗證：\`true\`\n- 等你：無\n- 下一步：${next}\n- 關卡：無\n${extra}<!-- /DESK -->`
 const mk = (next: string, agents: any = {}) => buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card(next), 1, agents, undefined)
+const TEMPLATE_SPEC = '\n## 規格\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | <前提> | <操作> | <看得到的結果> | `<測試名稱>` |\n'
 
 test('settings: global, project override and sync model; fresh sync is the default once a sync model is set', () => {
   const s = parseSettings(JSON.stringify({ model: 'opus', effort: 'high', sync: { claude: { model: 'haiku' } }, projects: { '/p/a/': { effort: 'xhigh' } } }))
@@ -137,4 +139,28 @@ test('dispatch and reply refusals share the same reasons', () => {
   expect(dispatchRefusal(mk('寫測試', busy), 'continue')).toBe(replyRefusal(mk('寫測試', busy)))
   expect(dispatchRefusal(mk('寫測試', asks), 'reply')).toBe('')
   expect(dispatchRefusal(mk('寫測試'), 'reply')).toBe('Agent 沒有在等你回覆')
+})
+
+test('spec template without AC refuses continue', () => {
+  const c = buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card('寫測試') + TEMPLATE_SPEC, 1, {}, undefined)
+  const staged = { ...c, pipeline: pipeline(c, undefined) }
+  for (const x of [c, staged]) {
+    expect(dispatchable(x)).toEqual(['sync'])
+    expect(dispatchRefusal(x, 'continue')).toBe('規格沒有驗收情境：先輸入 /desk:card spec a')
+    expect(dispatchRefusal(x, 'review')).toContain('/desk:card spec')
+    expect(dispatchRefusal(x, 'sync')).toBe('')
+  }
+  // 填好 AC 就跟現在一樣
+  const filled = buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card('寫測試') + TEMPLATE_SPEC.replace('| AC-1 | <前提> | <操作> | <看得到的結果> |', '| AC-1 | 會員 | 結帳 | 回傳 100 |'), 1, {}, undefined)
+  expect(dispatchable(filled)).toEqual(['continue', 'review', 'sync'])
+})
+
+test('implementation prompt follows confirmed plan', () => {
+  const c = mk('寫測試')
+  for (const p of [buildPrompt(c, 'continue'), buildPrompt(c, 'reply', '用 B'), buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: [] })]) {
+    expect(p).toContain('照「### 實作計畫」做，不用再停下來交計畫')
+    expect(p).toContain('要改範圍或做法寫進 等你')
+  }
+  expect(buildPrompt(c, 'sync')).not.toContain('實作計畫')
+  expect(buildPrompt(c, 'review')).not.toContain('照「### 實作計畫」做')
 })
