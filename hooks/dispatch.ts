@@ -91,6 +91,9 @@ export function launchName(now: number, seq: number): string {
   return `desk-${now.toString(36)}-${seq.toString(36)}`
 }
 
+/** 名字是不是 launchName() 取的（desk-<時間>-<序號>）：工作桌派出去的背景 agent。 */
+export const isDeskLaunch = (name: string): boolean => /^desk-[0-9a-z]+-[0-9a-z]+$/.test(name)
+
 export function launchArgs(prompt: string, opts: { model?: string; effort?: string; sessionId?: string; launchName: string }): string[] {
   return ['claude', '--bg', '--name', opts.launchName, ...(opts.sessionId ? ['--resume', opts.sessionId] : []), ...(opts.model ? ['--model', opts.model] : []), ...(opts.effort ? ['--effort', opts.effort] : []), prompt]
 }
