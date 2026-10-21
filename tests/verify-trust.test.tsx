@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, REGISTRY, result, leaves, text } from './fixture'
+import { AGENT_STOPPED } from '../hooks/chain'
 
 // 完成檢查的核准：按 g 開始一輪流程時就問；流程停在檢查段時說得出為什麼，排除後按 v 就接著走。
 const ROOT = '/home/u/wt/alpha'
@@ -287,7 +288,7 @@ test('stopping an agent on a chain paused at the check drops the pause so v only
   await ui.press({ key: `${PREFIX}stop` })
   await clock.settle()
   await ui.unmount()
-  expect(chain().stopped).toBe('你手動停止了 Agent')
+  expect(chain().stopped).toBe(AGENT_STOPPED)
   expect(chain().heldAtCheck).toBeUndefined()
 
   data.agents = []
@@ -300,7 +301,7 @@ test('stopping an agent on a chain paused at the check drops the pause so v only
   await h.verify()
   expect(sh(data)).toBe(1)
   expect(data.launches.length).toBe(1)
-  expect(chain().stopped).toBe('你手動停止了 Agent')
+  expect(chain().stopped).toBe(AGENT_STOPPED)
   ui = await $.ui.mount(PANE(160))
   const after = flat(text(await ui.drawn()))
   await ui.unmount()

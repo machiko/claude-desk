@@ -5,7 +5,7 @@ import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, isMerged, isReleaseLine, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
-import { CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
+import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { idleNext } from './dispatch'
 
 export type Turn = {
@@ -115,6 +115,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
   const hold = checkHold(c)
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
+  // Agent 被停掉：原因本身就說了要做什麼，不是修一輪。
+  if (c.state === 'failed' && c.chain?.stopped === AGENT_STOPPED) return { who: 'you', text: AGENT_STOPPED, key: 'g' }
   if (c.state === 'failed') return c.chain?.stopped
     ? { who: 'you', text: `流程已暫停（${c.chain.stopped}）：看審查檔（e）後按 g 再修一輪`, key: 'g' }
     : { who: 'you', text: '完成檢查未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' }

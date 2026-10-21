@@ -5,20 +5,20 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, events, feedOnDesk, liveCases, rawAgents, supersede, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
-import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, liveCases, rawAgents, supersede, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
+import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
-import { nextStep, paused } from './chain'
+import { AGENT_STOPPED, nextStep, paused } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
-import type { ChainRun } from './chain'
+import type { ChainRun, ChainStep } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialDecision, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
@@ -162,6 +162,8 @@ export async function refresh($: any, options: PluginOptions) {
     statusLine($, cur)
     await spin($, cases.some(c => c.state === 'running'))
     await stopSuperseded($, cases, superseded, now)
+    // 清單是真的（不是教學、claude agents 沒失敗）才看得出誰結束了。
+    if (!tutorial && agentsOut && agentsOut.exitCode === 0) await noteEnded($, list, cases)
     await autoChain($, options, cur)
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
@@ -172,7 +174,28 @@ export async function refresh($: any, options: PluginOptions) {
   return refreshing
 }
 
-/** 讀不到登錄表時面板上的說明：選項指定的、這個專案還沒建的、目前資料夾不在 git repo 裡。 */
+/**
+ * 最後一次派工的 Agent 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
+ * 之後派工用它分辨「現在的改動是上一個 Agent 留下的」還是別的對話在改。每一次派工只記一次，審查與同步不動指紋。
+ */
+async function noteEnded($: any, list: readonly any[], cases: readonly Case[]) {
+  for (const c of cases) {
+    if (c.demo) continue
+    const key = normalizeRoot(c.root)
+    const last = (await loadJobs($))[key]?.last
+    if (!last || last.ended) continue
+    const how = endedHow(list, last.launchName)
+    if (!how) continue
+    const codeAgent = last.kind === 'continue' || last.kind === 'reply'
+    const mark = codeAgent ? await worktreeMark($, c.root) : undefined
+    // 算指紋的這段時間可能剛派了新工：只改還是同一筆的紀錄。
+    const all = await loadJobs($)
+    const cur = all[key]?.last
+    if (!cur || cur.launchName !== last.launchName || cur.ended) continue
+    await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } } })
+  }
+}
+
 /**
  * 自動流程（第二到第四段）：只處理這個對話自己派出去、剛結束、還沒處理過的那一次。
  * 做完實作 → 跑完成檢查 → 綠了派審查 → 有 CRITICAL／HIGH 派修正，最多兩輪；停下來就寫進動態並提醒。
@@ -222,14 +245,19 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const finished: DispatchKind | null = last.kind === 'sync' ? null : last.kind
     const settings = finished ? await loadSettings($, options) : undefined
     const risk = settings ? await riskOf($, c, settings.riskHigh, settings.cardBase) : undefined
-    const step = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted })
-    if (!step) continue
+    const stoppedAgent = last.ended?.how === 'stopped'
+    const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent })
+    if (!planned) continue
     acted = true
-    if (finished === 'review' && step.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
+    // 被停掉的審查沒寫完：不歸檔、不算判過。
+    if (finished === 'review' && !stoppedAgent && planned.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
     // 這次審查看的是派審查時的 HEAD；之後有新 commit，結論就不算數。
-    if (finished === 'review') await saveChain($, key, r => r ? { ...r, judgedHead: (last.security ? r.securityHead : r.reviewHead) ?? c.git?.head ?? r.judgedHead } : r)
-    if (step.kind === 'verify') { void runVerify($, c, true); continue }
+    if (finished === 'review' && !stoppedAgent) await saveChain($, key, r => r ? { ...r, judgedHead: (last.security ? r.securityHead : r.reviewHead) ?? c.git?.head ?? r.judgedHead } : r)
+    if (planned.kind === 'verify') { void runVerify($, c, true); continue }
     await markHandled()
+    // 要派下一步之前先看 worktree：有不是上一個 Agent 留下的未提交改動（別的對話在改），停下來說原因，不派。
+    const foreign = planned.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
+    const step: ChainStep = foreign ? { kind: 'stop', reason: foreign } : planned
     if (step.kind === 'stop') {
       await saveChain($, key, r => r ? paused(r, step.reason, step.atCheck) : r)
       await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error', card: c.statusPath }])
@@ -499,6 +527,11 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
   const jobs = await loadJobs($)
   const rootKey = normalizeRoot(c.root)
   const own: RootJobs = jobs[rootKey] ?? {}
+  // worktree 有不是上一個 Agent 留下的未提交改動（別的對話在改）：不派，免得把它的東西清掉。同步不改程式，不擋；自動流程在派之前已經看過。
+  if (kind !== 'sync' && !opts.auto && !tutorial) {
+    const foreign = markRefusal(await worktreeMark($, c.root), own)
+    if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return }
+  }
   const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
   const now = await $.clock.now()
   const name = launchName(now, launchSeq++)
@@ -517,7 +550,7 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target
     review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
   }
-  const prompt = buildPrompt(c, kind, text, opts.fix, review, settings)
+  const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name)
   const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
   launchKinds = { ...launchKinds, [c.statusPath]: doing }
   await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
@@ -528,7 +561,7 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。
     if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead } : {}) }))
     if (kind === 'review' && head) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: head } : { reviewHead: head }) } : r)
-    const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), last: record }
+    const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
@@ -697,8 +730,8 @@ async function stopAgent($: any, c: Case) {
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${errorLine(r, 'claude stop 失敗')}）`); return }
-  await saveChain($, normalizeRoot(c.root), run => run ? paused(run, '你手動停止了 Agent') : run)
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止 Agent（對話保留，可再派工接續）`, tone: 'warning', card: c.statusPath }])
+  await saveChain($, normalizeRoot(c.root), run => run ? paused(run, AGENT_STOPPED) : run)
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${AGENT_STOPPED}（對話保留）`, tone: 'warning', card: c.statusPath }])
   $.ui.toast(`${c.name}：已停止 Agent`)
   void refresh($, optionsRef!)
 }

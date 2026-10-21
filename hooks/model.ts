@@ -178,6 +178,21 @@ export function asksFor(list: any[], launchName: string | undefined): AgentInfo 
   return String(a.state ?? '').toLowerCase() === 'blocked' ? { ...agentInfo(a), asks: true } : null
 }
 
+/**
+ * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑（busy／waiting）、停在提問（blocked）、清單裡找不到都是 null；
+ * `claude stop` 停掉的是 stopped（清單裡 state 是 stopped、沒有 status），其他算 finished。找不到不算結束：剛派出去的那次可能還沒出現在這份清單。
+ */
+export function endedHow(list: readonly any[], launchName: string | undefined): 'finished' | 'stopped' | null {
+  if (!launchName) return null
+  const a = list.find(x => x?.name === launchName && x?.kind === 'background')
+  if (!a) return null
+  const status = String(a.status ?? '').toLowerCase()
+  if (status === 'busy' || status === 'waiting') return null
+  const state = String(a.state ?? '').toLowerCase()
+  if (state === 'blocked') return null
+  return state === 'stopped' ? 'stopped' : 'finished'
+}
+
 /** 停下來等人的 agent：權限提示，或工作桌派出去的那次停在提問。 */
 export const agentWaits = (a: AgentInfo | undefined) => !!a && (!!a.waitingFor || a.status === 'waiting' || !!a.asks)
 
