@@ -34,6 +34,16 @@ const tags = new Map<string, string>()
 const prs = new Map<string, { at: number; okAt: number; branch: string; pr: PrInfo | null; failed?: boolean }>()
 const risks = new Map<string, Risk>()
 const merges = new Map<string, string>()
+/** store 的鍵：根目錄 → 分支在哪個 HEAD 被 git 認定合併、併進哪裡。合併後分支再有 commit，HEAD 不在基準分支裡了，靠它認得。 */
+export const GIT_MERGED_KEY = 'gitMerged'
+type GitMerged = Record<string, { branch: string; head: string; into: string }>
+/** 讀不到或寫不進 store 就當作沒有紀錄：不影響 git 本身的判斷。 */
+async function gitMerged($: any): Promise<GitMerged> {
+  try { return ((await $.store.get(GIT_MERGED_KEY)) as GitMerged | null) ?? {} } catch { return {} }
+}
+async function rememberMerged($: any, root: string, entry: GitMerged[string]) {
+  try { await $.store.set(GIT_MERGED_KEY, { ...(await gitMerged($)), [root]: entry }) } catch { /* 下次合併段再問一次 git */ }
+}
 const mergeMisses = new Map<string, number>()
 const projects = new Map<string, Project>()
 /** 根目錄＋HEAD → 最近一次變更的時間；HEAD 不變它就不變。 */
@@ -210,14 +220,31 @@ export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, 
   const key = `${c.root}\n${head}`
   const hit = merges.get(key)
   if (hit) return hit
+  const later = await mergedBefore($, c)
+  if (later) { merges.set(key, later); return later }
   const now = await $.clock.now()
   const missed = mergeMisses.get(key)
   if (!force && missed !== undefined && now - missed < MERGE_MISS_MS) return undefined
   for (const ref of await baseRefs($, c, cardBase)) {
-    if (await mergedThrough($, c.root, head, ref)) { merges.set(key, ref); mergeMisses.delete(key); return ref }
+    if (await mergedThrough($, c.root, head, ref)) {
+      merges.set(key, ref); mergeMisses.delete(key)
+      await rememberMerged($, c.root, { branch: c.git!.branch, head, into: ref })
+      return ref
+    }
   }
   mergeMisses.set(key, now)
   return undefined
+}
+
+/**
+ * 這個分支之前在某個 HEAD 被 git 認定合併過，現在的 HEAD 是從那裡長出來的（合併後又補了 commit）：仍算已合併，跟 PR 合併後再 commit 一樣。
+ * 有 PR 資訊（例如之後的 commit 開了新 PR）就照 PR 走；切到別的分支也不算。
+ */
+async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>): Promise<string | undefined> {
+  if (c.pr || !c.git) return undefined
+  const was = (await gitMerged($))[c.root]
+  if (!was || was.branch !== c.git.branch || was.head === c.git.head) return undefined
+  return (await git($, c.root, ['merge-base', '--is-ancestor', was.head, 'HEAD'])) === null ? undefined : was.into
 }
 
 /** HEAD 在 ref 裡、而且是從旁邊併進來的：沿 ref 的第一個父往回走，最後一步的父不是 HEAD。 */
