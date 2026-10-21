@@ -1,0 +1,1 @@
+- 新增 CHANGELOG 片段檔：每張卡的條目寫在 `changelog.d/<slug>.md`，不再改 CHANGELOG.md 的「## 未發布」，派工提示也改叫 Agent 寫片段；發版時 `/desk:card changelog <版本>` 把片段合併成版本段落（新增→調整→修復→移除）並刪掉片段檔，沒有片段、版本段已存在、片段不是「- 」開頭都會拒絕、不改檔。
