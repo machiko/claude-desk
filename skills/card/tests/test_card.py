@@ -71,7 +71,7 @@ class CardScriptTest(unittest.TestCase):
         git('remote', 'add', 'origin', self.origin, cwd=self.main)
         git('push', '-q', 'origin', 'main', cwd=self.main)
         self.reg = os.path.join(t, 'registry.md')
-        write(self.reg, '# 登錄\n\n| 案名 | 卡片 |\n| --- | --- |\n')
+        write(self.reg, '# 登錄\n\n| 任務名 | 卡片 |\n| --- | --- |\n')
         self.settings = os.path.join(t, 'dispatch.json')
         self.write_settings({})
 

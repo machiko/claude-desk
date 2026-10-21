@@ -21,7 +21,7 @@ export function compactStatus(text: string, max = SUMMARY_MAX): string {
   return fit(cleaned || first, max)
 }
 
-export const SUMMARY_SYSTEM = '你把軟體開發案子的狀態濃縮成一句繁體中文（台灣用語），20 個字以內。只留結論與還沒做的事；不要 commit hash、時間、括號細節、測試數字。只輸出那一句，不要引號、不要句號以外的標點。'
+export const SUMMARY_SYSTEM = '你把軟體開發任務的狀態濃縮成一句繁體中文（台灣用語），20 個字以內。只留結論與還沒做的事；不要 commit hash、時間、括號細節、測試數字。只輸出那一句，不要引號、不要句號以外的標點。'
 
 export const summaryPrompt = (status: string) => `狀態原文：\n${plain(status)}`
 

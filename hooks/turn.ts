@@ -1,4 +1,4 @@
-// 輪到誰、該做什麼：依六段與案子狀態產生一句給你看的話，以及這一刻該出現哪些動作。
+// 輪到誰、該做什麼：依六段與任務狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case, SentRecord } from '../types'
 import { slugOf } from './model'
@@ -21,7 +21,7 @@ export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boole
 /** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
 export type SentState = 'waiting' | 'unwritten'
 
-/** 這件案子的決策送出了沒：卡片「等你」跟送出時一樣才算；寫回卡片（等你改了）就回到平常。 */
+/** 這件任務的決策送出了沒：卡片「等你」跟送出時一樣才算；寫回卡片（等你改了）就回到平常。 */
 export function sentState(sent: Readonly<Record<string, SentRecord>>, c: Pick<Case, 'statusPath' | 'ask' | 'state'>): SentState | undefined {
   const r = sent[c.statusPath]
   if (!r || c.state !== 'ask' || r.ask !== c.ask) return undefined
@@ -74,7 +74,7 @@ function checkHold(c: Case): Turn | null {
   return { who: 'you', text, key: 'v' }
 }
 
-/** 接力停住、檢查段因此標 ✕：說停住的原因，按 v 重跑檢查。 */
+/** 流程停住、檢查段因此標 ✕：說停住的原因，按 v 重跑檢查。 */
 const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current === 'check' && c.pipeline.stages.some(s => s.id === 'check' && s.status === 'fail')
 
 /** 上線段該做的事：還沒打 tag 就打 tag；tag 打了、關卡是 release 就部署後按 u。面板合併後的下一步也用它。 */
@@ -84,7 +84,7 @@ export function shipTurn(c: Case): Turn {
 }
 
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
-  if (c.demo) return { who: 'none', text: '示範案子：只能看，照教學那件的指示操作' }
+  if (c.demo) return { who: 'none', text: '示範任務：只能看，照教學那件的指示操作' }
   if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
   if (ctx.launching) return { who: 'ai', text: '派工中，等 Agent 啟動' }
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
@@ -100,12 +100,12 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (ctx.verifying) return { who: 'ai', text: '完成檢查在跑' }
   if (ctx.queued) return { who: 'ai', text: '完成檢查排隊中' }
   if (isRunning(c)) return { who: 'ai', text: runningText(c) }
-  if (c.manual) return { who: 'none', text: '手動案子：工作桌只追蹤，不派工' }
+  if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
   const hold = checkHold(c)
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
   if (c.state === 'failed') return c.chain?.stopped
-    ? { who: 'you', text: `接力已暫停（${c.chain.stopped}）：看審查檔（e）後按 g 再修一輪`, key: 'g' }
+    ? { who: 'you', text: `流程已暫停（${c.chain.stopped}）：看審查檔（e）後按 g 再修一輪`, key: 'g' }
     : { who: 'you', text: '完成檢查未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' }
   const gate = parseGate(c.gate)
   if (gate?.kind === 'unknown') return { who: 'you', text: `關卡「${gate.detail}」：開卡片（o）處理`, key: 'o' }
@@ -118,11 +118,11 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
-      if (checkStageFailed(c)) return { who: 'you', text: `接力已暫停（${c.chain!.stopped}）`, key: 'v' }
+      if (checkStageFailed(c)) return { who: 'you', text: `流程已暫停（${c.chain!.stopped}）`, key: 'v' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 v 重新執行完成檢查' : '按 v 執行完成檢查', key: 'v' }
     case 'review':
       if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }
-      // 檢查剛通過、接力還沒派出審查（約兩秒）：不用你按 w。
+      // 檢查剛通過、流程還沒派出審查（約兩秒）：不用你按 w。
       if (c.chain?.autoReview && !c.chain.stopped && !c.chain.passed) return { who: 'ai', text: '接著自動審查' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）', key: 'w' }
     case 'merge': {

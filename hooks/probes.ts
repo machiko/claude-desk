@@ -363,7 +363,7 @@ export async function logTail($: any, id: string | undefined, n = 10): Promise<s
 /** 完成檢查最長跑多久。 */
 export const VERIFY_TIMEOUT_MS = 600_000
 
-/** 在案子根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
+/** 在任務根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
 export async function verifyResult($: any, c: Case): Promise<Verify> {
   const head = (await gitProbe($, c.root)).git?.head
   try {

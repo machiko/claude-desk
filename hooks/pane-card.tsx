@@ -122,7 +122,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   ]
 }
 
-/** 現在卡的內容列：案名、六段、PR、狀態、git、審查、部署、決策、Agent、下一步、檢查。 */
+/** 現在卡的內容列：任務名、六段、PR、狀態、git、審查、部署、決策、Agent、下一步、檢查。 */
 export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act: PaneActions): any[] {
   const { Box, Text, Button } = ui
   const meta = STATE[c.state]
@@ -137,7 +137,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   const prefix = `case-${c.statusPath}-`
   const tailText = `  ${meta.label}${age ? ` · ${age}` : ''}`
   const title = <Text bold color={COLOR.text} wrap="truncate-end">{fit(c.name, Math.max(4, width - 2 - displayWidth(tailText)))}</Text>
-  // 你在清單上選的那件：再點一次案名取消選取，現在卡與摘要列回到工作桌自己挑的那件。
+  // 你在清單上選的那件：再點一次任務名取消選取，現在卡與摘要列回到工作桌自己挑的那件。
   const isPicked = view.selected === c.statusPath
   const rows: any[] = []
 
@@ -152,7 +152,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
     </Box>,
   )
   rows.push(...turnRows(ui, turnOf(c, turnCtx(view, c)), width))
-  // 完成的案子：六段全部轉綠，後面接「✓ 完成 <tag>」。六段的備註（例如「可繼續實作」）由上一列的話取代。
+  // 完成的任務：六段全部轉綠，後面接「✓ 完成 <tag>」。六段的備註（例如「可繼續實作」）由上一列的話取代。
   const isDone = c.state === 'done'
   if (c.pipeline) rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end">{stageParts(c.pipeline, width < 30).map((p, i) => <Text key={`st${i}`} color={isDone ? COLOR.good : STAGE_COLOR[p.status]}>{(i && width >= 30 ? ' ' : '') + p.text}</Text>)}{isDone ? <Text color={COLOR.good} bold>{`   ✓ 完成${c.tag ? ` ${c.tag}` : ''}`}</Text> : null}</Text></Box>)
   // 沒有 PR 可看、git 判斷已合併（只在審查過後才算）
@@ -219,14 +219,14 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   }
 
   rows.push(...verifyRows(ui, c, view.verifies[c.statusPath], c.statusPath in view.verifying, view, view.queue.indexOf(c.statusPath), width))
-  if (c.manual) rows.push(<Box paddingLeft={INDENT}><Text color={COLOR.faint}>手動案子：工作桌只追蹤，不派工</Text></Box>)
+  if (c.manual) rows.push(<Box paddingLeft={INDENT}><Text color={COLOR.faint}>手動任務：工作桌只追蹤，不派工</Text></Box>)
   if (!c.manual && !c.verify && c.hasCard) rows.push(...wrappedRows(ui, '卡片尚缺完成檢查：請先寫一條「修正前失敗、修正後通過」的指令，才能派實作', width, COLOR.attention))
   return rows
 }
 
 /** 現在這件的操作（footer 第一排）：填入決策、派工、停止、輸出、審查檔、PR、檢查、開卡片。現在該按的那顆不變淡。 */
 export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[] {
-  // 示範案子只能看：連 m 展開全部也沒有動作。
+  // 示範任務只能看：連 m 展開全部也沒有動作。
   if (c.demo) return []
   const decisions = c.state === 'ask' ? parseDecisions(c.ask) : []
   const picks = view.picks[picksKey(c)] ?? {}

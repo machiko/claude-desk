@@ -27,18 +27,18 @@ test('the tutorial shows the sample cases as a read-only background, with the le
   const screen = flat(text(await ui.drawn()))
   // 現在卡是教學那件，輪到你的那句是教學的
   expect(screen).toContain(flat('看過規格（o 開卡片）後按 t 確認'))
-  // 其他案子是示範的那幾件，標題寫明只能看
+  // 其他任務是示範的那幾件，標題寫明只能看
   expect(screen).toContain('部署流程改版')
   expect(screen).toContain('訂單匯出CSV')
   expect(screen).toContain(flat('示範，只能看'))
-  // 摘要列與狀態列跟著教學那件，不被示範案子搶走
+  // 摘要列與狀態列跟著教學那件，不被示範任務搶走
   const band = await $.ui.mount(BAND(100))
   const bandText = flat(text(await band.drawn()))
   expect(bandText).toContain('會員折扣')
   expect(bandText).not.toContain('訂單匯出')
   expect(bandText).not.toContain('主工作區')
   expect(String(data.status ?? '')).not.toContain('訂單匯出')
-  // 示範案子不發動態、不跳通知
+  // 示範任務不發動態、不跳通知
   expect(data.toasts.some(t => /部署流程改版|訂單匯出|會員登入改版|主工作區/.test(t))).toBe(false)
   await band.unmount()
   await ui.unmount()
@@ -47,15 +47,15 @@ test('the tutorial shows the sample cases as a read-only background, with the le
 test('sample cases are not clickable: no row button, n skips them, commands cannot find them', async ($, on) => {
   const { data } = await startTutorial($, on)
   const ui = await $.ui.mount(PANE(72))
-  // 其他案子那幾列只是畫面，沒有按鈕、沒有數字鍵
+  // 其他任務那幾列只是畫面，沒有按鈕、沒有數字鍵
   expect(await ui.find({ key: `row-${DEMO_BETA}` })).toBeUndefined()
   expect(flat(text(await ui.drawn()))).toContain('訂單匯出CSV')
-  // n（下一件）也不會跳到示範案子，現在卡一直是教學那件
+  // n（下一件）也不會跳到示範任務，現在卡一直是教學那件
   await ui.press({ key: 'next' })
   expect(flat(text(await ui.drawn()))).toContain(flat('後按 t 確認'))
   // 指令也找不到它
   const r = await $.command.run({ command: 'desk', args: 'verify 訂單匯出' } as any)
-  expect(String((r as any).text)).toContain('找不到案子')
+  expect(String((r as any).text)).toContain('找不到任務')
   expect(data.writes.some(p => p.startsWith('/demo/'))).toBe(false)
   expect(data.launches).toEqual([])
   await ui.unmount()
@@ -98,11 +98,11 @@ test('after a sync in the tutorial the spec step still offers t', async ($, on) 
 test('starting the tutorial selects the lesson case; ending it clears the selection', async ($, on) => {
   const { data, clock } = await startTutorial($, on)
   await $.prompt.submit({ text: '這一步要做什麼？' } as any)
-  expect(data.submitted[0].context?.[0]).toContain('案子「教學：會員折扣」')
+  expect(data.submitted[0].context?.[0]).toContain('任務「教學：會員折扣」')
   // 再開一次（教學還在跑）也選回教學那件
   await $.command.run({ command: 'desk', args: 'tutorial' } as any)
   await $.prompt.submit({ text: '再問一次' } as any)
-  expect(data.submitted[1].context?.[0]).toContain('案子「教學：會員折扣」')
+  expect(data.submitted[1].context?.[0]).toContain('任務「教學：會員折扣」')
   await $.command.run({ command: 'desk', args: 'tutorial end' } as any)
   await clock.settle()
   await $.prompt.submit({ text: '結束了' } as any)

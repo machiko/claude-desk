@@ -77,7 +77,7 @@ test('reply refusal names why: waiting agents can be answered, others say why no
   expect(replyRefusal(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }))).toBe('Agent 仍在執行')
   expect(replyRefusal(mk('寫測試'))).toBe('Agent 沒有在等你回覆')
   expect(replyRefusal({ ...mk('寫測試', asks), manual: true })).toBe('登錄表設為 manual，只追蹤不派工')
-  expect(replyRefusal({ ...mk('寫測試', asks), demo: true })).toBe('示範案子只能看')
+  expect(replyRefusal({ ...mk('寫測試', asks), demo: true })).toBe('示範任務只能看')
 })
 
 test('prompts carry the case, the card rules and the environment limits', () => {
@@ -126,7 +126,7 @@ test('prompts use the configured name, project rules and review words', () => {
   expect(review).toContain('HIGH（漏寫稽核）')
   expect(review).toContain('（例如 金流、稽核）')
   expect(buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }, s)).toContain('資安審查只看：金流與退款；')
-  // 別的案子不帶這件案子的規則
+  // 別的任務不帶這件任務的規則
   expect(buildPrompt({ ...c, root: '/p/b' }, 'continue', '', undefined, undefined, s)).not.toContain('只改 api/')
 })
 

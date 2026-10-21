@@ -28,7 +28,7 @@ export const isTutorialDir = (path: string) => /\/\.claude\/desk-tutorial$/.test
 const GIT_ID = ['-c', 'user.name=desk tutorial', '-c', 'user.email=tutorial@example.invalid']
 export const gitCommit = (root: string, message: string) => ['git', '-C', root, ...GIT_ID, 'commit', '--quiet', '-m', message]
 
-/** 建主 repo（發版線 release/v1.0）與案子的 worktree；卡片與登錄表由 register 另外寫。 */
+/** 建主 repo（發版線 release/v1.0）與任務的 worktree；卡片與登錄表由 register 另外寫。 */
 export function setupScript(main: string, wt: string): string {
   const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
   return [
@@ -44,7 +44,7 @@ export function setupScript(main: string, wt: string): string {
   ].join('\n')
 }
 
-export const registryText = (card: string) => `# 案子登錄（desk 教學）\n\n| 案名 | 卡片 |\n| --- | --- |\n| ${TUTORIAL_NAME} | \`${card}\` |\n`
+export const registryText = (card: string) => `# 任務登錄（desk 教學）\n\n| 任務名 | 卡片 |\n| --- | --- |\n| ${TUTORIAL_NAME} | \`${card}\` |\n`
 
 export const settingsText = (registry: string, main: string, user: string) =>
   JSON.stringify({ user, card: { registry, main, worktrees: main.replace(/\/shop$/, '/shop-worktrees'), base: TUTORIAL_RELEASE } }, null, 2) + '\n'
@@ -268,7 +268,7 @@ export function tutorialTurn(c: Case): { text: string; key?: string } | null {
 /** 教學一開始的說明（/desk tutorial 的回應）。 */
 export const TUTORIAL_INTRO = [
   `教學已開始：沙盒在 ~/.claude/desk-tutorial，現在卡是「${TUTORIAL_NAME}」。`,
-  '「其他案子」是示範案子（只能看），讓你看到多件案子同時進行時面板長什麼樣子：有的在等你、有的正在處理、有的閒置。',
+  '「其他任務」是示範任務（只能看），讓你看到多件任務同時進行時面板長什麼樣子：有的在等你、有的正在處理、有的閒置。',
   '照現在卡第二列「▶ 輪到你」的指示按鍵，把六段走完：',
   '  1 規格：看過規格後按 t 確認',
   '  2 實作：按兩次 g 派 Agent（教學裡由腳本扮演，不花額度）',
@@ -276,5 +276,5 @@ export const TUTORIAL_INTRO = [
   '  4 審查：自動派審查；第一輪會挑出一條 HIGH，自動修正後複審',
   '  5 合併：先回答審查建議（a、b 或 c → f；選 c 會改程式並 commit，接著自動退回檢查、重新審查），再按 t 合併',
   '  6 上線：按 t 打 tag，再按兩次 u 確認上線',
-  '結束後輸入 /desk tutorial end 清除沙盒、回到你的案子。',
+  '結束後輸入 /desk tutorial end 清除沙盒、回到你的任務。',
 ].join('\n')

@@ -1,5 +1,5 @@
 // desk 自我更新：`/desk update` 與面板的「更新版本」按鈕把 desk 更新到 GitHub 上的最新版本；自動檢查每 24 小時查一次、只提示不安裝。
-// 只更新 desk 自己，不碰專案與案子。版號讀 plugin.json，提示只講版號。無法乾淨更新時什麼都不動（不 stash、不切換、不合併），說明原因。
+// 只更新 desk 自己，不碰專案與任務。版號讀 plugin.json，提示只講版號。無法乾淨更新時什麼都不動（不 stash、不切換、不合併），說明原因。
 // 跨檔傳 $ 的函式一律用 function 宣告（箭頭函式會被引擎掃描拒絕載入）。
 
 export const UPDATE_KEY = 'updateCheck'

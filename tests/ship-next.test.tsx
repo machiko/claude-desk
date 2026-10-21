@@ -8,7 +8,7 @@ const PR_MERGED = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepos
 /** 只留 Beta 一件：現在卡與摘要列都是它。 */
 function only(data: any, gate: string, extra: Record<string, unknown> = {}) {
   data.agents = []
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', gate)
   data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', ...extra }
 }
@@ -54,7 +54,7 @@ test('the pane next step follows the ship stage and offers archive only once the
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：release：v0.19.0 可上線', PASSED)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   ui = await $.ui.mount(PANE(80))
-  // 完成的案子不搶「現在」，點它的列看詳情
+  // 完成的任務不搶「現在」，點它的列看詳情
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /✓ 完成 v0\.19\.0/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '輸入 /desk:card archive beta 歸檔' })).toBeDefined()

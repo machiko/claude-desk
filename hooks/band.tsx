@@ -1,5 +1,5 @@
 // 摘要列：輸入框上方一行。左邊是面板上選的那件（沒選就是進行中的那件，再沒有就是現在該看的那件）與它的六段，右邊是在等你的那件。
-// 版面先算好（純函式，可測），再畫；放不下時依序：段名縮成字形 → 拿掉備註 → 案名截斷 → 拿掉右邊。
+// 版面先算好（純函式，可測），再畫；放不下時依序：段名縮成字形 → 拿掉備註 → 任務名截斷 → 拿掉右邊。
 import type { Case, Snapshot, StageStatus } from '../types'
 import { displayWidth, fit, focusCase, liveCases, summary } from './model'
 import { stageParts } from './pipeline'
@@ -47,7 +47,7 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   ]
 
   if (!lead) {
-    const quiet = s.cases.length ? `○ ${s.cases.length} 件都閒置` : '尚無案子'
+    const quiet = s.cases.length ? `○ ${s.cases.length} 件都閒置` : '尚無任務'
     return { lead: [...demo, { text: quiet, color: COLOR.faint }], wait: null, notice, button, buttonWidth }
   }
   const meta = STATE[lead.state]

@@ -1,6 +1,6 @@
 ---
 name: card
-description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|案名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格、清關卡；archive <slug> 把卡與審查檔複製到歸檔資料夾並更新登錄表。配合 /desk 工作桌使用。
+description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格、清關卡；archive <slug> 把卡與審查檔複製到歸檔資料夾並更新登錄表。配合 /desk 工作桌使用。
 ---
 
 # /desk:card
@@ -14,7 +14,7 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
 - `spec <目標> [需求描述]`：照下面「產生規格」做。
 - 沒帶參數就印用法，不猜。
 
-`<目標>` 可以是 worktree 資料夾名（slug）、案名（完整或唯一部分）或 `main`（主 repo）。
+`<目標>` 可以是 worktree 資料夾名（slug）、任務名（完整或唯一部分）或 `main`（主 repo）。
 
 設定（主 repo、worktree 位置、登錄表、模板、專案規則）在 desk 的 `dispatch.json`：全域那份疊上目前專案的 `~/.claude/handoffs/<repo>/dispatch.json`，說明見 `card.py` 開頭。要在專案的 repo 或 worktree 裡執行。
 
@@ -22,12 +22,12 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
 
 規格是這件事的唯一依據：審查會逐條對照驗收情境，「沒做到」「沒測到」都算 HIGH，會被自動修正。所以每一條都要寫得能驗證。
 
-1. **找卡**：`card.py card <目標>`，記下 path、root、format（DESK 新卡／CARD 舊卡）、branch、gate、check、spec、已填的 AC、user，以及 `rule:` 開頭的專案規則（寫規格時都要遵守）與 `suggested check:`。找不到就把腳本列出的案子給使用者選，不要猜。
+1. **找卡**：`card.py card <目標>`，記下 path、root、format（DESK 新卡／CARD 舊卡）、branch、gate、check、spec、已填的 AC、user，以及 `rule:` 開頭的專案規則（寫規格時都要遵守）與 `suggested check:`。找不到就把腳本列出的任務給使用者選，不要猜。
 2. **讀現況（唯讀）**：
    - 整張卡：狀態、下一步、Scope、Decisions、History。
    - `git -C <root> log --oneline -10`、`git -C <root> status --short`；分支已有改動就看它相對 merge-base 的 `git diff --stat`。
    - 需求牽涉的程式：路由、控制器／服務、權限設定、既有測試。範圍大就派 Explore agent 查，只帶回結論。
-   - 不改程式、不 commit、不碰其他案子的卡。
+   - 不改程式、不 commit、不碰其他任務的卡。
 3. **已有規格時**：`filled AC` 不是 none，就先用 AskUserQuestion 問「取代／只補缺漏／取消」，照答案做。
 4. **釐清問題**：只問「答案會改變驗收情境」的事，能從卡片或程式讀到的不要問。
    - 用 AskUserQuestion，一次最多 4 題，總共 3–5 題；每題 2–4 個具體選項，推薦的放第一個並標「(Recommended)」。

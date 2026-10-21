@@ -65,7 +65,7 @@ test('events name the change; the first snapshot is quiet', () => {
     { at: now, text: 'a 等你：要嗎？', tone: 'warning', card: row('a').statusPath },
     { at: now, text: 'b 加入工作桌', tone: 'subtle', card: row('b').statusPath },
   ])
-  // 換了專案：另一份登錄表的案子不是「加入」，不發動態
+  // 換了專案：另一份登錄表的任務不是「加入」，不發動態
   expect(events({ ...before, project: 'shop' }, { ...after, project: 'blog' })).toEqual([])
 })
 
@@ -94,7 +94,7 @@ test('a case slug is its worktree folder, and a failed command reports its last 
 })
 
 test('a failed card script reports its reason line, or the exception line after a Traceback', () => {
-  expect(reasonLine({ stderr: '找不到案子：beta\n登錄表：\n  alpha\n  gamma\n' })).toBe('找不到案子：beta')
+  expect(reasonLine({ stderr: '找不到任務：beta\n登錄表：\n  alpha\n  gamma\n' })).toBe('找不到任務：beta')
   expect(reasonLine({ stderr: 'Traceback (most recent call last):\n  File "card.py", line 9, in <module>\n    main()\nPermissionError: [Errno 13] Permission denied: \'CARD.md\'\n\n' }))
     .toBe("PermissionError: [Errno 13] Permission denied: 'CARD.md'")
   expect(reasonLine({ stderr: '\n  \n  關卡不是 spec\n細節' })).toBe('關卡不是 spec')

@@ -1,5 +1,5 @@
 // 面板分三區：header（desk 版本、額度、更新時間；到期提醒與容器異常）與 footer（現在這件的操作、全域鍵、容器與模型）常駐，
-// 只有 content（現在卡、其他案子進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
+// 只有 content（現在卡、其他任務進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
 import { displayWidth, feedOf, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
@@ -78,7 +78,7 @@ export type PaneActions = {
 }
 
 const WIDE = 100
-/** 進度表放得下完整段名（數字鍵＋圖示＋至少 10 格案名＋六段）的最小寬度；更窄改成緊湊圖示、不放標題列。 */
+/** 進度表放得下完整段名（數字鍵＋圖示＋至少 10 格任務名＋六段）的最小寬度；更窄改成緊湊圖示、不放標題列。 */
 const NARROW = 3 + 2 + 10 + 2 + 6 * 5
 const FEED_ROWS = 3
 const GUTTER = 3
@@ -99,12 +99,12 @@ export function stageStrip(c: Case): { text: string; status: string }[] {
   return c.pipeline.stages.map(s => ({ text: STAGE_GLYPH[s.status], status: s.status }))
 }
 
-/** 進度表的欄寬：數字鍵「1: 」＋狀態圖示＋案名（各列同寬）＋六段（每段 3 格）＋時間靠右。 */
+/** 進度表的欄寬：數字鍵「1: 」＋狀態圖示＋任務名（各列同寬）＋六段（每段 3 格）＋時間靠右。 */
 export function gridLayout(names: string[], ages: string[], width: number): { nameWidth: number; ageWidth: number; lead: number } {
   const ageWidth = Math.max(0, ...ages.map(displayWidth))
   const fixed = 3 + 2 + 2 + STAGES.length * STAGE_COL
   const longest = Math.max(4, ...names.map(displayWidth))
-  // 案名至少留 NAME_MIN 格（或全名）才放時間；不夠就先拿掉時間。
+  // 任務名至少留 NAME_MIN 格（或全名）才放時間；不夠就先拿掉時間。
   const keepAge = ageWidth > 0 && width - fixed - ageWidth - 1 >= Math.min(NAME_MIN, longest)
   const room = width - fixed - (keepAge ? ageWidth + 1 : 0)
   const nameWidth = Math.max(4, Math.min(longest, room))
@@ -217,16 +217,16 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
   return rows
 }
 
-/** 進度表（其他案子）：標題列放六段的字，每列「數字 圖示 案名 六段 時間」對齊。 */
+/** 進度表（其他任務）：標題列放六段的字，每列「數字 圖示 任務名 六段 時間」對齊。 */
 function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: PaneActions, focus: Case | null): any[] {
   const { Box, Text, Button } = ui
-  if (!cases.length) return [section(ui, WORD.others, width), <Text color={COLOR.faint}>{focus ? '其他案子都閒置' : ''}</Text>]
+  if (!cases.length) return [section(ui, WORD.others, width), <Text color={COLOR.faint}>{focus ? '其他任務都閒置' : ''}</Text>]
   const narrow = width < NARROW
   const ages = cases.map(c => ago(c.updatedAt, view.now))
   const g = gridLayout(cases.map(c => c.name), ages, width)
   const heads = (cases.find(c => c.pipeline)?.pipeline?.stages ?? STAGES).map(st => st.label)
   const rows: any[] = []
-  // 教學模式的背景是示範案子：標題寫明只能看。
+  // 教學模式的背景是示範任務：標題寫明只能看。
   const title = cases.some(c => c.demo) ? `${WORD.others}（示範，只能看）` : WORD.others
   if (narrow) rows.push(section(ui, title, width))
   else {
@@ -234,7 +234,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
     if (g.lead >= displayWidth(title) + 1) rows.push(<Box flexDirection="row"><Text color={COLOR.dim} bold>{pad(title, g.lead)}</Text><Text color={COLOR.faint}>{letters}</Text></Box>)
     else { rows.push(section(ui, title, width)); rows.push(<Text color={COLOR.faint}>{' '.repeat(g.lead) + letters}</Text>) }
   }
-  // 數字鍵只給真的案子；示範案子（教學背景）只是畫面，不能選。
+  // 數字鍵只給真的任務；示範任務（教學背景）只是畫面，不能選。
   const real = cases.filter(c => !c.demo)
   cases.forEach((c, i) => {
     const meta = STATE[c.state]
@@ -255,7 +255,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
       age ? <Text key="age" color={COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null,
     ]
     rows.push(c.demo
-      // 示範案子：同樣的排版，前面空出數字鍵的位置，沒有按鈕。
+      // 示範任務：同樣的排版，前面空出數字鍵的位置，沒有按鈕。
       ? <Box key={`demo-${c.statusPath}`} flexDirection="row"><Text>{'   '}</Text>{line}</Box>
       : <Button plain key={`row-${c.statusPath}`} hotkey={hot} dimColor={c.state === 'idle' || c.state === 'nocard'} onPress={() => act.select(c.statusPath)}>{line}</Button>,
     )
@@ -277,7 +277,7 @@ function feedRows(ui: any, view: PaneView, focus: Case | null, width: number): a
 }
 
 const HELP: [string, string][] = [
-  ['1–9', '選其他案子'], ['n', '下一件（需要你的優先）'], ['a b c d', '回答決策'], ['f', '填入決策'],
+  ['1–9', '選其他任務'], ['n', '下一件（需要你的優先）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／審查／同步（按兩次確認）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）'], ['l', 'Agent 輸出'],
   ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新版本', '把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
@@ -295,7 +295,7 @@ function helpRows(ui: any, view: PaneView, act: PaneActions, width: number): any
   ]
 }
 
-/** content：現在卡、其他案子進度表、最近、說明。寬時現在卡與進度表左右並排，逐列併起來。 */
+/** content：現在卡、其他任務進度表、最近、說明。寬時現在卡與進度表左右並排，逐列併起來。 */
 function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): any[] {
   const { Box, Text } = ui
   const s = view.s

@@ -21,7 +21,7 @@ export function fixture(on: any) {
   mock.env(on, { HOME: '/home/u' })
   const data = {
     files: {
-      [REGISTRY]: `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`,
+      [REGISTRY]: `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`,
       [CARD_A]: `<!-- DESK -->\n- 狀態：Alpha 一切就緒\n- 驗證：\`node test.mjs\`\n- 等你：要 push 嗎？A) 要 B) 等\n- 下一步：push\n- 關卡：無\n<!-- /DESK -->`,
       [CARD_B]: `<!-- DESK -->\n- 狀態：Beta 修正中\n- 驗證：\`npm test\`\n- 等你：無\n- 下一步：依審核修正\n- 關卡：無\n<!-- /DESK -->`,
       [CARD_C]: `<!-- DESK -->\n- 狀態：Gamma 閒置\n- 驗證：無\n- 等你：無\n- 下一步：無\n- 關卡：無\n<!-- /DESK -->`,

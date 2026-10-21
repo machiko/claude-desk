@@ -16,7 +16,7 @@ const specRuns = (data: any) => data.processCalls.filter((c: any) => c.argv.incl
 /** 只留 Beta 一件，停在 spec 關卡，沒有 Agent 在跑。 */
 function onlySpec(data: any) {
   data.agents = []
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', SPEC_GATE) + '\n\n## Decisions\n\n- D-01 2030-01-05 Alex：只匯出 CSV\n\n## History\n\n- 2030-01-05：產生規格草稿\n'
   data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git' }
   data.gh = []
@@ -61,7 +61,7 @@ test('pressing t twice confirms the spec like /desk:card spec ok and launches no
 
   await ui.press({ key: KEY })
   await clock.settle()
-  // 跑的是 /desk:card spec <slug> ok 用的那支腳本，在案子的 worktree 裡
+  // 跑的是 /desk:card spec <slug> ok 用的那支腳本，在任務的 worktree 裡
   const run = specRuns(data)
   expect(run).toHaveLength(1)
   expect(run[0].argv[0]).toBe('python3')
@@ -165,7 +165,7 @@ test('t does nothing outside the spec gate, while an agent runs, or on sample ca
   await ui.unmount()
   await clock.settle()
 
-  // 示範案子：停在 spec 關卡也不提供
+  // 示範任務：停在 spec 關卡也不提供
   const demo: any = { demo: true, state: 'gate', gate: 'spec：待確認規格', pipeline: { current: 'spec', stages: [], note: '' } }
   expect(awaitsSpecOk(demo)).toBe(false)
   expect(stageActions(demo).has('spec-ok')).toBe(false)
