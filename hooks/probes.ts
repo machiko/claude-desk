@@ -249,22 +249,25 @@ async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>): Promi
   return (await onBranchLine($, c.root, was.head)) ? was.into : undefined
 }
 
-/** commit 在 HEAD 的 first-parent 鏈上：先確認是祖先（便宜），再沿 HEAD 的第一個父走到 commit 之前的最後一步，看它的父是不是 commit。 */
-async function onBranchLine($: any, root: string, commit: string): Promise<boolean> {
-  if ((await git($, root, ['merge-base', '--is-ancestor', commit, 'HEAD'])) === null) return false
-  const line = ((await git($, root, ['rev-list', '--first-parent', `${commit}..HEAD`])) ?? '').split(/\r?\n/).filter(Boolean)
+/**
+ * 沿 to 的第一個父往回走，走到 from 之前的最後一步，回傳那一步的父；from 不是 to 的祖先（先問，便宜）或兩者相同就是 null。
+ * 父就是 from：from 在 to 的 first-parent 鏈上；不是：from 是從旁邊（某個 merge commit 的第二個父）併進來的。
+ */
+async function firstParentLanding($: any, root: string, from: string, to: string): Promise<string | null> {
+  if ((await git($, root, ['merge-base', '--is-ancestor', from, to])) === null) return null
+  const line = ((await git($, root, ['rev-list', '--first-parent', `${from}..${to}`])) ?? '').split(/\r?\n/).filter(Boolean)
   const oldest = line[line.length - 1]
-  if (!oldest) return false
-  return (await git($, root, ['rev-parse', `${oldest}^`])) === commit
+  return oldest ? git($, root, ['rev-parse', `${oldest}^`]) : null
+}
+
+/** commit 在 HEAD 的 first-parent 鏈上。 */
+async function onBranchLine($: any, root: string, commit: string): Promise<boolean> {
+  return (await firstParentLanding($, root, commit, 'HEAD')) === commit
 }
 
 /** HEAD 在 ref 裡、而且是從旁邊併進來的：沿 ref 的第一個父往回走，最後一步的父不是 HEAD。 */
 async function mergedThrough($: any, root: string, head: string, ref: string): Promise<boolean> {
-  if ((await git($, root, ['merge-base', '--is-ancestor', 'HEAD', ref])) === null) return false
-  const line = ((await git($, root, ['rev-list', '--first-parent', `HEAD..${ref}`])) ?? '').split(/\r?\n/).filter(Boolean)
-  const oldest = line[line.length - 1]
-  if (!oldest) return false
-  const parent = await git($, root, ['rev-parse', `${oldest}^`])
+  const parent = await firstParentLanding($, root, 'HEAD', ref)
   return !!parent && parent !== head
 }
 
