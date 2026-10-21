@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, text } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { needsPush, stageActions } from '../hooks/turn'
@@ -88,6 +88,32 @@ test('push buttons: an untracked branch already pushed to origin offers no push'
 
   expect(push).toBe(false)
   await ui.unmount()
+})
+
+const flat = (x: string) => x.replace(/\s+/g, '')
+const screen = async (ui: any) => flat(text(await ui.drawn()))
+
+/** 沒設追蹤分支、origin 上有同名分支：git 列照它算（與遠端一致、領先 n），不再說「未 push（沒有遠端分支）」；origin 沒有才說。 */
+test('push buttons: the git line of an untracked branch that origin has does not say unpushed', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { upstream: false, remoteAb: '0\t0' })
+  judgedAt(data, 'c2')
+
+  const ui = await mount($)
+  const inSync = await screen(ui)
+  data.git[BETA]!.remoteAb = '0\t1'
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ahead = await screen(ui)
+  delete data.git[BETA]!.remoteAb
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const noRef = await screen(ui)
+  await ui.unmount()
+
+  expect(inSync).toContain(flat('feature/b · 與遠端一致、無未提交變更'))
+  expect(inSync).not.toContain(flat('未 push'))
+  expect(ahead).toContain(flat('feature/b · 領先 1'))
+  expect(ahead).not.toContain(flat('未 push'))
+  expect(noRef).toContain(flat('feature/b · 未 push（沒有遠端分支）'))
 })
 
 /** 同上，但本機又多了 commit：照 origin 上的同名分支算出領先，出「⇡ push」。 */

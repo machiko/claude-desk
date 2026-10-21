@@ -91,7 +91,9 @@ export function fixture(on: any) {
       if (!g) return { value: result(128, '', 'not a git repository') }
       const args = e.argv.slice(3).join(' ')
       if (/^rev-parse \S+\^$/.test(args)) { const p = g.parents?.[args.slice(10, -1)]; return { value: p ? result(0, `${p}\n`) : result(128, '', 'bad revision') } }
-      if (/^rev-list --left-right --count refs\/remotes\/origin\/\S+\.\.\.HEAD$/.test(args)) return { value: g.remoteAb === undefined ? result(128, '', 'unknown revision') : result(0, `${g.remoteAb}\n`) }
+      // 照真實 git：只有查到 origin 上「同名」分支才有數字；查錯分支名跟沒有分支一樣回 128。
+      const remoteAb = args.match(/^rev-list --left-right --count refs\/remotes\/origin\/(\S+)\.\.\.HEAD$/)
+      if (remoteAb) return { value: g.remoteAb === undefined || remoteAb[1] !== g.branch ? result(128, '', 'unknown revision') : result(0, `${g.remoteAb}\n`) }
       if (/^rev-list --first-parent \S+\.\.HEAD$/.test(args)) return { value: result(0, g.branchLine ?? '') }
       if (args.startsWith('rev-list --first-parent')) return { value: result(0, g.firstParent ?? '') }
       if (args.startsWith('log -1 --format=%ct')) return { value: result(0, g.commitAt ? `${Math.floor(g.commitAt / 1000)}\n${g.commitFiles?.length ? `\n${g.commitFiles.join('\n')}\n` : ''}` : '') }
