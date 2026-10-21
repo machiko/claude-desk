@@ -11,7 +11,7 @@
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
   card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
-  card.py archive <slug>                       卡與審查檔複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
+  card.py archive <slug>                       卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
   card.py changelog <版本>                      發版：把所在 repo 的 changelog.d/*.md 合併成 CHANGELOG.md 的「## <版本>」段
                                                （插在「## 未發布」之後、上一版之前；條目依 新增→調整→修復→移除、同類依檔名），刪掉片段檔。
                                                沒有片段、版本段已存在、片段有一行不是「- 」開頭都報錯、不改檔。
@@ -408,7 +408,7 @@ def cmd_archive(slug):
     write(dest, read(path))
     task = os.path.join(root, '.task')
     for f in sorted(os.listdir(task)) if os.path.isdir(task) else []:
-        if re.match(r'(REVIEW|SECURITY|review-.*)\.md$', f):
+        if re.match(r'(REVIEW|SECURITY|PLAN|REPORT|review-.*)\.md$', f):
             write(os.path.join(ARCHIVE, f'{slug}-{f}'), read(os.path.join(task, f)))
     lines = read(REG).split('\n')
     removed = [l for l in lines if l.startswith('|') and f'`{path}`' in l]

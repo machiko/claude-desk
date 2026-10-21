@@ -1,7 +1,7 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
 import { isReleaseLine } from './pipeline'
-import { CARD_CMD, named, parseGate } from './card'
+import { CARD_CMD, named, parseGate, saysNone } from './card'
 import { agentWaits, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -153,7 +153,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
       ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
       : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
     : kind === 'continue' ? `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`
-    : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。'
+    : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : `${named(settings.user).trimStart()}的回覆：${text}`
   const base = cardRules(settings, c.root)
@@ -167,6 +167,18 @@ export function reviewTask(c: Case): string {
   return m ? m[1]! : ''
 }
 
+const IDLE_WAIT = '(?:(?:自動|完成)?檢查(?:結果|通過)?|(?:程式碼|資安)?審查(?:結果|通過)?|審閱(?:結果|通過)?|合併|PR(?:\\s*#?\\d+)?(?:合併|通過)?|CI(?:\\s*通過)?|(?:你|使用者|[A-Za-z][\\w-]*)\\s*(?:確認|拍板|審閱|決定)?)'
+const IDLE_CLAUSE = new RegExp(`^(?:(?:過了|通過後?)\\s*開\\s*PR|開\\s*PR|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
+
+/** 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」時，沒有要 Agent 做的事；回傳拒絕原因，否則空字串。 */
+export function idleNext(next: string): string {
+  if (saysNone(next)) return ''
+  const parts = next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
+  return parts.length > 0 && parts.every(p => IDLE_CLAUSE.test(p))
+    ? '下一步只剩等檢查／審查／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事'
+    : ''
+}
+
 /** 現在可以派哪些：進行中一律不派；等回覆只給回覆；規格未確認或沒有完成檢查不能派實作；同步隨時可。 */
 export function dispatchable(c: Case): DispatchKind[] {
   if (c.manual || c.state === 'running' || c.state === 'nocard') return []
@@ -178,7 +190,7 @@ export function dispatchable(c: Case): DispatchKind[] {
   // 規格段還是範本、六段停在規格段：一樣只能同步（已經審查過、合併、打 tag 的不擋）。
   if (specBlocks(c)) return ['sync']
   const out: DispatchKind[] = []
-  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify) out.push('continue')
+  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && !idleNext(c.next)) out.push('continue')
   if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
   out.push('sync')
   return out
@@ -204,7 +216,8 @@ export function replyRefusal(c: Case): string {
 export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'reply') return replyRefusal(c)
   if (dispatchable(c).includes(kind)) return ''
-  return c.manual ? MANUAL : c.state === 'running' ? BUSY : specBlocks(c) ? specGapReason(c) : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'
+  const idle = kind === 'continue' ? idleNext(c.next) : ''
+  return c.manual ? MANUAL : c.state === 'running' ? BUSY : specBlocks(c) ? specGapReason(c) : !c.verify ? '卡片尚缺完成檢查，規格未通過' : idle || '卡片狀態不符'
 }
 
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {

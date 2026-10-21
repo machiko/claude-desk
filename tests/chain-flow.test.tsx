@@ -243,3 +243,59 @@ test('a stale card whose spec is still a template is not rechecked by the chain,
   expect(run.stopped).toContain('/desk:card spec')
   expect(feed.filter(e => e.card === CARD_A && String(e.text).includes('/desk:card spec')).length).toBe(1)
 })
+
+test('idle next: the chain never dispatches a waiting-only next step', async ($, on) => {
+  // 實作做完後 Agent 常把下一步寫成「等自動檢查與審查；過了開 PR」：流程只跑檢查、派審查、派修正，不會拿這句派實作；手動按 g 也拒絕。
+  const { data, clock } = fixture(on)
+  data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace('- 下一步：push', '- 下一步：依規格實作')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.agents = []
+  let n = 0
+  data.launch = async (e: any) => {
+    n++
+    const id = `a000000${n}`
+    data.agents = [{ id, kind: 'background', cwd: '/home/u/wt/alpha', name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, id)
+  }
+  const step = async () => { await clock.advance(2500); await clock.settle() }
+  const finish = async () => {
+    data.agents = data.agents.map(a => ({ ...a, status: 'idle', state: 'done' }))
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    await clock.settle()
+    await step(); await step(); await step()
+  }
+  const prompts = () => data.launches.map(l => String(l.argv[l.argv.length - 1]))
+  const setGate = (g: string) => { data.files[CARD_A] = data.files[CARD_A]!.replace(/- 關卡：.*$/m, `- 關卡：${g}`) }
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(1)
+
+  // Agent 做完，把下一步改成只剩等待
+  data.files[CARD_A] = data.files[CARD_A]!.replace('- 下一步：依規格實作', '- 下一步：等自動檢查與審查；過了開 PR')
+  await finish()
+  expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(1)
+  expect(data.launches.length).toBe(2)
+  expect(prompts()[1]).toContain('程式碼審查')
+
+  // 審查有 HIGH：修正輪照派（修正是真的工作，不看下一步）
+  setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  await finish()
+  expect(data.launches.length).toBe(3)
+  expect(prompts()[2]).toContain('修正第 1／2 輪')
+
+  // 修完過關：之後手動按 g 被拒絕、沒有新的派工
+  setGate('無')
+  data.git['/home/u/wt/alpha']!.head = 'h2'
+  await finish()
+  setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  await finish()
+  expect(data.launches.length).toBe(4)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(4)
+  expect(data.toasts.some(t => t.includes('目前無法繼續') && t.includes('沒有要 Agent 做的事'))).toBe(true)
+  expect(prompts().some(p => p.startsWith('依卡片的下一步繼續：等'))).toBe(false)
+})

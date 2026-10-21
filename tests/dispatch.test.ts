@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
 
@@ -175,4 +175,36 @@ test('implementation prompt asks for a changelog fragment instead of CHANGELOG.m
   expect(buildPrompt(c, 'review')).not.toContain('changelog.d/')
   // 片段檔名跟著任務根目錄
   expect(buildPrompt({ ...c, root: '/p/order-export' }, 'continue')).toContain('changelog.d/order-export.md')
+})
+
+test('idle next: waiting-only next steps refuse continue and say what to do', () => {
+  // feed-current、spec-gate 實際派出去的句子，與幾種常見寫法
+  for (const next of ['等自動檢查與審查；過了開 PR', '等完成檢查與審查', '等檢查', '等審查', '等合併', '等 PR', '開 PR', '等你確認', '等 Reyes 確認', '待合併', '等 CI 通過', '等你', '等審查結果；通過後開 PR']) {
+    const why = idleNext(next)
+    expect(why).toContain('沒有要 Agent 做的事')
+    expect(why).toContain('先把下一步寫成要做的事')
+    const c = mk(next)
+    expect(dispatchable(c)).toEqual(['review', 'sync'])
+    expect(dispatchRefusal(c, 'continue')).toBe(why)
+    expect(dispatchRefusal(c, 'sync')).toBe('')
+  }
+})
+
+test('idle next: a next step with real work is still dispatched', () => {
+  for (const next of ['等檢查；補 AC-3 的測試', '依規格實作', 'push 後開 PR', '依 .task/REVIEW.md 的意見修正', '等審查通過後修 bug', '確認規格', '合併 main 進來', '寫測試']) {
+    expect(idleNext(next)).toBe('')
+    expect(dispatchable(mk(next))).toEqual(['continue', 'review', 'sync'])
+    expect(buildPrompt(mk(next), 'continue').startsWith(`依卡片的下一步繼續：${next}`)).toBe(true)
+  }
+  // 空白與「無」另有狀態處理，不算空派工
+  expect(idleNext('')).toBe('')
+  expect(idleNext('無')).toBe('')
+})
+
+test('sync prompt: no new facts means no History line and untouched fields', () => {
+  const p = buildPrompt(mk('寫測試'), 'sync')
+  expect(p).toContain('只在狀態、下一步、檢查確實與事實不符時才改那一欄')
+  expect(p).toContain('歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實')
+  expect(p).toContain('什麼都沒變就一個字都不寫、直接結束')
+  expect(p).not.toContain('已同步')
 })
