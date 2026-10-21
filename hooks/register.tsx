@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
-import { buildCase, caseNamed, demoCases, events, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
+import { buildCase, caseNamed, demoCases, events, feedOnDesk, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
 import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
@@ -143,7 +143,10 @@ export async function refresh($: any, options: PluginOptions) {
     const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     // 選取的案子已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
-    if (!error && rows.length) await update($, selected, v => (v && !cur.cases.some(c => c.statusPath === v) ? null : v))
+    if (!error && rows.length) {
+      await update($, selected, v => (v && !cur.cases.some(c => c.statusPath === v) ? null : v))
+      await update($, feedAtom, list => feedOnDesk(list, cur.cases))
+    }
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
     await update($, snapshot, () => cur)
@@ -184,7 +187,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const agentBusy = !!c.agent && !c.agent.asks
     if (run?.passed && c.chain?.stale && run.owner === mine && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !(c.statusPath in (await read($, launchingAtom)))) {
       await recheck($, key, run, last, mine, s.at)
-      await feedPush($, [{ at: s.at, text: `${c.name} 審查通過後有新 commit，自動重新檢查與審查`, tone: 'suggestion' }])
+      await feedPush($, [{ at: s.at, text: `${c.name} 審查通過後有新 commit，自動重新檢查與審查`, tone: 'suggestion', card: c.statusPath }])
       acted = true
       continue
     }
@@ -205,14 +208,14 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     await markHandled()
     if (step.kind === 'stop') {
       await saveChain($, key, r => r ? paused(r, step.reason, step.atCheck) : r)
-      await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error' }])
+      await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error', card: c.statusPath }])
       $.ui.toast(`${c.name}：流程已暫停，${step.reason}`, { timeoutMs: 10_000 })
       notify($, `${c.name}：流程已暫停，${step.reason}`)
     } else if (step.kind === 'pass') {
       const judged = step.skipped ? fresh?.head ?? c.git?.head : undefined
       await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(judged ? { judgedHead: judged } : {}) } : r)
       const text = step.needsHuman ? `${c.name} ${step.needsHuman}` : step.skipped ? `${c.name} 只動文件、檢查通過，免審查，可開 PR` : `${c.name} 審查通過，可開 PR`
-      await feedPush($, [{ at: s.at, text, tone: step.needsHuman ? 'warning' : 'success' }])
+      await feedPush($, [{ at: s.at, text, tone: step.needsHuman ? 'warning' : 'success', card: c.statusPath }])
       const say = step.needsHuman ? `${c.name}：${step.needsHuman}` : step.skipped ? `${c.name}：只動文件，免審查，可以開 PR` : `${c.name}：審查通過，可以開 PR`
       $.ui.toast(say, { timeoutMs: 10_000 })
       notify($, say)
@@ -361,7 +364,7 @@ const errorText = (error: unknown) => plain(error instanceof Error ? error.messa
 async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
   const reason = `檢查中斷：${errorText(error)}`
   $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error' }])
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
   await restage($, c.statusPath)
@@ -376,7 +379,7 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   if (missing.length) {
     const reason = `容器 ${missing.join('、')} 未啟動，請先在主工作區執行 docker compose up -d ${missing.join(' ')}`
     $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 檢查未執行：${reason}`, tone: 'warning' }])
+    await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
     if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
@@ -390,7 +393,7 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
-  await feedPush($, [{ at: result.at, text: `${c.name} ${result.ok ? '檢查通過' : `檢查未通過（exit ${result.exitCode}）`}`, tone: result.ok ? 'success' : 'error' }])
+  await feedPush($, [{ at: result.at, text: `${c.name} ${result.ok ? '檢查通過' : `檢查未通過（exit ${result.exitCode}）`}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   $.ui.toast(`${c.name}：${result.ok ? '檢查通過' : '檢查未通過'}`, { timeoutMs: 6000 })
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
@@ -418,7 +421,7 @@ async function resumeAtCheck($: any, c: Case) {
     const { handled: _, ...open } = last
     await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: open } })
   }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 流程繼續：檢查跑完了，接著自動往下走`, tone: 'suggestion' }])
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 流程繼續：檢查跑完了，接著自動往下走`, tone: 'suggestion', card: c.statusPath }])
   refreshSoon($, optionsRef!)
 }
 
@@ -504,11 +507,11 @@ async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchK
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
-    await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`, tone: 'suggestion' }])
+    await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`, tone: 'suggestion', card: c.statusPath }])
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error' }])
+    await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
     $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
   } finally {
     launchKinds = Object.fromEntries(Object.entries(launchKinds).filter(([k]) => k !== c.statusPath))
@@ -593,7 +596,7 @@ async function confirmShipped($: any, c: Case) {
   if (!next) { $.ui.toast(`${c.name}：卡片關卡已不是 release，沒有改動`); void refresh($, optionsRef!); return }
   const ok = await $.fs.write(c.statusPath, next).then(() => true).catch(() => false)
   if (!ok) { $.ui.toast(`${c.name}：寫入卡片失敗`); return }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已確認上線${c.tag ? `（${c.tag}）` : ''}`, tone: 'success' }])
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已確認上線${c.tag ? `（${c.tag}）` : ''}`, tone: 'success', card: c.statusPath }])
   $.ui.toast(`${c.name}：已確認上線，release 關卡已清除`)
   void refresh($, optionsRef!)
 }
@@ -621,12 +624,13 @@ async function archiveCase($: any, options: PluginOptions, c: Case) {
   if (r.exitCode !== 0) {
     const why = reasonLine(r)
     $.ui.toast(`${c.name}：歸檔失敗：${why}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: now, text: `${c.name} 歸檔失敗：${why}`, tone: 'error' }])
+    await feedPush($, [{ at: now, text: `${c.name} 歸檔失敗：${why}`, tone: 'error', card: c.statusPath }])
     void refreshAfterWrite($, options)
     return
   }
   const removeCmd = String(r.stdout ?? '').split(/\r?\n/).map((l: string) => l.trim()).find((l: string) => /\bworktree remove\b/.test(l))
   $.ui.toast(`${c.name}：已歸檔${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
+  // 歸檔後這件離開工作桌：這筆不掛在它的卡上，換到哪件都看得到。
   await feedPush($, [{ at: now, text: `${c.name} 已歸檔（worktree 與分支保留）`, tone: 'success' }])
   void refreshAfterWrite($, options)
 }
@@ -641,11 +645,11 @@ async function confirmSpec($: any, options: PluginOptions, c: Case) {
   if (r.exitCode !== 0) {
     const why = reasonLine(r)
     $.ui.toast(`${c.name}：確認規格失敗：${why}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error' }])
+    await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error', card: c.statusPath }])
     void refreshAfterWrite($, options)
     return
   }
-  await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success' }])
+  await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success', card: c.statusPath }])
   void refreshAfterWrite($, options)
 }
 
@@ -657,7 +661,7 @@ async function stopAgent($: any, c: Case) {
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${errorLine(r, 'claude stop 失敗')}）`); return }
   await saveChain($, normalizeRoot(c.root), run => run ? paused(run, '你手動停止了 Agent') : run)
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止 Agent（對話保留，可再派工接續）`, tone: 'warning' }])
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已停止 Agent（對話保留，可再派工接續）`, tone: 'warning', card: c.statusPath }])
   $.ui.toast(`${c.name}：已停止 Agent`)
   void refresh($, optionsRef!)
 }
