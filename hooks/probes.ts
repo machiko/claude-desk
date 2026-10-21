@@ -41,8 +41,13 @@ type GitMerged = Record<string, { branch: string; head: string; into: string }>
 async function gitMerged($: any): Promise<GitMerged> {
   try { return ((await $.store.get(GIT_MERGED_KEY)) as GitMerged | null) ?? {} } catch { return {} }
 }
+let rememberChain: Promise<void> = Promise.resolve()
 async function rememberMerged($: any, root: string, entry: GitMerged[string]) {
-  try { await $.store.set(GIT_MERGED_KEY, { ...(await gitMerged($)), [root]: entry }) } catch { /* 下次合併段再問一次 git */ }
+  const next = rememberChain.then(async () => {
+    try { await $.store.set(GIT_MERGED_KEY, { ...(await gitMerged($)), [root]: entry }) } catch { /* 下次合併段再問一次 git */ }
+  })
+  rememberChain = next.catch(() => {})
+  await next
 }
 const mergeMisses = new Map<string, number>()
 const projects = new Map<string, Project>()
@@ -220,15 +225,17 @@ export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, 
   const key = `${c.root}\n${head}`
   const hit = merges.get(key)
   if (hit) return hit
-  const later = await mergedBefore($, c)
-  if (later) { merges.set(key, later); return later }
   const now = await $.clock.now()
   const missed = mergeMisses.get(key)
   if (!force && missed !== undefined && now - missed < MERGE_MISS_MS) return undefined
+  const was = (await gitMerged($))[c.root]
+  const later = await mergedBefore($, c, was)
+  if (later) { merges.set(key, later); return later }
   for (const ref of await baseRefs($, c, cardBase)) {
-    if (await mergedThrough($, c.root, head, ref)) {
+    const mergedHead = await mergedCommit($, c, head, ref, was)
+    if (mergedHead) {
       merges.set(key, ref); mergeMisses.delete(key)
-      await rememberMerged($, c.root, { branch: c.git!.branch, head, into: ref })
+      await rememberMerged($, c.root, { branch: c.git!.branch, head: mergedHead, into: ref })
       return ref
     }
   }
@@ -237,16 +244,23 @@ export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, 
 }
 
 /**
- * 這個分支之前在某個 HEAD 被 git 認定合併過，那個 HEAD 還在現在 HEAD 的 first-parent 鏈上：仍算已合併，跟 PR 合併後再 commit 一樣。
- * 合併後在分支上補 commit、或把基準分支併回分支，沿第一個父往回走都會走到它；同名分支從已包含舊合併的基準分支重開，
- * 鏈走的是基準分支的主線，舊 HEAD 只是某個 merge commit 的第二個父，不算。
+ * 這個分支之前在某個 HEAD 被 git 認定合併過，那個 HEAD 還在現在 HEAD 的 first-parent 鏈上，或分支直接 fast-forward 到基準分支裡：
+ * 仍算已合併，跟 PR 合併後再 commit 一樣。合併後在分支上補 commit、或把基準分支併回分支（無論有無 fast-forward）都算；
+ * 同名分支從已包含舊合併的基準分支重開並有新 commit 時，新 HEAD 不在基準分支裡、舊 HEAD 也只是某個 merge commit 的第二個父，不算。
  * 有 PR 資訊（例如之後的 commit 開了新 PR）就照 PR 走；切到別的分支也不算。
  */
-async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>): Promise<string | undefined> {
-  if (c.pr || !c.git) return undefined
-  const was = (await gitMerged($))[c.root]
-  if (!was || was.branch !== c.git.branch || was.head === c.git.head) return undefined
-  return (await onBranchLine($, c.root, was.head)) ? was.into : undefined
+async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, was?: GitMerged[string]): Promise<string | undefined> {
+  if (c.pr || !c.git || !was || was.branch !== c.git.branch || was.head === c.git.head) return undefined
+  const landing = await firstParentLanding($, c.root, was.head, 'HEAD')
+  if (!landing) return undefined
+  if (landing === was.head) return was.into
+  return (await git($, c.root, ['merge-base', '--is-ancestor', 'HEAD', was.into])) !== null ? was.into : undefined
+}
+
+async function landingParent($: any, root: string, from: string, to: string): Promise<string | null> {
+  const line = ((await git($, root, ['rev-list', '--first-parent', `${from}..${to}`])) ?? '').split(/\r?\n/).filter(Boolean)
+  const oldest = line[line.length - 1]
+  return oldest ? git($, root, ['rev-parse', `${oldest}^`]) : null
 }
 
 /**
@@ -255,20 +269,24 @@ async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>): Promi
  */
 async function firstParentLanding($: any, root: string, from: string, to: string): Promise<string | null> {
   if ((await git($, root, ['merge-base', '--is-ancestor', from, to])) === null) return null
-  const line = ((await git($, root, ['rev-list', '--first-parent', `${from}..${to}`])) ?? '').split(/\r?\n/).filter(Boolean)
-  const oldest = line[line.length - 1]
-  return oldest ? git($, root, ['rev-parse', `${oldest}^`]) : null
+  return landingParent($, root, from, to)
 }
 
-/** commit 在 HEAD 的 first-parent 鏈上。 */
-async function onBranchLine($: any, root: string, commit: string): Promise<boolean> {
-  return (await firstParentLanding($, root, commit, 'HEAD')) === commit
-}
-
-/** HEAD 在 ref 裡、而且是從旁邊併進來的：沿 ref 的第一個父往回走，最後一步的父不是 HEAD。 */
-async function mergedThrough($: any, root: string, head: string, ref: string): Promise<boolean> {
-  const parent = await firstParentLanding($, root, 'HEAD', ref)
-  return !!parent && parent !== head
+/**
+ * 找出這個分支經由 merge commit 併進 ref 的那個 commit：HEAD 已在 ref 裡就看 HEAD；HEAD 不在 ref 裡（例如合併後兩分鐘內又補了 commit，
+ * 工作桌還沒在合併當下的 HEAD 問過 git）就看分支與 ref 的 merge-base 是否在 HEAD 的 first-parent 鏈上且經由 merge commit 併進 ref。
+ */
+async function mergedCommit($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: string, ref: string, was?: GitMerged[string]): Promise<string | null> {
+  if ((await git($, c.root, ['merge-base', '--is-ancestor', 'HEAD', ref])) !== null) {
+    const parent = await landingParent($, c.root, 'HEAD', ref)
+    return parent && parent !== head ? head : null
+  }
+  if (c.pr) return null
+  const fork = await git($, c.root, ['merge-base', 'HEAD', ref])
+  if (!fork || fork === head || (was && was.head === fork && was.branch !== c.git!.branch)) return null
+  if ((await landingParent($, c.root, fork, 'HEAD')) !== fork) return null
+  const intoParent = await landingParent($, c.root, fork, ref)
+  return intoParent && intoParent !== fork ? fork : null
 }
 
 /** 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 快取。找不到基準就是空清單（算一般風險，不快取）。 */

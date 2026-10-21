@@ -280,3 +280,87 @@ test('running the check on a merged case paused at the check does not claim the 
   expect((data.store.chains as any)[root]).toEqual(held)
   expect((data.store.jobs as any)[root].last.handled).toBe(true)
 })
+
+/** AC-1：只靠 git 認合併、沒有 PR：合併在 g1，之後在分支跑 git merge origin/main 被 fast-forward 到 main 頂端 m3，仍算已合併。 */
+test('a branch merged only through git stays merged after fast-forwarding to main', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/beta'
+  data.git[root] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: ['origin/main'], firstParent: 'm2\nm1\n', parents: { m1: 'base0' } }
+  data.gh = null
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.trustedVerify = { [CARD_B]: 'node test.mjs' }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'g1', judgedHead: 'g1' } }
+  data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+  const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle(); await clock.advance(2500); await clock.settle() }
+  await refresh()
+
+  // 分支沒有新 commit 就 git merge origin/main：fast-forward 到 main 的 m3（first-parent 走 m3→m2→m1，g1 是 m2 的第二個父）
+  data.git[root] = { ...data.git[root]!, head: 'm3', merged: ['origin/main'], forkPoint: 'm3', descends: ['g1'], branchLine: 'm3\nm2\nm1\n', firstParent: '', parents: { m1: 'base0' } }
+  await refresh()
+
+  expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
+  expect(data.launches.length).toBe(0)
+  const run = (data.store.chains as any)[root]
+  expect(run.passed).toBe(true)
+  expect(run.recheck).toBeUndefined()
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeDefined()
+  for (const k of NOT_AFTER_MERGE) expect(await ui.find({ key: `case-${CARD_B}-${k}` })).toBeUndefined()
+  await ui.unmount()
+})
+
+/** AC-2：g1 審查通過時還沒合併（進兩分鐘節流），兩分鐘內 g1 併進 main 且分支又補了 g2（工作桌從沒在 g1 看到合併），仍認得出已合併。 */
+test('a commit within two minutes of the merge is still recognized as merged without having seen the merge head', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/beta'
+  data.git[root] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: [] }
+  data.gh = null
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.trustedVerify = { [CARD_B]: 'node test.mjs' }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'g1', judgedHead: 'g1' } }
+  data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+  const tickRefresh = async () => { await clock.advance(30_000); await clock.settle(); await clock.advance(2500); await clock.settle() }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // 30 秒後（還在兩分鐘節流內）：g1 已併進 main，分支上又多了 g2（g2 不在 main 裡）
+  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1', descends: ['g1'], branchLine: 'g2\n', firstParent: 'm2\nm1\n', parents: { m1: 'base0', g2: 'g1' } }
+  await tickRefresh()
+
+  expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
+  expect(data.launches.length).toBe(0)
+  expect((data.store.gitMerged as any)?.[root]).toEqual({ branch: 'feature/b', head: 'g1', into: 'origin/main' })
+  const run = (data.store.chains as any)[root]
+  expect(run.passed).toBe(true)
+  expect(run.recheck).toBeUndefined()
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeDefined()
+  for (const k of NOT_AFTER_MERGE) expect(await ui.find({ key: `case-${CARD_B}-${k}` })).toBeUndefined()
+  await ui.unmount()
+})
+
+/** AC-3：同一輪 refresh 兩件任務並行認定 git 合併時，rememberMerged 串行寫入 store，不會後寫蓋掉前寫。 */
+test('concurrent git merge detections preserve both entries in gitMerged store', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const rootA = '/home/u/wt/alpha'
+  const rootB = '/home/u/wt/beta'
+  const passed = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace(/- 關卡：.*$/m, passed)
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, passed)
+  data.git[rootA] = { branch: 'feature/alpha', head: 'a1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: ['origin/main'], firstParent: 'm2\nm1\n', parents: { m1: 'base0' } }
+  data.git[rootB] = { branch: 'feature/b', head: 'b1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: ['origin/main'], firstParent: 'm2\nm1\n', parents: { m1: 'base0' } }
+  data.gh = null
+  data.agents = []
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  expect(data.store.gitMerged).toEqual({
+    [rootA]: { branch: 'feature/alpha', head: 'a1', into: 'origin/main' },
+    [rootB]: { branch: 'feature/b', head: 'b1', into: 'origin/main' },
+  })
+})
