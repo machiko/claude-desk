@@ -4,9 +4,9 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
-import { parseRegistry, parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, liveCases, rawAgents, supersede, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
-import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
+import { parseRegistry } from './card'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, liveCases, rawAgents, supersede, asksFor, agentInfo, stateOf, plain } from './model'
+import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
 import { layoutBand, renderBand } from './band'
@@ -14,24 +14,24 @@ import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
-import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
-import { AGENT_STOPPED, nextStep, paused } from './chain'
+import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, movedSince, parseVerdict, pipeline } from './pipeline'
+import { nextStep, paused } from './chain'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
 import type { ChainRun, ChainStep } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
-import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialDecision, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, openWith, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
+import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
+import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
 import { noticeOf } from './update'
 import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
 import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
+import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, fillPrRequest, fillPushRequest, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
-const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const isPaneOpen = atom({ plugin: 'desk', key: 'isPaneOpen' } as const, false)
 const isBandHidden = atom({ plugin: 'desk', key: 'isBandHidden' } as const, false)
@@ -511,7 +511,7 @@ export let optionsRef: PluginOptions | undefined
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
  * 從啟動後的 agents 清單用名字對回完整 session id 才算成功；審查與（設了同步模型的）同步開新 session，不改任務的 session。
  */
-async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}) {
+export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}) {
   const text = opts.text ?? ''
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
@@ -594,60 +594,6 @@ async function approveCheck($: any, c: Case): Promise<boolean> {
   return true
 }
 
-/** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
-async function reply($: any, options: PluginOptions, c: Case, text?: string) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const why = replyRefusal(c)
-  if (why) { $.ui.toast(`${c.name}：目前無法回覆（${why}）`); return }
-  let answer = text?.trim() ?? ''
-  if (!answer) {
-    // 停在提問（status waiting）的 Agent 重新整理時不讀輸出：回覆這時才讀它最後一句。
-    const asked = c.agent?.last || (tutorial ? '' : await lastLine($, c.agent?.id))
-    const picked = await $.ui.ask(`${asked ? `Agent 提問：${asked}` : '讀不到 Agent 的提問，按 l 看輸出'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
-    if (!picked || picked === '取消') return
-    answer = picked === '照卡片的下一步繼續' ? `照卡片的下一步繼續：${c.next || '依卡片'}` : picked
-  }
-  // 不先把上一次派工標成已回覆：派出成功時 dispatch 會換上新的那筆；派工失敗時要留著，Agent 才仍算在等你、可以再回覆。
-  await dispatch($, options, c, 'reply', { text: answer })
-}
-
-/** 合併段的「⇡ 開 PR」：只把要主對話做的事預填進輸入框，不自動送出；desk 自己不 push、不開 PR。 */
-async function fillPrRequest($: any, options: PluginOptions, c: Case) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const [target] = await baseRefs($, c, (await loadSettings($, options)).cardBase ?? '')
-  const text = `push ${c.git?.branch ?? '分支'} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR`
-  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入：${text}`)
-}
-
-/** 合併段 PR 已開後的「⇡ push」：只預填「push <分支>」，不自動送出；desk 自己不 push。有未提交的檔案時提醒只會推已 commit 的。 */
-async function fillPushRequest($: any, c: Case) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const text = `push ${c.git?.branch ?? '分支'}`
-  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入：${text}`)
-  if (c.gitState?.changed) $.ui.toast(`${c.name}：有 ${c.gitState.changed} 檔未提交，只會 push 已 commit 的`)
-}
-
-async function fillDecision($: any, c: Case) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const decisions = parseDecisions(c.ask)
-  const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
-  if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按數字鍵）`); return }
-  if (sentState(await readSent($), c) === 'waiting') { $.ui.toast(`${c.name}：決策已送出，等對話寫回卡片`); return }
-  const answer = decisionAnswer(decisions, picks)
-  if (tutorial) { await tutorialDecision($, c, answer); return }
-  const text = decisionPrompt(c.name, answer)
-  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) { $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入${text}`); return }
-  $.ui.toast(`${c.name}：決策已填入，按 Esc 回到輸入框再按 Enter 送出；此任務的卡片會一併附上`, { timeoutMs: 6000 })
-}
-
-async function openCard($: any, c: Case) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (!(await openWith($, c.statusPath))) $.ui.toast(`${c.name}：無法開啟 ${c.statusPath}`)
-}
-
 /** 系統通知（macOS 通知、手機）：同一句話這次載入只送一次，送不出去就算了。 */
 const notified = new Set<string>()
 function notify($: any, text: string) {
@@ -656,85 +602,12 @@ function notify($: any, text: string) {
   void Promise.resolve().then(() => $.ui.notify(text, { title: 'desk' })).catch(() => {})
 }
 
-/** 上線確認：重讀卡片，關卡還是 release 才清成「無」並記 History；desk 只在這裡寫卡。 */
-async function confirmShipped($: any, c: Case) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const text = await $.fs.read(c.statusPath).catch(() => null)
-  const d = new Date(await $.clock.now())
-  const two = (n: number) => String(n).padStart(2, '0')
-  const next = typeof text === 'string' ? confirmShip(text, `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, `${two(d.getHours())}:${two(d.getMinutes())}`, c.tag ?? '', isReleaseLine(c) ? '等下一版開發' : `${ARCHIVE_WORD}：${CARD_CMD} archive ${slugOf(c)}`, (await loadSettings($, optionsRef!)).user) : null
-  if (!next) { $.ui.toast(`${c.name}：卡片關卡已不是 release，沒有改動`); void refresh($, optionsRef!); return }
-  const ok = await $.fs.write(c.statusPath, next).then(() => true).catch(() => false)
-  if (!ok) { $.ui.toast(`${c.name}：寫入卡片失敗`); return }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已確認上線${c.tag ? `（${c.tag}）` : ''}`, tone: 'success', card: c.statusPath }])
-  $.ui.toast(`${c.name}：已確認上線，release 關卡已清除`)
-  void refresh($, optionsRef!)
-}
-
 /** 卡片或登錄表剛被改過（卡片腳本、對話、回合結束）後重新整理：已有一輪在跑（可能在改之前就讀過）就等它結束再讀一輪。 */
 export async function refreshAfterWrite($: any, options: PluginOptions) {
   if (refreshing) await refreshing.catch(() => {})
   return refresh($, options)
 }
 
-/** 在任務的 worktree 裡跑 /desk:card 用的那支腳本（cwd 讓它認得出同一個專案與登錄表）。 */
-async function runCardScript($: any, options: PluginOptions, c: Case, cmd: 'spec-ok' | 'archive') {
-  const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
-  return $.process.run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, cmd, slugOf(c)], { cwd: c.root, timeoutMs: 30_000, env })
-    .catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
-}
-
-/**
- * 真實模式的歸檔：執行 /desk:card archive <slug> 用的同一支腳本；卡片與審查檔由腳本複製、登錄表由腳本改。
- * 不刪 worktree 與分支，只把腳本印出的刪除指令放進提示。失敗就提示錯誤原因（腳本印的第一行），任務留著。
- */
-async function archiveCase($: any, options: PluginOptions, c: Case) {
-  const r = await runCardScript($, options, c, 'archive')
-  const now = await $.clock.now()
-  if (r.exitCode !== 0) {
-    const why = reasonLine(r)
-    $.ui.toast(`${c.name}：歸檔失敗：${why}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: now, text: `${c.name} 歸檔失敗：${why}`, tone: 'error', card: c.statusPath }])
-    void refreshAfterWrite($, options)
-    return
-  }
-  const removeCmd = String(r.stdout ?? '').split(/\r?\n/).map((l: string) => l.trim()).find((l: string) => /\bworktree remove\b/.test(l))
-  $.ui.toast(`${c.name}：已歸檔${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
-  // 歸檔後這件離開工作桌：這筆不掛在它的卡上，換到哪件都看得到。
-  await feedPush($, [{ at: now, text: `${c.name} 已歸檔（worktree 與分支保留）`, tone: 'success' }])
-  void refreshAfterWrite($, options)
-}
-
-/**
- * 真實模式的確認規格：執行 /desk:card spec <slug> ok 用的同一支腳本（在任務的 worktree 裡跑，認得出同一個專案），
- * 卡片由腳本改；只確認、不派工。腳本失敗（卡片已被改過、找不到卡）就提示錯誤原因（腳本印的第一行），關卡留著。
- */
-async function confirmSpec($: any, options: PluginOptions, c: Case) {
-  const r = await runCardScript($, options, c, 'spec-ok')
-  const now = await $.clock.now()
-  if (r.exitCode !== 0) {
-    const why = reasonLine(r)
-    $.ui.toast(`${c.name}：確認規格失敗：${why}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error', card: c.statusPath }])
-    void refreshAfterWrite($, options)
-    return
-  }
-  await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success', card: c.statusPath }])
-  void refreshAfterWrite($, options)
-}
-
-/** 停止 desk 自己派出去、正在跑的那個背景 agent（名字要對得上這件任務最後一次派工），流程一併暫停。 */
-async function stopAgent($: any, c: Case) {
-  const last = (await loadJobs($))[normalizeRoot(c.root)]?.last
-  if (!c.agent?.id || !last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：只能停止 desk 派出去的 Agent`); return }
-  if (tutorial) cancelSim()
-  const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
-  if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${errorLine(r, 'claude stop 失敗')}）`); return }
-  await saveChain($, normalizeRoot(c.root), run => run ? paused(run, AGENT_STOPPED) : run)
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${AGENT_STOPPED}（對話保留）`, tone: 'warning', card: c.statusPath }])
-  $.ui.toast(`${c.name}：已停止 Agent`)
-  void refresh($, optionsRef!)
-}
 
 
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
