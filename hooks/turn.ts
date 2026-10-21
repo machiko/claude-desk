@@ -59,11 +59,12 @@ const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
 export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !(!c.pr && c.chain?.needsHuman) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
 
 /**
- * 合併段、PR 已開，分支又有還沒 push 的 commit（修 CI、審查後修正）：要你 push。
+ * 合併段、PR 已開，分支又領先遠端（修 CI、審查後修正）：要你 push。
  * 還沒有可用的 PR 時由「開 PR」一起 push，這裡不重複；示範任務、Agent 在跑、已合併都不算。
+ * 遠端分支找不到（gitState 算不出領先）時不出現：PR 開著，分支一定推過，只是本機看不到。
  */
 export const needsPush = (c: Case) => !c.demo && c.state !== 'running' && c.pipeline?.current === 'merge' && !isMerged(c)
-  && c.pr?.state === 'OPEN' && !!c.gitState && (c.gitState.upstream === false || c.gitState.ahead > 0)
+  && c.pr?.state === 'OPEN' && (c.gitState?.ahead ?? 0) > 0
 
 /**
  * 流程停在檢查段（指令未核准、容器沒啟動、檢查中斷）：說為什麼，按 v；排除後跑完檢查，流程接著走。

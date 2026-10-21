@@ -31,7 +31,7 @@ export function fixture(on: any) {
     toasts: [] as string[],
     logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
     launches: [] as any[],
-    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** HEAD 是從這些 commit 長出來的（merge-base --is-ancestor <commit> HEAD）。 */ descends?: string[]; /** rev-list --first-parent <commit>..HEAD 的輸出（沿 HEAD 的第一個父往回走）。 */ branchLine?: string; /** merge-base HEAD <ref> 的回答（分叉點）；預設 base0。 */ forkPoint?: string; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 領先遠端幾個 commit（branch.ab）；預設 0。 */ ahead?: number; /** 幾檔已追蹤但未提交；預設 0。 */ changed?: number; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number; /** 那次 commit 改到的檔案（相對路徑；修改時間放 mtimes）。 */ commitFiles?: string[] }>,
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** HEAD 是從這些 commit 長出來的（merge-base --is-ancestor <commit> HEAD）。 */ descends?: string[]; /** rev-list --first-parent <commit>..HEAD 的輸出（沿 HEAD 的第一個父往回走）。 */ branchLine?: string; /** merge-base HEAD <ref> 的回答（分叉點）；預設 base0。 */ forkPoint?: string; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 沒有 upstream 時，rev-list --left-right --count refs/remotes/origin/<分支>...HEAD 的輸出（「落後\t領先」）；沒填＝origin 上沒有這個分支。 */ remoteAb?: string; /** 領先遠端幾個 commit（branch.ab）；預設 0。 */ ahead?: number; /** 幾檔已追蹤但未提交；預設 0。 */ changed?: number; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number; /** 那次 commit 改到的檔案（相對路徑；修改時間放 mtimes）。 */ commitFiles?: string[] }>,
     mcpCalls: [] as any[],
     /** gh pr list 的回應；null 模擬沒裝或沒登入。 */
     gh: [] as any[] | null,
@@ -87,6 +87,7 @@ export function fixture(on: any) {
       if (!g) return { value: result(128, '', 'not a git repository') }
       const args = e.argv.slice(3).join(' ')
       if (/^rev-parse \S+\^$/.test(args)) { const p = g.parents?.[args.slice(10, -1)]; return { value: p ? result(0, `${p}\n`) : result(128, '', 'bad revision') } }
+      if (/^rev-list --left-right --count refs\/remotes\/origin\/\S+\.\.\.HEAD$/.test(args)) return { value: g.remoteAb === undefined ? result(128, '', 'unknown revision') : result(0, `${g.remoteAb}\n`) }
       if (/^rev-list --first-parent \S+\.\.HEAD$/.test(args)) return { value: result(0, g.branchLine ?? '') }
       if (args.startsWith('rev-list --first-parent')) return { value: result(0, g.firstParent ?? '') }
       if (args.startsWith('log -1 --format=%ct')) return { value: result(0, g.commitAt ? `${Math.floor(g.commitAt / 1000)}\n${g.commitFiles?.length ? `\n${g.commitFiles.join('\n')}\n` : ''}` : '') }

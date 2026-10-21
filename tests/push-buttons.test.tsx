@@ -77,6 +77,45 @@ test('push buttons: new commits after the PR is open offer push that only fills 
   await ui.unmount()
 })
 
+/** 沒設追蹤分支（card.py new 會取消追蹤）、用 git push origin <分支> 推過：照 origin 上的同名分支算，已是最新就不出「⇡ push」。 */
+test('push buttons: an untracked branch already pushed to origin offers no push', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { upstream: false, remoteAb: '0\t0' })
+  judgedAt(data, 'c2')
+
+  const ui = await mount($)
+  const push = await has(ui, 'push')
+
+  expect(push).toBe(false)
+  await ui.unmount()
+})
+
+/** 同上，但本機又多了 commit：照 origin 上的同名分支算出領先，出「⇡ push」。 */
+test('push buttons: an untracked branch ahead of origin offers push', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { upstream: false, remoteAb: '0\t1' })
+  judgedAt(data, 'c2')
+
+  const ui = await mount($)
+  const push = await has(ui, 'push')
+
+  expect(push).toBe(true)
+  await ui.unmount()
+})
+
+/** 沒設追蹤分支、本機也沒有 origin 上的同名分支：算不出領先，不出「⇡ push」（規格只在「領先遠端」時出現）。 */
+test('push buttons: an untracked branch with no origin ref offers no push', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { upstream: false })
+  judgedAt(data, 'c2')
+
+  const ui = await mount($)
+  const push = await has(ui, 'push')
+
+  expect(push).toBe(false)
+  await ui.unmount()
+})
+
 /** AC-2 */
 test('push buttons: no push outside the merge stage', async ($, on) => {
   const { data } = fixture(on)
