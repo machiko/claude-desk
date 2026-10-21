@@ -283,11 +283,13 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
 /**
  * 審查通過後分支又有新 commit（你決定要改、或在面板外改了）：開新的一輪流程（不算修正輪數），
  * 排一次「做完了」讓流程照常走：完成檢查 → 審查只看上次審查之後的 diff。
+ * 這筆是合成的、不是真的派工，直接記成已結束：noteEnded 不會再對它重算指紋（這時 worktree 的改動多半是人在面板外改的），
+ * 派審查前照樣拿上一個程式 Agent 結束時的指紋比對。
  */
 async function recheck($: any, key: string, run: ChainRun, last: JobRecord | undefined, owner: string, now: number) {
   await saveChain($, key, () => ({ owner, startedAt: now, round: 0, recheck: true, ...(run.reviewHead ? { reviewHead: run.reviewHead } : {}), ...(run.judgedHead ? { judgedHead: run.judgedHead } : {}) }))
   const all = await loadJobs($)
-  const record: JobRecord = { launchName: last?.launchName ?? 'recheck', nativeId: last?.nativeId ?? 'recheck', sessionId: last?.sessionId ?? '', kind: 'continue', startedAt: now, fresh: false, answered: true, owner, recheck: true }
+  const record: JobRecord = { launchName: last?.launchName ?? 'recheck', nativeId: last?.nativeId ?? 'recheck', sessionId: last?.sessionId ?? '', kind: 'continue', startedAt: now, fresh: false, answered: true, owner, recheck: true, ended: { how: 'finished' } }
   await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: record } })
 }
 

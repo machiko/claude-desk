@@ -187,6 +187,53 @@ test('the chain stops before dispatching into a worktree someone else changed', 
   expect(h.prompt(2)).toContain('程式碼審查')
 })
 
+/**
+ * AC-2（recheck 路徑）：審查通過後人在面板外 commit、又留下未提交改動。流程自己排的「重新檢查、審查」那一筆合成紀錄
+ * 不是真的派工：不能把當下 worktree 重算成指紋（否則人的改動被洗成 Agent 留下的），要派審查時得停下並寫原因。
+ * @param lastAgent 上一筆紀錄是已結束的審查 Agent（清單裡找得到名字），或從沒派過工（名字找不到）。
+ */
+async function passedThenOutsideCommit($: any, on: any, lastAgent: boolean) {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  const h = helpers($, data, clock)
+  data.git[ROOT] = { branch: 'feature/alpha', head: 'h2' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  // 上一輪：程式 Agent 結束時 worktree 乾淨（指紋空字串），在 h1 派的審查已通過；審查 Agent 還留在清單裡（做完）
+  data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'h1', judgedHead: 'h1' } }
+  if (lastAgent) {
+    data.store.jobs = { [ROOT]: { sessionId: SID, mark: '', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: SID, kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true, ended: { how: 'finished' } } } }
+    data.agents = [{ id: 'a0000009', kind: 'background', cwd: ROOT, name: 'desk-x', sessionId: SID, state: 'done', status: 'idle', startedAt: 0 }]
+  }
+  // 人在面板外 commit 了 h2，手上還有 2 個檔沒提交
+  data.git[ROOT]!.changed = 2
+  await h.refresh()
+  await h.step(); await h.step(); await h.step()
+  // 不派審查，流程停下寫原因
+  expect(data.launches.length).toBe(0)
+  expect(h.jobs().last.recheck).toBe(true)
+  expect(h.jobs().last.ended).toEqual({ how: 'finished' })
+  // 指紋維持上一個程式 Agent 結束時記的那份，沒被重算成人的改動
+  expect(h.jobs().mark).toBe(lastAgent ? '' : undefined)
+  expect(h.chain().stopped).toContain(FOREIGN)
+  expect(h.chain().stopped).toContain('2 個檔')
+  expect(data.toasts.some((t: string) => t.includes('流程已暫停') && t.includes(FOREIGN))).toBe(true)
+  const ui = await $.ui.mount(PANE(120))
+  expect(await screen(ui)).toContain(flat('Alpha 流程已暫停：worktree 有未提交的改動（2 個檔）'))
+  await ui.unmount()
+  // AC-3：commit 或還原後（乾淨）按 g 照舊派出
+  data.git[ROOT]!.changed = 0
+  await h.go()
+  expect(data.launches.length).toBe(1)
+}
+
+test('a recheck after an outside commit does not launder uncommitted changes into the last agent\'s mark', async ($, on) => {
+  await passedThenOutsideCommit($, on, true)
+})
+
+test('a recheck with no prior dispatch still refuses to review a dirty worktree', async ($, on) => {
+  await passedThenOutsideCommit($, on, false)
+})
+
 test('endedHow: stopped, finished, still running, asking, or unknown', () => {
   const a = (x: any) => ({ kind: 'background', name: 'desk-1', ...x })
   expect(endedHow([a({ state: 'stopped' })], 'desk-1')).toBe('stopped')
