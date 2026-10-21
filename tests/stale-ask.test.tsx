@@ -89,6 +89,33 @@ test('stale ask: a failed stop still lets the card lead and is not retried', asy
   await ui.unmount()
 })
 
+/** `claude stop` 卡住時（最多等 30 秒）：重新整理照樣跑完、不等它；同一輪其他被取代的照樣停，卡住的那個結束後才記進「最近」。 */
+test('stale ask: a hung claude stop holds up neither the refresh nor the other stops', async ($, on) => {
+  const { data, clock } = fixture(on)
+  superseded(data)
+  const otherAt = STALE_AT + 30 * 60_000
+  data.agents = [...data.agents, { id: 'eeeeeeee', kind: 'background', cwd: BETA, name: launchName(otherAt, 3), sessionId: 'eeeeeeee-0000-4000-8000-000000000000', state: 'blocked', status: 'waiting', waitingFor: 'input needed', startedAt: otherAt }]
+  let release = () => {}
+  const hung = new Promise<void>(r => { release = r })
+  const run = data.run
+  data.run = async (e: any) => e.argv[0] === 'claude' && e.argv[1] === 'stop' && e.argv[2] === 'aaaaaaaa' ? (await hung, result(0)) : run(e)
+  const other = `Beta 已停掉 ${hhmm(otherAt)} 派出、被後來派工取代的 Agent`
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  const ui = await $.ui.mount(PANE(100))
+  const whileHung = await screen(ui)
+  release()
+  await clock.settle()
+  const afterwards = await screen(ui)
+
+  expect(data.stops).toEqual(['aaaaaaaa', 'eeeeeeee'])
+  expect(whileHung).toContain(flat(other))
+  expect(whileHung).not.toContain(flat(`Beta ${STOPPED}`))
+  expect(afterwards).toContain(flat(`Beta ${STOPPED}`))
+  await ui.unmount()
+})
+
 test('stale ask: the latest, busy, or non-desk agents are left alone', async ($, on) => {
   const { data } = fixture(on)
   data.gh = []

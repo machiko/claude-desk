@@ -25,22 +25,25 @@ async function triedStops($: any): Promise<string[]> {
 
 /**
  * 停掉工作桌上那幾件被取代的 Agent（`claude stop <id>`）。先記下 id 再停：停不掉也不重試。
- * 不在工作桌上的根目錄不碰。
+ * 不在工作桌上的根目錄不碰。只等記 id（下一輪才不會重停）；`claude stop` 同時跑、不等，卡住也不拖住重新整理與自動流程。
  */
 export async function stopSuperseded($: any, cases: readonly Case[], found: readonly Superseded[], now: number) {
   if (!found.length) return
   const tried = await triedStops($)
-  const todo = found
-    .filter(a => a.id && !tried.includes(a.id))
-    .map(a => ({ agent: a, card: cases.find(c => !c.demo && normalizeRoot(c.root) === a.root) }))
-    .filter(x => !!x.card)
+  const todo = found.flatMap(agent => {
+    const card = agent.id && !tried.includes(agent.id) ? cases.find(c => !c.demo && normalizeRoot(c.root) === agent.root) : undefined
+    return card ? [{ agent, card }] : []
+  })
   if (!todo.length) return
   await $.store.set(STALE_STOPS_KEY, [...todo.map(x => x.agent.id), ...tried].slice(0, STALE_STOPS_KEEP))
-  for (const { agent, card } of todo) {
-    const r = await $.process.run(['claude', 'stop', agent.id], { timeoutMs: STOP_TIMEOUT_MS }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
-    const what = `${hhmm(agent.startedAt)} 派出、被後來派工取代的 Agent`
-    const ok = r?.exitCode === 0
-    const text = ok ? `${card!.name} 已停掉 ${what}` : `${card!.name} 停不掉 ${what}：${errorLine(r, 'claude stop 失敗')}`
-    await feedPush($, [{ at: now, text, tone: ok ? 'subtle' : 'warning', card: card!.statusPath }])
-  }
+  for (const { agent, card } of todo) void stopOne($, agent, card, now)
+}
+
+/** 停一個，結果寫進「最近」；`claude stop` 失敗或逾時都記成停不掉。 */
+async function stopOne($: any, agent: Superseded, card: Case, now: number) {
+  const r = await $.process.run(['claude', 'stop', agent.id], { timeoutMs: STOP_TIMEOUT_MS }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
+  const what = `${hhmm(agent.startedAt)} 派出、被後來派工取代的 Agent`
+  const ok = r?.exitCode === 0
+  const text = ok ? `${card.name} 已停掉 ${what}` : `${card.name} 停不掉 ${what}：${errorLine(r, 'claude stop 失敗')}`
+  await feedPush($, [{ at: now, text, tone: ok ? 'subtle' : 'warning', card: card.statusPath }])
 }
