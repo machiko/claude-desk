@@ -31,7 +31,7 @@ export function fixture(on: any) {
     toasts: [] as string[],
     logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
     launches: [] as any[],
-    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** HEAD 是從這些 commit 長出來的（merge-base --is-ancestor <commit> HEAD）。 */ descends?: string[]; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number; /** 那次 commit 改到的檔案（相對路徑；修改時間放 mtimes）。 */ commitFiles?: string[] }>,
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** merge-base HEAD <ref> 的回答（分叉點）；預設 base0。 */ forkPoint?: string; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number; /** 那次 commit 改到的檔案（相對路徑；修改時間放 mtimes）。 */ commitFiles?: string[] }>,
     mcpCalls: [] as any[],
     /** gh pr list 的回應；null 模擬沒裝或沒登入。 */
     gh: [] as any[] | null,
@@ -95,9 +95,8 @@ export function fixture(on: any) {
       if (args.startsWith('remote get-url')) return { value: result(0, `${g.remote ?? 'git@bitbucket.org:acme/shop.git'}\n`) }
       if (args.startsWith('for-each-ref')) return { value: result(0, g.releases ?? 'origin/release/v1.4\n') }
       if (args.startsWith('symbolic-ref')) return { value: g.originHead ? result(0, `${g.originHead}\n`) : result(1, '', 'not a symbolic ref') }
-      if (args.startsWith('merge-base --is-ancestor') && e.argv[e.argv.length - 1] === 'HEAD') return { value: (g.descends ?? []).includes(e.argv[e.argv.length - 2]) ? result(0) : result(1) }
       if (args.startsWith('merge-base --is-ancestor')) return { value: (g.merged ?? []).includes(e.argv[e.argv.length - 1]) ? result(0) : result(1) }
-      if (args.startsWith('merge-base')) return { value: result(0, 'base0\n') }
+      if (args.startsWith('merge-base')) return { value: result(0, `${g.forkPoint ?? 'base0'}\n`) }
       if (args.startsWith('diff --name-only')) return { value: result(0, (g.files ?? []).join('\n')) }
       return { value: result(0, '') }
     }

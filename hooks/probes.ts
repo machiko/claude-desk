@@ -237,14 +237,15 @@ export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, 
 }
 
 /**
- * 這個分支之前在某個 HEAD 被 git 認定合併過，現在的 HEAD 是從那裡長出來的（合併後又補了 commit）：仍算已合併，跟 PR 合併後再 commit 一樣。
+ * 這個分支之前在某個 HEAD 被 git 認定合併過，現在的 HEAD 是直接從那裡長出來的（合併後又補了 commit）：仍算已合併，跟 PR 合併後再 commit 一樣。
+ * 「直接」是指 HEAD 與基準分支的分叉點就是合併時的 HEAD；同名分支重開（從已包含舊合併的基準分支切出來）分叉點在基準分支上，不算。
  * 有 PR 資訊（例如之後的 commit 開了新 PR）就照 PR 走；切到別的分支也不算。
  */
 async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>): Promise<string | undefined> {
   if (c.pr || !c.git) return undefined
   const was = (await gitMerged($))[c.root]
   if (!was || was.branch !== c.git.branch || was.head === c.git.head) return undefined
-  return (await git($, c.root, ['merge-base', '--is-ancestor', was.head, 'HEAD'])) === null ? undefined : was.into
+  return (await git($, c.root, ['merge-base', 'HEAD', was.into])) === was.head ? was.into : undefined
 }
 
 /** HEAD 在 ref 裡、而且是從旁邊併進來的：沿 ref 的第一個父往回走，最後一步的父不是 HEAD。 */

@@ -152,7 +152,7 @@ test('a branch merged only through git stays merged after a later commit on it',
   await refresh()
 
   // 合併之後，分支上多了 g2：g2 不在 main 裡，但是從合併時的 g1 長出來的
-  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], descends: ['g1'] }
+  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1' }
   await refresh()
 
   expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
@@ -185,7 +185,7 @@ test('a later PR or another branch in the same folder is not taken as the earlie
   expect(await merged()).toBe(true)
 
   // 合併後的 g2 開了新 PR：照 PR 走，不顯示「已合併到 main」
-  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], descends: ['g1'] }
+  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1' }
   data.gh = [{ number: 31, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/31', statusCheckRollup: [] }]
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.advance(6 * 60_000); await refresh()
@@ -193,7 +193,31 @@ test('a later PR or another branch in the same folder is not taken as the earlie
 
   // 同一個資料夾切到別的分支：不沿用 feature/b 的合併
   data.gh = null
-  data.git[root] = { ...data.git[root]!, branch: 'feature/c', head: 'c1', merged: [], descends: ['g1'] }
+  data.git[root] = { ...data.git[root]!, branch: 'feature/c', head: 'c1', merged: [], forkPoint: 'g1' }
   await clock.advance(6 * 60_000); await refresh()
   expect(await merged()).toBe(false)
+})
+
+/** 範圍外：同一個資料夾歸檔後用同名分支重開（從已包含舊合併的 main 切出來），新分支還沒合併，不能沿用舊的 git 合併紀錄。 */
+test('a branch reopened under the same name in the same folder is not taken as the earlier git merge', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/beta'
+  data.git[root] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: ['origin/main'], firstParent: 'm2\nm1\n', parents: { m1: 'base0' } }
+  data.gh = null
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.agents = []
+  const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
+  const ui = await $.ui.mount(PANE(80))
+  await refresh()
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeDefined()
+  await ui.unmount()
+
+  // 重開的 feature/b 從 main 的 m3 切出、新 commit n1：m3 包含當初的 g1，但分叉點是 m3，不是 g1
+  data.git[root] = { ...data.git[root]!, head: 'n1', merged: [], forkPoint: 'm3' }
+  await clock.advance(6 * 60_000); await refresh()
+  const again = await $.ui.mount(PANE(80))
+  expect(await again.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
+  expect(await again.find({ key: `case-${CARD_B}-sync` })).toBeDefined()
+  await again.unmount()
 })
