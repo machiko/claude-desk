@@ -133,7 +133,9 @@ export async function refresh($: any, options: PluginOptions) {
       // 合併段、沒有已合併的 PR：問 git 分支 HEAD 是不是已經在基準分支裡（GitLab、沒裝 gh、本機合併都靠這個）。
       // 審查後又有 commit 的（六段退回檢查）也要問：可能是改完直接合併了。
       const atMerge = !tutorial && (stages(withState).current === 'merge' || !!withState.chain?.stale) && withState.pr?.state !== 'MERGED'
-      const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr) : undefined
+      // 分叉點路徑只認工作桌在這條分支看過的 HEAD（審查時、判定時的 HEAD）。
+      const seen = [run?.reviewHead, run?.judgedHead].filter((h): h is string => !!h)
+      const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr, seen) : undefined
       const merged = into ? { ...withState, mergedInto: into } : withState
       const piped = { ...merged, ...(short ? { statusShort: short } : {}), pipeline: stages(merged) }
       return { ...piped, state: finalState(piped) }

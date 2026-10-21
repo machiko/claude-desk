@@ -343,6 +343,31 @@ test('a commit within two minutes of the merge is still recognized as merged wit
   await ui.unmount()
 })
 
+/** AC-5（範圍外）：另一個 worktree 的 feature/b 從 feature/a 已併進 main 的 a1 開出來、在 b1 審查過；分叉點 a1 雖經由 merge commit 併進 main，但工作桌從沒在這條分支看到 HEAD＝a1，不算已合併。 */
+test('a branch forked from a merged commit in another worktree is not taken as merged after review', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/beta'
+  // b1 不在 main 裡；merge-base(b1, origin/main)＝a1，a1 在 b1 的 first-parent 鏈上，且沿 main 的 first-parent 回到 a1 之前是 base0 ≠ a1（a1 經由 merge commit 併進 main）
+  data.git[root] = { branch: 'feature/b', head: 'b1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: [], forkPoint: 'a1', descends: ['a1'], branchLine: 'b1\n', firstParent: 'm2\nm1\n', parents: { m1: 'base0', b1: 'a1' } }
+  data.gh = null
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.trustedVerify = { [CARD_B]: 'node test.mjs' }
+  data.store.gitMerged = { '/home/u/wt/alpha': { branch: 'feature/a', head: 'a1', into: 'origin/main' } }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'b1', judgedHead: 'b1' } }
+  data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle(); await clock.advance(2500); await clock.settle()
+
+  expect(data.launches.length).toBe(0)
+  expect((data.store.gitMerged as any)[root]).toBeUndefined()
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
+  expect(await ui.find({ key: `case-${CARD_B}-sync` })).toBeDefined()
+  await ui.unmount()
+})
+
 /** AC-3：同一輪 refresh 兩件任務並行認定 git 合併時，rememberMerged 串行寫入 store，不會後寫蓋掉前寫。 */
 test('concurrent git merge detections preserve both entries in gitMerged store', async ($, on) => {
   const { data, clock } = fixture(on)

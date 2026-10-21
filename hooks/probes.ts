@@ -215,11 +215,13 @@ export async function diffBase($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, car
 }
 
 /**
- * git 判斷合併：分支 HEAD 是經由 merge commit 併進哪個候選分支——HEAD 在它裡面，但不在它的 first-parent 主線上。
+ * git 判斷合併，三條規則：1) 分支 HEAD 經由 merge commit 併進某個候選分支——HEAD 在它裡面，但不在它的 first-parent 主線上；
+ * 2) 之前在某個 HEAD 認定過合併，之後分支又有 commit 或 fast-forward 到基準分支（mergedBefore）；
+ * 3) HEAD 還不在基準分支裡，但工作桌曾在這條分支看過的 HEAD（`seen`：審查時的 HEAD）就是分叉點，且它經由 merge commit 併進（mergedCommit 第二段）。
  * 剛開的分支、停在 main 被 release 包含的主工作區，HEAD 都在主線上，不算；squash、rebase、fast-forward 合併也因此看不出來，
  * 那些靠 PR 狀態。只在合併段才問。找到就一直記住；沒找到兩分鐘內不重問（force 例外）。
  */
-export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = '', force = false): Promise<string | undefined> {
+export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = '', force = false, seen: readonly string[] = []): Promise<string | undefined> {
   const head = c.git?.head
   if (!head) return undefined
   const key = `${c.root}\n${head}`
@@ -232,7 +234,7 @@ export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, 
   const later = await mergedBefore($, c, was)
   if (later) { merges.set(key, later); return later }
   for (const ref of await baseRefs($, c, cardBase)) {
-    const mergedHead = await mergedCommit($, c, head, ref, was)
+    const mergedHead = await mergedCommit($, c, head, ref, was, seen)
     if (mergedHead) {
       merges.set(key, ref); mergeMisses.delete(key)
       await rememberMerged($, c.root, { branch: c.git!.branch, head: mergedHead, into: ref })
@@ -275,15 +277,17 @@ async function firstParentLanding($: any, root: string, from: string, to: string
 /**
  * 找出這個分支經由 merge commit 併進 ref 的那個 commit：HEAD 已在 ref 裡就看 HEAD；HEAD 不在 ref 裡（例如合併後兩分鐘內又補了 commit，
  * 工作桌還沒在合併當下的 HEAD 問過 git）就看分支與 ref 的 merge-base 是否在 HEAD 的 first-parent 鏈上且經由 merge commit 併進 ref。
+ * 第二段只接受工作桌曾在這條分支看過的 HEAD（`seen`）當分叉點：從別條已合併分支的 commit 開出來、還沒合併的分支（疊分支、
+ * 從已併回 main 的 release 分支切出的 fix）分叉點也符合「經由 merge commit 併進」，但那個 commit 從來不是這條分支的 HEAD，不算。
  */
-async function mergedCommit($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: string, ref: string, was?: GitMerged[string]): Promise<string | null> {
+async function mergedCommit($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: string, ref: string, was: GitMerged[string] | undefined, seen: readonly string[]): Promise<string | null> {
   if ((await git($, c.root, ['merge-base', '--is-ancestor', 'HEAD', ref])) !== null) {
     const parent = await landingParent($, c.root, 'HEAD', ref)
     return parent && parent !== head ? head : null
   }
   if (c.pr) return null
   const fork = await git($, c.root, ['merge-base', 'HEAD', ref])
-  if (!fork || fork === head || (was && was.head === fork && was.branch !== c.git!.branch)) return null
+  if (!fork || fork === head || !seen.includes(fork) || (was && was.head === fork && was.branch !== c.git!.branch)) return null
   if ((await landingParent($, c.root, fork, 'HEAD')) !== fork) return null
   const intoParent = await landingParent($, c.root, fork, ref)
   return intoParent && intoParent !== fork ? fork : null
