@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { awaitsSpecOk, pipeline, parseVerdict, checkStands, stageParts, standingVerdict } from '../hooks/pipeline'
+import { awaitsSpecOk, finalState, pipeline, parseVerdict, checkStands, stageParts, standingVerdict } from '../hooks/pipeline'
 import { dispatchable, dispatchRefusal } from '../hooks/dispatch'
-import { buildCase } from '../hooks/model'
+import { buildCase, stateOf } from '../hooks/model'
 import { stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
 
@@ -130,6 +130,17 @@ test('spec template without AC stays at spec stage', () => {
   expect(pipeline(c, ok()).current).toBe('spec')
   expect(pipeline(c, { ...ok(), ok: false }).current).toBe('spec')
   expect(pipeline({ ...c, chain: { round: 0, stale: true } }, undefined).current).toBe('spec')
+  // 關卡無：自動流程因為規格沒有驗收情境停下（例如免審查過關後又有新 commit），或檢查沒過：
+  // 狀態不是 failed，▶ 一樣叫你寫規格，不叫你按 g（g 會被拒）
+  const settle = (x: Case, v?: Verify) => { const s = { ...x, state: stateOf(x, v) }; const p = { ...s, pipeline: pipeline(s, v) }; return { ...p, state: finalState(p) } }
+  const stopped = settle({ ...c, chain: { round: 0, stale: true, passed: true, skippedReview: true, stopped: '規格沒有驗收情境：先輸入 /desk:card spec a' } })
+  const red = settle(c, { ...ok(), ok: false })
+  for (const x of [stopped, red]) {
+    expect(x.pipeline.current).toBe('spec')
+    expect(x.state).toBe('ready')
+    expect(turnOf(x)).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+    expect(dispatchable(x)).toEqual(['sync'])
+  }
 })
 
 test('filled AC or no spec section passes spec stage', () => {

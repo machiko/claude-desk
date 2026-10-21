@@ -183,10 +183,12 @@ export const isMerged = (c: Pick<Case, 'pipeline'>) => !!c.pipeline?.stages.some
 /**
  * 六段都過了（每段 done 或不適用）、沒有人要做的事：任務算「完成」。等你、執行中等狀態不受影響。
  * 合併之後流程停住或完成檢查沒過，分支已經進了基準分支，不再算未通過：照上線段走。
+ * 規格段還是範本、六段停在規格段：流程停住或檢查沒過也不算未通過（按 g 修不了），要先寫規格。
  */
-export function finalState(c: Pick<Case, 'state' | 'pipeline'>): Case['state'] {
+export function finalState(c: Pick<Case, 'state' | 'pipeline' | 'specGap'>): Case['state'] {
   const p = c.pipeline
-  const state = c.state === 'failed' && isMerged(c) ? 'ready' : c.state
+  const specHeld = !!c.specGap && p?.current === 'spec'
+  const state = c.state === 'failed' && (isMerged(c) || specHeld) ? 'ready' : c.state
   if (!p || p.current !== null || (state !== 'ready' && state !== 'idle')) return state
   return p.stages.every(s => s.status === 'done' || s.status === 'na') ? 'done' : state
 }
