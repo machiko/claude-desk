@@ -164,3 +164,15 @@ test('implementation prompt follows confirmed plan', () => {
   expect(buildPrompt(c, 'sync')).not.toContain('實作計畫')
   expect(buildPrompt(c, 'review')).not.toContain('照「### 實作計畫」做')
 })
+
+test('implementation prompt asks for a changelog fragment instead of CHANGELOG.md', () => {
+  const c = mk('寫測試')
+  for (const p of [buildPrompt(c, 'continue'), buildPrompt(c, 'reply', '用 B'), buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: [] }), buildPrompt(c, 'continue', '', { from: 'review', round: 1 })]) {
+    expect(p).toContain('changelog.d/a.md')
+    expect(p).toContain('不要改 CHANGELOG.md')
+  }
+  expect(buildPrompt(c, 'sync')).not.toContain('changelog.d/')
+  expect(buildPrompt(c, 'review')).not.toContain('changelog.d/')
+  // 片段檔名跟著任務根目錄
+  expect(buildPrompt({ ...c, root: '/p/order-export' }, 'continue')).toContain('changelog.d/order-export.md')
+})

@@ -271,5 +271,79 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('## 驗收情境', read(self.card_path()).replace('### 驗收情境', '## 驗收情境'))
 
 
+CHANGELOG_BEFORE = '# Changelog\n\n## 未發布\n\n## 0.26.0\n\n- 修復 舊的事\n'
+
+
+class ChangelogTest(unittest.TestCase):
+    """`card.py changelog <版本>`：把 changelog.d/*.md 合併成版本段落。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = self.tmp.name
+        git('init', '-q', '-b', 'main', cwd=self.root)
+        self.frag = os.path.join(self.root, 'changelog.d')
+        os.makedirs(self.frag)
+        write(os.path.join(self.frag, '.gitkeep'), '')
+        self.changelog = os.path.join(self.root, 'CHANGELOG.md')
+        write(self.changelog, CHANGELOG_BEFORE)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_changelog(self, version):
+        env = {**os.environ, 'DESK_SETTINGS': os.path.join(self.root, 'none.json'), 'DESK_PROJECT_DIR': ''}
+        return subprocess.run([sys.executable, SCRIPT, 'changelog', version], capture_output=True, text=True, env=env, cwd=self.root)
+
+    def fragments(self):
+        return sorted(f for f in os.listdir(self.frag) if f.endswith('.md'))
+
+    def test_changelog_merges_fragments_into_version_section_and_removes_them(self):
+        """AC-1：片段依 新增→調整→修復→移除 排列、同類依檔名，插在「## 未發布」之後、上一版之前；片段檔刪掉、.gitkeep 留著。"""
+        write(os.path.join(self.frag, 'a.md'), '- 修復 甲\n')
+        write(os.path.join(self.frag, 'b.md'), '- 新增 乙\n\n- 調整 丙\n')
+        write(os.path.join(self.frag, 'c.md'), '- 移除 丁\n- 新增 戊\n')
+
+        r = self.run_changelog('0.27.0')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read(self.changelog), '# Changelog\n\n## 未發布\n\n## 0.27.0\n\n- 新增 乙\n- 新增 戊\n- 調整 丙\n- 修復 甲\n- 移除 丁\n\n## 0.26.0\n\n- 修復 舊的事\n')
+        self.assertEqual(self.fragments(), [])
+        self.assertTrue(os.path.isfile(os.path.join(self.frag, '.gitkeep')))
+        self.assertIn('0.27.0', r.stdout)
+        self.assertIn('5', r.stdout)
+
+    def test_changelog_refuses_without_fragments(self):
+        """AC-2：只有 .gitkeep 就報錯，CHANGELOG 不動。"""
+        r = self.run_changelog('0.27.0')
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('沒有片段檔', r.stderr)
+        self.assertEqual(read(self.changelog), CHANGELOG_BEFORE)
+
+    def test_changelog_refuses_when_version_section_exists(self):
+        """AC-3：版本段已存在就報錯，CHANGELOG 與片段檔都不動。"""
+        write(os.path.join(self.frag, 'a.md'), '- 修復 甲\n')
+
+        r = self.run_changelog('0.26.0')
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('已存在', r.stderr)
+        self.assertEqual(read(self.changelog), CHANGELOG_BEFORE)
+        self.assertEqual(self.fragments(), ['a.md'])
+
+    def test_changelog_refuses_fragment_line_not_starting_with_dash(self):
+        """AC-4：片段有一行不是「- 」開頭就報錯並指出檔名與行號，什麼都不改。"""
+        write(os.path.join(self.frag, 'a.md'), '- 修復 甲\n')
+        write(os.path.join(self.frag, 'bad.md'), '- 新增 乙\n新增 丙\n')
+
+        r = self.run_changelog('0.27.0')
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('bad.md', r.stderr)
+        self.assertIn('2', r.stderr)
+        self.assertEqual(read(self.changelog), CHANGELOG_BEFORE)
+        self.assertEqual(self.fragments(), ['a.md', 'bad.md'])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,15 +1,16 @@
 ---
 name: card
-description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；archive <slug> 把卡與審查檔複製到歸檔資料夾並更新登錄表。配合 /desk 工作桌使用。
+description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；archive <slug> 把卡與審查檔複製到歸檔資料夾並更新登錄表；changelog <版本> 發版時把 changelog.d/*.md 片段合併成 CHANGELOG 的版本段落。配合 /desk 工作桌使用。
 ---
 
 # /desk:card
 
 腳本是 `python3 ${CLAUDE_PLUGIN_ROOT}/skills/card/scripts/card.py`（下面寫成 `card.py`）。收到 `/desk:card <args>` 時：
 
-- `new` 與 `archive`：直接執行 `card.py <args>`，把輸出原樣給使用者。
-  - `new` 之後提醒：接著用 `/desk:card spec <slug>` 產生規格。
+- `new`、`archive` 與 `changelog`：直接執行 `card.py <args>`，把輸出原樣給使用者。
+  - `new` 之後提醒：接著用 `/desk:card spec <slug>` 產生規格。`new` 不建 `changelog.d/<slug>.md`（空片段會讓發版合併報錯），條目由實作時寫。
   - `archive` 之後**不要**替使用者刪 worktree 或分支；只印出指令由使用者自己跑。
+  - `changelog <版本>`：在主 repo、要發的 PR 都合併之後執行；它把 `changelog.d/*.md` 合併成 `## <版本>` 段並刪掉片段檔，沒有片段、版本段已存在、片段不是 `- ` 開頭都會報錯不改檔。之後改版號、commit、打 tag 都由使用者自己做，不要替他 commit。
 - `spec <目標> ok`：執行 `card.py spec-ok <目標>`（清關卡、狀態改「規格已確認…，可派實作」、記 Decisions／History），輸出原樣給使用者。只有使用者明確說要確認時才跑，不要自己判斷規格夠好就替使用者確認。
 - `spec <目標> [需求描述]`：照下面「產生規格」做。
 - 沒帶參數就印用法，不猜。
@@ -42,7 +43,7 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
      - 則：看得到的結果（畫面、回應碼、資料、log），不寫實作方式。
      - 對應測試：既有的寫測試的完整名稱；還沒有的寫預計名稱並標（新）。
    - 牽涉權限、資料範圍或寫入時，至少一列寫越權或範圍外的情境。
-   - 同一段的「### 實作計畫」表（模板沒有就自己加在驗收情境之後，表頭 `| 檔案 | 改什麼 |`）：照步驟 2 讀到的程式，一列一個要改的檔，寫改什麼、為什麼；測試檔、CHANGELOG 也列。計畫跟規格用同一次確認，確認後 Agent 照計畫做、不再停下來交計畫，所以要寫到可以直接動手的程度。`spec-ok` 認不到填好的計畫會拒絕。
+   - 同一段的「### 實作計畫」表（模板沒有就自己加在驗收情境之後，表頭 `| 檔案 | 改什麼 |`）：照步驟 2 讀到的程式，一列一個要改的檔，寫改什麼、為什麼；測試檔也列，專案有 `changelog.d/` 就列 `changelog.d/<slug>.md`（條目寫在片段檔，不改 CHANGELOG.md）。計畫跟規格用同一次確認，確認後 Agent 照計畫做、不再停下來交計畫，所以要寫到可以直接動手的程度。`spec-ok` 認不到填好的計畫會拒絕。
    - 卡片的 `檢查`（舊卡 `驗證`）欄是空白、`無` 或 `<…>` 佔位時，寫一條能涵蓋全部對應測試的完成檢查（目標測試＋整套；有 `suggested check:` 就以它為準），實作前它應該是紅的。欄位已有指令就不改，只在回報裡說它有沒有涵蓋這些測試。
    - 用 `card.py gate <目標> 'spec：待確認規格（AC-1～AC-n）'` 設關卡（舊卡的 rev 由腳本處理，不要手改「關卡」與「更新」兩行）。設了之後工作桌只能同步、不會派實作。
    - History 加一行 `- YYYY-MM-DD：/desk:card spec 產生規格草稿（AC-1～AC-n），待確認`。

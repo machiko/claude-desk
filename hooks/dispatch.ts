@@ -137,6 +137,9 @@ function cardRules(settings: DispatchSettings, root: string): string[] {
 /** 會改程式的派工（繼續、回覆、修正）多這一條：照規格做，審查會逐條對照驗收情境。 */
 const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。有實作計畫時照「### 實作計畫」做，不用再停下來交計畫（規格確認時已一起確認）；實際改的檔跟計畫不同時在歷程寫明原因，要改範圍或做法寫進 等你。卡片沒有規格段就照下一步做。'
 
+/** 會改程式的派工再多一條：CHANGELOG 條目寫片段檔，不碰 CHANGELOG.md（發版時由 card.py changelog 合併，分支之間才不會搶「## 未發布」）。 */
+const changelogRule = (c: Case) => `專案有 changelog.d/ 資料夾時，使用者看得到的改動寫成 CHANGELOG 條目放在 changelog.d/${slugOf(c)}.md（一行或多行「- 」開頭、動詞開頭：新增／修復／調整／移除，沒有標題與版本；沒有使用者看得到的改動就不建這個檔），不要改 CHANGELOG.md，發版時才合併。沒有這個資料夾就照專案原本的慣例。`
+
 export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
 
@@ -154,7 +157,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : `${named(settings.user).trimStart()}的回覆：${text}`
   const base = cardRules(settings, c.root)
-  const rules = fix || kind === 'continue' || kind === 'reply' ? [SPEC_RULE, ...base] : base
+  const rules = fix || kind === 'continue' || kind === 'reply' ? [SPEC_RULE, changelogRule(c), ...base] : base
   return `${head}\n任務：${c.name}\n根目錄：${c.root}\n卡片：${c.statusPath}\n${rules.join('\n')}`
 }
 
