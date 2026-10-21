@@ -178,8 +178,8 @@ export function dispatchable(c: Case): DispatchKind[] {
   return out
 }
 
-/** 規格段認不到填好的 AC，而且六段停在規格段（沒算過六段的當作停在規格段）。 */
-const specBlocks = (c: Case) => !!c.specGap && (c.pipeline?.current ?? 'spec') === 'spec'
+/** 規格段認不到填好的 AC，而且六段停在規格段（沒算過六段的當作停在規格段；六段走完時 current 是 null，不算）。 */
+const specBlocks = (c: Case) => !!c.specGap && (c.pipeline ? c.pipeline.current === 'spec' : true)
 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 const BUSY = 'Agent 仍在執行'

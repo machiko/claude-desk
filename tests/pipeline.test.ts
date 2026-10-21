@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { pipeline, parseVerdict, checkStands, stageParts, standingVerdict } from '../hooks/pipeline'
+import { awaitsSpecOk, pipeline, parseVerdict, checkStands, stageParts, standingVerdict } from '../hooks/pipeline'
+import { dispatchable, dispatchRefusal } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
-import { turnOf } from '../hooks/turn'
+import { stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
 
 const card = (f: Partial<Record<'狀態' | '檢查' | '等你' | '下一步' | '關卡', string>>) =>
@@ -148,4 +149,30 @@ test('later evidence is not pulled back by empty spec', () => {
   expect(pipeline(withSpec(TEMPLATE_SPEC, { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可' }), undefined).current).toBe('merge')
   expect(pipeline(withSpec(TEMPLATE_SPEC, {}, { pr: { id: 9, state: 'MERGED', ci: 'none' } }), undefined).current).toBe('ship')
   expect(pipeline(withSpec(TEMPLATE_SPEC, { 關卡: 'release：v1.4.0 可上線' }, { tag: 'v1.4.0' }), undefined).current).toBe('ship')
+  // 六段走完（current 是 null）的範本規格卡：派工端也不退回規格段、不叫你寫規格
+  const shipped = flow(withSpec(TEMPLATE_SPEC, { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可' }, { tag: 'v1.4.0' }))
+  expect(shipped.pipeline.current).toBeNull()
+  expect(dispatchable(shipped)).toContain('continue')
+  expect(dispatchRefusal({ ...shipped, state: 'done' }, 'continue')).toBe('卡片狀態不符')
+  expect(dispatchRefusal({ ...shipped, state: 'done' }, 'review')).not.toContain('/desk:card spec')
+})
+
+test('spec gate without AC asks to write the spec, not confirm', () => {
+  const c = flow(withSpec(TEMPLATE_SPEC, { 關卡: 'spec：待確認規格' }))
+  expect(c.pipeline.current).toBe('spec')
+  expect(c.pipeline.note).toBe('尚缺驗收情境')
+  expect(turnOf(c)).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+  expect(awaitsSpecOk(c)).toBe(false)
+  expect(stageActions(c).has('spec-ok')).toBe(false)
+  expect(dispatchable(c)).toEqual(['sync'])
+  expect(dispatchRefusal(c, 'continue')).toContain('/desk:card spec')
+  expect(dispatchRefusal(c, 'review')).toContain('/desk:card spec')
+  // Agent 在跑時說 Agent 在做什麼，不說輪到你
+  expect(turnOf({ ...c, agent: { name: 'x', state: 'working', status: 'working' } }).who).toBe('ai')
+  // 填好 AC 的 spec 關卡照舊：按 t 確認
+  const filled = flow(withSpec(FILLED_SPEC, { 關卡: 'spec：待確認規格' }))
+  expect(filled.pipeline.note).toBe('規格待確認')
+  expect(turnOf(filled).key).toBe('t')
+  expect(awaitsSpecOk(filled)).toBe(true)
+  expect(stageActions(filled).has('spec-ok')).toBe(true)
 })

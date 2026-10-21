@@ -111,8 +111,9 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (gate?.kind === 'unknown') return { who: 'you', text: `關卡「${gate.detail}」：開卡片（o）處理`, key: 'o' }
   switch (c.pipeline?.current) {
     case 'spec':
-      if (gate?.kind === 'spec' && c.agent) return { who: 'ai', text: runningText(c) }
-      if (gate?.kind === 'spec') return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
+      if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
+      // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
+      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
       return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} ${c.specGap ? '寫驗收情境與實作計畫' : '寫規格與完成檢查'}` }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }

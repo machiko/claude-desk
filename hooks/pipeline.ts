@@ -33,11 +33,11 @@ export const standingVerdict = (c: Pick<Case, 'gate' | 'chain'>): ReviewVerdict 
 export const isReleaseLine = (c: Pick<Case, 'git'>) => !!c.git && /^release\//.test(c.git.branch)
 
 /**
- * 真實模式可以按 t 確認規格：停在規格段、關卡是 spec：…、沒有 Agent 在跑或停著等回覆，也不是示範任務。
+ * 真實模式可以按 t 確認規格：停在規格段、關卡是 spec：…、認得到填好的驗收情境、沒有 Agent 在跑或停著等回覆，也不是示範任務。
  * 有關卡時 state 是 gate 而不是 running，所以直接看 agent。
  */
-export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate'>) =>
-  !c.demo && !c.agent && c.pipeline?.current === 'spec' && parseGate(c.gate)?.kind === 'spec'
+export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate' | 'specGap'>) =>
+  !c.demo && !c.agent && !c.specGap && c.pipeline?.current === 'spec' && parseGate(c.gate)?.kind === 'spec'
 
 /** 可以從面板歸檔：六段全過（finalState 已排除 Agent 在跑、等你），不是發版線，也不是示範任務。教學模式由呼叫端另外排除。 */
 export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo && c.state === 'done' && !isReleaseLine(c)
@@ -115,8 +115,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
     switch (current) {
       case 'spec':
         if (!saysNone(c.ask)) set('wait', '待你決定')
-        else if (gate?.kind === 'spec') set('wait', '規格待確認')
         else if (c.specGap) set('wait', '尚缺驗收情境')
+        else if (gate?.kind === 'spec') set('wait', '規格待確認')
         else set('wait', '尚缺完成檢查')
         break
       case 'build':
