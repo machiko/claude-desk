@@ -9,9 +9,9 @@
 | 角色 | 負責 | 不做 |
 |---|---|---|
 | 主控台對話（開著 `/desk` 的那個 Claude Code 對話） | 規格、完成檢查、關卡判定、兩次失敗後的診斷 | 不在主 repo 切分支、不 push |
-| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md` | 不問問題等人（寫進卡的「等你」後結束）、不上線 |
+| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時 push 自己的分支、開 PR | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
 | 審查對話（新對話、不接續 Agent） | 只看任務檔、自己重新執行完成檢查、看 diff | 不啟動容器、不改 port、不參考 Agent 的結論 |
-| 你 | 業務決策、push、開 PR、合併、打 tag、部署 | — |
+| 你 | 業務決策、合併、打 tag、部署；push、開 PR 可以自己做，或交給 Agent | — |
 
 ## 六段
 
