@@ -7,6 +7,13 @@ import type { Risk } from './risk'
 
 export const MAX_FIX_ROUNDS = 2
 
+/** 實作做完、要自動執行的完成檢查不是你核准過的那條：不跑，停下來等你按 v 看過。`_WHY` 是不帶按鍵說明的原因。 */
+export const CHECK_CHANGED_WHY = '完成檢查的指令改過、還沒經你核准'
+export const CHECK_UNAPPROVED_WHY = '完成檢查的指令還沒經你核准'
+const APPROVE_HINT = '：按 v 看指令並核准，核准後流程接著走'
+export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
+export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
+
 export type ChainRun = {
   owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
   /** 上一次派審查時的 HEAD；修正後的複審只看這之後的 diff。 */
@@ -21,15 +28,27 @@ export type ChainRun = {
   judgedHead?: string
   /** 這一輪是審查通過後又有新 commit 而重新檢查、審查；複審只看 reviewHead 之後的 diff，不算修正輪數。 */
   recheck?: boolean
+  /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：你排除後按 v 跑完檢查，流程接著走。 */
+  heldAtCheck?: boolean
 }
 export type ChainStep =
   | { kind: 'verify' }
   | { kind: 'dispatch'; dispatch: DispatchKind; round: number; reason?: string; security?: boolean }
-  | { kind: 'stop'; reason: string }
+  | { kind: 'stop'; reason: string; atCheck?: boolean }
   | { kind: 'pass'; skipped?: boolean; needsHuman?: string }
   | null
 
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean }
+/**
+ * 流程暫停：寫下原因；只有停在檢查段的原因帶 heldAtCheck（按 v 跑完會接著走），
+ * 其他原因（例如你手動停止了 Agent）把之前留下的 heldAtCheck 拿掉。
+ */
+export function paused(run: ChainRun, reason: string, atCheck = false): ChainRun {
+  const { heldAtCheck: _, ...rest } = run
+  return { ...rest, stopped: reason, ...(atCheck ? { heldAtCheck: true } : {}) }
+}
+
+/** `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。 */
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -39,7 +58,7 @@ export function nextStep(run: ChainRun | undefined, finished: DispatchKind | nul
   if (!run || run.stopped || run.passed || !finished) return null
   const high = ctx.risk?.level === 'high' ? `高風險改動（${ctx.risk.reasons.join('、')}），審查已過，請你看過再開 PR` : undefined
   if (finished === 'continue' || finished === 'reply') {
-    if (check === null) return trusted ? { kind: 'verify' } : { kind: 'stop', reason: '完成檢查尚未授權：請先按 v 執行一次，之後才會自動執行' }
+    if (check === null) return trusted ? { kind: 'verify' } : { kind: 'stop', reason: ctx.changed ? CHECK_CHANGED : CHECK_UNAPPROVED, atCheck: true }
     if (check && ctx.risk?.level === 'low') return { kind: 'pass', skipped: true }
     if (check) return { kind: 'dispatch', dispatch: 'review', round: run.round }
     return run.round < MAX_FIX_ROUNDS ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'check' } : { kind: 'stop', reason: `修了 ${MAX_FIX_ROUNDS} 輪檢查仍未通過` }

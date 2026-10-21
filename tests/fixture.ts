@@ -54,6 +54,10 @@ export function fixture(on: any) {
     submitted: [] as any[],
     asks: [] as string[],
     answer: '執行',
+    /** 按 g 時核准完成檢查的那個對話框（選項有「核准並派工」）的回答；其他對話框用 answer。 */
+    approve: '核准並派工',
+    /** 每個對話框的選項，跟 asks 一一對應。 */
+    askOptions: [] as string[][],
     /** false 模擬輸入框無法預填。 */
     fillable: true,
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
@@ -128,8 +132,10 @@ export function fixture(on: any) {
   on('ui.panes', () => ({ value: data.panes }))
   on('tool.call', { tool: 'AskUserQuestion' }, (_: any, e: any) => {
     const q = e.questions?.[0]
+    const labels = ((q?.options ?? []) as any[]).map(o => String(o?.label ?? o))
     data.asks.push(String(q?.question ?? ''))
-    return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: data.answer } } }
+    data.askOptions.push(labels)
+    return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: labels.includes('核准並派工') ? data.approve : data.answer } } }
   })
   on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
   on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
