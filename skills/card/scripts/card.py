@@ -199,14 +199,13 @@ def filled_ac(text):
 
 
 def filled_plan(text):
-    """「### 實作計畫」表裡有內容的列（檔案、改什麼都不是空白或 <…> 佔位），回傳檔案欄。"""
+    """「### 實作計畫」表裡有內容的列（檔案、改什麼都不是空白或 <…> 佔位），回傳檔案欄。表格第一列一律是表頭，不看它寫什麼。"""
     m = re.search(r'^### 實作計畫\s*\n(.*?)(?=^##|\Z)', spec_section(text), re.M | re.S)
+    rows = [line for line in (m.group(1) if m else '').split('\n') if line.strip().startswith('|')]
     out = []
-    for line in (m.group(1) if m else '').split('\n'):
-        if not line.strip().startswith('|'):
-            continue
+    for line in rows[1:]:
         cells = [c.strip().strip('`').strip() for c in line.strip().strip('|').split('|')]
-        if len(cells) < 2 or cells[0] in ('', '檔案') or re.fullmatch(r':?-+:?', cells[0]):
+        if len(cells) < 2 or not cells[0] or re.fullmatch(r':?-+:?', cells[0]):
             continue
         if not cells[0].startswith('<') and cells[1] and not cells[1].startswith('<'):
             out.append(cells[0])
