@@ -11,7 +11,7 @@
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
   card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
-  card.py archive <slug>                       卡與審查檔複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
+  card.py archive <slug>                       卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
 
 設定讀 desk 的全域 dispatch.json（環境變數 DESK_SETTINGS 可指定別的路徑），再疊上目前專案的
 ~/.claude/handoffs/<repo 資料夾名>/dispatch.json（頂層同名鍵以專案的為準）。目前專案＝執行時所在
@@ -402,7 +402,7 @@ def cmd_archive(slug):
     write(dest, read(path))
     task = os.path.join(root, '.task')
     for f in sorted(os.listdir(task)) if os.path.isdir(task) else []:
-        if re.match(r'(REVIEW|SECURITY|review-.*)\.md$', f):
+        if re.match(r'(REVIEW|SECURITY|PLAN|REPORT|review-.*)\.md$', f):
             write(os.path.join(ARCHIVE, f'{slug}-{f}'), read(os.path.join(task, f)))
     lines = read(REG).split('\n')
     removed = [l for l in lines if l.startswith('|') and f'`{path}`' in l]
