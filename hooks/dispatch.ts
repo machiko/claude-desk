@@ -179,7 +179,9 @@ export function dispatchable(c: Case): DispatchKind[] {
 }
 
 /** 規格段認不到填好的 AC，而且六段停在規格段（沒算過六段的當作停在規格段；六段走完時 current 是 null，不算）。 */
-const specBlocks = (c: Case) => !!c.specGap && (c.pipeline ? c.pipeline.current === 'spec' : true)
+export const specBlocks = (c: Case) => !!c.specGap && (c.pipeline ? c.pipeline.current === 'spec' : true)
+/** specBlocks 時不能派工的原因：手動派工的拒絕與自動流程停下都用這句。 */
+export const specGapReason = (c: Case) => `規格沒有驗收情境：先輸入 ${CARD_CMD} spec ${slugOf(c)}`
 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 const BUSY = 'Agent 仍在執行'
@@ -196,7 +198,7 @@ export function replyRefusal(c: Case): string {
 export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'reply') return replyRefusal(c)
   if (dispatchable(c).includes(kind)) return ''
-  return c.manual ? MANUAL : c.state === 'running' ? BUSY : specBlocks(c) ? `規格沒有驗收情境：先輸入 ${CARD_CMD} spec ${slugOf(c)}` : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'
+  return c.manual ? MANUAL : c.state === 'running' ? BUSY : specBlocks(c) ? specGapReason(c) : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'
 }
 
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {

@@ -215,3 +215,31 @@ test('a commit after the pass in a chain this console did not start only steps b
   expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
   expect((data.store.chains as any)[root].passed).toBe(true)
 })
+
+const TEMPLATE_SPEC = '\n## 規格\n\n- 目標：<一句話>\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | <前提> | <操作> | <看得到的結果> | `<測試名稱>` |\n'
+
+/** 規格還是範本、審查通過後又有新 commit：面板退回規格段只能同步，自動流程也一樣不重新檢查、不派修正，流程停下並寫原因（只寫一次）。 */
+test('a stale card whose spec is still a template is not rechecked by the chain, which stops and says why', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/alpha'
+  let feed: any[] = []
+  on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed') feed = e.value; return next(e) })
+  data.git[root] = { branch: 'feature/alpha', head: 'h2' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過') + TEMPLATE_SPEC
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'h1', judgedHead: 'h1' } }
+  data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  await clock.advance(2500); await clock.settle()
+  await clock.advance(2500); await clock.settle()
+
+  expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
+  expect(data.launches.length).toBe(0)
+  const run = (data.store.chains as any)[root]
+  expect(run.recheck).toBeUndefined()
+  expect(run.stopped).toContain('/desk:card spec')
+  expect(feed.filter(e => e.card === CARD_A && String(e.text).includes('/desk:card spec')).length).toBe(1)
+})
