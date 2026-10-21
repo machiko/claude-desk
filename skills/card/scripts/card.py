@@ -265,6 +265,8 @@ def insert_registry_row(row):
 
 
 REGISTRY_TEMPLATE = '# 任務登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
+NAME_SLOT = '<任務名>'
+LEGACY_NAME_SLOT = '<案名>'  # 0.24.0 以前模板的卡名佔位：自訂模板（card.template）可能還寫著它
 
 
 def cmd_new(branch, name, base=None):
@@ -288,7 +290,7 @@ def cmd_new(branch, name, base=None):
     os.makedirs(os.path.join(wt, '.desk'), exist_ok=True)
     os.makedirs(os.path.join(wt, '.task'), exist_ok=True)
     card = os.path.join(wt, '.desk', 'CARD.md')
-    write(card, read(TPL).replace('<任務名>', name))
+    write(card, read(TPL).replace(NAME_SLOT, name).replace(LEGACY_NAME_SLOT, name))
     exclude = git('-C', MAIN, 'rev-parse', '--git-path', 'info/exclude').stdout.strip()
     exclude = exclude if os.path.isabs(exclude) else os.path.join(MAIN, exclude)
     current = read(exclude) if os.path.isfile(exclude) else ''
