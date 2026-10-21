@@ -1,6 +1,6 @@
 ---
 name: card
-description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；archive <slug> 把卡與審查檔複製到歸檔資料夾並更新登錄表。配合 /desk 工作桌使用。
+description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；archive <slug> 把卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾並更新登錄表。配合 /desk 工作桌使用。
 ---
 
 # /desk:card

@@ -258,6 +258,27 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('worktree remove', r.stdout)
         # worktree 不會被刪
         self.assertTrue(os.path.isdir(os.path.join(self.main + '-worktrees', 'order-export')))
+        # 沒有 PLAN／REPORT 時照常成功，不多出檔案
+        self.assertFalse(os.path.exists(os.path.join(archive, 'order-export-PLAN.md')))
+        self.assertFalse(os.path.exists(os.path.join(archive, 'order-export-REPORT.md')))
+
+    def test_archive_copies_plan_and_report(self):
+        """.task/PLAN.md、REPORT.md 跟審查檔一樣帶走，檔名 <slug>-PLAN.md、<slug>-REPORT.md。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
+        write(os.path.join(task, 'PLAN.md'), '# 計畫\n- 改 api\n')
+        write(os.path.join(task, 'REPORT.md'), '# 報告\n- 12 pass\n')
+        write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
+        write(os.path.join(task, 'notes.md'), 'x\n')
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertEqual(read(os.path.join(archive, 'order-export-PLAN.md')), '# 計畫\n- 改 api\n')
+        self.assertEqual(read(os.path.join(archive, 'order-export-REPORT.md')), '# 報告\n- 12 pass\n')
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'order-export-REVIEW.md')))
+        self.assertFalse(os.path.exists(os.path.join(archive, 'order-export-notes.md')))
 
     def test_unknown_target_lists_cases(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
