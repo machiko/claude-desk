@@ -41,7 +41,7 @@ export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'chang
   !c.demo && !c.manual && !c.agent && c.state !== 'running' && c.state !== 'nocard' && c.state !== 'done' && !isMerged(c)
   && typeof c.commitAt === 'number' && c.updatedAt !== null && (c.changedAt ?? c.commitAt) - c.updatedAt > BEHIND_MS && now - c.commitAt > SETTLE_MS
 
-export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
+export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'push' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
 
 const isRunning = (c: Case) => c.state === 'running'
 const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
@@ -57,6 +57,13 @@ const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
 
 /** 合併段還沒有可用的 PR：要你 push 並開 PR（高風險要先看過資安審查的不算）。 */
 export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !(!c.pr && c.chain?.needsHuman) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
+
+/**
+ * 合併段、PR 已開，分支又有還沒 push 的 commit（修 CI、審查後修正）：要你 push。
+ * 還沒有可用的 PR 時由「開 PR」一起 push，這裡不重複；示範任務、Agent 在跑、已合併都不算。
+ */
+export const needsPush = (c: Case) => !c.demo && c.state !== 'running' && c.pipeline?.current === 'merge' && !isMerged(c)
+  && c.pr?.state === 'OPEN' && !!c.gitState && (c.gitState.upstream === false || c.gitState.ahead > 0)
 
 /**
  * 流程停在檢查段（指令未核准、容器沒啟動、檢查中斷）：說為什麼，按 v；排除後跑完檢查，流程接著走。
@@ -167,6 +174,7 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
     // 自審的結論照算，但留著 w 讓你派獨立審查。
     if (current === 'merge' && c.chain?.selfReview) out.add('review')
     if (needsPr(c)) out.add('open-pr')
+    if (needsPush(c)) out.add('push')
   }
   if (current === 'ship') out.add('ship')
   if (ctx.tutorial && tutorialStep(c)) out.add('tutorial')

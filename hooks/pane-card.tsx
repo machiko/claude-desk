@@ -9,7 +9,7 @@ import { gitLine, isArmed } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
-import { cardBehind, needsPr, sentState, shipTurn, stageActions, turnOf } from './turn'
+import { cardBehind, needsPr, needsPush, sentState, shipTurn, stageActions, turnOf } from './turn'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
 import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
@@ -256,6 +256,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (c.reviewTop?.length && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
   if (needsPr(c) && can('open-pr')) out.push(button({ key: prefix + 'open-pr', isLead: !leadKey, isDim: !!leadKey, label: '⇡ 開 PR', onPress: () => act.fillPr(c) }))
+  if (needsPush(c) && can('push')) out.push(button({ key: prefix + 'push', isLead: !leadKey, isDim: !!leadKey, label: '⇡ push', onPress: () => act.fillPush(c) }))
   if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} 檢查中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
   if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)
