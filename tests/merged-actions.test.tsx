@@ -319,7 +319,7 @@ test('a commit within two minutes of the merge is still recognized as merged wit
   data.gh = null
   data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
   data.store.trustedVerify = { [CARD_B]: 'node test.mjs' }
-  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'g1', judgedHead: 'g1' } }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'g1', reviewBranch: 'feature/b', judgedHead: 'g1', judgedBranch: 'feature/b' } }
   data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
   data.agents = []
   const tickRefresh = async () => { await clock.advance(30_000); await clock.settle(); await clock.advance(2500); await clock.settle() }
@@ -353,7 +353,7 @@ test('a branch forked from a merged commit in another worktree is not taken as m
   data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
   data.store.trustedVerify = { [CARD_B]: 'node test.mjs' }
   data.store.gitMerged = { '/home/u/wt/alpha': { branch: 'feature/a', head: 'a1', into: 'origin/main' } }
-  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'b1', judgedHead: 'b1' } }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'b1', reviewBranch: 'feature/b', judgedHead: 'b1', judgedBranch: 'feature/b' } }
   data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
   data.agents = []
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -361,6 +361,28 @@ test('a branch forked from a merged commit in another worktree is not taken as m
 
   expect(data.launches.length).toBe(0)
   expect((data.store.gitMerged as any)[root]).toBeUndefined()
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
+  expect(await ui.find({ key: `case-${CARD_B}-sync` })).toBeDefined()
+  await ui.unmount()
+})
+
+/** AC-5（同資料夾）：不用 worktree，feature/a 在 a1 審過（流程紀錄的 a1 屬於 feature/a）、a1 併進 main 但 store 沒記到；同資料夾 `git switch -c feature/b a1` 補了 b1。分叉點 a1 是這個資料夾看過的 HEAD，但不是這條分支的，不算已合併。 */
+test('a branch forked in the same folder from the previous branch\'s reviewed head is not taken as merged', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/beta'
+  data.git[root] = { branch: 'feature/b', head: 'b1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: [], forkPoint: 'a1', descends: ['a1'], branchLine: 'b1\n', firstParent: 'm2\nm1\n', parents: { m1: 'base0', b1: 'a1' } }
+  data.gh = null
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.trustedVerify = { [CARD_B]: 'node test.mjs' }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'a1', reviewBranch: 'feature/a', judgedHead: 'a1', judgedBranch: 'feature/a' } }
+  data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle(); await clock.advance(2500); await clock.settle()
+
+  expect((data.store.gitMerged as any)?.[root]).toBeUndefined()
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
