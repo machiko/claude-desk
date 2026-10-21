@@ -152,7 +152,7 @@ test('a branch merged only through git stays merged after a later commit on it',
   await refresh()
 
   // 合併之後，分支上多了 g2：g2 不在 main 裡，但是從合併時的 g1 長出來的
-  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1' }
+  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1', descends: ['g1'], branchLine: 'g2\n', parents: { m1: 'base0', g2: 'g1' } }
   await refresh()
 
   expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
@@ -185,7 +185,7 @@ test('a later PR or another branch in the same folder is not taken as the earlie
   expect(await merged()).toBe(true)
 
   // 合併後的 g2 開了新 PR：照 PR 走，不顯示「已合併到 main」
-  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1' }
+  data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1', descends: ['g1'], branchLine: 'g2\n', parents: { m1: 'base0', g2: 'g1' } }
   data.gh = [{ number: 31, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/31', statusCheckRollup: [] }]
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.advance(6 * 60_000); await refresh()
@@ -193,7 +193,7 @@ test('a later PR or another branch in the same folder is not taken as the earlie
 
   // 同一個資料夾切到別的分支：不沿用 feature/b 的合併
   data.gh = null
-  data.git[root] = { ...data.git[root]!, branch: 'feature/c', head: 'c1', merged: [], forkPoint: 'g1' }
+  data.git[root] = { ...data.git[root]!, branch: 'feature/c', head: 'c1', merged: [], forkPoint: 'g1', descends: ['g1'], branchLine: 'c1\n', parents: { m1: 'base0', c1: 'g1' } }
   await clock.advance(6 * 60_000); await refresh()
   expect(await merged()).toBe(false)
 })
@@ -213,11 +213,42 @@ test('a branch reopened under the same name in the same folder is not taken as t
   expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeDefined()
   await ui.unmount()
 
-  // 重開的 feature/b 從 main 的 m3 切出、新 commit n1：m3 包含當初的 g1，但分叉點是 m3，不是 g1
-  data.git[root] = { ...data.git[root]!, head: 'n1', merged: [], forkPoint: 'm3' }
+  // 重開的 feature/b 從 main 的 m3 切出、新 commit n1：m3 包含當初的 g1，但分叉點是 m3，不是 g1；
+  // 沿 n1 的第一個父走的是 main 的主線（m3、m2、m1），g1 只是 m2 的第二個父
+  data.git[root] = { ...data.git[root]!, head: 'n1', merged: [], forkPoint: 'm3', descends: ['g1'], branchLine: 'n1\nm3\nm2\nm1\n' }
   await clock.advance(6 * 60_000); await refresh()
   const again = await $.ui.mount(PANE(80))
   expect(await again.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
   expect(await again.find({ key: `case-${CARD_B}-sync` })).toBeDefined()
   await again.unmount()
+})
+
+/** 只靠 git 認合併、沒有 PR：合併在 g1，之後把 main（m3）併回分支成 x1。分叉點變成 m3，但沿 x1 的第一個父仍走得到 g1，仍算已合併。 */
+test('a branch merged only through git stays merged after main is merged back into it', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const root = '/home/u/wt/beta'
+  data.git[root] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', releases: '', originHead: 'origin/main', merged: ['origin/main'], firstParent: 'm2\nm1\n', parents: { m1: 'base0' } }
+  data.gh = null
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.trustedVerify = { [CARD_B]: 'node test.mjs' }
+  data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'g1', judgedHead: 'g1' } }
+  data.store.jobs = { [root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+  const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle(); await clock.advance(2500); await clock.settle() }
+  await refresh()
+
+  // 合併之後 git merge origin/main：x1 的第一個父是 g1、第二個父是 main 的 m3
+  data.git[root] = { ...data.git[root]!, head: 'x1', merged: [], forkPoint: 'm3', descends: ['g1'], branchLine: 'x1\n', parents: { m1: 'base0', x1: 'g1' } }
+  await refresh()
+
+  expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
+  expect(data.launches.length).toBe(0)
+  const run = (data.store.chains as any)[root]
+  expect(run.passed).toBe(true)
+  expect(run.recheck).toBeUndefined()
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeDefined()
+  for (const k of NOT_AFTER_MERGE) expect(await ui.find({ key: `case-${CARD_B}-${k}` })).toBeUndefined()
+  await ui.unmount()
 })

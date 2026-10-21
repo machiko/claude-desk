@@ -237,15 +237,25 @@ export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, 
 }
 
 /**
- * 這個分支之前在某個 HEAD 被 git 認定合併過，現在的 HEAD 是直接從那裡長出來的（合併後又補了 commit）：仍算已合併，跟 PR 合併後再 commit 一樣。
- * 「直接」是指 HEAD 與基準分支的分叉點就是合併時的 HEAD；同名分支重開（從已包含舊合併的基準分支切出來）分叉點在基準分支上，不算。
+ * 這個分支之前在某個 HEAD 被 git 認定合併過，那個 HEAD 還在現在 HEAD 的 first-parent 鏈上：仍算已合併，跟 PR 合併後再 commit 一樣。
+ * 合併後在分支上補 commit、或把基準分支併回分支，沿第一個父往回走都會走到它；同名分支從已包含舊合併的基準分支重開，
+ * 鏈走的是基準分支的主線，舊 HEAD 只是某個 merge commit 的第二個父，不算。
  * 有 PR 資訊（例如之後的 commit 開了新 PR）就照 PR 走；切到別的分支也不算。
  */
 async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>): Promise<string | undefined> {
   if (c.pr || !c.git) return undefined
   const was = (await gitMerged($))[c.root]
   if (!was || was.branch !== c.git.branch || was.head === c.git.head) return undefined
-  return (await git($, c.root, ['merge-base', 'HEAD', was.into])) === was.head ? was.into : undefined
+  return (await onBranchLine($, c.root, was.head)) ? was.into : undefined
+}
+
+/** commit 在 HEAD 的 first-parent 鏈上：先確認是祖先（便宜），再沿 HEAD 的第一個父走到 commit 之前的最後一步，看它的父是不是 commit。 */
+async function onBranchLine($: any, root: string, commit: string): Promise<boolean> {
+  if ((await git($, root, ['merge-base', '--is-ancestor', commit, 'HEAD'])) === null) return false
+  const line = ((await git($, root, ['rev-list', '--first-parent', `${commit}..HEAD`])) ?? '').split(/\r?\n/).filter(Boolean)
+  const oldest = line[line.length - 1]
+  if (!oldest) return false
+  return (await git($, root, ['rev-parse', `${oldest}^`])) === commit
 }
 
 /** HEAD 在 ref 裡、而且是從旁邊併進來的：沿 ref 的第一個父往回走，最後一步的父不是 HEAD。 */
