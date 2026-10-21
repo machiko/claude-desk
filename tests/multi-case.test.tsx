@@ -12,9 +12,9 @@ const ROOT: Record<string, string> = { [CARD_A]: ALPHA, [CARD_B]: BETA }
 const NAME: Record<string, string> = { [CARD_A]: 'Alpha', [CARD_B]: 'Beta' }
 const GLYPHS = /[●◉◆✕○·]/g
 
-/** 兩件案子 Alpha、Beta：都沒有等你、檢查已授權、各在自己的分支；派出去的 Agent 照 cwd 對回案子。 */
+/** 兩件任務 Alpha、Beta：都沒有等你、檢查已授權、各在自己的分支；派出去的 Agent 照 cwd 對回任務。 */
 function twoCases(data: any, clock: any) {
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 驗證：`npm test`', '- 驗證：`node test.mjs`')
   data.git[ALPHA] = { branch: 'feature/alpha', head: 'a1' }
@@ -58,7 +58,7 @@ const finish = (data: any, root: string) => { data.agents = data.agents.map((a: 
 const setGate = (data: any, card: string, g: string) => { data.files[card] = data.files[card]!.replace(/- 關卡：.*$/m, `- 關卡：${g}`) }
 const step = async (clock: any) => { await clock.advance(2500); await clock.settle() }
 
-/** 現在卡上的六段（`規格● 實作● …`）與其他案子表格那一列的六段字形。 */
+/** 現在卡上的六段（`規格● 實作● …`）與其他任務表格那一列的六段字形。 */
 async function cardStages(ui: any): Promise<string> {
   const t = await ui.find({ type: 'Text', text: /^規格[●◉◆✕○·]/ })
   return String(t?.text ?? '')
@@ -68,11 +68,11 @@ async function rowGlyphs(ui: any, card: string): Promise<string> {
   const after = row.slice(row.indexOf(NAME[card]!) + NAME[card]!.length)
   return (after.match(GLYPHS) ?? []).join('')
 }
-/** 把這件放到現在卡：它在其他案子表格裡就按那一列；不在表格裡就是已經在現在卡。 */
+/** 把這件放到現在卡：它在其他任務表格裡就按那一列；不在表格裡就是已經在現在卡。 */
 async function focus(ui: any, card: string) {
   if (await ui.find({ key: `row-${card}` })) await ui.press({ key: `row-${card}` })
 }
-/** 一件案子在現在卡與其他案子表格上的六段：先讓它當現在卡，再換另一件，讓它出現在表格。 */
+/** 一件任務在現在卡與其他任務表格上的六段：先讓它當現在卡，再換另一件，讓它出現在表格。 */
 async function bothViews(ui: any, card: string): Promise<{ card: string; row: string }> {
   await focus(ui, card)
   const onCard = await cardStages(ui)
@@ -235,9 +235,9 @@ test('between a passing check and the auto review the turn line does not ask you
   expect(card).not.toContain('按 w 派審查')
   expect(strip).toContain('接著自動審查')
   expect(strip).not.toContain('按 w 派審查')
-  // 接力隨後派出審查
+  // 流程隨後派出審查
   expect(data.launches.length).toBe(2)
-  // 沒有接力在等（手動按 v 通過的）：照舊請你按 w
+  // 沒有流程在等（手動按 v 通過的）：照舊請你按 w
   expect(turnOf({ ...betaCase(), pipeline: pipeline(betaCase(), passedAt('b1')) }).text).toContain('按 w 派審查')
   await ui.unmount()
 })
@@ -316,7 +316,7 @@ test('a check that breaks midway still lets the queued case run', async ($, on) 
   // 「最近」只放現在這件：換回 Alpha 才看得到它的檢查中斷
   await focus(ui, CARD_A)
   expect(JSON.stringify(await ui.drawn())).toContain('Alpha 檢查中斷')
-  // Alpha 停下等人處理，不會被接力一再重跑
+  // Alpha 停下等人處理，不會被流程一再重跑
   expect(stats.cwds.filter(c => c === ALPHA).length).toBe(1)
   await ui.unmount()
   await drain(clock)
@@ -366,7 +366,7 @@ test('a queued check that can no longer run lets the one behind it go next', asy
   await finishBoth($, data, clock)
   await $.command.run({ command: 'desk', args: 'verify Gamma' } as any)
   await clock.settle()
-  // 排隊期間 Beta 卡片的檢查指令改了、還沒授權：輪到它時接力不會自動跑
+  // 排隊期間 Beta 卡片的檢查指令改了、還沒授權：輪到它時流程不會自動跑
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 驗證：`node test.mjs`', '- 驗證：`node other.mjs`')
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()

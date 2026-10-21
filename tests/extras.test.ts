@@ -25,7 +25,7 @@ test('deploy steps come from the 部署 section; empty placeholders are skipped'
 
 test('reminders: days until, due within 3 days, overdue counts', () => {
   const now = new Date(2026, 11, 19, 15, 0).getTime()
-  const reg = '## 案子\n| a | `x` |\n## 提醒\n- 2026-12-22 決定 /api/rag-proxy 是否退役\n- 2027-03-01 Laravel 12 升版\n- 2026-12-18 昨天的事\n## 其他'
+  const reg = '## 任務\n| a | `x` |\n## 提醒\n- 2026-12-22 決定 /api/rag-proxy 是否退役\n- 2027-03-01 Laravel 12 升版\n- 2026-12-18 昨天的事\n## 其他'
   const list = parseReminders(reg, now)
   expect(list.map(r => [r.date, r.days])).toEqual([['2026-12-18', -1], ['2026-12-22', 3], ['2027-03-01', 72]])
   expect(dueReminders(list).map(r => r.text)).toEqual(['昨天的事', '決定 /api/rag-proxy 是否退役'])

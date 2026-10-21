@@ -13,7 +13,7 @@ const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh
 
 /** 只看 Alpha：卡片沒有待決策、沒有別的 Agent；每次派工都換一個背景 agent，跑到 finish() 才結束。 */
 function alphaOnly(data: any, clock: any) {
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |`
   data.git[ROOT] = { branch: 'feature/alpha', head: 'h1' }
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
   data.agents = []

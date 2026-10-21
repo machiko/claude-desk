@@ -402,7 +402,7 @@ test('prompts that are not typed by the person do not get the selected card', as
   await $.prompt.submit({ text: '背景工作完成', origin: { kind: 'task-notification' } } as any)
   expect(data.submitted.at(-1).context ?? []).toEqual([])
   await $.prompt.submit({ text: '我打的', origin: { kind: 'composer' } } as any)
-  expect((data.submitted.at(-1).context ?? []).join('')).toContain('案子「Beta」')
+  expect((data.submitted.at(-1).context ?? []).join('')).toContain('任務「Beta」')
   await ui.unmount()
 })
 

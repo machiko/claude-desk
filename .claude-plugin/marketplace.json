@@ -1,6 +1,6 @@
 {
   "name": "claude-desk",
-  "description": "desk：Claude Code 的工作桌，六段（規格、實作、檢查、審查、合併、上線）與背景 agent 自動接力。",
+  "description": "desk：Claude Code 的工作桌，六段（規格、實作、檢查、審查、合併、上線）與背景 agent 的自動流程。",
   "owner": { "name": "Reyes C" },
   "plugins": [{ "name": "desk", "source": "./" }]
 }

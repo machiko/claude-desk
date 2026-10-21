@@ -12,11 +12,11 @@ const UNAPPROVED = '完成檢查的指令改過、還沒經你核准：按 v 看
 const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 
-/** 只留 Beta 一件：審查過關、沒有 PR、沒有 Agent 在跑；接力是別的對話開的，不會自動派工。 */
+/** 只留 Beta 一件：審查過關、沒有 PR、沒有 Agent 在跑；流程是別的對話開的，不會自動派工。 */
 function onlyBeta(data: any, git: Record<string, unknown> = {}) {
   data.agents = []
   data.gh = []
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', PASSED)
   data.git[BETA] = { branch: 'feature/b', head: 'c2', remote: 'git@github.com:acme/shop.git', ...git }
 }
@@ -124,7 +124,7 @@ test('the merge stage offers an open-PR button that only fills the prompt', asyn
 test('a verdict the agent wrote itself counts but is marked self-review with w offered', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data)
-  // 完全沒有接力紀錄（結論是在別的對話寫進卡片的），或這次接力只有派實作（g）：都不是 desk 派的審查
+  // 完全沒有流程紀錄（結論是在別的對話寫進卡片的），或這次流程只有派實作（g）：都不是 desk 派的審查
   data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' } }
 
   const ui = await mount($)

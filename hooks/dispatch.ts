@@ -15,7 +15,7 @@ export type DispatchSettings = {
   projects: Record<string, { model?: string; effort?: string; rules?: string[] }>
   /** 寫進提示詞與卡片的人名（「要 <user> 決定的事」「<user> 在工作桌確認」）。 */
   user: string
-  /** 每次派工都附上的專案規則（例如測試只能怎麼跑）；案子的 rules 接在後面。 */
+  /** 每次派工都附上的專案規則（例如測試只能怎麼跑）；任務的 rules 接在後面。 */
   rules: string[]
   review: ReviewWords
   /** 額外的高風險路徑（正規式, 理由），排在內建的前面。 */
@@ -40,14 +40,14 @@ export const DEFAULT_REVIEW: ReviewWords = {
 
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
 const strList = (v: unknown) => Array.isArray(v) ? v.map(str).filter(Boolean) : []
-/** 一次派工留下的紀錄，按案子根目錄存在 $.store。 */
-export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 自動接力已處理過這次的結果。 */ handled?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，接力自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean }
+/** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
+export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean }
 export type RootJobs = { sessionId?: string; last?: JobRecord }
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
 export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆' }
 
-/** dispatch.json：全域 model／effort、每案子覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
+/** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
   const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '' }
   if (!text) return out
@@ -79,7 +79,7 @@ export function parseSettings(text: string | null): DispatchSettings {
 
 export const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
 
-/** 這件案子這種派工用的 model／effort：案子覆寫 > 全域；同步另有自己的模型。 */
+/** 這件任務這種派工用的 model／effort：任務覆寫 > 全域；同步另有自己的模型。 */
 export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind): { model: string; effort: string; fresh: boolean } {
   const own = settings.projects[normalizeRoot(root)] ?? {}
   const base = { model: own.model ?? settings.model, effort: own.effort ?? settings.effort }
@@ -116,7 +116,7 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
   return hits.length === 1 ? hits[0]! : null
 }
 
-/** 每次派工都附的規則；專案規則（dispatch.json 的 rules 與案子的 rules）接在最後。 */
+/** 每次派工都附的規則；專案規則（dispatch.json 的 rules 與任務的 rules）接在最後。 */
 function cardRules(settings: DispatchSettings, root: string): string[] {
   return [
     '卡片要精簡：狀態一句話 60 字內、下一步 40 字內，多件事用「；」分開；commit、測試數字、檔案清單等細節寫在卡片下方的歷程，不要塞進這兩欄。',
@@ -124,8 +124,8 @@ function cardRules(settings: DispatchSettings, root: string): string[] {
     '寫入前重讀卡片；內容與你開始時讀到的不同就停止並回報衝突，不要覆寫。',
     '檢查欄只放一條可執行的完成檢查（反引號），exit 0 代表做完；發現寫在 狀態 或 .task/REPORT.md。',
     `要${named(settings.user)}決定的事寫進 等你（有選項寫成 問題：A) … B) …）後結束這一輪，不要提問等待。`,
-    '做完實作：關卡留 無；完成檢查與審查由工作桌自動接力，你不用自己送審查。',
-    '只在此案子根目錄作業；不 push、不開 PR、不碰正式環境、不啟動或重建容器、不改 port、不在主工作區切分支。',
+    '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。',
+    '只在此任務根目錄作業；不 push、不開 PR、不碰正式環境、不啟動或重建容器、不改 port、不在主工作區切分支。',
     ...settings.rules,
     ...(settings.projects[normalizeRoot(root)]?.rules ?? []),
   ]
@@ -152,7 +152,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : `${named(settings.user).trimStart()}的回覆：${text}`
   const base = cardRules(settings, c.root)
   const rules = fix || kind === 'continue' || kind === 'reply' ? [SPEC_RULE, ...base] : base
-  return `${head}\n案子：${c.name}\n根目錄：${c.root}\n卡片：${c.statusPath}\n${rules.join('\n')}`
+  return `${head}\n任務：${c.name}\n根目錄：${c.root}\n卡片：${c.statusPath}\n${rules.join('\n')}`
 }
 
 /** 下一步以 .task/review-… 開頭時，那個路徑。 */
@@ -181,7 +181,7 @@ const BUSY = 'Agent 仍在執行'
 
 /** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
 export function replyRefusal(c: Case): string {
-  if (c.demo) return '示範案子只能看'
+  if (c.demo) return '示範任務只能看'
   if (c.manual) return MANUAL
   if (c.state === 'reply' || agentWaits(c.agent)) return ''
   return c.state === 'running' || c.agent?.status === 'busy' ? BUSY : 'Agent 沒有在等你回覆'

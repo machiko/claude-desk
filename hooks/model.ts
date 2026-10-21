@@ -1,4 +1,4 @@
-// 狀態模型：從卡片、檔案時間與背景 agent 推出每件案子的一個狀態詞，以及工作桌要看的順序。
+// 狀態模型：從卡片、檔案時間與背景 agent 推出每件任務的一個狀態詞，以及工作桌要看的順序。
 // 純函式；register.tsx 負責讀。
 import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '../types'
 import type { RegistryRow } from './card'
@@ -6,7 +6,7 @@ import { parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyComm
 import { STATE } from './theme'
 import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
 
-/** 案子的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
+/** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
 export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
 
 /**
@@ -158,7 +158,7 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
   if (agentWaits(c.agent)) return 'reply'
   const running = !!c.agent && !c.agent.asks
   const verdict = parseVerdict(c.gate)
-  // 審查結論由自動接力處理：沒擋的就過、有擋的去修；接力停下或沒有接力時才要人。
+  // 審查結論由自動流程處理：沒擋的就過、有擋的去修；流程停下或沒有流程時才要人。
   if (verdict) {
     if (running) return 'running'
     if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return blocking(verdict) > 0 ? 'failed' : 'ready'
@@ -196,7 +196,7 @@ export function counts(cases: readonly Case[]): Record<CaseState, number> {
   return out
 }
 
-/** 會搶焦點的案子：有真的案子時示範案子只是背景（教學模式）；只有示範資料時就是它們。 */
+/** 會搶焦點的任務：有真的任務時示範任務只是背景（教學模式）；只有示範資料時就是它們。 */
 export function liveCases(cases: readonly Case[]): Case[] {
   return cases.some(c => !c.demo) ? cases.filter(c => !c.demo) : [...cases]
 }
@@ -207,7 +207,7 @@ export function focusCase(cases: readonly Case[]): Case | null {
   return first && first.state !== 'idle' && first.state !== 'nocard' && first.state !== 'done' ? first : null
 }
 
-/** 一件案子在列表上的那句話：等你的題目、關卡、agent 等什麼、否則下一步。 */
+/** 一件任務在列表上的那句話：等你的題目、關卡、agent 等什麼、否則下一步。 */
 export function summary(c: Case): string {
   if (c.state === 'ask') { const d = parseDecisions(c.ask)[0]; return d ? d.title || c.ask : c.ask }
   if (c.state === 'reply') return c.agent?.waitingFor ? `Agent 等待：${c.agent.waitingFor}` : c.agent?.last ? `Agent 提問：${c.agent.last}` : 'Agent 等待你回覆'
@@ -222,7 +222,7 @@ export function summary(c: Case): string {
 
 /** 自上一份快照以來的變化，給動態與 toast。 */
 export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
-  // 示範資料切換、換了專案：不是案子本身有變化，不發動態。
+  // 示範資料切換、換了專案：不是任務本身有變化，不發動態。
   if (!prev || prev.demo !== cur.demo || prev.project !== cur.project) return []
   const before = new Map(prev.cases.map(c => [c.statusPath, c]))
   const out: FeedEvent[] = []
@@ -266,7 +266,7 @@ export function feedOnDesk(feed: readonly FeedEvent[], cases: readonly Case[]): 
   return feed.filter(e => !e.card || onDesk.has(e.card))
 }
 
-/** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的案子當「其他案子」的背景（demoCases）。 */
+/** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的任務當「其他任務」的背景（demoCases）。 */
 export function demoSnapshot(now: number): Snapshot {
   const agents: Record<string, AgentInfo> = { '/demo/beta': { name: 'desk-demo', state: 'working', status: 'busy', startedAt: now - 3 * 60_000 } }
   const card = (status: string, verify: string, ask: string, next: string, gate = '無') =>
@@ -290,16 +290,16 @@ export function demoSnapshot(now: number): Snapshot {
   }
 }
 
-/** 教學模式的背景案子：標成示範，只能看、不搶焦點。 */
+/** 教學模式的背景任務：標成示範，只能看、不搶焦點。 */
 export function demoCases(now: number): Case[] {
   return demoSnapshot(now).cases.map(c => ({ ...c, demo: true }))
 }
 
-/** 指令裡的案名找案子：先全名、再部分符合；示範案子只能看，指令找不到它們。 */
+/** 指令裡的任務名找任務：先全名、再部分符合；示範任務只能看，指令找不到它們。 */
 export function caseNamed(s: Snapshot | null, name: string): Case | null {
   if (!s) return null
   const q = name.trim()
-  // 示範案子只能看，指令找不到它們。
+  // 示範任務只能看，指令找不到它們。
   const real = s.cases.filter(c => !c.demo)
   return real.find(c => c.name === q) ?? real.find(c => c.name.includes(q)) ?? null
 }

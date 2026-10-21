@@ -8,7 +8,7 @@ import { fixture, CARD_A, CARD_B, PANE } from './fixture'
 const card = (f: { gate?: string; next?: string }) =>
   `<!-- DESK -->\n- 狀態：ok\n- 檢查：\`npm test\`\n- 等你：無\n- 下一步：${f.next ?? '依規格實作'}\n- 關卡：${f.gate ?? '無'}\n<!-- /DESK -->`
 
-/** 跟工作桌一樣：讀卡 → 疊上 git／PR／接力 → 算六段 → 決定是否完成。 */
+/** 跟工作桌一樣：讀卡 → 疊上 git／PR／流程 → 算六段 → 決定是否完成。 */
 function mk(f: Parameters<typeof card>[0], extra: Partial<Case> = {}, v?: Verify): Case {
   const base = { ...buildCase({ name: 'A', statusPath: '/w/age-group/.desk/CARD.md' }, card(f), 1, {}, v), git: { branch: 'feature/a', head: 'h2' }, ...extra }
   const piped = { ...base, pipeline: pipeline(base as Case, v) }
@@ -253,7 +253,7 @@ test('a branch merged only through git stays merged after main is merged back in
   await ui.unmount()
 })
 
-/** 已合併、流程停在檢查段時用指令跑檢查：只記檢查結果，不寫「流程繼續」，流程與派工紀錄維持原樣（合併後不再接力）。 */
+/** 已合併、流程停在檢查段時用指令跑檢查：只記檢查結果，不寫「流程繼續」，流程與派工紀錄維持原樣（合併後流程不再往下走）。 */
 test('running the check on a merged case paused at the check does not claim the chain goes on', async ($, on) => {
   const { data, clock } = fixture(on)
   const root = '/home/u/wt/alpha'

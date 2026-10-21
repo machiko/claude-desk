@@ -84,7 +84,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   // 教學的審查不會寫進真實的審查存底
   expect(data.writes.some((w: string) => w.includes('/handoffs/reviews/'))).toBe(false)
 
-  // 結束：只刪沙盒，面板回到原本的案子
+  // 結束：只刪沙盒，面板回到原本的任務
   const ended = await $.command.run({ command: 'desk', args: 'tutorial end' } as any)
   expect(String((ended as any).text)).toContain('沙盒已刪除')
   expect(data.processCalls.some((c: any) => c.argv.join(' ') === `rm -rf ${P.dir}`)).toBe(true)

@@ -7,7 +7,7 @@ import type { Case, Verify } from '../types'
 const card = (f: { check?: string; ask?: string; next?: string; gate?: string }) =>
   `<!-- DESK -->\n- 狀態：ok\n- 檢查：${f.check ?? '`npm test`'}\n- 等你：${f.ask ?? '無'}\n- 下一步：${f.next ?? '依規格實作'}\n- 關卡：${f.gate ?? '無'}\n<!-- /DESK -->`
 
-/** 跟工作桌一樣：讀卡 → 疊上 git／PR／接力 → 算六段 → 決定是否完成。 */
+/** 跟工作桌一樣：讀卡 → 疊上 git／PR／流程 → 算六段 → 決定是否完成。 */
 function mk(f: Parameters<typeof card>[0], extra: Partial<Case> = {}, v?: Verify): Case {
   const base = { ...buildCase({ name: 'A', statusPath: '/w/age-group/.desk/CARD.md' }, card(f), 1, {}, v), git: { branch: 'feature/a', head: 'h1' }, ...extra }
   const piped = { ...base, pipeline: pipeline(base as Case, v) }

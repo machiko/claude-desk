@@ -12,7 +12,7 @@ const prompt = (data: any, i = 0) => String(data.launches[i].argv[data.launches[
 
 /** 只留 Beta 一件：工作桌派出去的那次做完後停在提問（blocked、不再 busy）。 */
 function waiting(data: any, gate = '無') {
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_B] = setFields(data.files[CARD_B]!, { 關卡: gate })
   data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git' }
   data.gh = []
@@ -100,14 +100,14 @@ test('reply is refused with a reason when no agent is waiting', async ($, on) =>
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await refused('reply Beta 好', '沒有在等你回覆')
 
-  // 示範案子：教學裡的示範案子只能看
+  // 示範任務：教學裡的示範任務只能看
   const P = tutorialPaths('/home/u')
   data.git[P.wt] = { branch: 'feature/discount', head: 'h0' }
   data.git[P.main] = { branch: 'release/v1.0', head: 'm0' }
   await $.command.run({ command: 'desk', args: 'tutorial' } as any)
   await clock.settle()
   data.toasts.length = 0
-  await refused('reply 訂單匯出 好', '示範案子')
+  await refused('reply 訂單匯出 好', '示範任務')
 })
 
 test('cancelling the reply dialog dispatches nothing', async ($, on) => {

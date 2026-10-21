@@ -1,7 +1,7 @@
 {
   "name": "desk",
   "version": "0.24.0",
-  "description": "工作桌：每件案子走規格、實作、檢查、審查、合併、上線六段，面板告訴你輪到誰、該按什麼；實作、完成檢查、審查與修正由背景 Agent（claude --bg）自動接力。PR 與 CI 可讀 Bitbucket（MCP）或 GitHub（gh），都是唯讀；不 push、不合併、不碰正式環境。",
+  "description": "工作桌：每件任務走規格、實作、檢查、審查、合併、上線六段，面板告訴你輪到誰、該按什麼；實作、完成檢查、審查與修正由背景 Agent（claude --bg）自動走完流程。PR 與 CI 可讀 Bitbucket（MCP）或 GitHub（gh），都是唯讀；不 push、不合併、不碰正式環境。",
   "author": {
     "name": "Reyes C"
   },
@@ -17,8 +17,8 @@
   "userConfig": {
     "registryPath": {
       "type": "string",
-      "title": "案子登錄表",
-      "description": "Markdown 表格：每列「| 案名 | `DESK 卡路徑` |」。留空＝依目前所在的 repo 讀 ~/.claude/handoffs/<repo 資料夾名>/projects-scope.md（worktree 算同一個 repo）；填了就每個專案都讀這一份。",
+      "title": "任務登錄表",
+      "description": "Markdown 表格：每列「| 任務名 | `DESK 卡路徑` |」。留空＝依目前所在的 repo 讀 ~/.claude/handoffs/<repo 資料夾名>/projects-scope.md（worktree 算同一個 repo）；填了就每個專案都讀這一份。",
       "default": ""
     },
     "refreshSeconds": {

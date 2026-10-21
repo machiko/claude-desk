@@ -1,6 +1,6 @@
 # desk
 
-Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張面板只放「現在該看的那一件」，並告訴你輪到誰、該按什麼。從規格、實作、檢查、審查、合併到上線，中間的實作、檢查、審查、修正由背景 Agent 自動接力。
+Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張面板只放「現在該看的那一件」，並告訴你輪到誰、該按什麼。從規格、實作、檢查、審查、合併到上線，中間的實作、檢查、審查、修正由背景 Agent 自動走完流程。
 
 > **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH findings for up to two rounds. The UI and prompts are in Traditional Chinese.
 
@@ -19,7 +19,7 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
    檢查    尚未執行
            python3 -m unittest -q
 
- 其他案子（示範，只能看）       規格 實作 檢查 審查 合併 上線
+ 其他任務（示範，只能看）       規格 實作 檢查 審查 合併 上線
  1 ● 主工作區（release/v1.4）   ·    ·    ◆    ·    ·    ○     20 分鐘
       CHANGELOG 日期要現在補還是發版時補？
  2 ◆ 部署流程改版               ●    ◆    ○    ○    ○    ○      5 小時
@@ -52,7 +52,7 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 
 ## 第一次使用：教學
 
-輸入 `/desk tutorial`。它會在 `~/.claude/desk-tutorial` 建一個小 repo 和一件案子「教學：會員折扣」放在現在卡；「其他案子」是幾件示範案子（只能看），讓你看到多件案子同時進行時面板的樣子。照現在卡第二列「▶ 輪到你」的指示把六段走完：
+輸入 `/desk tutorial`。它會在 `~/.claude/desk-tutorial` 建一個小 repo 和一件任務「教學：會員折扣」放在現在卡；「其他任務」是幾件示範任務（只能看），讓你看到多件任務同時進行時面板的樣子。照現在卡第二列「▶ 輪到你」的指示把六段走完：
 
 1. 規格：看過預先寫好的規格，按 `t` 確認（實際使用時按兩次 `t`，或輸入 `/desk:card spec <slug> ok`）。
 2. 實作：按兩次 `g`。教學裡的 Agent 和審查由腳本扮演，不花額度，也不需要信任資料夾。
@@ -61,11 +61,11 @@ Claude Code 的工作桌：一行摘要列看有沒有案子在等你，一張�
 5. 合併：回答審查建議，再按 `f` 寫回卡片；然後按 `t` 在本機合併。選 c（現在改）會改程式並 commit，接著自動退回重新檢查、重新審查，過關後才輪到合併。
 6. 上線：按 `t` 打 tag，再按兩次 `u` 確認上線。
 
-做完輸入 `/desk tutorial end`，沙盒會刪除，面板回到你自己的案子。需要 `git` 與 `python3`。
+做完輸入 `/desk tutorial end`，沙盒會刪除，面板回到你自己的任務。需要 `git` 與 `python3`。
 
 ## 快速開始
 
-desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/desk`，就列那個 repo 的案子。每個專案的登錄表與設定放在 `~/.claude/handoffs/<repo 資料夾名>/`，以主 repo `~/code/shop` 為例是 `~/.claude/handoffs/shop/`。
+desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/desk`，就列那個 repo 的任務。每個專案的登錄表與設定放在 `~/.claude/handoffs/<repo 資料夾名>/`，以主 repo `~/code/shop` 為例是 `~/.claude/handoffs/shop/`。
 
 1. 在專案的 `dispatch.json`（`~/.claude/handoffs/shop/dispatch.json`）指定主 repo（`/desk:card new` 從這裡建 worktree）：
 
@@ -73,13 +73,13 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
    { "card": { "main": "~/code/shop", "base": "origin/main" } }
    ```
 
-2. 在 repo 裡開一件案子：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。
+2. 在 repo 裡開一件任務：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。
 3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後在面板按兩次 `t` 確認（或輸入 `/desk:card spec order-export ok`）。
 4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派 Agent）。
 
 背景 Agent 只會在「信任過的 repo」裡啟動：第一次用某個 repo 前，先在那個 repo 根目錄開一次 `claude`，信任提示選 Yes。
 
-完整流程（角色、六段、自動接力、風險分級、常見狀況）見 [docs/WORKFLOW.md](docs/WORKFLOW.md)。
+完整流程（角色、六段、自動流程、風險分級、常見狀況）見 [docs/WORKFLOW.md](docs/WORKFLOW.md)。
 
 ## 指令
 
@@ -88,13 +88,13 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk` | 開啟面板並把鍵盤焦點移過去；第一次會開始定時更新 |
 | `/desk close` | 收起面板（面板有焦點時按 Esc 也可以） |
 | `/desk refresh` | 立刻重讀 |
-| `/desk go\|sync\|review <案名>` | 派工：繼續（開始一輪流程；完成檢查還沒核准過會先問）、同步、審查 |
-| `/desk reply <案名> [回覆]` | 回覆停下來問的 Agent |
-| `/desk verify <案名>` | 執行卡片的完成檢查（第一次會先確認） |
-| `/desk open <案名>` | 用系統預設程式開卡片 |
+| `/desk go\|sync\|review <任務名>` | 派工：繼續（開始一輪流程；完成檢查還沒核准過會先問）、同步、審查 |
+| `/desk reply <任務名> [回覆]` | 回覆停下來問的 Agent |
+| `/desk verify <任務名>` | 執行卡片的完成檢查（第一次會先確認） |
+| `/desk open <任務名>` | 用系統預設程式開卡片 |
 | `/desk bar` | 收起／顯示摘要列 |
 | `/desk update` | 把 desk 自己更新到 GitHub 上的最新版本（面板 footer 的「⇡ 更新版本」按鈕相同，只用點的、不綁快捷鍵）；重新啟動 Claude Code 後生效 |
-| `/desk tutorial` | 教學：在沙盒裡把六段走一遍，旁邊配幾件示範案子（`/desk tutorial end` 結束並刪除沙盒） |
+| `/desk tutorial` | 教學：在沙盒裡把六段走一遍，旁邊配幾件示範任務（`/desk tutorial end` 結束並刪除沙盒） |
 | `/desk off` | 這個對話關閉工作桌 |
 | `/desk:card new <分支> <卡名> [base]` | 建 worktree、DESK 卡、登錄表列 |
 | `/desk:card spec <目標> [需求]` | 產生規格草稿並設 `spec：` 關卡；`… ok` 確認 |
@@ -104,7 +104,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 | 鍵 | 作用 |
 |---|---|
-| 1–9、n | 選其他案子；n 跳到下一件（需要你的優先）。選了的那件是對話的主角：之後你打的每則都附上它的卡，摘要列標「已選」；再點現在卡的案名取消選取 |
+| 1–9、n | 選其他任務；n 跳到下一件（需要你的優先）。選了的那件是對話的主角：之後你打的每則都附上它的卡，摘要列標「已選」；再點現在卡的任務名取消選取 |
 | a b c d、f | 選決策選項、填入輸入框；送出後那題鎖住，等對話寫回卡片 |
 | g／w／s | 繼續／審查／同步（**按兩次確認**，確認文字寫出模型與 effort） |
 | y | 回覆停下來問的 Agent |
@@ -119,7 +119,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 ## DESK 卡
 
-每件案子一張 `.desk/CARD.md`，工作桌只讀這個區塊：
+每件任務一張 `.desk/CARD.md`，工作桌只讀這個區塊：
 
 ```
 <!-- DESK -->
@@ -141,14 +141,14 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - **六段圖示**：● 已過、◉ 進行中、◆ 等你、✕ 卡住、○ 未到、· 不適用；上線確認後六個 ● 轉綠、狀態是 ✓「已上線」。
 - **卡片可能過期**：分支最近一次 commit 改到的程式（只改卡片的 commit 不算）比卡片新、又沒有 Agent 在跑時，現在卡提示「按 s 同步」。先寫卡、測試跑完才 commit 的不算過期。
 - **提醒**：登錄表「## 提醒」段 `- YYYY-MM-DD 事項`，到期前三天出現。
-- **通知**：等你、接力暫停、可開 PR、檢查未通過會送一次通知（走 Claude Code 的通知管道）。
+- **通知**：等你、流程暫停、可開 PR、檢查未通過會送一次通知（走 Claude Code 的通知管道）。
 - **新版本**：每 24 小時查一次 GitHub 上有沒有新的 desk（時間記在本機，重開也算），有就在面板與摘要列顯示「有新版本 x.y.z」，同一版只在「最近」記一筆；只提示、不安裝，查不到就不出聲。專案 `dispatch.json` 設 `"updateCheck": "off"` 關掉。
 
 ## desk 會寫什麼
 
 - 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在案子根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞要求 Agent 不 push、不開 PR、不碰正式環境、不啟動容器。
+- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞要求 Agent 不 push、不開 PR、不碰正式環境、不啟動容器。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push，也不自動重新啟動 Claude Code。
 - 不會 push、不會開或合併 PR、不會部署。
 
@@ -165,7 +165,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 | 選項 | 預設 | 作用 |
 |---|---|---|
-| `registryPath` | 空白 | 案子登錄表：每列 `\| 案名 \| \`卡片路徑\` \|`。空白＝目前專案的 `projects-scope.md`；填了就每個專案都讀這一份 |
+| `registryPath` | 空白 | 任務登錄表：每列 `\| 任務名 \| \`卡片路徑\` \|`。空白＝目前專案的 `projects-scope.md`；填了就每個專案都讀這一份 |
 | `dispatchSettingsPath` | `~/.claude/handoffs/dispatch.json` | 全域派工設定；目前專案的 `dispatch.json` 疊在上面（見下） |
 | `refreshSeconds` | `30` | 重讀間隔（10–600） |
 | `bitbucketServer` | `bitbucket` | Bitbucket 的 repo 讀 PR 與 CI 的 MCP 伺服器名稱（GitHub 用 `gh`，不用設定） |
@@ -181,14 +181,14 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 | 檔案 | 作用 |
 |---|---|
-| `projects-scope.md` | 這個專案的案子登錄表 |
+| `projects-scope.md` | 這個專案的任務登錄表 |
 | `dispatch.json` | 專案設定，疊在全域 `dispatch.json` 上：頂層同名鍵整個以專案的為準 |
 | `review-pitfalls.md`、`reviews/` | 常犯錯誤清單與審查存底 |
 | `archive/` | `/desk:card archive` 的歸檔 |
 
 專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
 
-不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，不會列出別的專案的案子。共用的設定（`model`、`effort`、`sync`、`user`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，不會列出別的專案的任務。共用的設定（`model`、`effort`、`sync`、`user`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
@@ -221,7 +221,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 | 鍵 | 作用 |
 |---|---|
-| `model`／`effort`、`projects.<根目錄>` | 派工用的模型與 effort，案子可以覆寫 |
+| `model`／`effort`、`projects.<根目錄>` | 派工用的模型與 effort，任務可以覆寫 |
 | `sync` | 同步用的模型；`session: fresh` 每次開新對話 |
 | `user` | 寫進提示詞與卡片的人名（預設「使用者」） |
 | `rules`、`projects.<根目錄>.rules` | 每次派工都附上的專案規則 |

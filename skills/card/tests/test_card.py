@@ -71,7 +71,7 @@ class CardScriptTest(unittest.TestCase):
         git('remote', 'add', 'origin', self.origin, cwd=self.main)
         git('push', '-q', 'origin', 'main', cwd=self.main)
         self.reg = os.path.join(t, 'registry.md')
-        write(self.reg, '# 登錄\n\n| 案名 | 卡片 |\n| --- | --- |\n')
+        write(self.reg, '# 登錄\n\n| 任務名 | 卡片 |\n| --- | --- |\n')
         self.settings = os.path.join(t, 'dispatch.json')
         self.write_settings({})
 
@@ -116,6 +116,20 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('/desk:card spec order-export', r.stdout)
         # 同一個分支再開一次要拒絕
         self.assertNotEqual(self.run_card('new', 'feature/order-export', '訂單匯出').returncode, 0)
+
+    def test_new_fills_card_name_when_custom_template_uses_legacy_placeholder(self):
+        """0.24.0 以前的自訂模板（card.template）卡名佔位是舊的寫法，開卡時照樣換成卡名。"""
+        legacy = '<案名>'  # LEGACY_NAME_SLOT：0.24.0 以前模板的卡名佔位
+        tpl = os.path.join(self.t, 'old-template.md')
+        write(tpl, read(TEMPLATE).replace('<任務名>', legacy))
+        self.write_settings({'card': {'template': tpl}})
+
+        r = self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        card = read(self.card_path())
+        self.assertIn('# 訂單匯出 DESK', card)
+        self.assertNotIn(legacy, card)
 
     def test_project_comes_from_the_repo_and_worktrees_share_it(self):
         # 全域設定只有人名；主 repo 寫在專案的 dispatch.json，登錄表還不存在

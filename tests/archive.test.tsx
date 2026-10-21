@@ -16,7 +16,7 @@ const archiveRuns = (data: any) => data.processCalls.filter((c: any) => c.argv.i
 /** 只留 Beta 一件；預設六段全過：已合併、v0.19.0 已打、關卡不是 release。 */
 function only(data: any, gate = PASSED, extra: Record<string, unknown> = { tag: 'v0.19.0' }) {
   data.agents = []
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', gate)
   data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', ...extra }
   data.gh = PR_MERGED
@@ -34,7 +34,7 @@ function scriptOk(data: any) {
   data.run = async (e: any) => {
     if (!e.argv.includes('archive')) return result(0, '')
     data.files[ARCHIVED] = data.files[CARD_B]!
-    data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Gamma | \`${CARD_C}\` |\n\n## 已歸檔的卡（worktree 刪除後，卡片留存供查閱）\n\n- beta：2030-01-05 歸檔；卡片在 \`${ARCHIVED}\``
+    data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Gamma | \`${CARD_C}\` |\n\n## 已歸檔的卡（worktree 刪除後，卡片留存供查閱）\n\n- beta：2030-01-05 歸檔；卡片在 \`${ARCHIVED}\``
     return result(0, `歸檔完成：${PROJECT_DIR}/archive（登錄表移除 1 列）\nworktree 與分支請自己確認後再刪：\n  git -C /home/u/shop worktree remove ${BETA}\n`)
   }
 }
@@ -42,7 +42,7 @@ function scriptOk(data: any) {
 async function mountBeta($: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
-  // 完成的案子不搶「現在」，點它的列看詳情
+  // 完成的任務不搶「現在」，點它的列看詳情
   await ui.press({ key: `row-${CARD_B}` })
   return ui
 }
@@ -65,7 +65,7 @@ test('a done case offers an archive button with no hotkey', async ($, on) => {
 test('pressing archive twice archives the case like /desk:card archive and keeps the worktree', async ($, on) => {
   const { data, clock } = fixture(on)
   only(data)
-  // 登錄表還有別的案子（Gamma 閒置）：歸檔後面板照常顯示「最近」
+  // 登錄表還有別的任務（Gamma 閒置）：歸檔後面板照常顯示「最近」
   data.files[REGISTRY] += `\n| Gamma | \`${CARD_C}\` |`
   scriptOk(data)
   const all = recordAll(data)
@@ -79,7 +79,7 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
 
   await ui.press({ key: KEY })
   await clock.settle()
-  // 跑的是 /desk:card archive <slug> 用的那支腳本，在案子的 worktree 裡
+  // 跑的是 /desk:card archive <slug> 用的那支腳本，在任務的 worktree 裡
   const run = archiveRuns(data)
   expect(run).toHaveLength(1)
   expect(run[0].argv[0]).toBe('python3')
@@ -111,7 +111,7 @@ test('a failed archive shows the error and keeps the case', async ($, on) => {
   only(data)
   data.run = async (e: any) => e.argv.includes('archive')
     // card.py 真的會印的格式：原因在第一行，後面接整份登錄表
-    ? result(1, '', '找不到唯一的案子「beta」（符合 0 件）。登錄表裡有：\n  Alpha  (/home/u/wt/alpha/.desk/CARD.md)\n  Gamma  (/home/u/wt/gamma/.desk/CARD.md)\n')
+    ? result(1, '', '找不到唯一的任務「beta」（符合 0 件）。登錄表裡有：\n  Alpha  (/home/u/wt/alpha/.desk/CARD.md)\n  Gamma  (/home/u/wt/gamma/.desk/CARD.md)\n')
     : result(0, '')
   const ui = await mountBeta($)
   const registry = data.files[REGISTRY]
@@ -119,7 +119,7 @@ test('a failed archive shows the error and keeps the case', async ($, on) => {
   await ui.press({ key: KEY })
   await clock.settle()
   expect(archiveRuns(data)).toHaveLength(1)
-  expect(data.toasts.some(t => t.includes('歸檔失敗') && t.includes('找不到唯一的案子「beta」'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('歸檔失敗') && t.includes('找不到唯一的任務「beta」'))).toBe(true)
   expect(data.toasts.some(t => t.includes('歸檔失敗') && t.includes('Gamma'))).toBe(false)
   const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 歸檔失敗/.test(n.text) && n.props?.color === 'error')
   expect(feed).toBeDefined()
@@ -167,14 +167,14 @@ test('no archive button before the case is done or on tutorial and sample cases'
   await noArchive(ui)
   await ui.unmount()
 
-  // 示範案子：完成了也不提供
+  // 示範任務：完成了也不提供
   const demo: any = { demo: true, state: 'done', git: { branch: 'feature/x' }, pipeline: { current: null, stages: [], note: '' } }
   expect(canArchive(demo)).toBe(false)
   expect(stageActions(demo).has('archive')).toBe(false)
   expect(canArchive({ ...demo, demo: false })).toBe(true)
   expect(stageActions({ ...demo, demo: false }).has('archive')).toBe(true)
   expect(stageActions({ ...demo, demo: false }, { tutorial: true }).has('archive')).toBe(false)
-  // 發版線本身不算一件要歸檔的案子
+  // 發版線本身不算一件要歸檔的任務
   expect(canArchive({ ...demo, demo: false, git: { branch: 'release/v1.4' } })).toBe(false)
 
   // 教學那件走完六段（已上線確認）：也沒有歸檔按鈕

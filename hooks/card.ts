@@ -11,7 +11,7 @@ export const expandHome = (path: string, home: string) => path.replace(/^~(?=\/|
 
 const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim().replace(/`/g, ''))
 
-/** 登錄表：任何一列 `| 案名 | \`路徑\` |` 都算；標題列有 Executor 欄時，該欄寫 manual 的案子不派工。 */
+/** 登錄表：任何一列 `| 任務名 | \`路徑\` |` 都算；標題列有 Executor 欄時，該欄寫 manual 的任務不派工。 */
 export function parseRegistry(text: string, home: string): RegistryRow[] {
   const rows: RegistryRow[] = []
   let executorCol = -1
@@ -130,16 +130,16 @@ export function decisionAnswer(decisions: Decision[], picks: Record<string, stri
 export const allPicked = (decisions: Decision[], picks: Record<string, string>) =>
   decisions.length > 0 && decisions.every((d, i) => d.options.length === 0 || !!picks[String(i)])
 
-/** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件案子的決策。 */
+/** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件任務的決策。 */
 export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`
 
-/** 送出的提示是不是某件案子的決策（以「「案名」決策：」開頭）：回傳案名，不是就 null。 */
+/** 送出的提示是不是某件任務的決策（以「「任務名」決策：」開頭）：回傳任務名，不是就 null。 */
 export function decisionName(text: string): string | null {
   const m = String(text ?? '').match(/^\s*「(.+?)」決策：/)
   return m ? m[1]! : null
 }
 
-/** 案子根目錄：卡片所在資料夾；資料夾名以 `.` 開頭（.desk、.console）就再上一層。 */
+/** 任務根目錄：卡片所在資料夾；資料夾名以 `.` 開頭（.desk、.console）就再上一層。 */
 export function projectRoot(statusPath: string): string {
   const parts = statusPath.replace(/\\/g, '/').split('/')
   parts.pop()

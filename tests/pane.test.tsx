@@ -74,7 +74,7 @@ test('a declined verify runs nothing', async ($, on) => {
   await ui.unmount()
 })
 
-/** 選了案子之後，每次送出都以它為主：卡片沒變只附一句提醒，變了附全文；再點案名才取消。 */
+/** 選了任務之後，每次送出都以它為主：卡片沒變只附一句提醒，變了附全文；再點任務名才取消。 */
 test('a selected case stays the subject of every prompt until its name is clicked again', async ($, on) => {
   const { data } = fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -85,12 +85,12 @@ test('a selected case stays the subject of every prompt until its name is clicke
   const seen = data.submitted
 
   await $.prompt.submit({ text: '請看一下' } as any)
-  expect(seen[0].context?.[0]).toContain('案子「Beta」')
+  expect(seen[0].context?.[0]).toContain('任務「Beta」')
   expect(seen[0].context?.[0]).toContain('預設以它為主')
   expect(seen[0].context?.[0]).toContain('- 下一步：依審核修正')
 
   await $.prompt.submit({ text: '再一次' } as any)
-  expect(seen[1].context?.[0]).toContain('案子「Beta」')
+  expect(seen[1].context?.[0]).toContain('任務「Beta」')
   expect(seen[1].context?.[0]).toContain('沒有變動')
   expect(seen[1].context?.[0]).not.toContain('- 下一步')
 
@@ -110,7 +110,7 @@ test('a selected case that leaves the registry is no longer attached', async ($,
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: `row-${CARD_B}` })
-  data.files['/home/u/.claude/handoffs/shop/projects-scope.md'] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |`
+  data.files['/home/u/.claude/handoffs/shop/projects-scope.md'] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |`
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await $.prompt.submit({ text: 'Beta 歸檔了' } as any)
   expect(data.submitted[0].context ?? []).toEqual([])
@@ -217,7 +217,7 @@ test('an ask without options shows its text and offers no fill', async ($, on) =
   ASK(data, GH_LOGIN)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(100))
-  // 「▶ 輪到你」那句就是卡片上的原句，案子仍是等你。
+  // 「▶ 輪到你」那句就是卡片上的原句，任務仍是等你。
   expect(await ui.find({ type: 'Text', text: '▶ 輪到你  ' })).toBeDefined()
   expect(await shows(ui, 'gh auth login', '好了說一聲')).toBe(true)
   expect(await ui.find({ type: 'Text', text: '  等你' })).toBeDefined()

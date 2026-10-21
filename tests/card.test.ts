@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { parseRegistry, parseCard, parseDecisions, pickByDigit, unpick, decisionAnswer, allPicked, parseGate, verifyCommand, projectRoot, splitClauses, saysNone } from '../hooks/card'
 
 test('registry rows are any table line with a name and a backticked path; ~ expands', () => {
-  const text = `# 登錄\n\n## 案子\n| Project | STATUS path | Scope |\n| --- | --- | --- |\n| 主工作區 | \`~/Workspace/app/.desk/CARD.md\` | 發版 |\n| 會員登入 | \`/abs/wt/.console/STATUS.md\` | |\n\n文字 | 不是列 |`
+  const text = `# 登錄\n\n## 任務\n| Project | STATUS path | Scope |\n| --- | --- | --- |\n| 主工作區 | \`~/Workspace/app/.desk/CARD.md\` | 發版 |\n| 會員登入 | \`/abs/wt/.console/STATUS.md\` | |\n\n文字 | 不是列 |`
   expect(parseRegistry(text, '/home/u')).toEqual([
     { name: '主工作區', statusPath: '/home/u/Workspace/app/.desk/CARD.md' },
     { name: '會員登入', statusPath: '/abs/wt/.console/STATUS.md' },

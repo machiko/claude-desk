@@ -45,7 +45,7 @@ export async function saveTutorial($: any) {
   await $.store.set(TUTORIAL_KEY, tutorial).catch(() => {})
 }
 
-/** 教學的派工：不啟動 claude，由腳本在 SIM_MS 後「做完」。回傳的樣子跟真的派工一樣，接力照常記錄。 */
+/** 教學的派工：不啟動 claude，由腳本在 SIM_MS 後「做完」。回傳的樣子跟真的派工一樣，流程照常記錄。 */
 export function startSim($: any, options: PluginOptions, c: Case, kind: DispatchKind, name: string, now: number, opts: { fix?: FixReason }) {
   const reviews = tutorial?.reviews ?? 0
   const work: SimWork = kind === 'review' ? (reviews === 0 ? 'review-1' : reviews === 1 ? 'review-2' : 'review-3') : kind === 'sync' ? 'sync' : opts.fix || reviews > 0 ? 'fix' : 'build'
@@ -55,7 +55,7 @@ export function startSim($: any, options: PluginOptions, c: Case, kind: Dispatch
 }
 
 /**
- * 模擬的 Agent 或審查做完：改程式並 commit、寫審查檔、寫回卡片，然後重讀讓接力往下走。
+ * 模擬的 Agent 或審查做完：改程式並 commit、寫審查檔、寫回卡片，然後重讀讓流程往下走。
  * 收尾期間模擬仍算「工作中」（refresh 不會以為它結束了）；每一步之後確認這一輪還有效（教學沒有結束、沒有被新的一輪取代）。
  */
 export async function finishSim($: any, options: PluginOptions) {
@@ -92,14 +92,14 @@ export async function finishSim($: any, options: PluginOptions) {
     if (sim?.token === job.token) sim = null
   }
   if (!tutorial) return
-  // 正在跑的那一次 refresh 是寫檔前讀的；等它結束再讀一次，接力才看得到新的卡片。
+  // 正在跑的那一次 refresh 是寫檔前讀的；等它結束再讀一次，流程才看得到新的卡片。
   if (refreshing) await refreshing
   await refresh($, options)
 }
 
 /**
  * 重新載入後接著教：沙盒被刪了就結束教學；上一輪模擬還沒做完（派工紀錄未處理、沒有在跑的模擬）就重新排上，
- * 不然接力會以為 Agent 做完了，拿舊的程式跑檢查。
+ * 不然流程會以為 Agent 做完了，拿舊的程式跑檢查。
  */
 export async function resumeTutorial($: any, options: PluginOptions) {
   if (!tutorial) return
@@ -111,7 +111,7 @@ export async function resumeTutorial($: any, options: PluginOptions) {
   startSim($, options, { root: p.wt, statusPath: p.card } as Case, last.kind, last.launchName, await $.clock.now(), fix ? { fix } : {})
 }
 
-/** 教學的決策：直接寫回卡片，不送到主對話；選 C（現在改）就扮演主對話改程式並 commit，接力會看到新 commit 而重新檢查、審查。 */
+/** 教學的決策：直接寫回卡片，不送到主對話；選 C（現在改）就扮演主對話改程式並 commit，流程會看到新 commit 而重新檢查、審查。 */
 export async function tutorialDecision($: any, c: Case, answer: string) {
   const text = await $.fs.read(c.statusPath).catch(() => null)
   if (typeof text !== 'string') { $.ui.toast('教學卡片讀不到；輸入 /desk tutorial end 後重新開始'); return }
@@ -124,7 +124,7 @@ export async function tutorialDecision($: any, c: Case, answer: string) {
   }
   await $.fs.write(c.statusPath, cardAfterDecision(text, answer, day, (await loadSettings($, optionsRef!)).user))
   $.ui.toast(answer === 'C'
-    ? '已改程式並 commit（實際使用時由主對話照你的決定改）。審查後有新 commit，接力會自動重新檢查、審查。'
+    ? '已改程式並 commit（實際使用時由主對話照你的決定改）。審查後有新 commit，流程會自動重新檢查、審查。'
     : `已寫回卡片：${answer}。實際使用時這一步會填入輸入框，按 Enter 送給主對話。`, { timeoutMs: 8000 })
   await refresh($, optionsRef!)
 }
@@ -191,7 +191,7 @@ async function clearView($: any, pick: string | null) {
   await update($, contentOffset, () => 0)
 }
 
-/** 結束教學：停掉模擬、刪沙盒（只刪 ~/.claude/desk-tutorial）、清掉它留下的接力紀錄，面板切回你的案子。 */
+/** 結束教學：停掉模擬、刪沙盒（只刪 ~/.claude/desk-tutorial）、清掉它留下的流程紀錄，面板切回你的任務。 */
 export async function tutorialEnd($: any, options: PluginOptions): Promise<string> {
   sim?.timer?.cancel(); sim = null
   const p = tutorialPaths(await home($))
@@ -213,10 +213,10 @@ export async function tutorialEnd($: any, options: PluginOptions): Promise<strin
   await clearView($, null)
   await refresh($, options)
   if (!existed) return '目前沒有教學沙盒。'
-  return removed ? '教學已結束，沙盒已刪除；面板回到你的案子。' : `教學已結束，但沙盒刪不掉，請自己刪除 ${p.dir}`
+  return removed ? '教學已結束，沙盒已刪除；面板回到你的任務。' : `教學已結束，但沙盒刪不掉，請自己刪除 ${p.dir}`
 }
 
-/** 一件案子在 desk 自己 store 裡的紀錄（派工、接力、檢查結果）全部清掉。 */
+/** 一件任務在 desk 自己 store 裡的紀錄（派工、流程、檢查結果）全部清掉。 */
 export async function forgetRoot($: any, root: string, statusPath: string) {
   const key = normalizeRoot(root)
   const jobs = await loadJobs($)

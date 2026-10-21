@@ -132,7 +132,7 @@ test('risk is not cached when no base could be found', async () => {
   expect((await riskOf($, c)).level).toBe('high')
 })
 
-/** 一張 GitHub 案子、PR 開著且 CI 跑中；gh 之後可以改成失敗。 */
+/** 一張 GitHub 任務、PR 開著且 CI 跑中；gh 之後可以改成失敗。 */
 function githubCase(data: any) {
   data.agents = []
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', PASSED)

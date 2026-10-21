@@ -7,10 +7,10 @@
 
 用法：
   card.py new <分支> <卡名> [base]             從主 repo 建 worktree（資料夾名取分支最後一段）、DESK 卡、登錄表列
-  card.py card <slug|案名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
-  card.py spec-init <slug|案名|main>           沒有「## 規格」就插入模板的空白規格段
-  card.py gate <slug|案名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
-  card.py spec-ok <slug|案名|main>             關卡是 spec：… 才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
+  card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
+  card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
+  card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
+  card.py spec-ok <slug|任務名|main>             關卡是 spec：… 才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
   card.py archive <slug>                       卡與審查檔複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
 
 設定讀 desk 的全域 dispatch.json（環境變數 DESK_SETTINGS 可指定別的路徑），再疊上目前專案的
@@ -21,7 +21,7 @@
   card.worktrees  worktree 放哪（預設主 repo 旁邊的 <名稱>-worktrees）
   card.base       new 沒給 base 時從哪裡切（預設 origin/main）
   card.check      new 之後建議的完成檢查，{slug} 會換成資料夾名
-  card.registry   案子登錄表（預設專案資料夾裡的 projects-scope.md；new 時不存在就建一份）
+  card.registry   任務登錄表（預設專案資料夾裡的 projects-scope.md；new 時不存在就建一份）
   card.template   DESK 卡模板（預設 plugin 內附的 templates/DESK-template.md）
   card.archive    歸檔資料夾（預設登錄表旁邊的 archive/）
   card.specRules  寫規格時要額外遵守的專案規則（字串陣列）
@@ -118,7 +118,7 @@ def need_registry():
 def registry_rows():
     need_registry()
     if not os.path.isfile(REG):
-        fail(f'找不到案子登錄表：{REG}（用 {CMD} new 開第一張卡會自動建立，或在 dispatch.json 的 card.registry 指定）')
+        fail(f'找不到任務登錄表：{REG}（用 {CMD} new 開第一張卡會自動建立，或在 dispatch.json 的 card.registry 指定）')
     rows = []
     for line in read(REG).split('\n'):
         m = re.match(r'^\|\s*([^|]+?)\s*\|\s*`([^`]+)`', line)
@@ -128,7 +128,7 @@ def registry_rows():
 
 
 def resolve(arg):
-    """slug（worktree 資料夾名）、案名（完整或唯一部分）或 main。"""
+    """slug（worktree 資料夾名）、任務名（完整或唯一部分）或 main。"""
     rows = registry_rows()
     if arg == 'main':
         if not MAIN:
@@ -138,7 +138,7 @@ def resolve(arg):
         hits = [r for r in rows if f'/{arg}/' in r[1]] or [r for r in rows if r[0] == arg] or [r for r in rows if arg in r[0]]
     if len(hits) != 1:
         names = '\n'.join(f'  {n}  ({p})' for n, p in rows)
-        fail(f'找不到唯一的案子「{arg}」（符合 {len(hits)} 件）。登錄表裡有：\n{names}')
+        fail(f'找不到唯一的任務「{arg}」（符合 {len(hits)} 件）。登錄表裡有：\n{names}')
     name, path = hits[0]
     if not os.path.isfile(path):
         fail(f'卡片不存在：{path}')
@@ -264,7 +264,9 @@ def insert_registry_row(row):
     write(REG, '\n'.join(lines))
 
 
-REGISTRY_TEMPLATE = '# 案子登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
+REGISTRY_TEMPLATE = '# 任務登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
+NAME_SLOT = '<任務名>'
+LEGACY_NAME_SLOT = '<案名>'  # 0.24.0 以前模板的卡名佔位：自訂模板（card.template）可能還寫著它
 
 
 def cmd_new(branch, name, base=None):
@@ -288,7 +290,7 @@ def cmd_new(branch, name, base=None):
     os.makedirs(os.path.join(wt, '.desk'), exist_ok=True)
     os.makedirs(os.path.join(wt, '.task'), exist_ok=True)
     card = os.path.join(wt, '.desk', 'CARD.md')
-    write(card, read(TPL).replace('<案名>', name))
+    write(card, read(TPL).replace(NAME_SLOT, name).replace(LEGACY_NAME_SLOT, name))
     exclude = git('-C', MAIN, 'rev-parse', '--git-path', 'info/exclude').stdout.strip()
     exclude = exclude if os.path.isabs(exclude) else os.path.join(MAIN, exclude)
     current = read(exclude) if os.path.isfile(exclude) else ''

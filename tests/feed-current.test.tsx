@@ -11,7 +11,7 @@ const kase = (statusPath: string) => ({ statusPath }) as Case
 
 /** Alpha、Beta 兩件；都沒有等你、沒有 Agent，誰被選取誰就是現在這件。 */
 function twoCases(data: any) {
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '無' })
   data.agents = []
   data.gh = []
@@ -99,7 +99,7 @@ test('a case removed from the registry leaves nothing behind in the recent feed'
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   expect(gamma()).toBeGreaterThan(0)
   // Gamma 離開登錄表（歸檔、或換了專案）。
-  data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   if (await ui.find({ key: `row-${CARD_A}` })) await ui.press({ key: `row-${CARD_A}` })

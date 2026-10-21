@@ -1,4 +1,4 @@
-// 自動接力：實作做完 → 自動檢查 → 綠了自動審查 → 有 CRITICAL／HIGH 自動修正，修正最多兩輪，碰不到合併與上線。
+// 自動流程：實作做完 → 自動檢查 → 綠了自動審查 → 有 CRITICAL／HIGH 自動修正，修正最多兩輪，碰不到合併與上線。
 // 純函式：給它上一次派工、檢查結果、審查結論，它說下一步做什麼。
 import type { ReviewVerdict } from '../types'
 import type { DispatchKind } from './dispatch'
@@ -52,7 +52,7 @@ export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: b
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
- * 接力只在 `run` 存在、沒停下、沒過關時動。
+ * 流程只在 `run` 存在、沒停下、沒過關時動。
  */
 export function nextStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext = {}): ChainStep {
   if (!run || run.stopped || run.passed || !finished) return null
