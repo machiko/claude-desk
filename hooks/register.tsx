@@ -14,8 +14,9 @@ import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
-import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, movedSince, parseVerdict, pipeline } from './pipeline'
-import { nextStep, paused } from './chain'
+import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
+import { judgedAt, nextStep, paused, seenHeads } from './chain'
+import { approveCheck, trustedChecks } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
 import type { ChainRun, ChainStep } from './chain'
@@ -133,7 +134,9 @@ export async function refresh($: any, options: PluginOptions) {
       // 合併段、沒有已合併的 PR：問 git 分支 HEAD 是不是已經在基準分支裡（GitLab、沒裝 gh、本機合併都靠這個）。
       // 審查後又有 commit 的（六段退回檢查）也要問：可能是改完直接合併了。
       const atMerge = !tutorial && (stages(withState).current === 'merge' || !!withState.chain?.stale) && withState.pr?.state !== 'MERGED'
-      const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr) : undefined
+      // 分叉點路徑只認工作桌在這條分支看過的 HEAD（審查時、判定時的 HEAD，且記下的分支是現在的分支）。
+      const seen = seenHeads(run, probe.git?.branch)
+      const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr, seen) : undefined
       const merged = into ? { ...withState, mergedInto: into } : withState
       const piped = { ...merged, ...(short ? { statusShort: short } : {}), pipeline: stages(merged) }
       return { ...piped, state: finalState(piped) }
@@ -252,7 +255,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     // 被停掉的審查沒寫完：不歸檔、不算判過。
     if (finished === 'review' && !stoppedAgent && planned.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
     // 這次審查看的是派審查時的 HEAD；之後有新 commit，結論就不算數。
-    if (finished === 'review' && !stoppedAgent) await saveChain($, key, r => r ? { ...r, judgedHead: (last.security ? r.securityHead : r.reviewHead) ?? c.git?.head ?? r.judgedHead } : r)
+    if (finished === 'review' && !stoppedAgent) await saveChain($, key, r => r ? { ...r, ...judgedAt(r, !!last.security, c.git) } : r)
     if (planned.kind === 'verify') { void runVerify($, c, true); continue }
     await markHandled()
     // 要派下一步之前先看 worktree：有不是上一個 Agent 留下的未提交改動（別的對話在改），停下來說原因，不派。
@@ -265,7 +268,8 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       notify($, `${c.name}：流程已暫停，${step.reason}`)
     } else if (step.kind === 'pass') {
       const judged = step.skipped ? fresh?.head ?? c.git?.head : undefined
-      await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(judged ? { judgedHead: judged } : {}) } : r)
+      // 免審查過關：判定的 HEAD 是檢查時的；跟現在的 HEAD 一樣才記得住它的分支。
+      await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(judged ? { judgedHead: judged, judgedBranch: judged === c.git?.head ? c.git?.branch : undefined } : {}) } : r)
       const text = step.needsHuman ? `${c.name} ${step.needsHuman}` : step.skipped ? `${c.name} 只動文件、檢查通過，免審查，可開 PR` : `${c.name} 審查通過，可開 PR`
       await feedPush($, [{ at: s.at, text, tone: step.needsHuman ? 'warning' : 'success', card: c.statusPath }])
       const say = step.needsHuman ? `${c.name}：${step.needsHuman}` : step.skipped ? `${c.name}：只動文件，免審查，可以開 PR` : `${c.name}：審查通過，可以開 PR`
@@ -287,7 +291,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
  * 派審查前照樣拿上一個程式 Agent 結束時的指紋比對。
  */
 async function recheck($: any, key: string, run: ChainRun, last: JobRecord | undefined, owner: string, now: number) {
-  await saveChain($, key, () => ({ owner, startedAt: now, round: 0, recheck: true, ...(run.reviewHead ? { reviewHead: run.reviewHead } : {}), ...(run.judgedHead ? { judgedHead: run.judgedHead } : {}) }))
+  await saveChain($, key, () => ({ owner, startedAt: now, round: 0, recheck: true, ...(run.reviewHead ? { reviewHead: run.reviewHead, ...(run.reviewBranch ? { reviewBranch: run.reviewBranch } : {}) } : {}), ...(run.judgedHead ? { judgedHead: run.judgedHead, ...(run.judgedBranch ? { judgedBranch: run.judgedBranch } : {}) } : {}) }))
   const all = await loadJobs($)
   const record: JobRecord = { launchName: last?.launchName ?? 'recheck', nativeId: last?.nativeId ?? 'recheck', sessionId: last?.sessionId ?? '', kind: 'continue', startedAt: now, fresh: false, answered: true, owner, recheck: true, ended: { how: 'finished' } }
   await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: record } })
@@ -368,11 +372,6 @@ let checking: string | null = null
 const isQueued = (statusPath: string) => checkQueue.some(q => q.statusPath === statusPath)
 /** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，流程派審查的那一刻六段不退回實作。 */
 let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
-
-/** 這個對話核准過的完成檢查：卡片路徑 → 指令全文。 */
-async function trustedChecks($: any): Promise<Record<string, string>> {
-  return ((await $.store.get(TRUST_KEY).catch(() => null)) as Record<string, string> | null) ?? {}
-}
 
 /** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒核准、按了取消、已經在跑或在排）是 false。 */
 async function runVerify($: any, c: Case, auto = false, fromQueue = false): Promise<boolean> {
@@ -538,7 +537,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   const now = await $.clock.now()
   const name = launchName(now, launchSeq++)
   let review: ReviewOpts | undefined
-  const head = kind === 'review' ? (await gitProbe($, c.root)).git?.head : undefined
+  const probed = kind === 'review' ? (await gitProbe($, c.root)).git : undefined
   if (kind === 'review') {
     const run = (await loadChains($))[rootKey]
     const round = opts.auto ? run?.round ?? 0 : 0
@@ -561,8 +560,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name })
     const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。
-    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead } : {}) }))
-    if (kind === 'review' && head) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: head } : { reviewHead: head }) } : r)
+    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
+    // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。
+    if (kind === 'review' && probed) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: probed.head, securityBranch: probed.branch } : { reviewHead: probed.head, reviewBranch: probed.branch }) } : r)
     const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
@@ -581,22 +581,6 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   }
 }
 
-const APPROVE = '核准並派工'
-
-/**
- * 按 g 開始一輪流程：這張卡的完成檢查還沒核准過（或指令改過），先問；做完實作會自動執行它，流程不用停下等你按 v。
- * 回傳能不能派：核准或早就核准過是 true；取消或關掉對話框是 false，什麼都不記。
- */
-async function approveCheck($: any, c: Case): Promise<boolean> {
-  const trusted = await trustedChecks($)
-  if (!c.verify || trusted[c.statusPath] === c.verify) return true
-  const answer = await $.ui.ask(`在 ${c.root} 派實作。做完會自動執行這條完成檢查：\n${c.verify}\n核准後這張卡同一條指令不再問；不核准就不派工。`, { header: `${c.name} 核准檢查`, options: [APPROVE, '取消'] }).catch(() => '')
-  if (answer !== APPROVE) return false
-  await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
-  return true
-}
-
-/** 系統通知（macOS 通知、手機）：同一句話這次載入只送一次，送不出去就算了。 */
 const notified = new Set<string>()
 function notify($: any, text: string) {
   if (!active || tutorial || notified.has(text)) return

@@ -20,14 +20,20 @@ export type ChainRun = {
   owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
   /** 上一次派審查時的 HEAD；修正後的複審只看這之後的 diff。 */
   reviewHead?: string
+  /** reviewHead 當時所在的分支；合併辨識只認「這條分支」看過的 HEAD，同一個資料夾換分支後不算。 */
+  reviewBranch?: string
   /** 上一次派資安審查時的 HEAD。 */
   securityHead?: string
+  /** securityHead 當時所在的分支。 */
+  securityBranch?: string
   /** 過關了但要你看過（高風險）；開了 PR 就算看過。 */
   needsHuman?: string
   /** 只動文件，跳過了審查。 */
   skippedReview?: boolean
   /** 最近一次審查（或免審查過關）判定的 HEAD；分支之後有新 commit，那次的結論就不算數。 */
   judgedHead?: string
+  /** judgedHead 當時所在的分支。 */
+  judgedBranch?: string
   /** 這一輪是審查通過後又有新 commit 而重新檢查、審查；複審只看 reviewHead 之後的 diff，不算修正輪數。 */
   recheck?: boolean
   /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：你排除後按 v 跑完檢查，流程接著走。 */
@@ -47,6 +53,26 @@ export type ChainStep =
 export function paused(run: ChainRun, reason: string, atCheck = false): ChainRun {
   const { heldAtCheck: _, ...rest } = run
   return { ...rest, stopped: reason, ...(atCheck ? { heldAtCheck: true } : {}) }
+}
+
+/**
+ * 審查結束：結論算在派審查時的 HEAD 與它所屬的分支；沒記到 HEAD 就用現在的；都沒有就沿用上一次判定的。
+ * 分支跟著 HEAD 的來源走，不混用：HEAD 來自舊紀錄（沒記分支）時，分支就是空的。
+ */
+export function judgedAt(run: ChainRun, security: boolean, git?: { branch: string; head: string }): Pick<ChainRun, 'judgedHead' | 'judgedBranch'> {
+  const [head, branch] = security ? [run.securityHead, run.securityBranch] : [run.reviewHead, run.reviewBranch]
+  if (head) return { judgedHead: head, judgedBranch: branch }
+  if (git?.head) return { judgedHead: git.head, judgedBranch: git.branch }
+  return { judgedHead: run.judgedHead, judgedBranch: run.judgedBranch }
+}
+
+/**
+ * 合併辨識的分叉點路徑只認工作桌在「這條分支」看過的 HEAD：流程紀錄的 reviewHead／judgedHead，且記下的分支就是現在的分支。
+ * 流程紀錄按資料夾記，同一個資料夾從上一條分支已審的 HEAD 開新分支時，那個 HEAD 不算這條分支看過的；沒記分支的舊紀錄一律不算（退回認不出，不誤判）。
+ */
+export function seenHeads(run: ChainRun | undefined, branch: string | undefined): string[] {
+  if (!run || !branch) return []
+  return [run.reviewBranch === branch ? run.reviewHead : undefined, run.judgedBranch === branch ? run.judgedHead : undefined].filter((h): h is string => !!h)
 }
 
 /** `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。 */
