@@ -113,7 +113,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
     case 'spec':
       if (gate?.kind === 'spec' && c.agent) return { who: 'ai', text: runningText(c) }
       if (gate?.kind === 'spec') return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
-      return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫規格與完成檢查` }
+      return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} ${c.specGap ? '寫驗收情境與實作計畫' : '寫規格與完成檢查'}` }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }

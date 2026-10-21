@@ -1,8 +1,8 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
 import { isReleaseLine } from './pipeline'
-import { named, parseGate } from './card'
-import { agentWaits } from './model'
+import { CARD_CMD, named, parseGate } from './card'
+import { agentWaits, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHORT_ID = /^[0-9a-f]{8}$/i
@@ -132,7 +132,7 @@ function cardRules(settings: DispatchSettings, root: string): string[] {
 }
 
 /** 會改程式的派工（繼續、回覆、修正）多這一條：照規格做，審查會逐條對照驗收情境。 */
-const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。卡片沒有規格段就照下一步做。'
+const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。有實作計畫時照「### 實作計畫」做，不用再停下來交計畫（規格確認時已一起確認）；實際改的檔跟計畫不同時在歷程寫明原因，要改範圍或做法寫進 等你。卡片沒有規格段就照下一步做。'
 
 export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
@@ -169,12 +169,17 @@ export function dispatchable(c: Case): DispatchKind[] {
   if (c.state === 'done') return ['sync']
   // 規格還沒確認（關卡 spec：…）：不派實作也不審查，只能同步。
   if (parseGate(c.gate)?.kind === 'spec') return ['sync']
+  // 規格段還是範本、六段停在規格段：一樣只能同步（已經審查過、合併、打 tag 的不擋）。
+  if (specBlocks(c)) return ['sync']
   const out: DispatchKind[] = []
   if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify) out.push('continue')
   if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
   out.push('sync')
   return out
 }
+
+/** 規格段認不到填好的 AC，而且六段停在規格段（沒算過六段的當作停在規格段）。 */
+const specBlocks = (c: Case) => !!c.specGap && (c.pipeline?.current ?? 'spec') === 'spec'
 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 const BUSY = 'Agent 仍在執行'
@@ -191,7 +196,7 @@ export function replyRefusal(c: Case): string {
 export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'reply') return replyRefusal(c)
   if (dispatchable(c).includes(kind)) return ''
-  return c.manual ? MANUAL : c.state === 'running' ? BUSY : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'
+  return c.manual ? MANUAL : c.state === 'running' ? BUSY : specBlocks(c) ? `規格沒有驗收情境：先輸入 ${CARD_CMD} spec ${slugOf(c)}` : !c.verify ? '卡片尚缺完成檢查，規格未通過' : '卡片狀態不符'
 }
 
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {

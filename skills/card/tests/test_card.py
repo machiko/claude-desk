@@ -101,6 +101,11 @@ class CardScriptTest(unittest.TestCase):
         s = s.replace('| AC-2 | | | | |', '| AC-2 | 一般會員 | 匯出訂單 | 403 | `export forbidden`（新） |')
         write(path, s)
 
+    def fill_plan(self, path):
+        s = read(path)
+        s = s.replace('| `<路徑>` | <改什麼、為什麼> |', '| `api/export.py` | 加 CSV 匯出與權限檢查 |')
+        write(path, s)
+
     def test_new_creates_worktree_card_registry_row_and_excludes(self):
         self.write_settings({'card': {'check': 'make test SLUG={slug}'}})
         r = self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
@@ -179,12 +184,36 @@ class CardScriptTest(unittest.TestCase):
         self.run_card('gate', 'order-export', 'spec：待確認規格')
         self.assertIn('沒有填好的驗收情境', self.run_card('spec-ok', 'order-export').stderr)
         self.fill_spec(card)
+        self.fill_plan(card)
         r = self.run_card('spec-ok', '訂單')
         self.assertEqual(r.returncode, 0, r.stderr)
         text = read(card)
         self.assertIn('- 關卡：無', text)
         self.assertIn('- 狀態：規格已確認（AC-1～AC-2），可派實作', text)
-        self.assertRegex(text, r'- D-02 \d{4}-\d{2}-\d{2} Alex：確認規格（AC-1～AC-2，共 2 條）')
+        self.assertRegex(text, r'- D-02 \d{4}-\d{2}-\d{2} Alex：確認規格（AC-1～AC-2，共 2 條）與實作計畫（1 項）')
+
+    def test_spec_ok_refuses_without_plan(self):
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        # 拿掉規格段，讓 spec-init 從模板插入空白規格段（含「### 實作計畫」範本）
+        s = read(card)
+        start, end = s.index('## 規格'), s.index('## Scope')
+        write(card, s[:start] + s[end:])
+        self.assertIn('已插入空白規格段', self.run_card('spec-init', 'order-export').stdout)
+        self.assertIn('### 實作計畫', read(card))
+        self.run_card('gate', 'order-export', 'spec：待確認規格（AC-1～AC-2）')
+        self.fill_spec(card)
+        before = read(card)
+        r = self.run_card('spec-ok', 'order-export')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('沒有實作計畫', r.stderr)
+        self.assertEqual(read(card), before)
+        self.fill_plan(card)
+        r = self.run_card('spec-ok', 'order-export')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 關卡：無', text)
+        self.assertRegex(text, r'- D-\d+ \d{4}-\d{2}-\d{2} \S+：確認規格（AC-1～AC-2，共 2 條）與實作計畫（1 項）')
 
     def test_old_card_gate_bumps_rev(self):
         os.makedirs(os.path.join(self.t, 'old', '.console'))

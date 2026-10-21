@@ -10,7 +10,7 @@
   card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
-  card.py spec-ok <slug|任務名|main>             關卡是 spec：… 才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
+  card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
   card.py archive <slug>                       卡與審查檔複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
 
 設定讀 desk 的全域 dispatch.json（環境變數 DESK_SETTINGS 可指定別的路徑），再疊上目前專案的
@@ -192,6 +192,21 @@ def filled_ac(text):
     return out
 
 
+def filled_plan(text):
+    """「### 實作計畫」表裡有內容的列（檔案、改什麼都不是空白或 <…> 佔位），回傳檔案欄。"""
+    m = re.search(r'^### 實作計畫\s*\n(.*?)(?=^##|\Z)', spec_section(text), re.M | re.S)
+    out = []
+    for line in (m.group(1) if m else '').split('\n'):
+        if not line.strip().startswith('|'):
+            continue
+        cells = [c.strip().strip('`').strip() for c in line.strip().strip('|').split('|')]
+        if len(cells) < 2 or cells[0] in ('', '檔案') or re.fullmatch(r':?-+:?', cells[0]):
+            continue
+        if not cells[0].startswith('<') and cells[1] and not cells[1].startswith('<'):
+            out.append(cells[0])
+    return out
+
+
 def git(*args, check=False):
     r = subprocess.run(['git', *args], capture_output=True, text=True, timeout=120)
     if check and r.returncode != 0:
@@ -366,12 +381,15 @@ def cmd_spec_ok(arg):
     ids = filled_ac(text)
     if not ids:
         fail('「## 規格」沒有填好的驗收情境，不能確認')
+    plan = filled_plan(text)
+    if not plan:
+        fail(f'「### 實作計畫」還沒填（改哪些檔、各改什麼），沒有實作計畫，不能確認；用 {CMD} spec 補上')
     span = f'{ids[0]}～{ids[-1]}' if len(ids) > 1 else ids[0]
     set_gate(path, '無', {'狀態': f'規格已確認（{span}），可派實作'})
     text = read(path)
     today = datetime.date.today().isoformat()
     n = len(re.findall(r'^- D-\d+', text, re.M)) + 1
-    text = append_line(text, '## Decisions', f'- D-{n:02d} {today} {USER}：確認規格（{span}，共 {len(ids)} 條）')
+    text = append_line(text, '## Decisions', f'- D-{n:02d} {today} {USER}：確認規格（{span}，共 {len(ids)} 條）與實作計畫（{len(plan)} 項）')
     text = append_line(text, '## History', f'- {today}：規格確認，關卡清為無，可派實作')
     write(path, text)
     print(f'規格已確認（{span}），關卡清為「無」：{path}')

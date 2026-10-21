@@ -100,6 +100,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
   // 審查後又有 commit（stale）再合併的也算：審查過、整個分支也進了基準分支。
   if (c.mergedInto && (reached === INDEX.review || stale)) reached = Math.max(reached, INDEX.merge)
+  // 規格段還是範本（認不到填好的 AC）：檢查結果、審查後的新 commit 都不能讓它跳過規格段；審查過、已合併、有 tag 的照舊。
+  if (c.specGap && reached < INDEX.review) reached = -1
   // 流程停住、檢查又沒通過過：卡片上的審查結論（例如 Agent 自己寫的）不能讓它跳過檢查段。已合併、已打 tag 的不管。
   const held = !!c.chain?.stopped && check !== true && !release && !tagged && c.pr?.state !== 'MERGED' && !c.mergedInto
   if (held && reached > INDEX.build) reached = INDEX.build
@@ -114,6 +116,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
       case 'spec':
         if (!saysNone(c.ask)) set('wait', '待你決定')
         else if (gate?.kind === 'spec') set('wait', '規格待確認')
+        else if (c.specGap) set('wait', '尚缺驗收情境')
         else set('wait', '尚缺完成檢查')
         break
       case 'build':
