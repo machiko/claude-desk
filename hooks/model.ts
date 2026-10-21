@@ -158,10 +158,10 @@ const isSuperseded = (a: any, last: Readonly<Record<string, LastLaunch>>): boole
  * 它們不再代表任務（狀態照卡片走）；回傳拿掉它們之後的清單，與被取代的那幾個（給工作桌停掉）。
  */
 export function supersede(list: readonly any[], last: Readonly<Record<string, LastLaunch>>): { list: any[]; superseded: Superseded[] } {
-  return {
-    list: list.filter(a => !isSuperseded(a, last)),
-    superseded: list.filter(a => isSuperseded(a, last)).map(a => ({ root: cwdOf(a), id: typeof a.id === 'string' ? a.id : '', name: plain(String(a.name)), startedAt: a.startedAt as number })),
-  }
+  // 一次分流，每個 Agent 只判斷一次。
+  return list.reduce<{ list: any[]; superseded: Superseded[] }>((acc, a) => isSuperseded(a, last)
+    ? { list: acc.list, superseded: [...acc.superseded, { root: cwdOf(a), id: typeof a.id === 'string' ? a.id : '', name: plain(String(a.name)), startedAt: a.startedAt as number }] }
+    : { list: [...acc.list, a], superseded: acc.superseded }, { list: [], superseded: [] })
 }
 
 export function agentInfo(a: any): AgentInfo {
