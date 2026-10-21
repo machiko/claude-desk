@@ -576,6 +576,15 @@ async function fillPrRequest($: any, options: PluginOptions, c: Case) {
   if (!filled.isFilled) $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入：${text}`)
 }
 
+/** 合併段 PR 已開後的「⇡ push」：只預填「push <分支>」，不自動送出；desk 自己不 push。有未提交的檔案時提醒只會推已 commit 的。 */
+async function fillPushRequest($: any, c: Case) {
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  const text = `push ${c.git?.branch ?? '分支'}`
+  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
+  if (!filled.isFilled) $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入：${text}`)
+  if (c.gitState?.changed) $.ui.toast(`${c.name}：有 ${c.gitState.changed} 檔未提交，只會 push 已 commit 的`)
+}
+
 async function fillDecision($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const decisions = parseDecisions(c.ask)
@@ -826,6 +835,7 @@ export const register: Register = (on, options) => {
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),
       openPr: c => void (c.pr?.url ? openPath($, c.pr.url, ' PR') : undefined),
       fillPr: c => void fillPrRequest($, options, c),
+      fillPush: c => void fillPushRequest($, c),
       next: () => void (async () => {
         const cur = await read($, snapshot)
         if (!cur) return

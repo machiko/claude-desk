@@ -350,7 +350,17 @@ export async function models($: any, options: PluginOptions, turnModel: { model?
 /** git status --porcelain=v2 --branch 的摘要；不是 git 資料夾就 undefined。 */
 export async function gitStatus($: any, root: string): Promise<GitState | undefined> {
   const out = await git($, root, ['status', '--porcelain=v2', '--branch'])
-  return out === null ? undefined : parseGitStatus(out)
+  if (out === null) return undefined
+  const st = parseGitStatus(out)
+  return st.upstream ? st : { ...st, ...(await originBranch($, root, out)) }
+}
+
+/** 沒設追蹤分支（card.py new 會取消追蹤；用 git push origin <分支> 推過也不會設）：照 origin 上的同名分支算領先、落後。 */
+async function originBranch($: any, root: string, status: string): Promise<Partial<GitState>> {
+  const branch = status.match(/^# branch\.head (.+)$/m)?.[1]
+  if (!branch || branch === '(detached)') return {}
+  const counts = (await git($, root, ['rev-list', '--left-right', '--count', `refs/remotes/origin/${branch}...HEAD`]))?.trim().match(/^(\d+)\s+(\d+)$/)
+  return counts ? { upstream: true, behind: Number(counts[1]), ahead: Number(counts[2]) } : {}
 }
 
 /** Agent 最近幾行有意義的輸出。 */
