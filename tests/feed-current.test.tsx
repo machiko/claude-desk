@@ -80,6 +80,10 @@ test('the recent feed shows only what happened to the case on the now card', asy
 
 test('a case removed from the registry leaves nothing behind in the recent feed', async ($, on) => {
   const { data } = fixture(on)
+  // 每次寫入「最近」的內容：不只看畫面，也看 refresh 有沒有真的把離桌那件的動態清掉。
+  let stored: FeedEvent[] = []
+  on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed') stored = e.value; return next(e) })
+  const gamma = () => stored.filter(e => e.card === CARD_C).length
   data.agents = []
   data.gh = []
   data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '無' })
@@ -93,6 +97,7 @@ test('a case removed from the registry leaves nothing behind in the recent feed'
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   data.files[CARD_C] = setFields(data.files[CARD_C]!, { 等你: '無', 關卡: 'release：待上線' })
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  expect(gamma()).toBeGreaterThan(0)
   // Gamma 離開登錄表（歸檔、或換了專案）。
   data.files[REGISTRY] = `## 案子\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -101,5 +106,7 @@ test('a case removed from the registry leaves nothing behind in the recent feed'
   const drawn = await screen(ui)
   expect(drawn).toContain(flat('Alpha 進入關卡'))
   expect(drawn).not.toContain(flat('Gamma'))
+  expect(gamma()).toBe(0)
+  expect(stored.some(e => e.card === CARD_A)).toBe(true)
   await ui.unmount()
 })
