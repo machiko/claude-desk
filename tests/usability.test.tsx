@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, BAND, CARD_A, CARD_B, NOW, result } from './fixture'
+import { AGENT_STOPPED } from '../hooks/chain'
 
 test('a dispatch confirm expires after 3 seconds', async ($, on) => {
   const { data, clock } = fixture(on)
@@ -33,7 +34,7 @@ test('stop asks twice and only stops the agent desk launched', async ($, on) => 
   await ui.press({ key: `case-${CARD_B}-stop` })
   await clock.settle()
   expect(stops).toEqual([['claude', 'stop', 'dddddddd']])
-  expect((data.store.chains as any)['/home/u/wt/beta'].stopped).toBe('你手動停止了 Agent')
+  expect((data.store.chains as any)['/home/u/wt/beta'].stopped).toBe(AGENT_STOPPED)
   await ui.unmount()
 })
 

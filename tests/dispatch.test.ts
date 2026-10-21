@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
+import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
 
@@ -195,4 +196,49 @@ test('sync prompt: no new facts means no History line and untouched fields', () 
   expect(p).toContain('歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實')
   expect(p).toContain('什麼都沒變就一個字都不寫、直接結束')
   expect(p).not.toContain('已同步')
+})
+
+// 工作桌與主對話撞同一個 worktree：Agent 要知道自己的名字；派工前分辨未提交改動是不是上一個 Agent 留下的。
+test('prompts tell the agent its own launch name', () => {
+  const c = mk('寫測試')
+  for (const p of [buildPrompt(c, 'continue', '', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'reply', '用 B', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'sync', '', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, undefined, 'desk-abc-1')]) {
+    expect(p).toContain('你的背景 Agent 名字是 desk-abc-1')
+    expect(p).toContain('清單裡這個名字就是你自己')
+  }
+  // 沒給名字（例如教學）就不寫這句；規則仍排在最後
+  expect(buildPrompt(c, 'continue')).not.toContain('你的背景 Agent 名字')
+  const s = parseSettings(JSON.stringify({ rules: ['測試只能用 make test'] }))
+  expect(buildPrompt(c, 'continue', '', undefined, undefined, s, 'desk-abc-1').endsWith('測試只能用 make test')).toBe(true)
+})
+
+test('worktree mark: clean, same or foreign leftovers', () => {
+  const FOREIGN = '不是上一個 Agent 留下的'
+  const clean = markOf('# branch.oid h1\n# branch.head x\n', '')
+  expect(clean).toEqual({ files: 0, hash: '' })
+  const two = markOf('# branch.oid h1\n1 .M N... 100644 100644 100644 a b x.ts\n? y.ts\n', 'diff --git a/x.ts b/x.ts\n+1')
+  expect(two.files).toBe(2)
+  expect(two.hash).toMatch(/^[0-9a-f]{8}$/)
+  // 同樣的狀態與 diff 指紋相同；內容不同就不同
+  expect(markOf('1 .M N... 100644 100644 100644 a b x.ts\n? y.ts\n', 'diff --git a/x.ts b/x.ts\n+1')).toEqual(two)
+  expect(markOf('1 .M N... 100644 100644 100644 a b x.ts\n? y.ts\n', 'diff --git a/x.ts b/x.ts\n+2').hash).not.toBe(two.hash)
+  const own = (last?: Partial<JobRecord>, mark?: string): RootJobs => ({ ...(last ? { last: { launchName: 'desk-1', nativeId: 'x', sessionId: 's', kind: 'continue' as const, startedAt: 0, fresh: false, ...last } } : {}), ...(mark !== undefined ? { mark } : {}) })
+  const refused = `worktree 有未提交的改動（2 個檔），${FOREIGN}；可能有別的對話在改，commit 或還原後再派`
+  // 乾淨：一律可派
+  expect(markRefusal(clean, undefined)).toBe('')
+  expect(markRefusal(clean, own({ ended: { how: 'finished' } }, 'ffffffff'))).toBe('')
+  // 從沒派過工、worktree 髒：拒絕
+  expect(markRefusal(two, undefined)).toBe(refused)
+  expect(markRefusal(two, {})).toBe(refused)
+  // 上一個會改程式的 Agent 還在（例如停在提問）：改動是它的
+  expect(markRefusal(two, own({}))).toBe('')
+  expect(markRefusal(two, own({ kind: 'reply' }))).toBe('')
+  // 它結束時留下的（指紋相同），做完或被停掉都一樣；之後只派過審查、同步也不影響
+  expect(markRefusal(two, own({ ended: { how: 'finished' } }, two.hash))).toBe('')
+  expect(markRefusal(two, own({ ended: { how: 'stopped' } }, two.hash))).toBe('')
+  expect(markRefusal(two, own({ kind: 'review', ended: { how: 'finished' } }, two.hash))).toBe('')
+  expect(markRefusal(two, own({ kind: 'sync', ended: { how: 'finished' } }, two.hash))).toBe('')
+  // 指紋不同、或只派過同步／審查而沒有指紋：別人改的
+  expect(markRefusal(two, own({ ended: { how: 'finished' } }, 'ffffffff'))).toBe(refused)
+  expect(markRefusal(two, own({ ended: { how: 'finished' } }, ''))).toBe(refused)
+  expect(markRefusal(two, own({ kind: 'sync', ended: { how: 'finished' } }))).toBe(refused)
 })

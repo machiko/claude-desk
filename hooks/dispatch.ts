@@ -41,8 +41,8 @@ export const DEFAULT_REVIEW: ReviewWords = {
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
 const strList = (v: unknown) => Array.isArray(v) ? v.map(str).filter(Boolean) : []
 /** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
-export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean }
-export type RootJobs = { sessionId?: string; last?: JobRecord }
+export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' } }
+export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string }
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
 export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆' }
@@ -145,7 +145,8 @@ export type ReviewOpts = { round: number; base?: string; /** 第一次審查的 
 
 export type FixReason = { from: 'check' | 'review'; round: number; tail?: string[] }
 
-export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null)): string {
+/** `self`：這次派出去的啟動名；Agent 查同一個 worktree 有沒有別的 Agent 時，才不會把自己當成別人。 */
+export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = ''): string {
   const head = fix ? (fix.from === 'check'
       ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
       : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
@@ -155,7 +156,8 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : `${named(settings.user).trimStart()}的回覆：${text}`
   const base = cardRules(settings, c.root)
   const rules = fix || kind === 'continue' || kind === 'reply' ? [SPEC_RULE, ...base] : base
-  return `${head}\n任務：${c.name}\n根目錄：${c.root}\n卡片：${c.statusPath}\n${rules.join('\n')}`
+  const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
+  return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
 }
 
 /** 下一步以 .task/review-… 開頭時，那個路徑。 */
@@ -235,4 +237,35 @@ function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): s
     ...(r?.pitfalls && r.history ? [`審完後看 ${r.history} 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 ${r.pitfalls} 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。`] : []),
     '不改程式、不 commit。',
   ].join('\n')
+}
+
+// 工作桌與主對話撞同一個 worktree：派工前分辨未提交的改動是不是上一個 Agent 留下的。
+/** worktree 未提交狀態的指紋：`files` 有幾個檔在 git status 裡，`hash` 是狀態與 diff 的雜湊（乾淨是空字串）。 */
+export type WorktreeMark = { files: number; hash: string }
+
+/** 32 位元 FNV-1a，八個十六進位字元；只拿來比「一不一樣」，不需要加密強度（執行環境沒有 node:crypto）。 */
+function fnv1a(text: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return h.toString(16).padStart(8, '0')
+}
+
+/** `git status --porcelain=v2` 與 `git diff HEAD` 的輸出做成指紋；`#` 開頭的分支標頭不算。 */
+export function markOf(status: string, diff: string): WorktreeMark {
+  const lines = String(status ?? '').split(/\r?\n/).map(l => l.trimEnd()).filter(l => l && !l.startsWith('#'))
+  return lines.length ? { files: lines.length, hash: fnv1a(`${lines.join('\n')}\n${String(diff ?? '')}`) } : { files: 0, hash: '' }
+}
+
+const CODE_KINDS: ReadonlySet<DispatchKind> = new Set(['continue', 'reply'])
+
+/**
+ * 派繼續／回覆／審查前的拒絕原因；空字串代表可以派。乾淨一律可以；上一個會改程式的 Agent 還在（例如停在提問）時改動是它的；
+ * 它結束時留下的指紋（`own.mark`）跟現在一樣也可以。從沒派過工、或指紋不同：有別的對話在改，拒絕。同步不經過這裡。
+ */
+export function markRefusal(now: WorktreeMark, own: RootJobs | undefined): string {
+  if (!now.files) return ''
+  const last = own?.last
+  if (last && CODE_KINDS.has(last.kind) && !last.ended) return ''
+  if (own?.mark !== undefined && own.mark === now.hash) return ''
+  return `worktree 有未提交的改動（${now.files} 個檔），不是上一個 Agent 留下的；可能有別的對話在改，commit 或還原後再派`
 }
