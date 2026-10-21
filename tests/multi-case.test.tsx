@@ -405,5 +405,6 @@ test('a check whose error report also fails still lets the queued case run', asy
   expect(refuse).toEqual([])
   expect(stats.cwds).toEqual([ALPHA, BETA])
   expect(data.toasts.some(t => t.startsWith('Alpha：檢查中斷'))).toBe(true)
+  expect(data.toasts.some(t => t.startsWith('Alpha：檢查中斷，原因也記不下來（'))).toBe(true)
   await drain(clock)
 })

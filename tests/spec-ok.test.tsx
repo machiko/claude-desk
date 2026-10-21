@@ -68,6 +68,9 @@ test('pressing t twice confirms the spec like /desk:card spec ok and launches no
   expect(String(run[0].argv[1]).endsWith('/skills/card/scripts/card.py')).toBe(true)
   expect(run[0].argv.slice(2)).toEqual(['spec-ok', 'beta'])
   expect(run[0].init.cwd).toBe(BETA)
+  // 帶 DESK_SETTINGS，腳本才認得同一個專案的設定與登錄表
+  expect(typeof run[0].init.env?.DESK_SETTINGS).toBe('string')
+  expect(run[0].init.env.DESK_SETTINGS.length).toBeGreaterThan(0)
   expect(data.files[CARD_B]).toContain('- 關卡：無')
   expect(data.files[CARD_B]).toContain(`- 狀態：${CONFIRMED}`)
   expect(data.files[CARD_B]).toContain('- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）')
@@ -76,6 +79,8 @@ test('pressing t twice confirms the spec like /desk:card spec ok and launches no
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   expect(await screen(ui)).toContain(flat('Beta 規格已確認，可以派實作'))
+  const ok = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 規格已確認/.test(n.text) && n.props?.color === 'success')
+  expect(ok).toBeDefined()
   expect(await screen(ui)).toContain(flat('按 g 派 Agent：依審核修正'))
   expect(await ui.find({ key: KEY })).toBeUndefined()
   expect(data.launches).toHaveLength(0)
