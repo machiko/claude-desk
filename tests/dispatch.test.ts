@@ -164,3 +164,35 @@ test('implementation prompt follows confirmed plan', () => {
   expect(buildPrompt(c, 'sync')).not.toContain('實作計畫')
   expect(buildPrompt(c, 'review')).not.toContain('照「### 實作計畫」做')
 })
+
+/** AC-1：會改程式的派工（繼續、回覆、修正）可以 push 自己的分支、開 PR，但不 force push、不推別的分支、不合併。 */
+test('agent push: implementation prompts allow pushing the own branch and opening a PR', () => {
+  const c = mk('push 後開 PR')
+
+  const prompts = [buildPrompt(c, 'continue'), buildPrompt(c, 'reply', '用 B'), buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: [] }), buildPrompt(c, 'continue', '', { from: 'review', round: 2 })]
+
+  for (const p of prompts) {
+    expect(p).toContain('可以 push 這件任務自己的分支')
+    expect(p).toContain('開 PR')
+    expect(p).toContain('不 force push')
+    expect(p).toContain('不 push 到其他分支')
+    expect(p).toContain('不合併 PR')
+    expect(p).toContain('PR 網址寫進歷程')
+    expect(p).not.toContain('不 push、不開 PR')
+    // 其他環境限制照舊
+    expect(p).toContain('不碰正式環境')
+    expect(p).toContain('不啟動或重建容器')
+  }
+})
+
+/** AC-2：範圍外：同步與審查（含資安審查）仍不 push、不開 PR。 */
+test('agent push: sync and review prompts still forbid push and PR', () => {
+  const c = mk('push 後開 PR')
+
+  const prompts = [buildPrompt(c, 'sync'), buildPrompt(c, 'review'), buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' })]
+
+  for (const p of prompts) {
+    expect(p).toContain('不 push、不開 PR')
+    expect(p).not.toContain('可以 push')
+  }
+})
