@@ -5,6 +5,7 @@ import type { RegistryRow } from './card'
 import { parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
 import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
+import { isDeskLaunch } from './dispatch'
 
 /** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
 export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
@@ -121,10 +122,15 @@ export function rawAgents(json: string): any[] {
  * 一個轉完回合的 agent 會 status idle 而 state 還是 working／blocked，那不算在跑；
  * 它是不是「停下來等你」要看它是不是工作桌派出去的那一次（`asksFor`）。
  */
-export function parseAgents(json: string): Record<string, AgentInfo> {
+export const parseAgents = (json: string): Record<string, AgentInfo> => agentsByRoot(rawAgents(json))
+
+const cwdOf = (a: any): string => typeof a?.cwd === 'string' ? a.cwd.replace(/\\/g, '/').replace(/\/+$/, '') : ''
+
+/** 同 parseAgents，從已經解析好的清單（例如拿掉被取代的之後）挑。 */
+export function agentsByRoot(list: readonly any[]): Record<string, AgentInfo> {
   const out: Record<string, AgentInfo> = {}
-  for (const a of rawAgents(json)) {
-    const cwd = typeof a?.cwd === 'string' ? a.cwd.replace(/\\/g, '/').replace(/\/+$/, '') : ''
+  for (const a of list) {
+    const cwd = cwdOf(a)
     if (!cwd || a.kind !== 'background') continue
     const status = String(a.status ?? '').toLowerCase()
     if (status !== 'busy' && status !== 'waiting') continue
@@ -133,6 +139,29 @@ export function parseAgents(json: string): Record<string, AgentInfo> {
     if (!prev || (info.startedAt ?? 0) > (prev.startedAt ?? 0)) out[cwd] = info
   }
   return out
+}
+
+/** 一個根目錄最後一次派工的名字與派出時間（$.store 的 jobs）。 */
+export type LastLaunch = { launchName: string; startedAt: number }
+/** 被後來的派工取代、還停在提問的工作桌 Agent。 */
+export type Superseded = { root: string; id: string; name: string; startedAt: number }
+
+const isSuperseded = (a: any, last: Readonly<Record<string, LastLaunch>>): boolean => {
+  const l = last[cwdOf(a)]
+  const name = String(a?.name ?? '')
+  return !!l && a.kind === 'background' && String(a.status ?? '').toLowerCase() === 'waiting'
+    && isDeskLaunch(name) && name !== l.launchName && typeof a.startedAt === 'number' && a.startedAt < l.startedAt
+}
+
+/**
+ * 挑出被取代的 Agent：工作桌派的（desk- 開頭）、停在提問（status waiting）、比這個根目錄最後一次派工早啟動、不是最後那一次。
+ * 它們不再代表任務（狀態照卡片走）；回傳拿掉它們之後的清單，與被取代的那幾個（給工作桌停掉）。
+ */
+export function supersede(list: readonly any[], last: Readonly<Record<string, LastLaunch>>): { list: any[]; superseded: Superseded[] } {
+  return {
+    list: list.filter(a => !isSuperseded(a, last)),
+    superseded: list.filter(a => isSuperseded(a, last)).map(a => ({ root: cwdOf(a), id: typeof a.id === 'string' ? a.id : '', name: plain(String(a.name)), startedAt: a.startedAt as number })),
+  }
 }
 
 export function agentInfo(a: any): AgentInfo {

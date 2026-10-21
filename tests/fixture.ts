@@ -61,6 +61,10 @@ export function fixture(on: any) {
     /** false 模擬輸入框無法預填。 */
     fillable: true,
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
+    /** `claude stop <id>` 停過的 id（依序）。 */
+    stops: [] as string[],
+    /** 不是 null 就讓 `claude stop` 失敗，stderr 是這句；null 交給 run。 */
+    stopError: null as string | null,
     store: {} as Record<string, unknown>,
     /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
     root: SESSION_ROOT,
@@ -108,6 +112,10 @@ export function fixture(on: any) {
     }
     if (e.argv[0] === 'gh') { data.ghCalls.push(e); return { value: data.gh === null ? result(1, '', 'gh: not logged in') : result(0, JSON.stringify(data.gh)) } }
     if (e.argv[0] === 'claude' && e.argv[1] === 'logs') return { value: result(0, data.logs[e.argv[2]] ?? '') }
+    if (e.argv[0] === 'claude' && e.argv[1] === 'stop') {
+      data.stops.push(String(e.argv[2]))
+      if (data.stopError !== null) return { value: result(1, '', data.stopError) }
+    }
     if (e.argv[0] === 'claude' && e.argv[1] === '--bg') { data.launches.push(e); return { value: await data.launch(e) } }
     data.processCalls.push(e)
     return { value: await data.run(e) }

@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
-import { buildCase, caseNamed, demoCases, events, feedOnDesk, liveCases, parseAgents, rawAgents, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, events, feedOnDesk, liveCases, rawAgents, supersede, asksFor, agentInfo, stateOf, plain, errorLine, reasonLine, slugOf } from './model'
 import { archiveReview, baseRefs, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
 import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
 import { sorted } from './model'
@@ -28,6 +28,7 @@ import { noticeOf } from './update'
 import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
 import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
+import { lastLaunches, stopSuperseded } from './stale-agents'
 
 const PANE = 'desk'
 const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
@@ -83,10 +84,11 @@ export async function refresh($: any, options: PluginOptions) {
     knownPaths = [...(path ? [path] : []), ...rows.map(r => r.statusPath)]
     // 教學不看真的背景 agent，只看模擬的那一個。
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
-    const list = agentsOut && agentsOut.exitCode === 0 ? rawAgents(agentsOut.stdout) : []
-    const agents: Record<string, AgentInfo> = tutorial ? simAgents() : agentsOut && agentsOut.exitCode === 0 ? parseAgents(agentsOut.stdout) : {}
-    const verifies = await read($, verifiesAtom)
     const jobs = await loadJobs($)
+    // 被後來派工取代、還停在提問的工作桌 Agent 不代表任務：拿掉它們再挑（狀態照卡片走），之後停掉。
+    const { list, superseded } = supersede(agentsOut && agentsOut.exitCode === 0 ? rawAgents(agentsOut.stdout) : [], lastLaunches(jobs))
+    const agents: Record<string, AgentInfo> = tutorial ? simAgents() : agentsOut && agentsOut.exitCode === 0 ? agentsByRoot(list) : {}
+    const verifies = await read($, verifiesAtom)
     const chains = await loadChains($)
     const summaries = await loadSummaries($)
     const launching = await read($, launchingAtom)
@@ -159,6 +161,7 @@ export async function refresh($: any, options: PluginOptions) {
     forcePr = false
     statusLine($, cur)
     await spin($, cases.some(c => c.state === 'running'))
+    await stopSuperseded($, cases, superseded, now)
     await autoChain($, options, cur)
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
@@ -554,7 +557,9 @@ async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   if (why) { $.ui.toast(`${c.name}：目前無法回覆（${why}）`); return }
   let answer = text?.trim() ?? ''
   if (!answer) {
-    const picked = await $.ui.ask(`Agent 提問：${c.agent?.last || '（無法讀取問題，請開啟卡片或用 claude logs 查看）'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
+    // 停在提問（status waiting）的 Agent 重新整理時不讀輸出：回覆這時才讀它最後一句。
+    const asked = c.agent?.last || (tutorial ? '' : await lastLine($, c.agent?.id))
+    const picked = await $.ui.ask(`${asked ? `Agent 提問：${asked}` : '讀不到 Agent 的提問，按 l 看輸出'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
     if (!picked || picked === '取消') return
     answer = picked === '照卡片的下一步繼續' ? `照卡片的下一步繼續：${c.next || '依卡片'}` : picked
   }
