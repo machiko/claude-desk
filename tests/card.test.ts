@@ -95,6 +95,13 @@ test('a placeholder or prose check field counts as no check', () => {
   expect(verifyCommand('`./scripts/ci.sh`')).toBe('./scripts/ci.sh')
   expect(verifyCommand('`FOO=1 npm test` → PASS')).toBe('FOO=1 npm test')
   expect(verifyCommand('`~/bin/check`')).toBe('~/bin/check')
+  // 第一個 token 含引號、括號、驚嘆號也是合法 shell：不能誤殺
+  expect(verifyCommand('`FOO="a b" npm test`')).toBe('FOO="a b" npm test')
+  expect(verifyCommand('`NODE_OPTIONS="--max-old-space-size=4096" npm test`')).toBe('NODE_OPTIONS="--max-old-space-size=4096" npm test')
+  expect(verifyCommand('`[ -f x ] && npm test`')).toBe('[ -f x ] && npm test')
+  expect(verifyCommand('`( cd a && make )`')).toBe('( cd a && make )')
+  expect(verifyCommand('`"/path with space/run.sh"`')).toBe('"/path with space/run.sh"')
+  expect(verifyCommand('`! grep -q TODO src`')).toBe('! grep -q TODO src')
   expect(looksLikeCommand('npm test')).toBe(true)
   expect(looksLikeCommand('<npm test>')).toBe(false)
   expect(looksLikeCommand('待 spec 定')).toBe(false)

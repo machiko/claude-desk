@@ -57,13 +57,14 @@ export function parseGate(value: string | undefined): Gate | null {
 export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '審查', release: '上線', unknown: '關卡' }
 
 /**
- * 這段文字像不像一條可執行指令：整段被 `<` `>` 包住的是範本佔位；第一個 token 要是 ASCII 的指令字（程式名、路徑、`FOO=1` 這種環境變數），
- * 中文或全形標點開頭的是說明句。只看第一個 token，後面的參數可以有中文（例如 `--grep "訂單匯出"`）。
+ * 這段文字像不像一條可執行指令：整段被 `<` `>` 包住的是範本佔位；第一個 token 含中文或全形標點（非 ASCII 可見字元）的是說明句。
+ * 用黑名單而不是白名單：`FOO="a b" cmd`、`[ -f x ] && …`、`( … )`、`"/path with space/x"`、`! cmd` 這些 ASCII 開頭的都是合法 shell，不能誤殺。
+ * 只看第一個 token，後面的參數可以有中文（例如 `--grep "訂單匯出"`）。
  */
 export function looksLikeCommand(text: string): boolean {
   const raw = text.trim()
   if (!raw || (raw.startsWith('<') && raw.endsWith('>'))) return false
-  return /^[A-Za-z0-9_.\/~$=@:+-]+$/.test(raw.split(/\s+/)[0]!)
+  return !/[^\x21-\x7E]/.test(raw.split(/\s+/)[0]!)
 }
 
 /**
