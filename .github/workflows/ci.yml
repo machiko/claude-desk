@@ -28,3 +28,5 @@ jobs:
         run: claude plugin test .
       - name: /desk:card tests
         run: python3 -m unittest discover -s skills/card/tests
+      - name: check-public.sh tests
+        run: python3 -m unittest discover -s scripts/tests

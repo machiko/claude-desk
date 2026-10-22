@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseRegistry, parseCard, parseDecisions, pickByDigit, unpick, decisionAnswer, allPicked, parseGate, verifyCommand, projectRoot, splitClauses, saysNone, filledAc, hasSpec } from '../hooks/card'
+import { parseRegistry, parseCard, parseDecisions, pickByDigit, unpick, decisionAnswer, allPicked, parseGate, verifyCommand, looksLikeCommand, projectRoot, splitClauses, saysNone, filledAc, hasSpec } from '../hooks/card'
 import SPEC_CASES from './spec-cases.mjs'
 
 test('registry rows are any table line with a name and a backticked path; ~ expands', () => {
@@ -60,7 +60,8 @@ test('gate, verify command, none words and project root', () => {
   expect(parseGate('看 diff')).toEqual({ kind: 'unknown', detail: '看 diff' })
   expect(verifyCommand('`php artisan test` → PASS')).toBe('php artisan test')
   expect(verifyCommand('無')).toBe('')
-  expect(verifyCommand('c45c949e 狀態跑過')).toBe('c45c949e 狀態跑過')
+  // 沒有反引號的說明文字不是指令（見下一支測試）
+  expect(verifyCommand('c45c949e 狀態跑過')).toBe('')
   expect(saysNone('無；補充')).toBe(true)
   expect(saysNone('無法確定')).toBe(false)
   expect(projectRoot('/a/b/.desk/CARD.md')).toBe('/a/b')
@@ -75,4 +76,34 @@ test('filled AC follows the same shared spec cases as card.py', () => {
   for (const c of SPEC_CASES as { name: string; card: string; hasSpec: boolean; ac: string[] }[]) {
     expect({ name: c.name, hasSpec: hasSpec(c.card), ac: filledAc(c.card) }).toEqual({ name: c.name, hasSpec: c.hasSpec, ac: c.ac })
   }
+})
+
+test('a placeholder or prose check field counts as no check', () => {
+  // 範本佔位：整段被 <…> 包住（不管有沒有反引號）
+  expect(verifyCommand('`<完成檢查：修之前會紅、修好會綠的一條指令>`')).toBe('')
+  expect(verifyCommand('<完成檢查：修之前會紅、修好會綠的一條指令>')).toBe('')
+  // 反引號裡是說明句：第一個字不像指令
+  expect(verifyCommand('`待 spec 定，先不跑`')).toBe('')
+  expect(verifyCommand('`規格確認後補`')).toBe('')
+  expect(verifyCommand('`（暫無）`')).toBe('')
+  // 沒有反引號：一律不是指令
+  expect(verifyCommand('待規格確認後補')).toBe('')
+  expect(verifyCommand('npm test')).toBe('')
+  // 正常指令照舊
+  expect(verifyCommand('`npm test -- --grep "訂單匯出" && npm test`')).toBe('npm test -- --grep "訂單匯出" && npm test')
+  expect(verifyCommand('`test "$(grep -c "^test(\'x" t.ts)" -ge 5 && claude plugin test .`')).toBe('test "$(grep -c "^test(\'x" t.ts)" -ge 5 && claude plugin test .')
+  expect(verifyCommand('`./scripts/ci.sh`')).toBe('./scripts/ci.sh')
+  expect(verifyCommand('`FOO=1 npm test` → PASS')).toBe('FOO=1 npm test')
+  expect(verifyCommand('`~/bin/check`')).toBe('~/bin/check')
+  // 第一個 token 含引號、括號、驚嘆號也是合法 shell：不能誤殺
+  expect(verifyCommand('`FOO="a b" npm test`')).toBe('FOO="a b" npm test')
+  expect(verifyCommand('`NODE_OPTIONS="--max-old-space-size=4096" npm test`')).toBe('NODE_OPTIONS="--max-old-space-size=4096" npm test')
+  expect(verifyCommand('`[ -f x ] && npm test`')).toBe('[ -f x ] && npm test')
+  expect(verifyCommand('`( cd a && make )`')).toBe('( cd a && make )')
+  expect(verifyCommand('`"/path with space/run.sh"`')).toBe('"/path with space/run.sh"')
+  expect(verifyCommand('`! grep -q TODO src`')).toBe('! grep -q TODO src')
+  expect(looksLikeCommand('npm test')).toBe(true)
+  expect(looksLikeCommand('<npm test>')).toBe(false)
+  expect(looksLikeCommand('待 spec 定')).toBe(false)
+  expect(looksLikeCommand('')).toBe(false)
 })

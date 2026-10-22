@@ -119,8 +119,8 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
   return hits.length === 1 ? hits[0]! : null
 }
 
-/** 每次派工都附的規則；專案規則（dispatch.json 的 rules 與任務的 rules）接在最後。 */
-function cardRules(settings: DispatchSettings, root: string): string[] {
+/** 每次派工都附的規則；canPush（會改程式的派工）可以 push 自己的分支、開 PR，其他的不寫遠端。專案規則（dispatch.json 的 rules 與任務的 rules）接在最後。 */
+function cardRules(settings: DispatchSettings, root: string, canPush = false): string[] {
   return [
     '卡片要精簡：狀態一句話 60 字內、下一步 40 字內，多件事用「；」分開；commit、測試數字、檔案清單等細節寫在卡片下方的歷程，不要塞進這兩欄。',
     '卡片在 .desk/CARD.md（或 .console/STATUS.md）；結束這一輪前把五欄寫回，每欄一行。保留卡片既有的欄位名，不要改名：舊卡用「驗證」「等使用者」，新卡用「檢查」「等你」，工作桌兩種都讀得懂。',
@@ -128,7 +128,8 @@ function cardRules(settings: DispatchSettings, root: string): string[] {
     '檢查欄只放一條可執行的完成檢查（反引號），exit 0 代表做完；發現寫在 狀態 或 .task/REPORT.md。',
     `要${named(settings.user)}決定的事寫進 等你（有選項寫成 問題：A) … B) …）後結束這一輪，不要提問等待。`,
     '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。',
-    '只在此任務根目錄作業；不 push、不開 PR、不碰正式環境、不啟動或重建容器、不改 port、不在主工作區切分支。',
+    '只在此任務根目錄作業；不碰正式環境、不啟動或重建容器、不改 port、不在主工作區切分支。',
+    canPush ? PUSH_RULE : NO_PUSH_RULE,
     ...settings.rules,
     ...(settings.projects[normalizeRoot(root)]?.rules ?? []),
   ]
@@ -136,6 +137,14 @@ function cardRules(settings: DispatchSettings, root: string): string[] {
 
 /** 會改程式的派工（繼續、回覆、修正）多這一條：照規格做，審查會逐條對照驗收情境。 */
 const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。有實作計畫時照「### 實作計畫」做，不用再停下來交計畫（規格確認時已一起確認）；實際改的檔跟計畫不同時在歷程寫明原因，要改範圍或做法寫進 等你。卡片沒有規格段就照下一步做。'
+
+/** 會改程式的派工（繼續、回覆、修正）可以 push 自己的分支、開 PR；寫遠端的範圍只到這裡。 */
+export const PUSH_RULE = '可以 push 這件任務自己的分支（git push -u origin \u003c分支\u003e）並對基準分支開 PR；不 force push、不 push 到其他分支（main、release/* 等）、不合併 PR、不打 tag。push 或開 PR 後把分支頂端 commit 與 PR 網址寫進歷程。'
+/** 同步與審查只讀不寫遠端。 */
+export const NO_PUSH_RULE = '不 push、不開 PR。'
+
+/** 會改程式的派工再多一條：CHANGELOG 條目寫片段檔，不碰 CHANGELOG.md（發版時由 card.py changelog 合併，分支之間才不會搶「## 未發布」）。 */
+const changelogRule = (c: Case) => `專案有 changelog.d/ 資料夾時，使用者看得到的改動寫成 CHANGELOG 條目放在 changelog.d/${slugOf(c)}.md（一行或多行「- 」開頭、動詞開頭：新增／修復／調整／移除，沒有標題與版本；沒有使用者看得到的改動就不建這個檔），不要改 CHANGELOG.md，發版時才合併。沒有這個資料夾就照專案原本的慣例。`
 
 export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
@@ -153,8 +162,9 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : `${named(settings.user).trimStart()}的回覆：${text}`
-  const base = cardRules(settings, c.root)
-  const rules = fix || kind === 'continue' || kind === 'reply' ? [SPEC_RULE, ...base] : base
+  const writes = !!fix || kind === 'continue' || kind === 'reply'
+  const base = cardRules(settings, c.root, writes)
+  const rules = writes ? [SPEC_RULE, changelogRule(c), ...base] : base
   return `${head}\n任務：${c.name}\n根目錄：${c.root}\n卡片：${c.statusPath}\n${rules.join('\n')}`
 }
 

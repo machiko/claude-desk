@@ -1,0 +1,1 @@
+- 修復 `scripts/check-public.sh` 在 worktree 裡跑不起來：清單在 worktree 找不到時改到主 repo 根目錄找（也可用 `CHECK_PUBLIC_DENYLIST` 指定路徑），掃描範圍是執行所在的 worktree；修掉 bash 在 UTF-8 locale 下把 `$list` 後的全形冒號吃進變數名、報 unbound variable 的問題；補上 python unittest（`scripts/tests`）並加進 CI。

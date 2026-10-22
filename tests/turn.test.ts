@@ -17,7 +17,8 @@ const passed: Verify = { command: '`npm test`'.slice(1, -1), at: 1, ok: true, ex
 const ids = (c: Case, ctx = {}) => [...stageActions(c, ctx)].sort()
 
 test('each stage says whose turn it is and what to press, in plain words', () => {
-  expect(turnOf(mk({ check: '無' }))).toEqual({ who: 'you', text: '輸入 /desk:card spec age-group 寫規格與完成檢查' })
+  expect(turnOf(mk({ check: '無' }))).toEqual({ who: 'you', text: '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令', key: 'o' })
+  expect(turnOf(mk({ check: '`<完成檢查：修之前會紅、修好會綠的一條指令>`' }))).toEqual({ who: 'you', text: '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令', key: 'o' })
   expect(turnOf(mk({ gate: 'spec：待確認規格' }))).toEqual({ who: 'you', text: '看過規格（o 開卡片）後按 t 確認（或輸入 /desk:card spec age-group ok）', key: 't' })
   expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派 Agent：依規格實作', key: 'g' })
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
@@ -58,6 +59,23 @@ test('processing lines say who is doing what, without repeating that it is in pr
   expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修' }, { chain: { round: 1 }, state: 'ready' }, passed)).text).toBe('審查有結論，接著自動修正或過關')
   // 沒有任何一句還留著舊的「執行者」或「不用做事」
   for (const c of [running(), running('review')]) expect(turnOf(c).text).not.toMatch(/執行者|不用做事/)
+})
+
+/** AC-3：PR 開著、分支又領先遠端：輪到你說 push，不說合併；與遠端一致時照舊說合併 PR。 */
+test('agent push: an open PR with new commits asks to push, not to merge', () => {
+  const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
+  const git = (ahead: number) => ({ ahead, behind: 0, changed: 0, untracked: 0, upstream: true })
+  const pass = { id: 1, state: 'OPEN' as const, ci: 'pass' as const }
+
+  const ahead = mk({ gate }, { pr: pass, gitState: git(1) })
+  const pending = mk({ gate }, { pr: { ...pass, ci: 'pending' }, gitState: git(2) })
+  const inSync = mk({ gate }, { pr: pass, gitState: git(0) })
+
+  for (const c of [ahead, pending]) {
+    expect(turnOf(c)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 推上去，CI 過了再合併' })
+    expect(stageActions(c).has('push')).toBe(true)
+  }
+  expect(turnOf(inSync)).toEqual({ who: 'you', text: '合併 PR（p 開啟）', key: 'p' })
 })
 
 test('idle next: the now card asks for v instead of g', () => {
