@@ -243,6 +243,8 @@ claude plugin test .                  # hooks 的測試
 python3 -m unittest discover -s skills/card/tests   # /desk:card 的測試
 ```
 
+測試時間與機器負載：`claude plugin test` 對每一支測試都重新載入整個 hooks 模組圖（約 5,500 行），單支的載入成本約 110–200 ms，測試本身的工作多半只有 20–200 ms；最重的一支（`tests/chain-flow.test.tsx` 第一支）單獨跑約 420 ms。runner 固定開「CPU 核心數」個子行程同時跑，所以每支測試的牆鐘時間會隨機器當時的負載放大：同一台機器有別的 worktree 也在跑整套時，單獨 420 ms 的那支可能被放大到 2–5 秒，超過 5000 ms 就逾時，而且每次逾時的那支都不同。跑整套前先看 `uptime`，避免幾個 worktree 同時跑；這種逾時不是測試或 hooks 壞了，不要用調逾時、重試或 skip 蓋掉，等負載降下來再跑一次就好。
+
 ### CHANGELOG 片段檔
 
 每張卡（分支）的 CHANGELOG 條目寫在 `changelog.d/<slug>.md`（slug＝worktree 資料夾名＝分支最後一段，例如 `changelog.d/check-public.md`），不改 `CHANGELOG.md`，所以各分支之間不會再搶「## 未發布」。片段檔只放條目：一行或多行 `- ` 開頭、動詞開頭（新增／修復／調整／移除），一條一個使用者看得到的主題，沒有標題、沒有版本；沒有使用者看得到的改動就不建這個檔（空檔會讓發版報錯）。目錄裡的 `.gitkeep` 讓它在沒有片段時也存在。
