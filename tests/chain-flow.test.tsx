@@ -189,6 +189,7 @@ test('a commit after the review passed reruns the check and a diff-only review, 
   expect(run.recheck).toBe(true)
   expect(run.passed).toBeUndefined()
   expect(run.reviewHead).toBe('h2')
+  expect(run.reviewBranch).toBe('feature/alpha')
 
   // 重新審查通過：結論算在 h2，回到可開 PR
   data.agents = data.agents.map(a => ({ ...a, status: 'idle', state: 'done' }))
@@ -198,6 +199,7 @@ test('a commit after the review passed reruns the check and a diff-only review, 
   const after = (data.store.chains as any)[root]
   expect(after.passed).toBe(true)
   expect(after.judgedHead).toBe('h2')
+  expect(after.judgedBranch).toBe('feature/alpha')
   expect(data.launches.length).toBe(1)
 })
 
