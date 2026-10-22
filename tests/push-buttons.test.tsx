@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, text } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, result, text } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { needsPush, stageActions } from '../hooks/turn'
@@ -33,6 +33,16 @@ function recordExec(data: any) {
 }
 const wroteRemote = (calls: any[]) => calls.some(e => (e.argv[0] === 'git' && e.argv.includes('push')) || (e.argv[0] === 'gh' && e.argv.includes('create')))
 
+/** 派工會啟動一個背景 Agent：清單裡多一個同名、在跑的 Agent（照 `claude --bg` 的回應）。 */
+function startsAgents(data: any, clock: any) {
+  data.launch = async (e: any) => {
+    const id = `e000000${data.launches.length}`
+    data.agents = [{ id, kind: 'background', cwd: BETA, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, id)
+  }
+}
+const promptOf = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
+
 async function mount($: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   return $.ui.mount(PANE(100))
@@ -48,34 +58,6 @@ function mergeCase(over: Partial<Case>): Case {
   const c: Case = { ...buildCase({ name: 'Beta', statusPath: CARD_B }, card, 1, {}, undefined), git: { branch: 'feature/b', head: 'c2' }, ...over }
   return { ...c, pipeline: pipeline(c, v) }
 }
-
-/** AC-1 */
-test('push buttons: new commits after the PR is open offer push that only fills the prompt', async ($, on) => {
-  const { data } = fixture(on)
-  onlyBeta(data, { ahead: 1 })
-  judgedAt(data, 'c2')
-  const calls = recordExec(data)
-
-  const ui = await mount($)
-  const push = await ui.find({ key: `${PREFIX}push` })
-  const openPr = await has(ui, 'open-pr')
-  const pr = await has(ui, 'pr')
-  await ui.press({ key: `${PREFIX}push` })
-  data.fillable = false
-  await ui.press({ key: `${PREFIX}push` })
-
-  expect(labelOf(push)).toBe('⇡ push')
-  expect(openPr).toBe(false)
-  expect(pr).toBe(true)
-  expect(data.fills).toEqual([
-    { text: 'push feature/b', mode: 'replace' },
-    { text: 'push feature/b', mode: 'replace' },
-  ])
-  expect(data.submitted).toHaveLength(0)
-  expect(data.toasts.some(t => t.includes('輸入框無法預填，請直接輸入：push feature/b'))).toBe(true)
-  expect(wroteRemote(calls)).toBe(false)
-  await ui.unmount()
-})
 
 /** 沒設追蹤分支（card.py new 會取消追蹤）、用 git push origin <分支> 推過：照 origin 上的同名分支算，已是最新就不出「⇡ push」。 */
 test('push buttons: an untracked branch already pushed to origin offers no push', async ($, on) => {
@@ -142,7 +124,6 @@ test('push buttons: an untracked branch with no origin ref offers no push', asyn
   await ui.unmount()
 })
 
-/** AC-2 */
 test('push buttons: no push outside the merge stage', async ($, on) => {
   const { data } = fixture(on)
   // 審查在 c1 過關、之後多了 c2 且從沒 push 過：退回檢查段
@@ -173,7 +154,7 @@ test('push buttons: no push outside the merge stage', async ($, on) => {
   }
 })
 
-/** AC-3 */
+/** AC-4 */
 test('push buttons: no push when in sync, running, merged, or open-PR already covers it', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data, { ahead: 0 })
@@ -203,22 +184,6 @@ test('push buttons: no push when in sync, running, merged, or open-PR already co
   expect(stageActions(merged).has('push')).toBe(false)
 })
 
-/** AC-4 */
-test('push buttons: uncommitted changes still allow push with a warning', async ($, on) => {
-  const { data } = fixture(on)
-  onlyBeta(data, { ahead: 2, changed: 3 })
-  judgedAt(data, 'c2')
-  const calls = recordExec(data)
-
-  const ui = await mount($)
-  await ui.press({ key: `${PREFIX}push` })
-
-  expect(data.fills).toEqual([{ text: 'push feature/b', mode: 'replace' }])
-  expect(data.toasts.some(t => t.includes('有 3 檔未提交，只會 push 已 commit 的'))).toBe(true)
-  expect(wroteRemote(calls)).toBe(false)
-  await ui.unmount()
-})
-
 /** AC-5 */
 test('push buttons: push and open-PR have no hotkeys; demo cases get no push', async ($, on) => {
   const { data } = fixture(on)
@@ -240,4 +205,120 @@ test('push buttons: push and open-PR have no hotkeys; demo cases get no push', a
   expect(needsPush(demo)).toBe(false)
   expect(stageActions(demo).has('push')).toBe(false)
   expect(needsPush({ ...demo, demo: false })).toBe(true)
+})
+
+/** AC-1 */
+test('push buttons: open-PR dispatches a publish agent', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, { upstream: false }, [])
+  judgedAt(data, 'c2')
+  startsAgents(data, clock)
+  const calls = recordExec(data)
+
+  const ui = await mount($)
+  const before = await screen(ui)
+  await ui.press({ key: `${PREFIX}open-pr` })
+  const armed = labelOf(await ui.find({ key: `${PREFIX}open-pr` }))
+  const afterOne = data.launches.length
+  await ui.press({ key: `${PREFIX}open-pr` })
+  await clock.settle()
+  const after = await screen(ui)
+  const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 派推送/.test(n.text))
+  const p = promptOf(data)
+  await ui.unmount()
+
+  expect(before).toContain(flat('▶ 輪到你  按 ⇡ 開 PR 派 Agent push 並開 PR'))
+  expect(armed).toContain('再按一次確認派 Agent 開 PR')
+  expect(afterOne).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].argv).not.toContain('--resume')
+  expect(data.launches[0].init.cwd).toBe(BETA)
+  expect(p.split('\n')[0]).toContain('推送：push feature/b 並對 release/v1.4 開 PR，PR 網址寫進歷程')
+  expect(p).toContain('不 force push')
+  expect(p).toContain('不合併 PR')
+  expect(p).toContain('不打 tag')
+  expect(after).toContain(flat('Agent 在 push、開 PR'))
+  expect(feed).toBeDefined()
+  expect(data.toasts.some(t => t.includes('Beta：推送已派出'))).toBe(true)
+  // desk 自己不 push、不開 PR，也不預填輸入框
+  expect(data.fills).toHaveLength(0)
+  expect(wroteRemote(calls)).toBe(false)
+})
+
+/** AC-2 */
+test('push buttons: push dispatches a publish agent that only pushes', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, { ahead: 2, changed: 3 })
+  judgedAt(data, 'c2')
+  startsAgents(data, clock)
+  const calls = recordExec(data)
+
+  const ui = await mount($)
+  const push = await ui.find({ key: `${PREFIX}push` })
+  const openPr = await has(ui, 'open-pr')
+  await ui.press({ key: `${PREFIX}push` })
+  const afterOne = data.launches.length
+  await ui.press({ key: `${PREFIX}push` })
+  await clock.settle()
+  const p = promptOf(data)
+  await ui.unmount()
+
+  expect(labelOf(push)).toBe('⇡ push')
+  expect(openPr).toBe(false)
+  expect(afterOne).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  expect(p.split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開，不開新 PR）')
+  expect(p).not.toContain('並對 release/v1.4 開 PR')
+  expect(p).toContain('不 force push')
+  // 有未提交的檔案：照樣派（Agent 只推已 commit 的），並提醒
+  expect(data.toasts.some(t => t.includes('有 3 檔未提交，只會 push 已 commit 的'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('目前無法推送') || t.includes('推送失敗'))).toBe(false)
+  expect(data.toasts.some(t => t.includes('Beta：推送已派出'))).toBe(true)
+  expect(data.fills).toHaveLength(0)
+  expect(wroteRemote(calls)).toBe(false)
+})
+
+/** AC-3 */
+test('push buttons: after publish the stage is merge', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, { upstream: false }, [])
+  judgedAt(data, 'c2')
+  // 這個對話自己的流程（會自動往下走的那種），而且還沒標過關：推送結束後流程也不能接著跑
+  data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b', judgedHead: 'c2', judgedBranch: 'feature/b' } }
+  data.store.trustedVerify = { [CARD_B]: 'npm test' }
+  startsAgents(data, clock)
+  const step = async () => { await clock.advance(2500); await clock.settle() }
+
+  const ui = await mount($)
+  await ui.press({ key: `${PREFIX}open-pr` })
+  await ui.press({ key: `${PREFIX}open-pr` })
+  await clock.settle()
+  const running = await screen(ui)
+  // 推送做完：PR 開了、CI 在跑；分支推上去了
+  data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
+  data.gh = [{ ...OPEN_PR, statusCheckRollup: [{ conclusion: null, status: 'IN_PROGRESS' }] }]
+  data.git[BETA] = { ...data.git[BETA]!, upstream: true, ahead: 0 }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await step(); await step(); await step()
+  const pending = await screen(ui)
+  // CI 過了：可以合併
+  data.gh = [OPEN_PR]
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await step(); await step()
+  const ready = await screen(ui)
+  const chain = (data.store.chains as any)[BETA]
+  await ui.unmount()
+
+  expect(running).toContain(flat('合併◆'))
+  expect(pending).toContain(flat('規格● 實作● 檢查● 審查● 合併◉'))
+  expect(pending).toContain(flat('PR 的 CI 在跑'))
+  expect(ready).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
+  expect(ready).toContain(flat('▶ 輪到你  合併 PR（p 開啟）'))
+  // 不跑檢查、不派審查或修正、不算修正輪、不停下流程
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh')).toHaveLength(0)
+  expect(data.launches).toHaveLength(1)
+  expect(chain.round).toBe(0)
+  expect(chain.stopped).toBeUndefined()
+  expect(ready).not.toContain(flat('流程已暫停'))
+  expect(ready).not.toContain(flat('推送失敗'))
 })
