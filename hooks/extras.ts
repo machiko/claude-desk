@@ -1,5 +1,4 @@
-// 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態、下一件。不碰磁碟。
-import type { Case } from '../types'
+// 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態。不碰磁碟。
 import { isNoise, plain } from './model'
 
 /** 二次確認：同一個動作 3 秒內按第二次才執行。 */
@@ -85,14 +84,4 @@ export function parseGitStatus(text: string): GitState {
 export function gitLine(g: GitState): string {
   const parts = [g.upstream === false ? '未 push（沒有遠端分支）' : '', g.ahead ? `領先 ${g.ahead}` : '', g.behind ? `落後 ${g.behind}` : '', g.changed ? `未提交 ${g.changed} 檔` : '', g.untracked ? `未追蹤 ${g.untracked} 檔` : ''].filter(Boolean)
   return parts.length ? parts.join(' · ') : '與遠端一致、無未提交變更'
-}
-
-/** `n`：下一件。從目前選的那件往後找，需要你處理的優先；都沒有就照順序輪。 */
-const NEEDS_YOU = new Set(['ask', 'reply', 'gate', 'failed'])
-export function nextCase(sorted: Case[], current: string | null): string | null {
-  if (!sorted.length) return null
-  const at = sorted.findIndex(c => c.statusPath === current)
-  const order = [...sorted.slice(at + 1), ...sorted.slice(0, at + 1)]
-  const urgent = order.find(c => NEEDS_YOU.has(c.state) && c.statusPath !== current)
-  return (urgent ?? order.find(c => c.statusPath !== current) ?? sorted[0]!).statusPath
 }

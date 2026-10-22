@@ -137,16 +137,13 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   const prefix = `case-${c.statusPath}-`
   const tailText = `  ${meta.label}${age ? ` · ${age}` : ''}`
   const title = <Text bold color={COLOR.text} wrap="truncate-end">{fit(c.name, Math.max(4, width - 2 - displayWidth(tailText)))}</Text>
-  // 你在清單上選的那件：再點一次任務名取消選取，現在卡與摘要列回到工作桌自己挑的那件。
-  const isPicked = view.selected === c.statusPath
+  // 任務名只是文字：點了不動作。取消選取在「更多動作」裡。
   const rows: any[] = []
 
   rows.push(
     <Box flexDirection="row">
       <Text color={meta.color}>{spin} </Text>
-      <Box flexGrow={1} flexShrink={1} overflow="hidden">{isPicked
-        ? <Button plain key={prefix + 'name'} onPress={() => act.select(c.statusPath)}>{title}</Button>
-        : title}</Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">{title}</Box>
       <Text color={meta.color} bold>{`  ${meta.label}`}</Text>
       {age ? <Text color={COLOR.faint}>{` · ${age}`}</Text> : null}
     </Box>,

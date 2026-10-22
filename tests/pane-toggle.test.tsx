@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, BAND } from './fixture'
+import { fixture, BAND, PANE } from './fixture'
 
 test('band button closes a shown pane and opens it again', async ($, on) => {
   const { data } = fixture(on)
@@ -48,4 +48,22 @@ test('an open the engine does not draw says why in a toast', async ($, on) => {
   await band.press({ key: 'pane' })
   expect(data.toasts.some(t => t.includes('needs 144 columns') && t.includes('/desk'))).toBe(true)
   await band.unmount()
+})
+
+test('pane-toggle: no next button or n hotkey', async ($, on) => {
+  fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(100))
+  const bindsN = async () => (await ui.findAll({ type: 'Button' })).some((b: any) => b.props?.hotkey === 'n')
+  expect(await ui.find({ key: 'next' })).toBeUndefined()
+  expect(await bindsN()).toBe(false)
+  // 展開更多動作、打開說明也一樣：沒有「→ 下一件」，說明不提 n，沒有任何按鈕綁 n（所以按 n 不做任何事）。
+  await ui.press({ key: 'more' })
+  await ui.press({ key: 'help' })
+  expect(await ui.find({ key: 'next' })).toBeUndefined()
+  expect(await bindsN()).toBe(false)
+  expect(await ui.find({ type: 'Text', text: /下一件/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^n\s*$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '停止 Agent（按兩次確認）' })).toBeDefined()
+  await ui.unmount()
 })

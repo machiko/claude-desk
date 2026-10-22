@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B } from './fixture'
 import { contentWindow, flowRows, scrollHint, wrapText } from '../hooks/layout'
 import { displayWidth } from '../hooks/model'
 
@@ -50,14 +50,20 @@ test('a docked pane takes the body rows so the footer sits at the bottom', async
   await inline.unmount()
 })
 
-test('moving to another case (n, or a row) scrolls the content back to the top', async ($, on) => {
+test('cancelling the selection scrolls the content back to the top', async ($, on) => {
   fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  // 16 列高時進度表在捲動範圍外：先在高的面板選 Beta，再回到 16 列。
+  const tall = await $.ui.mount(PANE(72))
+  await tall.press({ key: `row-${CARD_B}` })
+  await tall.unmount()
   const ui = await $.ui.mount(PANE(72, 'inline', 16))
+  expect(await ui.find({ type: 'Text', text: /^Beta$/ })).toBeDefined()
   await ui.press({ key: 'help' })
   await scrollBy($, 100)
   expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeUndefined()
-  await ui.press({ key: 'next' })
+  await ui.press({ key: 'more' })
+  await ui.press({ key: 'deselect' })
   expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeDefined()
   await ui.unmount()
 })

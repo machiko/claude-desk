@@ -68,7 +68,7 @@ test('plain /desk opens or focuses the panel (never closes it, never the bar); /
   await band.unmount()
 })
 
-test('the band follows the case selected in the pane and falls back when the selection is cleared', async ($, on) => {
+test('band: clicking the now card title keeps it selected', async ($, on) => {
   const { data } = fixture(on)
   data.agents = []
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -87,12 +87,14 @@ test('the band follows the case selected in the pane and falls back when the sel
   expect(lead).toContain('輪到你：按 g 派 Agent：依審核修正')
   // 選了的那件是對話的主角，前面標「已選」。
   expect(lead).toContain('已選')
-  // 再點 Beta 一次取消選取：回到 Alpha。
-  await pane.press({ key: `case-${CARD_B}-name` })
-  const back = await line()
-  expect(back.startsWith('● Alpha')).toBe(true)
-  expect(back.includes('Beta')).toBe(false)
-  expect(back.includes('已選')).toBe(false)
+  // 點現在卡的標題：標題只是文字，沒有按鈕可按；Beta 仍是現在卡、仍標「已選」，不會掉回其他任務。
+  await expect(pane.press({ key: `case-${CARD_B}-name` })).rejects.toThrow()
+  expect((await pane.findAll({ type: 'Button' })).some((b: any) => String(b.text ?? '').includes('Beta'))).toBe(false)
+  const still = await line()
+  expect(still.slice(0, still.indexOf('● Alpha'))).toContain('Beta')
+  expect(still).toContain('已選')
+  expect(await pane.find({ type: 'Text', text: /^Beta$/ })).toBeDefined()
+  expect(await pane.find({ key: `row-${CARD_B}` })).toBeUndefined()
   await pane.unmount()
   await band.unmount()
 })
