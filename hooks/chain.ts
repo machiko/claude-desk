@@ -13,6 +13,8 @@ export const CHECK_UNAPPROVED_WHY = '完成檢查的指令還沒經你核准'
 const APPROVE_HINT = '：按 v 看指令並核准，核准後流程接著走'
 export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
 export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
+/** 流程裡的 Agent 被停掉（面板 k 或外面 `claude stop`）：不算做完，不跑檢查、不派審查或修正；它可能留下改到一半的東西，看過再重開。 */
+export const AGENT_STOPPED = 'Agent 被停止，未完成；看過 worktree 後按 g 重開'
 
 export type ChainRun = {
   owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
@@ -73,8 +75,8 @@ export function seenHeads(run: ChainRun | undefined, branch: string | undefined)
   return [run.reviewBranch === branch ? run.reviewHead : undefined, run.judgedBranch === branch ? run.judgedHead : undefined].filter((h): h is string => !!h)
 }
 
-/** `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。 */
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean }
+/** `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。 */
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -82,6 +84,8 @@ export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: b
  */
 export function nextStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext = {}): ChainStep {
   if (!run || run.stopped || run.passed || !finished) return null
+  // 被停掉的 Agent 做的事不完整：不能當成做完往下走（同步不在流程裡，照舊不動）。
+  if (ctx.stopped && finished !== 'sync') return { kind: 'stop', reason: AGENT_STOPPED }
   const high = ctx.risk?.level === 'high' ? `高風險改動（${ctx.risk.reasons.join('、')}），審查已過，請你看過再開 PR` : undefined
   if (finished === 'continue' || finished === 'reply') {
     if (check === null) return trusted ? { kind: 'verify' } : { kind: 'stop', reason: ctx.changed ? CHECK_CHANGED : CHECK_UNAPPROVED, atCheck: true }

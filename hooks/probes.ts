@@ -4,8 +4,8 @@ import type { PluginOptions } from 'claude-code'
 import type { Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
 import { lastMeaningful, plain } from './model'
-import { REVIEW_FILE, SECURITY_FILE, modelFor, parseSettings } from './dispatch'
-import type { DispatchSettings } from './dispatch'
+import { REVIEW_FILE, SECURITY_FILE, markOf, modelFor, parseSettings } from './dispatch'
+import type { DispatchSettings, WorktreeMark } from './dispatch'
 import { READ_TOOL, ciOf, mcpJson, pickPr, prQuery, repoOf, statusQuery } from './bitbucket'
 import type { Repo } from './bitbucket'
 import { ghPrArgs, githubRepoOf, pickGhPr } from './github'
@@ -367,6 +367,17 @@ export async function models($: any, options: PluginOptions, turnModel: { model?
     dispatch: { model: settings.model, effort: settings.effort },
     sync: { model: settings.sync.model, effort: settings.sync.effort || (settings.sync.model ? '' : settings.effort), fresh: sync.fresh },
   }
+}
+
+/** 指紋不看的路徑：卡片（.desk、.console）與審查、計畫、回報檔（.task）是 Agent、審查、你都會寫的，不算誰留下的改動。 */
+const MARK_EXCLUDES = [':(exclude).desk', ':(exclude).console', ':(exclude).task']
+
+/** worktree 未提交狀態的指紋：git status 與對 HEAD 的 diff 做雜湊；不是 git 資料夾或 git 失敗就當乾淨。 */
+export async function worktreeMark($: any, root: string): Promise<WorktreeMark> {
+  const status = await git($, root, ['status', '--porcelain=v2', '--untracked-files=all', '--', '.', ...MARK_EXCLUDES])
+  if (status === null) return markOf('', '')
+  const diff = await git($, root, ['diff', 'HEAD', '--', '.', ...MARK_EXCLUDES])
+  return markOf(status, diff ?? '')
 }
 
 /** git status --porcelain=v2 --branch 的摘要；不是 git 資料夾就 undefined。 */
