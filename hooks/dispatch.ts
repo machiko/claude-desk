@@ -177,7 +177,9 @@ export function reviewTask(c: Case): string {
 }
 
 const IDLE_WAIT = '(?:(?:自動|完成)?檢查(?:結果|通過)?|(?:程式碼|資安)?審查(?:結果|通過)?|審閱(?:結果|通過)?|合併|PR(?:\\s*#?\\d+)?(?:合併|通過)?|CI(?:\\s*通過)?|(?:你|使用者|[A-Za-z][\\w-]*)\\s*(?:確認|拍板|審閱|決定)?)'
-const IDLE_CLAUSE = new RegExp(`^(?:(?:過了|通過後?)\\s*開\\s*PR|開\\s*PR|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
+/** `/desk:card done` 寫的下一步「到面板按 v 執行完成檢查」（與「按 v」的幾種寫法）：也是等檢查，不派 Agent。 */
+const IDLE_PRESS_V = '(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:完成)?檢查)?'
+const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|開\\s*PR|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
 
 /** 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」時，沒有要 Agent 做的事；回傳拒絕原因，否則空字串。 */
 export function idleNext(next: string): string {
