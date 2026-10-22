@@ -372,9 +372,15 @@ test('a queued check that can no longer run lets the one behind it go next', asy
   await clock.settle()
   pass(ALPHA)
   await clock.settle()
+  // 沒接手的那件（Beta）不用等下一輪重新整理：六段馬上不再是「排隊中」
+  const ui = await $.ui.mount(PANE(100))
+  const beta = await bothViews(ui, CARD_B)
+  await ui.unmount()
 
   expect(stats.cwds).toEqual([ALPHA, GAMMA])
   expect(stats.max).toBe(1)
+  expect(beta.card).not.toContain('檢查◉')
+  expect(beta.row).toBe(glyphsOf(beta.card))
   await drain(clock)
 })
 
@@ -399,5 +405,6 @@ test('a check whose error report also fails still lets the queued case run', asy
   expect(refuse).toEqual([])
   expect(stats.cwds).toEqual([ALPHA, BETA])
   expect(data.toasts.some(t => t.startsWith('Alpha：檢查中斷'))).toBe(true)
+  expect(data.toasts.some(t => t.startsWith('Alpha：檢查中斷，原因也記不下來（'))).toBe(true)
   await drain(clock)
 })

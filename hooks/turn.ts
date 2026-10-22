@@ -76,6 +76,8 @@ export const needsPush = (c: Case) => !c.demo && c.state !== 'running' && c.pipe
 function checkHold(c: Case): Turn | null {
   const why = c.chain?.heldAtCheck ? c.chain.stopped : undefined
   if (!why) return null
+  // 停下之後卡片的檢查被整條清掉：按 v 跑不了（只會說尚缺檢查），不再承諾核准；先叫你填檢查。
+  if (!c.verify) return { who: 'you', text: MISSING_CHECK, key: 'o' }
   // 別的對話開的流程：這裡按 v 只會跑檢查、接不下去；說去哪裡接，或在這裡重開一輪。
   if (c.chain!.foreign) {
     const short = why === CHECK_CHANGED ? CHECK_CHANGED_WHY : why === CHECK_UNAPPROVED ? CHECK_UNAPPROVED_WHY : why

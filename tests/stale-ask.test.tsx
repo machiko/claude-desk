@@ -116,6 +116,45 @@ test('stale ask: a hung claude stop holds up neither the refresh nor the other s
   await ui.unmount()
 })
 
+/** 被取代的 Agent 沒有 id（claude agents 沒回）：停不掉，但要在「最近」說一次，不能悄悄消失；不跑 claude stop、下一輪不再記。 */
+test('stale ask: a superseded agent without an id is reported once, not silently dropped', async ($, on) => {
+  const { data } = fixture(on)
+  superseded(data)
+  const { id: _, ...noId } = data.agents[0]
+  data.agents = [noId, data.agents[1]]
+  const line = flat(`Beta 停不掉 ${hhmm(STALE_AT)} 派出、被後來派工取代的 Agent：沒有 Agent id`)
+
+  await refreshTwice($)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(100))
+  const shown = await screen(ui)
+
+  expect(data.stops).toEqual([])
+  expect(shown.split(line).length - 1).toBe(1)
+  expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
+  await ui.unmount()
+})
+
+/** 停掉之後「最近」寫不進去：不能變成沒人接的 rejection；重新整理照常完成、toast 說原因。 */
+test('stale ask: a stop whose feed entry cannot be written still finishes the refresh', async ($, on) => {
+  const { data, clock } = fixture(on)
+  superseded(data)
+  on('state.set', (_: any, e: any, next: any) => e?.plugin === 'desk' && e?.key === 'feed' && Array.isArray(e.value) && e.value.some((x: any) => String(x?.text).includes('被後來派工取代'))
+    ? { deny: '狀態寫不進去' }
+    : next(e))
+
+  await refreshTwice($)
+  await clock.settle()
+  const ui = await $.ui.mount(PANE(100))
+  const shown = await screen(ui)
+
+  expect(data.stops).toEqual(['aaaaaaaa'])
+  expect(shown).not.toContain(flat('工作桌讀取失敗'))
+  expect(shown).not.toContain(flat('被後來派工取代'))
+  expect(data.toasts.some(t => t.includes('Beta：停掉被取代的 Agent 後記不下結果') && t.includes('狀態寫不進去'))).toBe(true)
+  await ui.unmount()
+})
+
 test('stale ask: the latest, busy, or non-desk agents are left alone', async ($, on) => {
   const { data } = fixture(on)
   data.gh = []

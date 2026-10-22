@@ -233,6 +233,20 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('- 關卡：無', text)
         self.assertRegex(text, r'- D-\d+ \d{4}-\d{2}-\d{2} \S+：確認規格（AC-1～AC-2，共 2 條）與實作計畫（1 項）')
 
+    def test_spec_ok_counts_plan_rows_without_relying_on_header_text(self):
+        """計畫表的表頭不是「檔案」（自訂模板改了欄名）：表格第一列一律當表頭，不算成一項。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        self.run_card('gate', 'order-export', 'spec：待確認規格（AC-1～AC-2）')
+        self.fill_spec(card)
+        self.fill_plan(card)
+        write(card, read(card).replace('| 檔案 | 改什麼 |', '| 路徑 | 做什麼 |'))
+
+        r = self.run_card('spec-ok', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(read(card), r'- D-\d+ \d{4}-\d{2}-\d{2} \S+：確認規格（AC-1～AC-2，共 2 條）與實作計畫（1 項）')
+
     def test_old_card_gate_bumps_rev(self):
         os.makedirs(os.path.join(self.t, 'old', '.console'))
         old = os.path.join(self.t, 'old', '.console', 'STATUS.md')

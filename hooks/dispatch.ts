@@ -225,8 +225,11 @@ export function replyRefusal(c: Case): string {
 export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'reply') return replyRefusal(c)
   if (dispatchable(c).includes(kind)) return ''
-  const idle = kind === 'continue' ? idleNext(c.next) : ''
-  return c.manual ? MANUAL : c.state === 'running' ? BUSY : specBlocks(c) ? specGapReason(c) : !c.verify ? '卡片尚缺完成檢查，規格未通過' : idle || '卡片狀態不符'
+  if (c.manual) return MANUAL
+  if (c.state === 'running') return BUSY
+  if (specBlocks(c)) return specGapReason(c)
+  if (!c.verify) return '卡片尚缺完成檢查，規格未通過'
+  return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
 }
 
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {

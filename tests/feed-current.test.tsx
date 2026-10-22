@@ -78,6 +78,29 @@ test('the recent feed shows only what happened to the case on the now card', asy
   await ui.unmount()
 })
 
+/** 沒選任何一件時，現在這件由工作桌自己挑（等你的優先）：「最近」跟著它，挑到別件就換。 */
+test('the recent feed follows the case the desk picks when nothing is selected', async ($, on) => {
+  const { data } = fixture(on)
+  twoCases(data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '要 push 嗎？A) 要 B) 等' })
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 關卡: 'spec：待確認規格' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  const alphaFocused = await screen(ui)
+  // Alpha 的決策處理完、換 Beta 等你：現在這件換成 Beta
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '無' })
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 關卡: '無', 等你: '要合併嗎？A) 要 B) 等' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const betaFocused = await screen(ui)
+  await ui.unmount()
+
+  expect(alphaFocused).toContain(flat('Alpha 等你'))
+  expect(alphaFocused).not.toContain(flat('Beta 進入關卡'))
+  expect(betaFocused).toContain(flat('Beta 等你'))
+  expect(betaFocused).not.toContain(flat('Alpha 等你'))
+})
+
 test('a case removed from the registry leaves nothing behind in the recent feed', async ($, on) => {
   const { data } = fixture(on)
   // 每次寫入「最近」的內容：不只看畫面，也看 refresh 有沒有真的把離桌那件的動態清掉。
