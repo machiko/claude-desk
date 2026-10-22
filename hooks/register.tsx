@@ -30,7 +30,7 @@ import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
 import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
-import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, fillPrRequest, fillPushRequest, openCard, reply, stopAgent } from './card-actions'
+import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -528,8 +528,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   const jobs = await loadJobs($)
   const rootKey = normalizeRoot(c.root)
   const own: RootJobs = jobs[rootKey] ?? {}
-  // worktree 有不是上一個 Agent 留下的未提交改動（別的對話在改）：不派，免得把它的東西清掉。同步不改程式，不擋；自動流程在派之前已經看過。
-  if (kind !== 'sync' && !opts.auto && !tutorial) {
+  // worktree 有不是上一個 Agent 留下的未提交改動（別的對話在改）：不派，免得把它的東西清掉。
+  // 同步不改程式、推送只推已 commit 的，不擋；自動流程在派之前已經看過。
+  if (kind !== 'sync' && kind !== 'publish' && !opts.auto && !tutorial) {
     const foreign = markRefusal(await worktreeMark($, c.root), own)
     if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return }
   }
@@ -737,8 +738,8 @@ export const register: Register = (on, options) => {
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),
       openPr: c => void (c.pr?.url ? openPath($, c.pr.url, ' PR') : undefined),
-      fillPr: c => void fillPrRequest($, options, c),
-      fillPush: c => void fillPushRequest($, c),
+      publishPr: c => void (async () => { if (await confirmed($, `${c.statusPath}\nopen-pr`)) await publishPr($, options, c) })(),
+      publishPush: c => void (async () => { if (await confirmed($, `${c.statusPath}\npush`)) await publishPush($, options, c) })(),
       next: () => void (async () => {
         const cur = await read($, snapshot)
         if (!cur) return

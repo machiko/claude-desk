@@ -23,7 +23,6 @@ test('each stage says whose turn it is and what to press, in plain words', () =>
   expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派 Agent：依規格實作', key: 'g' })
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
   expect(turnOf(mk({}), { verifying: true }).who).toBe('ai')
-  expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }))).toEqual({ who: 'you', text: 'push 分支並開 PR' })
   expect(turnOf(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線', key: 'u' })
   expect(turnOf(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '輸入 /desk:card archive age-group 歸檔' })
   expect(turnOf(mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' } })).who).toBe('ai')
@@ -34,7 +33,7 @@ test('only the actions that make sense now are listed: passed stages drop their 
   expect(ids(mk({ check: '無' }))).toEqual(['open', 'sync'])
   // 實作段：繼續；還沒有檢查與審查
   expect(ids(mk({}))).toEqual(['continue', 'open', 'sync'])
-  // 審查過了（有結論、零擋）、還沒有 PR：沒有 v、沒有 w，多了開 PR（只預填輸入框）
+  // 審查過了（有結論、零擋）、還沒有 PR：沒有 v、沒有 w，多了開 PR（派推送 Agent）
   expect(ids(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過' }), {})).toEqual(['open', 'open-pr', 'sync'])
   // 上線段：上線確認；合併過了不再同步
   expect(ids(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual(['open', 'ship'])
@@ -72,7 +71,7 @@ test('agent push: an open PR with new commits asks to push, not to merge', () =>
   const inSync = mk({ gate }, { pr: pass, gitState: git(0) })
 
   for (const c of [ahead, pending]) {
-    expect(turnOf(c)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 推上去，CI 過了再合併' })
+    expect(turnOf(c)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併' })
     expect(stageActions(c).has('push')).toBe(true)
   }
   expect(turnOf(inSync)).toEqual({ who: 'you', text: '合併 PR（p 開啟）', key: 'p' })
@@ -85,4 +84,22 @@ test('idle next: the now card asks for v instead of g', () => {
   // 有實作的下一步照舊
   expect(turnOf(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual({ who: 'you', text: '按 g 派 Agent：等檢查；補 AC-3 的測試', key: 'g' })
   expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open', 'sync'])
+})
+
+/** AC-5 */
+test('turn: merge stage asks to dispatch publish', () => {
+  const passedGate = { gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }
+  const noPr = mk(passedGate)
+  const ahead = mk(passedGate, { pr: { id: 12, state: 'OPEN', ci: 'pass' } as any, gitState: { ahead: 1, behind: 0, changed: 0, untracked: 0, upstream: true } })
+  const running = mk(passedGate, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy', kind: 'publish' } })
+
+  expect(noPr.pipeline?.current).toBe('merge')
+  // 沒有快捷鍵：按鈕是「⇡ 開 PR」「⇡ push」，句子說按哪一顆、誰去做
+  expect(turnOf(noPr)).toEqual({ who: 'you', text: '按 ⇡ 開 PR 派 Agent push 並開 PR' })
+  expect(stageActions(noPr).has('open-pr')).toBe(true)
+  expect(turnOf(ahead)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併' })
+  expect(stageActions(ahead).has('push')).toBe(true)
+  // 推送 Agent 在跑：說它在做什麼，六段不退回實作
+  expect(running.pipeline?.current).toBe('merge')
+  expect(turnOf(running)).toEqual({ who: 'ai', text: 'Agent 在 push、開 PR（l 看輸出）' })
 })

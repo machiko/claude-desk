@@ -1,4 +1,4 @@
-// 現在卡上的動作：回覆 Agent、預填開 PR／push／決策、開卡片、確認上線、歸檔、確認規格、停止 Agent。
+// 現在卡上的動作：回覆 Agent、派 Agent 開 PR／push、預填決策、開卡片、確認上線、歸檔、確認規格、停止 Agent。
 // 從 register.tsx 搬出來（只搬不改）；派工、重新整理仍在 register.tsx，比照 tutorial-run.tsx 從那裡匯入。
 // 跨檔傳 $ 的函式一律用 function 宣告；atom 位址同 register.tsx，各自宣告。
 import { atom, read } from 'claude-code'
@@ -37,21 +37,24 @@ export async function reply($: any, options: PluginOptions, c: Case, text?: stri
   await dispatch($, options, c, 'reply', { text: answer })
 }
 
-/** 合併段的「⇡ 開 PR」：只把要主對話做的事預填進輸入框，不自動送出；desk 自己不 push、不開 PR。 */
-export async function fillPrRequest($: any, options: PluginOptions, c: Case) {
+/** 教學不派真的 Agent：合併照教學說的按 t。 */
+const TUTORIAL_PUBLISH = '教學不會真的 push：照教學的指示按 t 合併'
+
+/** 合併段的「⇡ 開 PR」（按兩次確認後）：派推送 Agent push 分支並對基準分支開 PR；desk 自己不跑 git push、gh。 */
+export async function publishPr($: any, options: PluginOptions, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  if (tutorial) { $.ui.toast(`${c.name}：${TUTORIAL_PUBLISH}`); return }
   const [target] = await baseRefs($, c, (await loadSettings($, options)).cardBase ?? '')
-  const text = `push ${c.git?.branch ?? '分支'} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR`
-  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入：${text}`)
+  const text = `push ${c.git?.branch ?? '分支'} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR，PR 網址寫進歷程`
+  await dispatch($, options, c, 'publish', { text })
 }
 
-/** 合併段 PR 已開後的「⇡ push」：只預填「push <分支>」，不自動送出；desk 自己不 push。有未提交的檔案時提醒只會推已 commit 的。 */
-export async function fillPushRequest($: any, c: Case) {
+/** 合併段 PR 已開後的「⇡ push」（按兩次確認後）：派推送 Agent 只 push、不開新 PR。有未提交的檔案時提醒只會推已 commit 的。 */
+export async function publishPush($: any, options: PluginOptions, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const text = `push ${c.git?.branch ?? '分支'}`
-  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入：${text}`)
+  if (tutorial) { $.ui.toast(`${c.name}：${TUTORIAL_PUBLISH}`); return }
+  const text = `只 push ${c.git?.branch ?? '分支'}（PR${c.pr?.id ? ` #${c.pr.id}` : ''} 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程`
+  await dispatch($, options, c, 'publish', { text })
   if (c.gitState?.changed) $.ui.toast(`${c.name}：有 ${c.gitState.changed} 檔未提交，只會 push 已 commit 的`)
 }
 

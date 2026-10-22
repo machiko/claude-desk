@@ -51,3 +51,15 @@ test('a stopped agent pauses the chain without holding at the check', () => {
   expect(nextStep(run(0, { stopped: 'x' }), 'continue', null, null, true, { stopped: true })).toBeNull()
   expect(paused(run(0, { heldAtCheck: true }), AGENT_STOPPED)).toEqual({ owner: 'me', startedAt: 1, round: 0, stopped: AGENT_STOPPED })
 })
+
+/** AC-3 */
+test('chain: a finished publish does not restart the chain', () => {
+  // 推送（push、開 PR）不在流程裡：做完、被停掉、檢查結果或審查結論在不在都一樣，不跑檢查、不派審查或修正、不停下流程。
+  for (const r of [run(), run(1), run(0, { passed: true })]) {
+    expect(nextStep(r, 'publish', null, null, true)).toBeNull()
+    expect(nextStep(r, 'publish', false, v(0, 1), true)).toBeNull()
+    expect(nextStep(r, 'publish', null, null, false, { stopped: true })).toBeNull()
+  }
+  // 對照組：同樣條件做完的是實作就會往下走。
+  expect(nextStep(run(), 'continue', null, null, true)).toEqual({ kind: 'verify' })
+})

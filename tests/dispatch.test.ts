@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE } from '../hooks/dispatch'
 import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
+import type { Case, Verify } from '../types'
 
 const card = (next: string, extra = '') => `<!-- DESK -->\n- 狀態：ok\n- 驗證：\`true\`\n- 等你：無\n- 下一步：${next}\n- 關卡：無\n${extra}<!-- /DESK -->`
 const mk = (next: string, agents: any = {}) => buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card(next), 1, agents, undefined)
@@ -285,4 +286,56 @@ test('worktree mark: clean, same or foreign leftovers', () => {
   expect(markRefusal(two, own({ ended: { how: 'finished' } }, 'ffffffff'))).toBe(refused)
   expect(markRefusal(two, own({ ended: { how: 'finished' } }, ''))).toBe(refused)
   expect(markRefusal(two, own({ kind: 'sync', ended: { how: 'finished' } }))).toBe(refused)
+})
+
+/** 合併段的 Case：審查過關、檢查在 h 過了；PR、git 狀態、Agent 由呼叫端給。 */
+function atMerge(over: Partial<Case> = {}): Case {
+  const passedCard = card('合併').replace('- 關卡：無', '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1；可合併')
+  const v: Verify = { command: 'true', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'h' }
+  const c: Case = { ...buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, passedCard, 1, {}, v), git: { branch: 'feature/a', head: 'h' }, ...over }
+  return { ...c, pipeline: pipeline(c, v) }
+}
+
+/** AC-5 */
+test('dispatch: publish is only dispatchable at the merge stage', () => {
+  const ahead = (n: number) => ({ ahead: n, behind: 0, changed: 0, untracked: 0, upstream: true })
+  const open = { id: 12, state: 'OPEN', ci: 'pass' } as any
+  const noPr = atMerge()
+  const pushable = atMerge({ pr: open, gitState: ahead(1) })
+  const inSync = atMerge({ pr: open, gitState: ahead(0) })
+  const risky = atMerge({ chain: { round: 0, passed: true, needsHuman: '高風險改動' } })
+  const running = { ...atMerge(), state: 'running' as const, agent: { name: 'x', state: 'working', status: 'busy' } }
+  const building = mk('寫測試')
+
+  expect([noPr, pushable, inSync, risky].map(c => c.pipeline!.current)).toEqual(['merge', 'merge', 'merge', 'merge'])
+  expect(building.pipeline?.current ?? 'build').not.toBe('merge')
+  expect(dispatchable(noPr)).toContain('publish')
+  expect(dispatchRefusal(noPr, 'publish')).toBe('')
+  expect(dispatchable(pushable)).toContain('publish')
+  expect(dispatchRefusal(pushable, 'publish')).toBe('')
+  // 沒有要推的、高風險還沒看過資安審查、不在合併段：拒絕並說原因
+  for (const c of [inSync, risky, building]) {
+    expect(dispatchable(c)).not.toContain('publish')
+    expect(dispatchRefusal(c, 'publish')).toBe(PUBLISH_ONLY_AT_MERGE)
+  }
+  expect(PUBLISH_ONLY_AT_MERGE).toBe('只有合併段還要 push 或開 PR 時才能推送')
+  // Agent 在跑：說它在跑
+  expect(dispatchable(running)).toEqual([])
+  expect(dispatchRefusal(running, 'publish')).toBe('Agent 仍在執行')
+  expect(dispatchRefusal({ ...noPr, manual: true }, 'publish')).toBe('登錄表設為 manual，只追蹤不派工')
+})
+
+test('publish prompt: push and PR only, keeps the gate, no spec or changelog duties, fresh session', () => {
+  const p = buildPrompt(atMerge(), 'publish', 'push feature/a 並對 main 開 PR，PR 網址寫進歷程')
+
+  expect(p.split('\n')[0]).toBe('推送：push feature/a 並對 main 開 PR，PR 網址寫進歷程。只推已 commit 的：不 commit、不改程式、不 rebase。沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束。')
+  expect(p).toContain('可以 push 這件任務自己的分支')
+  expect(p).toContain('不 force push')
+  expect(p).toContain('不合併 PR')
+  expect(p).toContain('不打 tag')
+  expect(p).toContain('關卡與檢查欄保持原樣')
+  expect(p).not.toContain('做完實作：關卡留 無')
+  expect(p).not.toContain('## 規格')
+  expect(p).not.toContain('changelog.d/')
+  expect(modelFor(parseSettings('{"model":"opus"}'), '/p/a', 'publish')).toEqual({ model: 'opus', effort: '', fresh: true })
 })
