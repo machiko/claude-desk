@@ -2,9 +2,11 @@
 
 執行：python3 -m unittest discover -s skills/card/tests
 """
+import datetime
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -246,6 +248,76 @@ class CardScriptTest(unittest.TestCase):
 
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(read(card), r'- D-\d+ \d{4}-\d{2}-\d{2} \S+：確認規格（AC-1～AC-2，共 2 條）與實作計畫（1 項）')
+
+    def confirmed_card_with_commit(self):
+        """規格已確認、分支有一個新 commit 的卡；回傳 (卡片路徑, worktree)。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        wt = os.path.dirname(os.path.dirname(card))
+        self.run_card('gate', 'order-export', 'spec：待確認規格')
+        self.fill_spec(card)
+        self.fill_plan(card)
+        self.assertEqual(self.run_card('spec-ok', 'order-export').returncode, 0)
+        git('config', 'user.email', 't@example.com', cwd=wt)
+        git('config', 'user.name', 't', cwd=wt)
+        write(os.path.join(wt, 'export.py'), 'x = 1\n')
+        git('add', 'export.py', cwd=wt)
+        git('commit', '-q', '-m', 'feat: 匯出', cwd=wt)
+        return card, wt
+
+    def test_done_writes_status_next_and_history(self):
+        card, wt = self.confirmed_card_with_commit()
+        write(card, read(card).replace('- 等你：無', '- 等你：要不要分頁？'))
+        write(card, re.sub(r'^- 檢查：.*$', '- 檢查：`make test`', read(card), count=1, flags=re.M))
+        before = read(card)
+        block = lambda s: s[s.index('<!-- DESK'):s.index('<!-- /DESK -->')]
+        sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=wt, capture_output=True, text=True).stdout.strip()
+
+        r = self.run_card('done', 'order-export', 'CSV', '匯出做完，測試綠')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 狀態：CSV 匯出做完，測試綠\n', text)
+        self.assertIn('- 下一步：到面板按 v 執行完成檢查\n', text)
+        for name in ('等你', '關卡', '檢查'):
+            line = re.search(rf'^- {name}：.*$', block(before), re.M).group(0)
+            self.assertIn(line, block(text), name)
+        history = text[text.index('## History'):]
+        today = datetime.date.today().isoformat()
+        self.assertIn(f'- {today}：/desk:card done（feature/order-export {sha}）：CSV 匯出做完，測試綠\n', history)
+        self.assertNotIn('未提交', history)
+
+    def test_done_refuses_before_spec_confirmed(self):
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        # 關卡是 spec：…（AC 已填）
+        self.run_card('gate', 'order-export', 'spec：待確認規格')
+        self.fill_spec(card)
+        before = read(card)
+        r = self.run_card('done', 'order-export', '做完了')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('先確認規格（按 t 或 /desk:card spec order-export ok）', r.stderr)
+        self.assertEqual(read(card), before)
+        # 關卡是無，但規格段認不到填好的 AC
+        self.run_card('gate', 'order-export', '無')
+        write(card, read(card).replace('| AC-1 | 管理員 | 匯出訂單 | 下載 CSV |', '| AC-1 | | | |').replace('| AC-2 | 一般會員 | 匯出訂單 | 403 |', '| AC-2 | | | |'))
+        before = read(card)
+        r = self.run_card('done', 'order-export', '做完了')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('先確認規格（按 t 或 /desk:card spec order-export ok）', r.stderr)
+        self.assertEqual(read(card), before)
+
+    def test_done_notes_uncommitted_files(self):
+        card, wt = self.confirmed_card_with_commit()
+        write(os.path.join(wt, 'export.py'), 'x = 2\n')
+        write(os.path.join(wt, 'new.py'), 'y = 1\n')
+
+        r = self.run_card('done', 'order-export', '匯出做一半')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 狀態：匯出做一半\n', text)
+        self.assertRegex(text[text.index('## History'):], r'- \d{4}-\d{2}-\d{2}：/desk:card done（feature/order-export [0-9a-f]+）：匯出做一半；有 2 個檔未提交\n')
 
     def test_old_card_gate_bumps_rev(self):
         os.makedirs(os.path.join(self.t, 'old', '.console'))
