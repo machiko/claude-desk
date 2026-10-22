@@ -154,6 +154,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
 function mergeTurn(c: Case): Turn {
   if (!c.pr && c.chain?.needsHuman) return { who: 'you', text: '高風險改動：看過資安審查（e）後再開 PR', key: 'e' }
   if (needsPr(c)) return { who: 'you', text: 'push 分支並開 PR' }
+  // PR 開著、分支又有新 commit：先 push，CI 才會跑在新 commit 上；這時叫你合併會合到舊的。
+  if (needsPush(c)) return { who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 推上去，CI 過了再合併' }
   if (c.pr!.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 在跑' }
   if (c.pr!.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
   return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }

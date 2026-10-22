@@ -61,6 +61,23 @@ test('processing lines say who is doing what, without repeating that it is in pr
   for (const c of [running(), running('review')]) expect(turnOf(c).text).not.toMatch(/執行者|不用做事/)
 })
 
+/** AC-3：PR 開著、分支又領先遠端：輪到你說 push，不說合併；與遠端一致時照舊說合併 PR。 */
+test('agent push: an open PR with new commits asks to push, not to merge', () => {
+  const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
+  const git = (ahead: number) => ({ ahead, behind: 0, changed: 0, untracked: 0, upstream: true })
+  const pass = { id: 1, state: 'OPEN' as const, ci: 'pass' as const }
+
+  const ahead = mk({ gate }, { pr: pass, gitState: git(1) })
+  const pending = mk({ gate }, { pr: { ...pass, ci: 'pending' }, gitState: git(2) })
+  const inSync = mk({ gate }, { pr: pass, gitState: git(0) })
+
+  for (const c of [ahead, pending]) {
+    expect(turnOf(c)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 推上去，CI 過了再合併' })
+    expect(stageActions(c).has('push')).toBe(true)
+  }
+  expect(turnOf(inSync)).toEqual({ who: 'you', text: '合併 PR（p 開啟）', key: 'p' })
+})
+
 test('idle next: the now card asks for v instead of g', () => {
   const c = mk({ next: '等自動檢查與審查；過了開 PR' })
   expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
