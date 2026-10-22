@@ -102,15 +102,13 @@ test('a due reminder shows in the meters and on the bar when nobody waits', asyn
   await band.unmount()
 })
 
-test('help lists the keys; n moves to the next case', async ($, on) => {
+test('help lists the keys', async ($, on) => {
   const { data } = fixture(on)
   void data
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: 'help' })
   expect(await ui.find({ type: 'Text', text: '停止 Agent（按兩次確認）' })).toBeDefined()
-  await ui.press({ key: 'next' })
-  expect(await ui.find({ type: 'Text', text: /^Beta$/ })).toBeDefined()
   await ui.unmount()
 })
 

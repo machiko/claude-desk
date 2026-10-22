@@ -74,8 +74,8 @@ test('a declined verify runs nothing', async ($, on) => {
   await ui.unmount()
 })
 
-/** 選了任務之後，每次送出都以它為主：卡片沒變只附一句提醒，變了附全文；再點任務名才取消。 */
-test('a selected case stays the subject of every prompt until its name is clicked again', async ($, on) => {
+/** 選了任務之後，每次送出都以它為主：卡片沒變只附一句提醒，變了附全文；從「更多動作」取消選取才停。 */
+test('pane: cancel selection from more actions', async ($, on) => {
   const { data } = fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
@@ -99,9 +99,44 @@ test('a selected case stays the subject of every prompt until its name is clicke
   await $.prompt.submit({ text: '卡片改了' } as any)
   expect(seen[2].context?.[0]).toContain('- 下一步：補測試')
 
-  await ui.press({ key: `case-${CARD_B}-name` })
+  // 精簡動作沒有取消選取；按 m 展開才出現，沒有快捷鍵。
+  expect(await ui.find({ key: 'deselect' })).toBeUndefined()
+  await ui.press({ key: 'more' })
+  const deselect = await ui.find({ key: 'deselect' })
+  expect(deselect?.text).toBe('✕ 取消選取')
+  expect(deselect?.props?.hotkey).toBeUndefined()
+  await ui.press({ key: 'deselect' })
+  // 回到工作桌自己挑的 Alpha，摘要列不再標「已選」，Beta 回到其他任務。
+  expect(await ui.find({ type: 'Text', text: /^Alpha$/ })).toBeDefined()
+  expect(await ui.find({ key: `row-${CARD_B}` })).toBeDefined()
+  expect(await ui.find({ key: 'deselect' })).toBeUndefined()
+  const band = await $.ui.mount(BAND(160))
+  expect(leaves(await band.drawn(), 'Text').map(text).join('')).not.toContain('已選')
+  await band.unmount()
   await $.prompt.submit({ text: '取消選取後' } as any)
   expect(seen[3].context ?? []).toEqual([])
+  await ui.unmount()
+})
+
+test('pane: clicking the auto-picked now card does nothing', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(72))
+  const band = await $.ui.mount(BAND(160))
+  const line = async () => leaves(await band.drawn(), 'Text').map(text).join('')
+  const pane = async () => leaves(await ui.drawn(), 'Text').map(text).join('')
+  const before = { band: await line(), pane: await pane() }
+  expect(before.band.startsWith('● Alpha')).toBe(true)
+  // 工作桌自己挑的 Alpha：標題只是文字，沒有按鈕可按，也沒有取消選取。
+  await expect(ui.press({ key: `case-${CARD_A}-name` })).rejects.toThrow()
+  expect((await ui.findAll({ type: 'Button' })).some((b: any) => String(b.text ?? '').includes('Alpha'))).toBe(false)
+  expect(await line()).toBe(before.band)
+  expect(await line()).not.toContain('已選')
+  expect(await pane()).toBe(before.pane)
+  await ui.press({ key: 'more' })
+  expect(await ui.find({ key: 'deselect' })).toBeUndefined()
+  await band.unmount()
   await ui.unmount()
 })
 
