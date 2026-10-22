@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""/desk:card 的卡片操作：開卡、找卡、補空白規格段、改關卡、確認規格、歸檔。
+"""/desk:card 的卡片操作：開卡、找卡、補空白規格段、改關卡、確認規格、歸檔、發版合併 CHANGELOG 片段。
 
 兩種卡片都支援：
 - 新卡 `.desk/CARD.md`：`<!-- DESK -->` 區塊，欄位「檢查」「等你」。
@@ -12,6 +12,12 @@
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
   card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
   card.py archive <slug>                       卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
+  card.py changelog <版本>                      發版：把所在 repo 的 changelog.d/*.md 合併成 CHANGELOG.md 的「## <版本>」段
+                                               （插在「## 未發布」之後、上一版之前；條目依 新增→調整→修復→移除、同類依檔名），刪掉片段檔。
+                                               沒有片段、版本段已存在、片段有一行不是「- 」開頭都報錯、不改檔。
+
+CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree 資料夾名），內容是一行或多行「- 」開頭、
+動詞開頭的條目，沒有標題；不改 CHANGELOG.md，發版時才用 changelog 合併，各分支就不會再搶「## 未發布」。
 
 設定讀 desk 的全域 dispatch.json（環境變數 DESK_SETTINGS 可指定別的路徑），再疊上目前專案的
 ~/.claude/handoffs/<repo 資料夾名>/dispatch.json（頂層同名鍵以專案的為準）。目前專案＝執行時所在
@@ -424,6 +430,93 @@ def cmd_archive(slug):
     print(f'  git -C {MAIN or "<主 repo>"} worktree remove {root}')
 
 
+FRAGMENT_DIR = 'changelog.d'
+CHANGELOG = 'CHANGELOG.md'
+UNRELEASED = '## 未發布'
+# 版本段裡條目的順序：動詞開頭決定分類，不在表裡的排最後；同類依檔名、再依檔內順序。
+VERB_ORDER = ('新增', '調整', '修復', '移除')
+
+
+def repo_root():
+    """執行時所在的 repo 根目錄；不在 git repo 裡就用目前資料夾。"""
+    r = git('rev-parse', '--show-toplevel')
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else os.getcwd()
+
+
+def read_fragments(frag_dir):
+    """changelog.d 裡的 (檔名, [條目]) 依檔名排序；空檔或有一行不是「- 」開頭就報錯。"""
+    if not os.path.isdir(frag_dir):
+        fail(f'沒有片段檔資料夾 {frag_dir}：每張卡的條目寫在 {FRAGMENT_DIR}/<slug>.md，發版時才合併')
+    names = sorted(f for f in os.listdir(frag_dir) if f.endswith('.md') and not f.startswith('.'))
+    if not names:
+        fail(f'{frag_dir} 裡沒有片段檔（*.md），沒有東西可以發版，不改檔')
+    out = []
+    for name in names:
+        lines = [l.rstrip() for l in read(os.path.join(frag_dir, name)).split('\n')]
+        bad = next(((i, l) for i, l in enumerate(lines, 1) if l.strip() and not l.startswith('- ')), None)
+        if bad:
+            fail(f'{FRAGMENT_DIR}/{name} 第 {bad[0]} 行不是「- 」開頭的條目：{bad[1]}\n片段檔只放條目（例如「- 新增 …」），沒有標題與版本；未改任何檔')
+        entries = [l for l in lines if l.strip()]
+        if not entries:
+            fail(f'{FRAGMENT_DIR}/{name} 是空的：寫一條以上的條目，或刪掉這個檔；未改任何檔')
+        out.append((name, entries))
+    return out
+
+
+def order_entries(fragments):
+    """依 VERB_ORDER 分類（「- 」後面的動詞），同類依檔名、檔內順序；穩定排序。"""
+    def rank(entry):
+        verb = entry[2:].lstrip()
+        return next((i for i, v in enumerate(VERB_ORDER) if verb.startswith(v)), len(VERB_ORDER))
+    flat = [(rank(e), e) for _, entries in fragments for e in entries]
+    return [e for _, e in sorted(flat, key=lambda x: x[0])]
+
+
+def insert_version(text, version, entries):
+    """「## <版本>」段插在「## 未發布」之後、下一個 ## 段之前；沒有「## 未發布」就一起補在第一個 ## 段之前（或檔尾）。"""
+    section = f'## {version}\n\n' + '\n'.join(entries) + '\n'
+    lines = text.split('\n')
+    heads = [i for i, l in enumerate(lines) if l.startswith('## ') and not l.startswith('###')]
+    unreleased = next((i for i in heads if lines[i].strip() == UNRELEASED), None)
+    if unreleased is None:
+        at = heads[0] if heads else len(lines)
+        block = [UNRELEASED, '', *section.rstrip('\n').split('\n'), '']
+    else:
+        at = next((i for i in heads if i > unreleased), len(lines))
+        block = [*section.rstrip('\n').split('\n'), '']
+    # 插入點之前多餘的空行收成一行，插入點是檔尾時補一個空行隔開。
+    before = lines[:at]
+    while len(before) > 1 and before[-1].strip() == '' and before[-2].strip() == '':
+        before.pop()
+    if before and before[-1].strip() != '':
+        before.append('')
+    after = lines[at:]
+    merged = before + block + after
+    return '\n'.join(merged).rstrip('\n') + '\n'
+
+
+def cmd_changelog(version):
+    version = version.strip().lstrip('v')
+    if not re.fullmatch(r'\d+(\.\d+)+(-[0-9A-Za-z.]+)?', version):
+        fail(f'版本要像 0.27.0（可以帶 v 開頭）：{version or "空白"}')
+    root = repo_root()
+    changelog = os.path.join(root, CHANGELOG)
+    if not os.path.isfile(changelog):
+        fail(f'找不到 {changelog}')
+    fragments = read_fragments(os.path.join(root, FRAGMENT_DIR))
+    text = read(changelog)
+    if re.search(rf'^## v?{re.escape(version)}\s*$', text, re.M):
+        fail(f'{CHANGELOG} 已存在「## {version}」段，不重複合併；要補條目請直接改那一段，片段檔未動')
+    entries = order_entries(fragments)
+    write(changelog, insert_version(text, version, entries))
+    for name, _ in fragments:
+        os.remove(os.path.join(root, FRAGMENT_DIR, name))
+    print(f'已合併 {len(fragments)} 個片段檔、{len(entries)} 條進 {CHANGELOG} 的「## {version}」段，片段檔已刪：')
+    for name, items in fragments:
+        print(f'  {FRAGMENT_DIR}/{name}（{len(items)} 條）')
+    print(f'接著：改版號 → git add {CHANGELOG} {FRAGMENT_DIR} → commit → tag v{version}')
+
+
 def main(argv):
     if not argv:
         fail(__doc__, 2)
@@ -440,6 +533,8 @@ def main(argv):
         cmd_spec_ok(args[0])
     elif cmd == 'archive' and args:
         cmd_archive(args[0])
+    elif cmd == 'changelog' and args:
+        cmd_changelog(args[0])
     else:
         fail(__doc__, 2)
 

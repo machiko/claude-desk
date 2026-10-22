@@ -99,6 +99,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk:card new <分支> <卡名> [base]` | 建 worktree、DESK 卡、登錄表列 |
 | `/desk:card spec <目標> [需求]` | 產生規格草稿並設 `spec：` 關卡；`… ok` 確認 |
 | `/desk:card archive <slug>` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree） |
+| `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在主 repo 執行；沒有片段、版本段已存在、片段格式錯都不改檔） |
 
 焦點：`/desk` 或 ctrl+x tab 移到面板，ctrl+x tab 回輸入框。面板裡按 `i` 看完整快捷鍵。
 
@@ -148,7 +149,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 - 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞要求 Agent 不 push、不開 PR、不碰正式環境、不啟動容器。
+- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步與審查不 push、不開 PR。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push，也不自動重新啟動 Claude Code。
 - 不會 push、不會開或合併 PR、不會部署。
 
@@ -157,7 +158,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - 介面、提示詞與卡片欄位都是繁體中文。
 - 預設的發版慣例：發版線是 `release/*` 分支、上線看 `v*` tag。用 main 直接發版也可以，只是「開發中版本」那一欄不會出現。
 - PR 狀態只讀 GitHub 與 Bitbucket；其他平台（或沒裝 `gh`）的合併靠 git 判斷，只認得 merge commit，squash、rebase、fast-forward 合併看不出來，要自己在卡片寫回。
-- 背景 Agent 的權限照你的 Claude Code 設定；desk 只在提示詞裡要求不 push、不開 PR、不碰正式環境，不是沙盒。
+- 背景 Agent 的權限照你的 Claude Code 設定；desk 只在提示詞裡限制 push 的範圍（只推自己的分支、不合併）與不碰正式環境，不是沙盒。
 
 ## 設定
 
@@ -241,6 +242,18 @@ claude plugin validate .
 claude plugin test .                  # hooks 的測試
 python3 -m unittest discover -s skills/card/tests   # /desk:card 的測試
 ```
+
+### CHANGELOG 片段檔
+
+每張卡（分支）的 CHANGELOG 條目寫在 `changelog.d/<slug>.md`（slug＝worktree 資料夾名＝分支最後一段，例如 `changelog.d/check-public.md`），不改 `CHANGELOG.md`，所以各分支之間不會再搶「## 未發布」。片段檔只放條目：一行或多行 `- ` 開頭、動詞開頭（新增／修復／調整／移除），一條一個使用者看得到的主題，沒有標題、沒有版本；沒有使用者看得到的改動就不建這個檔（空檔會讓發版報錯）。目錄裡的 `.gitkeep` 讓它在沒有片段時也存在。
+
+發版（在主 repo、要發的 PR 都合併之後）：
+
+```
+python3 skills/card/scripts/card.py changelog 0.27.0   # 或 /desk:card changelog 0.27.0
+```
+
+它把片段合併成 `## 0.27.0` 段（插在「## 未發布」之後、上一版之前；順序 新增 → 調整 → 修復 → 移除，同類依檔名）並刪掉片段檔；沒有片段、版本段已存在、片段有一行不是 `- ` 開頭都會報錯、不改檔。接著改 `.claude-plugin/plugin.json` 的版號，`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json`，commit、打 tag。「## 未發布」標題留著（空的）。
 
 型別檢查：`npx -y -p typescript@5 tsc -p tsconfig.json --noEmit`。它要讀 `.claude-plugin/types/`（Claude Code 產生的 mod 型別，不進版控），所以只在本機跑；GitHub Actions 跑 `plugin validate`、`plugin test` 與 `/desk:card` 的測試（`.github/workflows/ci.yml`）。
 

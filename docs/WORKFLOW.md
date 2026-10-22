@@ -9,9 +9,9 @@
 | 角色 | 負責 | 不做 |
 |---|---|---|
 | 主控台對話（開著 `/desk` 的那個 Claude Code 對話） | 規格、完成檢查、關卡判定、兩次失敗後的診斷 | 不在主 repo 切分支、不 push |
-| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md` | 不問問題等人（寫進卡的「等你」後結束）、不上線 |
+| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時 push 自己的分支、開 PR | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
 | 審查對話（新對話、不接續 Agent） | 只看任務檔、自己重新執行完成檢查、看 diff | 不啟動容器、不改 port、不參考 Agent 的結論 |
-| 你 | 業務決策、push、開 PR、合併、打 tag、部署 | — |
+| 你 | 業務決策、合併、打 tag、部署；push、開 PR 可以自己做，或交給 Agent | — |
 
 ## 六段
 
@@ -78,6 +78,8 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 - 開卡：`/desk:card new <分支> <卡名> [base]`（建 worktree＋DESK 卡＋登錄表列）。
 - 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時只能同步不能派實作）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡，就能按 `g`。審查會逐條對照驗收情境。
 - 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。
+- CHANGELOG：每張卡的條目寫在 `changelog.d/<slug>.md`（`- ` 開頭、動詞開頭的條目，沒有標題），Agent 的派工提示也這樣要求；不改 CHANGELOG.md，分支之間才不會搶「## 未發布」。
+- 發版：要發的 PR 都合併之後，在主 repo `/desk:card changelog <版本>` 把片段合併成 `## <版本>` 段並刪掉片段檔，再改版號、commit、打 tag。沒有片段、版本段已存在、片段格式錯都會報錯不改檔。
 
 ## 常見狀況
 

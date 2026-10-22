@@ -1,0 +1,3 @@
+- 修復 只靠 git 辨識合併時，分支在合併後執行 `git merge` 被 fast-forward 到基準分支會認不出已合併
+- 修復 合併後兩分鐘內（工作桌還沒在合併當下的 HEAD 問過 git）分支又有新 commit 時認不出已合併
+- 修復 多件任務同一輪重新整理並行認定 git 合併時，`rememberMerged` 讀改寫 store 可能互相覆蓋
