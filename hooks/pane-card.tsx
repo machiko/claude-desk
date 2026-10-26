@@ -259,14 +259,12 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (c.reviewTop?.length && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
   // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次確認才派，沒有快捷鍵（寫遠端的事不配單鍵）。
-  if (needsPr(c) && can('open-pr')) {
-    const armed = isArmed(view.armed, `${c.statusPath}\nopen-pr`, view.now)
-    out.push(button({ key: prefix + 'open-pr', isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `再按一次確認派 Agent 開 PR（${modelText(view, 'publish')}）` : '⇡ 開 PR', onPress: () => act.publishPr(c) }))
+  const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
+    const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
+    out.push(button({ key: prefix + id, isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `再按一次確認派 Agent ${doing}（${modelText(view, 'publish')}）` : `⇡ ${doing}`, onPress }))
   }
-  if (needsPush(c) && can('push')) {
-    const armed = isArmed(view.armed, `${c.statusPath}\npush`, view.now)
-    out.push(button({ key: prefix + 'push', isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `再按一次確認派 Agent push（${modelText(view, 'publish')}）` : '⇡ push', onPress: () => act.publishPush(c) }))
-  }
+  if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
+  if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
   if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} 檢查中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
   if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)

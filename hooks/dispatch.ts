@@ -1,6 +1,6 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
-import { isReleaseLine, needsPr, needsPush } from './pipeline'
+import { agentBusy, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, named, parseGate, saysNone } from './card'
 import { agentWaits, slugOf } from './model'
 
@@ -145,8 +145,14 @@ const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不�
 
 /** 推送只動遠端與卡片：審查結論（關卡）與完成檢查是之前判定的，改了六段會退回去。 */
 const PUBLISH_CARD_RULE = '這次只推送：關卡與檢查欄保持原樣；狀態寫 PR 與 CI 的現況，下一步寫等 CI 與合併。'
-/** 推送的提示頭；`text` 是 card-actions 組好的「push <分支> 並對 <基準分支> 開 PR…」或「只 push <分支>…」。 */
-const publishHead = (text: string) => `推送：${text || 'push 這個分支並開 PR，PR 網址寫進歷程'}。只推已 commit 的：不 commit、不改程式、不 rebase。沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束。`
+/** 「⇡ 開 PR」要推送 Agent 做的事；`target` 是基準分支（可帶 origin/），找不到就空白。開不了 PR 的平台寫進等你。 */
+export const openPrRequest = (branch: string, target: string) =>
+  `push ${branch} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束`
+/** 「⇡ push」要推送 Agent 做的事：PR 已開，只 push、不開新 PR。 */
+export const pushRequest = (branch: string, prId?: number) =>
+  `只 push ${branch}（PR${prId ? ` #${prId}` : ''} 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程`
+/** 推送的提示頭；`text` 是 openPrRequest 或 pushRequest 組好的那句。 */
+const publishHead = (text: string) => `推送：${text || openPrRequest('這個分支', '')}。只推已 commit 的：不 commit、不改程式、不 rebase。`
 
 /** 會改程式的派工（繼續、回覆、修正）與推送可以 push 自己的分支、開 PR；寫遠端的範圍只到這裡。 */
 export const PUSH_RULE = '可以 push 這件任務自己的分支（git push -u origin \u003c分支\u003e）並對基準分支開 PR；不 force push、不 push 到其他分支（main、release/* 等）、不合併 PR、不打 tag。push 或開 PR 後把分支頂端 commit 與 PR 網址寫進歷程。'
@@ -241,7 +247,7 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'reply') return replyRefusal(c)
   if (dispatchable(c).includes(kind)) return ''
   if (c.manual) return MANUAL
-  if (c.state === 'running') return BUSY
+  if (c.state === 'running' || (kind === 'publish' && agentBusy(c))) return BUSY
   if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
   if (specBlocks(c)) return specGapReason(c)
   if (!c.verify) return '卡片尚缺完成檢查，規格未通過'

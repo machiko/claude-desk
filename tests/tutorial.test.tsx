@@ -65,6 +65,13 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(data.files[P.card]).toContain('- 等你：無')
   expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：審查 MEDIUM → A/)
   await turn(ui, '按 t 合併到 release/v1.0')
+  // 「⇡ 開 PR」按兩次也不派真的 Agent，只提示照教學按 t
+  const sim = data.launches.length
+  await ui.press({ key: KEY('open-pr') })
+  await ui.press({ key: KEY('open-pr') })
+  await clock.settle()
+  expect(data.launches.length).toBe(sim)
+  expect(data.toasts.some(t => t.includes('教學不會真的 push：照教學的指示按 t 合併'))).toBe(true)
   await ui.press({ key: KEY('tutorial') })
 
   // 6 上線：t 打 tag、卡片關卡改 release，再按兩次 u

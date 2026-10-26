@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_B, REGISTRY, result, text } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
-import { needsPush, stageActions } from '../hooks/turn'
+import { needsPr, needsPush, stageActions } from '../hooks/turn'
 import type { Case, Verify } from '../types'
 
 const BETA = '/home/u/wt/beta'
@@ -182,6 +182,18 @@ test('push buttons: no push when in sync, running, merged, or open-PR already co
   expect(stageActions(running).has('push')).toBe(false)
   expect(needsPush(merged)).toBe(false)
   expect(stageActions(merged).has('push')).toBe(false)
+  // 推送 Agent 在跑、但卡片「等你」有一題決策（state 是 ask）：也沒有開 PR／push
+  const busy = { name: 'desk-p', state: 'working', status: 'busy', kind: 'publish' } as any
+  const ask = '審查 MEDIUM 1 條怎麼處理：A) 現在改 B) 之後再說'
+  const askingNoPr = mergeCase({ ask, state: 'ask', agent: busy })
+  const askingAhead = mergeCase({ ask, state: 'ask', agent: busy, gitState: ahead, pr })
+  expect([askingNoPr.pipeline!.current, askingAhead.pipeline!.current]).toEqual(['merge', 'merge'])
+  expect(needsPr(askingNoPr)).toBe(false)
+  expect(stageActions(askingNoPr).has('open-pr')).toBe(false)
+  expect(needsPush(askingAhead)).toBe(false)
+  expect(stageActions(askingAhead).has('push')).toBe(false)
+  // 對照組：同樣「等你」、Agent 停下（idle）時照常有開 PR
+  expect(needsPr(mergeCase({ ask, state: 'ask' }))).toBe(true)
 })
 
 /** AC-5 */
@@ -269,6 +281,7 @@ test('push buttons: push dispatches a publish agent that only pushes', async ($,
   expect(data.launches).toHaveLength(1)
   expect(p.split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開，不開新 PR）')
   expect(p).not.toContain('並對 release/v1.4 開 PR')
+  expect(p).not.toContain('開不了 PR')
   expect(p).toContain('不 force push')
   // 有未提交的檔案：照樣派（Agent 只推已 commit 的），並提醒
   expect(data.toasts.some(t => t.includes('有 3 檔未提交，只會 push 已 commit 的'))).toBe(true)
@@ -321,4 +334,22 @@ test('push buttons: after publish the stage is merge', async ($, on) => {
   expect(chain.stopped).toBeUndefined()
   expect(ready).not.toContain(flat('流程已暫停'))
   expect(ready).not.toContain(flat('推送失敗'))
+})
+
+/** 「有 n 檔未提交」只跟著真的派出去的 push：啟動失敗時不說，免得跟失敗訊息矛盾。 */
+test('push buttons: the uncommitted reminder only follows a dispatched push', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, { ahead: 2, changed: 3 })
+  judgedAt(data, 'c2')
+  data.launch = async () => result(1, '', 'boom')
+
+  const ui = await mount($)
+  await ui.press({ key: `${PREFIX}push` })
+  await ui.press({ key: `${PREFIX}push` })
+  await clock.settle()
+  await ui.unmount()
+
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts.some(t => t.includes('推送失敗'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('只會 push 已 commit 的'))).toBe(false)
 })

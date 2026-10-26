@@ -94,7 +94,7 @@ test('a new commit after review sends the case back to check, while old branch-n
   await ui.unmount()
 })
 
-/** AC-3 */
+/** 推送按鈕按一次只會要你再按一次（pr-dispatch 卡 AC-1 的前半；完整派工見 push-buttons.test.tsx）。 */
 test('the merge stage offers an open-PR button that asks for a second press before dispatching', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data)

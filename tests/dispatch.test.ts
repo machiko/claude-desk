@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, openPrRequest, pushRequest } from '../hooks/dispatch'
 import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
@@ -322,13 +322,27 @@ test('dispatch: publish is only dispatchable at the merge stage', () => {
   // Agent 在跑：說它在跑
   expect(dispatchable(running)).toEqual([])
   expect(dispatchRefusal(running, 'publish')).toBe('Agent 仍在執行')
+  // 推送 Agent 在跑、卡片「等你」有內容（state 是 ask，不是 running）：一樣不能再派，說它在跑
+  const busy = { name: 'desk-p', state: 'working', status: 'busy', kind: 'publish' as const }
+  const ask = '審查 MEDIUM 1 條怎麼處理：A) 現在改 B) 之後再說'
+  for (const c of [atMerge({ ask, state: 'ask', agent: busy }), atMerge({ ask, state: 'ask', agent: busy, pr: open, gitState: ahead(1) })]) {
+    expect(c.pipeline!.current).toBe('merge')
+    expect(dispatchable(c)).not.toContain('publish')
+    expect(dispatchRefusal(c, 'publish')).toBe('Agent 仍在執行')
+  }
   expect(dispatchRefusal({ ...noPr, manual: true }, 'publish')).toBe('登錄表設為 manual，只追蹤不派工')
 })
 
 test('publish prompt: push and PR only, keeps the gate, no spec or changelog duties, fresh session', () => {
-  const p = buildPrompt(atMerge(), 'publish', 'push feature/a 並對 main 開 PR，PR 網址寫進歷程')
+  const p = buildPrompt(atMerge(), 'publish', openPrRequest('feature/a', 'origin/main'))
+  const pushOnly = buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12))
 
-  expect(p.split('\n')[0]).toBe('推送：push feature/a 並對 main 開 PR，PR 網址寫進歷程。只推已 commit 的：不 commit、不改程式、不 rebase。沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束。')
+  expect(p.split('\n')[0]).toBe('推送：push feature/a 並對 main 開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束。只推已 commit 的：不 commit、不改程式、不 rebase。')
+  // 只 push：不叫它開 PR，也沒有開不了 PR 時寫等你那句
+  expect(pushOnly.split('\n')[0]).toBe('推送：只 push feature/a（PR #12 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程。只推已 commit 的：不 commit、不改程式、不 rebase。')
+  expect(pushOnly).not.toContain('開不了 PR')
+  expect(openPrRequest('feature/a', '')).toBe('push feature/a 並開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束')
+  expect(pushRequest('feature/a', undefined)).toContain('只 push feature/a（PR 已開，不開新 PR）')
   expect(p).toContain('可以 push 這件任務自己的分支')
   expect(p).toContain('不 force push')
   expect(p).toContain('不合併 PR')

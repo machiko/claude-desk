@@ -7,7 +7,7 @@ import type { Case } from '../types'
 import { parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
 import { errorLine, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings } from './probes'
-import { normalizeRoot, replyRefusal } from './dispatch'
+import { normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
 import { isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
@@ -45,17 +45,15 @@ export async function publishPr($: any, options: PluginOptions, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if (tutorial) { $.ui.toast(`${c.name}：${TUTORIAL_PUBLISH}`); return }
   const [target] = await baseRefs($, c, (await loadSettings($, options)).cardBase ?? '')
-  const text = `push ${c.git?.branch ?? '分支'} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR，PR 網址寫進歷程`
-  await dispatch($, options, c, 'publish', { text })
+  await dispatch($, options, c, 'publish', { text: openPrRequest(c.git?.branch ?? '分支', target ?? '') })
 }
 
-/** 合併段 PR 已開後的「⇡ push」（按兩次確認後）：派推送 Agent 只 push、不開新 PR。有未提交的檔案時提醒只會推已 commit 的。 */
+/** 合併段 PR 已開後的「⇡ push」（按兩次確認後）：派推送 Agent 只 push、不開新 PR。派出去了、又有未提交的檔案時提醒只會推已 commit 的。 */
 export async function publishPush($: any, options: PluginOptions, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if (tutorial) { $.ui.toast(`${c.name}：${TUTORIAL_PUBLISH}`); return }
-  const text = `只 push ${c.git?.branch ?? '分支'}（PR${c.pr?.id ? ` #${c.pr.id}` : ''} 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程`
-  await dispatch($, options, c, 'publish', { text })
-  if (c.gitState?.changed) $.ui.toast(`${c.name}：有 ${c.gitState.changed} 檔未提交，只會 push 已 commit 的`)
+  const sent = await dispatch($, options, c, 'publish', { text: pushRequest(c.git?.branch ?? '分支', c.pr?.id) })
+  if (sent && c.gitState?.changed) $.ui.toast(`${c.name}：有 ${c.gitState.changed} 檔未提交，只會 push 已 commit 的`)
 }
 
 export async function fillDecision($: any, c: Case) {

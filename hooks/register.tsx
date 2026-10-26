@@ -511,17 +511,18 @@ export let optionsRef: PluginOptions | undefined
 /**
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
  * 從啟動後的 agents 清單用名字對回完整 session id 才算成功；審查與（設了同步模型的）同步開新 session，不改任務的 session。
+ * 回傳有沒有派出去（被拒、按了取消、啟動失敗都是 false）。
  */
-export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}) {
+export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}): Promise<boolean> {
   const text = opts.text ?? ''
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
   const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
-  if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return }
-  if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
+  if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return false }
+  if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return false }
   if (kind === 'continue' && !opts.auto) {
-    if (!(await approveCheck($, c))) return
+    if (!(await approveCheck($, c))) return false
     // 等你回答的這段時間，可能已經從別處派出去了（例如又打了 /desk go）。
-    if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
+    if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return false }
   }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
@@ -532,7 +533,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   // 同步不改程式、推送只推已 commit 的，不擋；自動流程在派之前已經看過。
   if (kind !== 'sync' && kind !== 'publish' && !opts.auto && !tutorial) {
     const foreign = markRefusal(await worktreeMark($, c.root), own)
-    if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return }
+    if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return false }
   }
   const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
   const now = await $.clock.now()
@@ -571,10 +572,12 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
     await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`, tone: 'suggestion', card: c.statusPath }])
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
+    return true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
     $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
+    return false
   } finally {
     launchKinds = Object.fromEntries(Object.entries(launchKinds).filter(([k]) => k !== c.statusPath))
     await update($, launchingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
@@ -596,6 +599,11 @@ export async function refreshAfterWrite($: any, options: PluginOptions) {
 }
 
 
+
+/** 按兩次確認的動作：第二次按（確認時限內）才做。 */
+async function confirmThen($: any, key: string, then: () => Promise<unknown>) {
+  if (await confirmed($, key)) await then()
+}
 
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
 
@@ -738,8 +746,8 @@ export const register: Register = (on, options) => {
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),
       openPr: c => void (c.pr?.url ? openPath($, c.pr.url, ' PR') : undefined),
-      publishPr: c => void (async () => { if (await confirmed($, `${c.statusPath}\nopen-pr`)) await publishPr($, options, c) })(),
-      publishPush: c => void (async () => { if (await confirmed($, `${c.statusPath}\npush`)) await publishPush($, options, c) })(),
+      publishPr: c => void confirmThen($, `${c.statusPath}\nopen-pr`, () => publishPr($, options, c)),
+      publishPush: c => void confirmThen($, `${c.statusPath}\npush`, () => publishPush($, options, c)),
       next: () => void (async () => {
         const cur = await read($, snapshot)
         if (!cur) return
