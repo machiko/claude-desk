@@ -98,7 +98,7 @@ export async function summarizeStatuses($: any, options: PluginOptions, s: Snaps
 /** 狀態列（輸入框下方，跟 statusline 並存）：進行中的那件與它的階段；有人在等你就加一段。 */
 export function statusLine($: any, s: Snapshot) {
   const run = liveCases(s.cases).filter(c => c.state === 'running').sort((a, b) => (b.agent?.startedAt ?? 0) - (a.agent?.startedAt ?? 0))
-  const wait = liveCases(s.cases).find(c => c.state === 'ask' || c.state === 'reply' || c.state === 'gate' || c.state === 'failed')
+  const wait = liveCases(s.cases).find(c => c.state === 'ask' || c.state === 'reply' || c.state === 'approve' || c.state === 'gate' || c.state === 'failed')
   const parts: string[] = []
   if (run[0]) parts.push(`▶ ${run[0].name} ${run[0].pipeline ? stageLabel(run[0].pipeline) : ''}${run.length > 1 ? ` +${run.length - 1}` : ''}`)
   if (wait) parts.push(`● ${wait.name} 等你`)

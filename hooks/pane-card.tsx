@@ -56,7 +56,7 @@ export type Action = { key: string; label: string; hotkey?: string; isDim?: bool
 /** 上線確認只在最後一段：已經有 tag 包含這個 commit、關卡是 release：…（部署完由你按）。 */
 export const canShip = (c: Case) => c.pipeline?.current === 'ship' && !!c.tag && parseGate(c.gate)?.kind === 'release'
 /** 只有 desk 派出去、正在跑的那個才能從面板停止。 */
-const canStop = (c: Case) => c.state === 'running' && !!c.agent?.id && /^desk-/.test(c.agent.name)
+const canStop = (c: Case) => (c.state === 'running' || c.state === 'approve') && !!c.agent?.id && /^desk-/.test(c.agent.name)
 
 /** 確認文字裡的模型：同步用同步模型，其他用派工模型。 */
 function modelText(view: PaneView, k: DispatchKind): string {

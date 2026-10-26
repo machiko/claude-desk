@@ -252,7 +252,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
     const age = !narrow && g.ageWidth ? ages[i]! : ''
     const used = 3 + 2 + (narrow ? displayWidth(name) : g.nameWidth) + 2 + (strip.length ? (narrow ? strip.length : (STAGES.length - 1) * STAGE_COL + 2) : displayWidth(narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)))
     const line = [
-      <Text key="g" color={meta.color}>{glyph}</Text>, ' ', <Text key="n" color={COLOR.text} bold={c.state === 'ask' || c.state === 'reply'}>{name}</Text>,
+      <Text key="g" color={meta.color}>{glyph}</Text>, ' ', <Text key="n" color={COLOR.text} bold={c.state === 'ask' || c.state === 'reply' || c.state === 'approve'}>{name}</Text>,
       <Text key="gap">{'  '}</Text>,
       ...cells,
       age ? <Text key="age" color={COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null,
@@ -263,7 +263,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
       : <Button plain key={`row-${c.statusPath}`} hotkey={hot} dimColor={c.state === 'idle' || c.state === 'nocard'} onPress={() => act.select(c.statusPath)}>{line}</Button>,
     )
     const note = summary(c)
-    if (!narrow && note && (c.state === 'ask' || c.state === 'reply' || c.state === 'gate' || c.state === 'failed')) rows.push(<Box paddingLeft={5}><Text color={COLOR.dim} wrap="truncate-end">{fit(note, width - 5)}</Text></Box>)
+    if (!narrow && note && (c.state === 'ask' || c.state === 'reply' || c.state === 'approve' || c.state === 'gate' || c.state === 'failed')) rows.push(<Box paddingLeft={5}><Text color={COLOR.dim} wrap="truncate-end">{fit(note, width - 5)}</Text></Box>)
   })
   return rows
 }

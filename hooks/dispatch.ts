@@ -2,7 +2,7 @@
 import type { Case } from '../types'
 import { isReleaseLine } from './pipeline'
 import { CARD_CMD, named, parseGate, saysNone } from './card'
-import { agentWaits, slugOf } from './model'
+import { agentWaits, approvalWait, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHORT_ID = /^[0-9a-f]{8}$/i
@@ -192,6 +192,8 @@ export function idleNext(next: string): string {
 export function dispatchable(c: Case): DispatchKind[] {
   if (c.manual || c.state === 'running' || c.state === 'nocard') return []
   if (c.state === 'reply') return ['reply', 'sync']
+  // 等權限批准：回覆放行不了工具，只能同步。
+  if (c.state === 'approve') return ['sync']
   // 已上線：沒有要實作或審查的東西，只能同步。
   if (c.state === 'done') return ['sync']
   // 規格還沒確認（關卡 spec：…）：不派實作也不審查，只能同步。
@@ -217,6 +219,8 @@ const BUSY = 'Agent 仍在執行'
 export function replyRefusal(c: Case): string {
   if (c.demo) return '示範任務只能看'
   if (c.manual) return MANUAL
+  // 權限提示要到 claude agents 批准；回覆會被當成一則新訊息，不會放行那個工具。
+  if (c.state === 'approve' || approvalWait(c.agent)) return 'Agent 在等權限批准，不是提問'
   if (c.state === 'reply' || agentWaits(c.agent)) return ''
   return c.state === 'running' || c.agent?.status === 'busy' ? BUSY : 'Agent 沒有在等你回覆'
 }

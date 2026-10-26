@@ -122,6 +122,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
       case 'build':
         if (coding) set('active', c.chain?.round ? `修正第 ${c.chain.round} 輪` : 'Agent 處理中')
         else if (c.state === 'reply') set('wait', 'Agent 等待你回覆')
+        else if (c.state === 'approve') set('wait', 'Agent 等你批准權限')
         else if (c.chain?.stopped) set('fail', c.chain.stopped)
         else if (c.manual) set('todo', '手動追蹤')
         else if (c.state === 'idle') set('todo', '閒置')

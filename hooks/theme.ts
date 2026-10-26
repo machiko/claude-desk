@@ -15,6 +15,8 @@ export const COLOR = {
 export const STATE: Record<CaseState, { glyph: string; label: string; color: string; weight: number }> = {
   ask: { glyph: '●', label: '等你', color: COLOR.attention, weight: 0 },
   reply: { glyph: '●', label: '等回覆', color: COLOR.attention, weight: 1 },
+  /** Agent 停在權限提示：要到 claude agents 批准，不是回覆。 */
+  approve: { glyph: '●', label: '等批准', color: COLOR.attention, weight: 1 },
   gate: { glyph: '◆', label: '關卡', color: COLOR.attention, weight: 2 },
   failed: { glyph: '✕', label: '失敗', color: COLOR.bad, weight: 3 },
   running: { glyph: '▶', label: '進行中', color: COLOR.running, weight: 4 },
@@ -26,7 +28,7 @@ export const STATE: Record<CaseState, { glyph: string; label: string; color: str
 }
 
 /** 摘要列上有數字才顯示的狀態，依序。 */
-export const BAND_STATES: CaseState[] = ['ask', 'reply', 'gate', 'failed', 'running', 'ready']
+export const BAND_STATES: CaseState[] = ['ask', 'reply', 'approve', 'gate', 'failed', 'running', 'ready']
 
 export const SPINNER = ['◐', '◓', '◑', '◒']
 

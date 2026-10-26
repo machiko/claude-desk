@@ -7,7 +7,9 @@ const BETA = '/home/u/wt/beta'
 const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
 const LAUNCH = 'desk-launch-1'
 const PREFIX = `case-${CARD_B}-`
+const APPROVE = `Agent 在等權限批准：到終端機跑 claude agents 選 ${LAUNCH} 批准`
 const flat = (x: string) => x.replace(/\s+/g, '')
+const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 只留 Beta 一件：工作桌派出去的那次停下來（blocked）。 */
 function blocked(data: any, agent: Record<string, unknown>, logs = '要先跑整套測試嗎？\n') {
@@ -18,6 +20,64 @@ function blocked(data: any, agent: Record<string, unknown>, logs = '要先跑整
   data.logs = { bbbbbbbb: logs }
   data.store.jobs = { [BETA]: { sessionId: SID, last: { launchName: LAUNCH, nativeId: 'bbbbbbbb', sessionId: SID, kind: 'continue', startedAt: NOW - 60_000, fresh: false } } }
 }
+
+test('permission wait: a permission prompt asks you to approve in claude agents, not to reply', async ($, on) => {
+  // 停在權限提示的 Agent：清單上可能是 status waiting，也可能已經不是 busy（idle）；兩種都要認得。
+  const { data } = fixture(on)
+  for (const status of ['waiting', 'idle']) {
+    blocked(data, { status, waitingFor: 'permission prompt' })
+    data.toasts.length = 0
+
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    const ui = await $.ui.mount(PANE(120))
+    const shown = await screen(ui)
+
+    // 任務狀態：等你批准權限，不是等你回覆
+    expect(shown).toContain(flat('等批准'))
+    expect(shown).not.toContain(flat('等回覆'))
+    expect(shown).not.toContain(flat('Agent 等待你回覆'))
+    // ▶ 輪到你：去 claude agents 批准
+    expect(shown).toContain(flat(`▶ 輪到你`))
+    expect(shown).toContain(flat(APPROVE))
+    expect(shown).not.toContain(flat('按 y 回覆'))
+    // 動作列：沒有 y（回覆），有 k（停止）與 l（輸出）
+    expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
+    expect((await ui.find({ key: `${PREFIX}stop` }))?.props?.hotkey).toBe('k')
+    expect((await ui.find({ key: `${PREFIX}logs` }))?.props?.hotkey).toBe('l')
+    await ui.unmount()
+
+    // 摘要列同樣措辭
+    const band = await $.ui.mount(BAND(200))
+    const bar = flat(text(await band.drawn()))
+    expect(bar).toContain(flat(`輪到你：${APPROVE}`))
+    expect(bar).not.toContain(flat('按 y 回覆'))
+    await band.unmount()
+
+    // /desk reply 也不送：說清楚它在等權限批准
+    const out: any = await $.command.run({ command: 'desk', args: 'reply Beta 好' } as any)
+    const said = [String(out?.text ?? ''), ...data.toasts].join('\n')
+    expect(said).toContain('Agent 在等權限批准，不是提問')
+    expect(data.launches).toHaveLength(0)
+    expect(data.asks).toHaveLength(0)
+  }
+})
+
+test('permission wait: a blocked agent waiting on anything else still asks you to reply', async ($, on) => {
+  const { data } = fixture(on)
+  for (const agent of [{ status: 'waiting', waitingFor: 'input needed' }, { status: 'idle' }]) {
+    blocked(data, agent)
+
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    const ui = await $.ui.mount(PANE(120))
+    const shown = await screen(ui)
+
+    expect(shown).toContain(flat('等回覆'))
+    expect(shown).toContain(flat('按 y 回覆 Agent 的提問'))
+    expect(shown).not.toContain(flat('等權限批准'))
+    expect((await ui.find({ key: `${PREFIX}reply` }))?.text).toBe('↩ 回覆')
+    await ui.unmount()
+  }
+})
 
 /** 背景 Agent 的 `claude logs`：整個畫面的重繪紀錄，顏色、游標移動、轉圈圈與狀態列夾在句子裡。 */
 const QUESTION = '要先跑整套測試，還是只跑 permission-wait 的測試？'

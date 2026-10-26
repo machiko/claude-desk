@@ -183,8 +183,21 @@ export function supersede(list: readonly any[], last: Readonly<Record<string, La
 }
 
 export function agentInfo(a: any): AgentInfo {
-  return { ...(typeof a.id === 'string' ? { id: a.id } : {}), name: plain(String(a.name ?? a.id ?? '')), ...(typeof a.sessionId === 'string' ? { sessionId: a.sessionId } : {}), state: String(a.state ?? ''), status: String(a.status ?? ''), ...(a.waitingFor ? { waitingFor: plain(String(a.waitingFor)) } : {}), ...(typeof a.startedAt === 'number' ? { startedAt: a.startedAt } : {}) }
+  const waitsFor = waitsOf(a)
+  return { ...(typeof a.id === 'string' ? { id: a.id } : {}), name: plain(String(a.name ?? a.id ?? '')), ...(typeof a.sessionId === 'string' ? { sessionId: a.sessionId } : {}), state: String(a.state ?? ''), status: String(a.status ?? ''), ...(a.waitingFor ? { waitingFor: plain(String(a.waitingFor)) } : {}), ...(waitsFor ? { waitsFor } : {}), ...(typeof a.startedAt === 'number' ? { startedAt: a.startedAt } : {}) }
 }
+
+/** 停下來的 Agent 在等什麼：waitingFor 提到 permission 是權限提示；其他停下來的（blocked 或 status waiting）當成提問。 */
+function waitsOf(a: any): AgentInfo['waitsFor'] {
+  if (/permission/i.test(String(a?.waitingFor ?? ''))) return 'permission'
+  return String(a?.state ?? '').toLowerCase() === 'blocked' || String(a?.status ?? '').toLowerCase() === 'waiting' ? 'question' : undefined
+}
+
+/** Agent 停在權限提示：要到終端機的 claude agents 批准，面板代替不了。 */
+export const approvalWait = (a: AgentInfo | undefined) => a?.waitsFor === 'permission'
+
+/** 等權限批准時給人看的那句：現在卡最上方、摘要列與列表都用它。 */
+export const approveText = (c: Pick<Case, 'agent'>) => `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准`
 
 /** 工作桌派出去的那一次（按啟動名）做完後停在提問：state blocked 且不再 busy。 */
 export function asksFor(list: any[], launchName: string | undefined): AgentInfo | null {
@@ -217,6 +230,7 @@ export const agentWaits = (a: AgentInfo | undefined) => !!a && (!!a.waitingFor |
 export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): CaseState {
   if (!c.hasCard) return 'nocard'
   if (!saysNone(c.ask)) return 'ask'
+  if (approvalWait(c.agent)) return 'approve'
   if (agentWaits(c.agent)) return 'reply'
   const running = !!c.agent && !c.agent.asks
   const verdict = parseVerdict(c.gate)
@@ -254,7 +268,7 @@ export function sorted(cases: readonly Case[]): Case[] {
 }
 
 export function counts(cases: readonly Case[]): Record<CaseState, number> {
-  const out = { ask: 0, reply: 0, gate: 0, failed: 0, running: 0, ready: 0, done: 0, idle: 0, nocard: 0 }
+  const out = { ask: 0, reply: 0, approve: 0, gate: 0, failed: 0, running: 0, ready: 0, done: 0, idle: 0, nocard: 0 }
   for (const c of cases) out[c.state]++
   return out
 }
@@ -273,6 +287,7 @@ export function focusCase(cases: readonly Case[]): Case | null {
 /** 一件任務在列表上的那句話：等你的題目、關卡、agent 等什麼、否則下一步。 */
 export function summary(c: Case): string {
   if (c.state === 'ask') { const d = parseDecisions(c.ask)[0]; return d ? d.title || c.ask : c.ask }
+  if (c.state === 'approve') return approveText(c)
   if (c.state === 'reply') return c.agent?.waitingFor ? `Agent 等待：${c.agent.waitingFor}` : c.agent?.last ? `Agent 提問：${c.agent.last}` : 'Agent 等待你回覆'
   if (c.state === 'gate') { const g = parseGate(c.gate)!; return g.detail || c.gate }
   if (c.state === 'nocard') return '找不到卡片'
@@ -296,9 +311,10 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     if (!p) { push(`${c.name} 加入工作桌`, 'subtle'); continue }
     if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) push(`${c.name} 等你：${fit(summary(c), 40)}`, 'warning')
     else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning')
+    else if (c.state === 'approve' && p.state !== 'approve') push(`${c.name} Agent 等你批准權限`, 'warning')
     else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning')
     else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
-    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply') push(`${c.name} Agent 已完成`, 'subtle')
+    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent 已完成`, 'subtle')
     else if (c.state === 'failed' && p.state !== 'failed') push(`${c.name} 檢查未通過`, 'error')
   }
   return out

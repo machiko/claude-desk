@@ -25,7 +25,7 @@ function leadCase(s: Snapshot, selected: string | null): Case | null {
   return running[0] ?? focusCase(s.cases) ?? (s.tutorial ? s.cases[0] ?? null : null)
 }
 
-const NEEDS_YOU = new Set(['ask', 'reply', 'gate', 'failed'])
+const NEEDS_YOU = new Set(['ask', 'reply', 'approve', 'gate', 'failed'])
 
 export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxOf: (c: Case) => TurnCtx = () => ({}), selected: string | null = null): BandLayout {
   const narrow = columns < NARROW
