@@ -98,6 +98,8 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk off` | 這個對話關閉工作桌 |
 | `/desk:card new <分支> <卡名> [base]` | 建 worktree、DESK 卡、登錄表列 |
 | `/desk:card spec <目標> [需求]` | 產生規格草稿並設 `spec：` 關卡；`… ok` 確認 |
+| `/desk:card done <slug> <狀態一句>` | 主對話告一段落時寫回卡片：狀態、下一步（到面板按 v）與 History（分支、HEAD）；規格沒確認會拒絕 |
+| `/desk:flow` | 在主對話（不派 Agent）走六段的說明：每段對話做什麼、面板怎麼看得到，末尾附一行 CLAUDE.md 規則 |
 | `/desk:card archive <slug>` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree） |
 | `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在主 repo 執行；沒有片段、版本段已存在、片段格式錯都不改檔） |
 
@@ -114,6 +116,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | v | 完成檢查；流程停在檢查段（指令改過、容器沒啟動、檢查中斷）時，跑完流程接著走 |
 | u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡並記 History |
 | o／e／p | 開卡片／審查檔／PR |
+| ⇡ 開 PR／⇡ push | 合併段才出現、沒有快捷鍵，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag） |
 | t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
 | x／m／i | 展開全文／更多動作／說明 |
 | r | 重新整理（在 `m` 更多動作裡；平常定時、每回合結束、對話改了卡片或跑了 git 之後都會自動重讀） |
@@ -149,9 +152,9 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 - 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步與審查不 push、不開 PR。
+- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步與審查不 push、不開 PR。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push，也不自動重新啟動 Claude Code。
-- 不會 push、不會開或合併 PR、不會部署。
+- desk 自己不跑 `git push`、不開或合併 PR、不會部署；push、開 PR 交給它派的 Agent，合併由你按。
 
 ## 限制
 

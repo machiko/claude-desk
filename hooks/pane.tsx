@@ -57,10 +57,10 @@ export type PaneActions = {
   logs: (c: Case) => void
   openReview: (c: Case) => void
   openPr: (c: Case) => void
-  /** 合併段還沒有 PR：把「push 分支並對基準分支開 PR」預填進輸入框，由你送出；desk 自己不 push、不開 PR。 */
-  fillPr: (c: Case) => void
-  /** 合併段、PR 已開又有沒 push 的 commit：把「push 分支」預填進輸入框，由你送出；desk 自己不 push。 */
-  fillPush: (c: Case) => void
+  /** 合併段還沒有 PR：派推送 Agent push 分支並對基準分支開 PR（按兩次）；desk 自己不跑 git push、gh。 */
+  publishPr: (c: Case) => void
+  /** 合併段、PR 已開又有沒 push 的 commit：派推送 Agent 只 push（按兩次）。 */
+  publishPush: (c: Case) => void
   /** 上線確認：清掉 release 關卡（按兩次）。 */
   ship: (c: Case) => void
   /** 真實模式的 t：確認規格（按兩次），效果同 /desk:card spec <slug> ok。 */

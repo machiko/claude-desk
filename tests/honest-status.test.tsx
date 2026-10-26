@@ -83,10 +83,10 @@ test('a new commit after review sends the case back to check, while old branch-n
   expect(moved).toContain(flat('▶ 輪到你  審查後有新 commit：按 v 重新執行完成檢查'))
   expect(moved).toContain(flat('實作● 檢查◆'))
   expect(noteOf({ round: 0, passed: true, stale: true }, checkAt('c1'))).toBe('檢查・審查後有新 commit，需重新檢查')
-  expect(moved).not.toContain(flat('push 分支並開 PR'))
-  expect(same).toContain(flat('▶ 輪到你  push 分支並開 PR'))
+  expect(moved).not.toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR'))
+  expect(same).toContain(flat('▶ 輪到你  按 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(same).not.toContain(flat('審查後有新 commit'))
-  expect(legacy).toContain(flat('▶ 輪到你  push 分支並開 PR'))
+  expect(legacy).toContain(flat('▶ 輪到你  按 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(legacy).not.toContain(flat('審查後有新 commit'))
   expect(noteOf({ round: 0, passed: true }, checkAt('feature/b'))).toBe('合併・可開 PR')
   expect(checkStands({ verify: 'npm test', git }, oldCheck)).toBe(true)
@@ -94,8 +94,8 @@ test('a new commit after review sends the case back to check, while old branch-n
   await ui.unmount()
 })
 
-/** AC-3 */
-test('the merge stage offers an open-PR button that only fills the prompt', async ($, on) => {
+/** 推送按鈕按一次只會要你再按一次（pr-dispatch 卡 AC-1 的前半；完整派工見 push-buttons.test.tsx）。 */
+test('the merge stage offers an open-PR button that asks for a second press before dispatching', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data)
   judgedAt(data, 'c2')
@@ -105,16 +105,13 @@ test('the merge stage offers an open-PR button that only fills the prompt', asyn
   const ui = await mount($)
   const button = await ui.find({ key: `${PREFIX}open-pr` })
   await ui.press({ key: `${PREFIX}open-pr` })
-  data.fillable = false
-  await ui.press({ key: `${PREFIX}open-pr` })
+  const armed = await ui.find({ key: `${PREFIX}open-pr` })
 
   expect(button?.text || button?.props?.label).toBe('⇡ 開 PR')
-  expect(data.fills).toEqual([
-    { text: 'push feature/b 並對 release/v1.4 開 PR', mode: 'replace' },
-    { text: 'push feature/b 並對 release/v1.4 開 PR', mode: 'replace' },
-  ])
-  expect(data.submitted).toHaveLength(0)
-  expect(data.toasts.some(t => t.includes('輸入框無法預填') && t.includes('push feature/b 並對 release/v1.4 開 PR'))).toBe(true)
+  expect(armed?.text || armed?.props?.label).toContain('再按一次確認派 Agent 開 PR')
+  // 按一次只會要你再按一次：不派 Agent、不預填輸入框；desk 自己也不 push、不開 PR
+  expect(data.launches).toHaveLength(0)
+  expect(data.fills).toHaveLength(0)
   expect(calls.some(e => e.argv[0] === 'git' && e.argv.includes('push'))).toBe(false)
   expect(calls.some(e => e.argv[0] === 'gh' && e.argv.includes('create'))).toBe(false)
   await ui.unmount()
@@ -137,11 +134,11 @@ test('a verdict the agent wrote itself counts but is marked self-review with w o
   const independent = await refreshed($, ui)
   const independentW = await ui.find({ key: `${PREFIX}review` })
 
-  expect(noChain).toContain(flat('push 分支並開 PR（審查是自審，可按 w 派獨立審查）'))
+  expect(noChain).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（審查是自審，可按 w 派獨立審查）'))
   expect(noChain).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
   expect(noChainW?.props?.hotkey).toBe('w')
   expect(self).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
-  expect(self).toContain(flat('push 分支並開 PR（審查是自審，可按 w 派獨立審查）'))
+  expect(self).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（審查是自審，可按 w 派獨立審查）'))
   expect(self).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
   expect(noteOf({ round: 0, selfReview: true }, checkAt('c2'))).toBe('合併・可開 PR（自審）')
   expect(selfW?.props?.hotkey).toBe('w')
@@ -165,7 +162,7 @@ test('a stopped chain shows its reason and the key to press instead of the next 
   expect(shown).toContain(flat(`▶ 輪到你  ${UNAPPROVED}`))
   expect(shown).toContain(flat('實作● 檢查✕ 審查'))
   expect(noteOf({ round: 0, stopped: UNAPPROVED })).toBe(`檢查・${UNAPPROVED}`)
-  expect(shown).not.toContain(flat('push 分支並開 PR'))
+  expect(shown).not.toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(shown).not.toContain(flat('✓ 完成'))
   expect(leaves(verify, 'Text').some((t: any) => t.props?.bold)).toBe(true)
   await ui.unmount()
