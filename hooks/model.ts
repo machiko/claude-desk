@@ -47,32 +47,78 @@ export function isNoise(line: string): boolean {
   const l = line.trim()
   if (displayWidth(l) < 4) return true
   if (/…/.test(l) && displayWidth(l) < 40) return true
-  if (/\d+(?:\.\d+)?k? tokens|\d+s ·|· ↓|esc to interrupt|\? for shortcuts|^running |^[A-Z][a-z]+ for \d+\s*s/.test(l)) return true
+  if (/\d+(?:\.\d+)?k? tokens|\d+s ·|· ↓|esc to interrupt|\? for shortcuts|shift\+tab|^running |^[A-Z][a-z]+ for \d+\s*s/.test(l)) return true
   if (/^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║>·\-=*`()]+$/.test(l)) return true
   if (!/[\u3400-\u9fff]/.test(l) && !/\s/.test(l) && l.length < 16) return true
   // 重繪剩下的數字碎片（倒數、欄位號）：沒有中文、也沒有連續三個英文字母。
   if (!/[\u3400-\u9fff]/.test(l) && !/[A-Za-z]{3}/.test(l)) return true
-  // 狀態列：額度百分比（5h:40% 7d:43%）、增刪行數（+20/-22 │ …）。
-  if (/\d+[hd]:\d+%|^\+\d+\/-\d+\s/.test(l)) return true
-  return false
+  // 額度列（5h:40% 7d:43%）。
+  if (/\d+[hd]:\d+%/.test(l)) return true
+  return isStatusLine(l)
 }
 
 /**
- * `claude logs` 是整個畫面的重繪紀錄，拆回一行一行的字：顏色與清行拿掉；游標右移、跳到某一欄是字與字之間的空白；
- * 其他游標移動與 \r 才是分行。連續空白併成一格。
+ * 畫面最底的狀態列「<分支> │ +n/-m │ <worktree>」（沒有改動時沒有中段）：用 │ 分欄、每欄是一個詞（或它的重繪碎片，例如「r leas v14.2.6」）。
+ * 兩端都是 │ 的是框線裡的句子（權限提示框、表格），不算。
+ */
+export function isStatusLine(line: string): boolean {
+  const l = line.trim()
+  if (!/│/.test(l)) return false
+  if (/\+\d+\/-\d+/.test(l)) return true
+  if (/[\u3400-\u9fff]/.test(l) || (l.startsWith('│') && l.endsWith('│'))) return false
+  return l.split('│').every(seg => seg.trim().split(/\s+/).length <= 3)
+}
+
+/** 東亞寬字（CJK、全形、韓文）在終端機佔兩格。 */
+const isWide = (code: number) => code >= 0x1100 && (code <= 0x115f || (code >= 0x2e80 && code <= 0xa4cf) || (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff00 && code <= 0xff60) || (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x20000 && code <= 0x3fffd))
+
+/**
+ * `claude logs` 是整個畫面的重繪紀錄（每次只畫有變的格子），把它重播成最後的畫面，一列一個字串，由上到下。
+ * 只追游標與格子：游標移動（上下左右、跳欄、定位）、清行、清畫面照做；顏色、模式切換與其他序列略過。
+ * 同一列多次重繪會疊在同一列上，所以不會把「c mmand.run」這種只畫了變動格子的碎片當成一句話；
+ * 紀錄開始前就畫好的格子還是看不到（狀態列常只剩碎片），那些由 isNoise 擋。
  */
 export function screenLines(raw: string): string[] {
-  return String(raw ?? '')
-    .replace(/\u001b\[[0-9;:]*m/g, '')
-    .replace(/\u001b\[\d*K/g, '')
-    .replace(/\u001b\[\d*[CG]/g, ' ')
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '\n')
-    .split(/[\r\n]+/)
-    .map(l => plain(l).replace(/\s+/g, ' ').trim())
+  const rows = new Map<number, string[]>()
+  let r = 0
+  let c = 0
+  const row = () => { const got = rows.get(r); if (got) return got; const made: string[] = []; rows.set(r, made); return made }
+  const re = /\u001b\[([0-?]*)[ -/]*([@-~])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]|\r|\n|[^\u001b\r\n]+/g
+  for (const m of String(raw ?? '').matchAll(re)) {
+    const s = m[0]
+    if (s === '\r') { c = 0; continue }
+    if (s === '\n') { r++; c = 0; continue }
+    if (s[0] !== '\u001b') {
+      for (const ch of s) {
+        const code = ch.codePointAt(0) ?? 0
+        if (code < 32 || (code >= 0x7f && code <= 0x9f)) continue
+        const cells = row()
+        cells[c++] = ch
+        if (isWide(code)) cells[c++] = ''
+      }
+      continue
+    }
+    if (m[2] === undefined) continue
+    const args = (m[1] ?? '').split(';').map(x => parseInt(x, 10))
+    const arg = (i: number, fallback: number) => { const v = args[i]; return v === undefined || Number.isNaN(v) ? fallback : v }
+    switch (m[2]) {
+      case 'A': r = Math.max(0, r - arg(0, 1)); break
+      case 'B': r += arg(0, 1); break
+      case 'C': c += arg(0, 1); break
+      case 'D': c = Math.max(0, c - arg(0, 1)); break
+      case 'G': c = Math.max(0, arg(0, 1) - 1); break
+      case 'H': case 'f': r = Math.max(0, arg(0, 1) - 1); c = Math.max(0, arg(1, 1) - 1); break
+      case 'K': { const cells = row(); const k = arg(0, 0); if (k === 0) cells.length = Math.min(cells.length, c); else if (k === 1) cells.fill(' ', 0, c + 1); else cells.length = 0; break }
+      case 'J': { const k = arg(0, 0); for (const key of [...rows.keys()]) if (k === 2 || (k === 0 && key > r) || (k === 1 && key < r)) rows.delete(key); if (k === 0) row().length = Math.min(row().length, c); break }
+      default: break
+    }
+  }
+  return [...rows.keys()].sort((a, b) => a - b)
+    .map(k => plain(Array.from(rows.get(k)!, x => x ?? ' ').join('')).replace(/\s+/g, ' ').trim())
     .filter(l => l && !isNoise(l))
 }
 
-/** Agent 記錄的最後一句有意義的話（見 screenLines），略過雜訊；行首的轉圈圈、項目符號與 [標籤] 拿掉。 */
+/** Agent 最後畫面上最下面一句有意義的話（見 screenLines），略過雜訊；行首的轉圈圈、項目符號與 [標籤] 拿掉。 */
 export function lastMeaningful(raw: string, max = 120): string {
   return (screenLines(raw).pop() ?? '').replace(/^[⏺●✻✽✢✳✶·❯]\s*/, '').replace(/^\[[^\]]*\]\s*/, '').slice(0, max)
 }
@@ -91,7 +137,7 @@ export function displayWidth(text: string): number {
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0
     if (code < 32) continue
-    w += code >= 0x1100 && (code <= 0x115f || (code >= 0x2e80 && code <= 0xa4cf) || (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff00 && code <= 0xff60) || (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x20000 && code <= 0x3fffd)) ? 2 : 1
+    w += isWide(code) ? 2 : 1
   }
   return w
 }
