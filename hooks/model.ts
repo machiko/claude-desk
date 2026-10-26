@@ -46,8 +46,8 @@ export function plain(text: string): string {
 export function isNoise(line: string): boolean {
   const l = line.trim()
   if (displayWidth(l) < 4) return true
-  // 輸入框上框線「──…── <名字> ─」、模式列「⏸ manual mode on · ← for agents」「⏵⏵ accept edits on」、努力度「● high · /effort」。
-  if (/^─{10,} .* ─$/.test(l) || /\b(?:[a-z]+ mode|accept edits|bypass permissions) on\b|← (?:for|\d+) agents|· \/effort$/.test(l)) return true
+  // 輸入框上框線「──…── <名字> ─」、模式列「⏸ manual mode on · ← for agents」「⏵⏵ accept edits on」（只認 ⏸／⏵⏵ 開頭的，提問裡的「mode on」不算）、努力度「● high · /effort」。
+  if (/^─{10,} .* ─$/.test(l) || /^(?:⏸|⏵⏵)\s*(?:[a-z]+ mode|accept edits|bypass permissions) on\b|← (?:for|\d+) agents|· \/effort$/.test(l)) return true
   if (/…/.test(l) && displayWidth(l) < 40) return true
   if (/\d+(?:\.\d+)?k? tokens|\d+s ·|· ↓|esc to interrupt|\? for shortcuts|shift\+tab|^running |^[A-Z][a-z]+ for \d+\s*s/.test(l)) return true
   if (/^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║>·\-=*`()]+$/.test(l)) return true
@@ -77,16 +77,13 @@ const isWide = (code: number) => code >= 0x1100 && (code <= 0x115f || (code >= 0
 /**
  * `claude logs` 是整個畫面的重繪紀錄（每次只畫有變的格子），把它重播成最後的畫面，一列一個字串，由上到下。
  * 只追游標與格子：游標移動（上下左右、跳欄、定位）、清行、清畫面照做；顏色、模式切換與其他序列略過。
- * 紀錄裡列與列之間的 \n 只是回到行首，真正的換行是緊接在後的 \e[nB（紀錄用 \e[nB、\e[n;mH 定位每一列）；
- * 後面沒有接定位的 \n（純文字輸出）才是換行。
+ * 真實紀錄列與列之間是 \r（回到行首），列由緊接的 \e[nB、\e[n;mH 決定；\n 當一般換行。
  * 同一列多次重繪會疊在同一列上，所以不會把「c mmand.run」這種只畫了變動格子的碎片當成一句話；
  * 紀錄開始前就畫好的格子還是看不到（狀態列常只剩碎片），那些由 isNoise 擋。
  * 短 session 的紀錄從整頁畫起，畫面最底的輸入框（只剩提示符 ❯ 的那列）與它以下的框線、模型列、分支列、模式列都是 UI 元件，整段丟掉。
  */
 export function screenLines(raw: string): string[] {
   const text = String(raw ?? '')
-  // \n 後面（略過顏色碼與橫向移動）緊接著上下移動或定位：這個 \n 只回到行首，列由後面的序列決定。
-  const rowMoveNext = /^(?:\u001b\[[0-9;]*[mCG])*\u001b\[\d*(?:;\d*)?[ABHf]/
   const rows = new Map<number, string[]>()
   let r = 0
   let c = 0
@@ -95,7 +92,7 @@ export function screenLines(raw: string): string[] {
   for (const m of text.matchAll(re)) {
     const s = m[0]
     if (s === '\r') { c = 0; continue }
-    if (s === '\n') { if (!rowMoveNext.test(text.slice(m.index! + 1, m.index! + 80))) r++; c = 0; continue }
+    if (s === '\n') { r++; c = 0; continue }
     if (s[0] !== '\u001b') {
       for (const ch of s) {
         const code = ch.codePointAt(0) ?? 0
