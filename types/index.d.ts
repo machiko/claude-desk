@@ -109,7 +109,7 @@ declare module 'claude-code' {
       snapshot: Snapshot | null
       isPaneOpen: boolean
       isBandHidden: boolean
-      /** 被選取的任務（卡片路徑）：對話的主角，每次送出提示都附上它的卡；再點任務名才取消。 */
+      /** 被選取的任務（卡片路徑）：對話的主角，每次送出提示都附上它的卡；取消選取在「更多動作」裡。 */
       selected: string | null
       /** 從面板送出的決策：卡片路徑 → 送出時的「等你」原文與由哪個回合處理；等你改了就失效。 */
       sent: Record<string, SentRecord>

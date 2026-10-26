@@ -5,10 +5,9 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, liveCases, rawAgents, supersede, asksFor, agentInfo, stateOf, plain } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, plain } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
-import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
-import { sorted } from './model'
+import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
@@ -724,7 +723,12 @@ export const register: Register = (on, options) => {
       sent: await readSent($),
     }
     const act: PaneActions = {
-      select: path => void (async () => { await update($, selected, v => (v === path ? null : path)); await update($, contentOffset, () => 0) })(),
+      // 點已經在現在卡的那件不動作；取消選取只走「更多動作」的 deselect。
+      select: path => void (async () => {
+        if ((await read($, selected)) === path) return
+        await update($, selected, () => path); await update($, contentOffset, () => 0)
+      })(),
+      deselect: () => void (async () => { await update($, selected, () => null); await update($, contentOffset, () => 0) })(),
       pick: (c, index, key) => void update($, picksAtom, all => {
         const k = picksKey(c)
         const mine = all[k] ?? {}
@@ -748,15 +752,6 @@ export const register: Register = (on, options) => {
       openPr: c => void (c.pr?.url ? openPath($, c.pr.url, ' PR') : undefined),
       publishPr: c => void confirmThen($, `${c.statusPath}\nopen-pr`, () => publishPr($, options, c)),
       publishPush: c => void confirmThen($, `${c.statusPath}\npush`, () => publishPush($, options, c)),
-      next: () => void (async () => {
-        const cur = await read($, snapshot)
-        if (!cur) return
-        // 示範任務只是背景：n 不會跳到它們。
-        const list = sorted(liveCases(cur.cases))
-        const at = await read($, selected) ?? list[0]?.statusPath ?? null
-        const to = nextCase(list, at)
-        if (to) { await update($, selected, () => to); await update($, contentOffset, () => 0) }
-      })(),
       help: () => void update($, helpAtom, v => !v),
       more: () => void update($, showAllAtom, v => !v),
       refresh: () => { forcePr = true; void refresh($, options) },

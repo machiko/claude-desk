@@ -114,7 +114,7 @@ const rowText = (message: any) => typeof message?.content === 'string' ? message
 
 
 export function registerPromptSync(on: On, deps: PromptSyncDeps) {
-  // 選取的任務是對話的主角：每次送出都附上它（卡片變了附全文，沒變附一句提醒），再點任務名才取消。
+  // 選取的任務是對話的主角：每次送出都附上它（卡片變了附全文，沒變附一句提醒），取消選取在「更多動作」裡。
   // 從面板填入的決策送出時記下來：面板鎖住那題，等對話寫回卡片。
   on('prompt.submit', async ($, e, next) => {
     if ((e.origin && !TYPED_ORIGINS.has(e.origin.kind)) || e.isMeta || !deps.isActive()) return next(e)

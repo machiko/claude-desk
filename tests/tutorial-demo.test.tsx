@@ -44,14 +44,13 @@ test('the tutorial shows the sample cases as a read-only background, with the le
   await ui.unmount()
 })
 
-test('sample cases are not clickable: no row button, n skips them, commands cannot find them', async ($, on) => {
+test('sample cases are not clickable: no row button, commands cannot find them', async ($, on) => {
   const { data } = await startTutorial($, on)
   const ui = await $.ui.mount(PANE(72))
   // 其他任務那幾列只是畫面，沒有按鈕、沒有數字鍵
   expect(await ui.find({ key: `row-${DEMO_BETA}` })).toBeUndefined()
   expect(flat(text(await ui.drawn()))).toContain('訂單匯出CSV')
-  // n（下一件）也不會跳到示範任務，現在卡一直是教學那件
-  await ui.press({ key: 'next' })
+  // 現在卡一直是教學那件
   expect(flat(text(await ui.drawn()))).toContain(flat('後按 t 確認'))
   // 指令也找不到它
   const r = await $.command.run({ command: 'desk', args: 'verify 訂單匯出' } as any)
