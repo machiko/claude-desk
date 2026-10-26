@@ -81,6 +81,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   const release = isReleaseLine(c)
   const running = runningKind(c)
   const coding = !!running && WRITES_CODE.has(running)
+  // 停在權限提示的 Agent 是做到一半被擋住：和寫程式中一樣，之前的檢查結果不能讓六段往前走（等人批准，不是待審查）。
+  const busy = coding || c.agent?.waitsFor === 'permission'
 
   const reviewed = (verdict && blocking(verdict) === 0) || (c.chain?.passed && !stale)
   // 按 u 確認上線後關卡清成無、PR 資訊過一小時也不顯示，靠確認時寫進卡片的狀態與下一步認得它已上線。
@@ -93,10 +95,10 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   if (tagged && !(gate?.kind === 'release')) reached = INDEX.ship
   else if (c.pr?.state === 'MERGED' || tagged) reached = INDEX.merge
   else if (reviewed) reached = INDEX.review
-  else if (check === true && !coding) reached = INDEX.check
-  else if (check === false && !coding) reached = INDEX.build
+  else if (check === true && !busy) reached = INDEX.check
+  else if (check === false && !busy) reached = INDEX.build
   // 審查後有新 commit：程式已經寫了，退回檢查重來。
-  else if (stale && !coding) reached = INDEX.build
+  else if (stale && !busy) reached = INDEX.build
   else if (!saysNone(c.next) || c.agent || c.verify) reached = c.verify && saysNone(c.ask) && gate?.kind !== 'spec' ? INDEX.spec : -1
   // 沒有 PR 可看時，git 看到 HEAD 已在基準分支裡也算合併；但只在審查過了之後（剛開的分支 HEAD 也在 base 裡）。
   // 審查後又有 commit（stale）再合併的也算：審查過、整個分支也進了基準分支。
@@ -107,7 +109,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   const held = !!c.chain?.stopped && check !== true && !release && !tagged && c.pr?.state !== 'MERGED' && !c.mergedInto
   if (held && reached > INDEX.build) reached = INDEX.build
   // 完成檢查在跑或排隊：結果還沒出來，停在檢查段（之前在同一個 HEAD 通過過也一樣）；審查過了的不退。
-  if ((verifying || queued) && !coding && reached >= INDEX.spec && reached <= INDEX.check) reached = INDEX.build
+  if ((verifying || queued) && !busy && reached >= INDEX.spec && reached <= INDEX.check) reached = INDEX.build
   for (let i = 0; i <= reached; i++) status[STAGES[i]!.id] = 'done'
 
   const current = STAGES[reached + 1]?.id ?? null
