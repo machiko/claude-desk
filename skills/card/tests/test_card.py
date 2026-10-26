@@ -5,6 +5,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -246,6 +247,39 @@ class CardScriptTest(unittest.TestCase):
 
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(read(card), r'- D-\d+ \d{4}-\d{2}-\d{2} \S+：確認規格（AC-1～AC-2，共 2 條）與實作計畫（1 項）')
+
+    def test_spec_ok_replaces_placeholder_next(self):
+        """下一步還是範本佔位 `<…>`：確認規格時一起改成「依規格與實作計畫實作」。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        self.assertRegex(read(card), r'- 下一步：<[^>\n]+>')
+        self.run_card('gate', 'order-export', 'spec：待確認規格（AC-1～AC-2）')
+        self.fill_spec(card)
+        self.fill_plan(card)
+
+        r = self.run_card('spec-ok', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 下一步：依規格與實作計畫實作', text)
+        self.assertIn('- 狀態：規格已確認（AC-1～AC-2），可派實作', text)
+        self.assertIn('- 關卡：無', text)
+
+    def test_spec_ok_keeps_real_next(self):
+        """下一步已經是具體的一句：確認規格時不動它。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        write(card, re.sub(r'^- 下一步：.*$', '- 下一步：先做 CSV 匯出', read(card), count=1, flags=re.M))
+        self.run_card('gate', 'order-export', 'spec：待確認規格（AC-1～AC-2）')
+        self.fill_spec(card)
+        self.fill_plan(card)
+
+        r = self.run_card('spec-ok', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 下一步：先做 CSV 匯出', text)
+        self.assertNotIn('依規格與實作計畫實作', text)
 
     def test_old_card_gate_bumps_rev(self):
         os.makedirs(os.path.join(self.t, 'old', '.console'))

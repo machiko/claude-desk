@@ -1,7 +1,7 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
 import { isReleaseLine } from './pipeline'
-import { CARD_CMD, named, parseGate, saysNone } from './card'
+import { CARD_CMD, isPlaceholder, named, parseGate, saysNone } from './card'
 import { agentWaits, approvalWait, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -159,7 +159,8 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
   const head = fix ? (fix.from === 'check'
       ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
       : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
-    : kind === 'continue' ? `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`
+    // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
+    : kind === 'continue' ? (isPlaceholder(c.next) ? '依卡片的規格與實作計畫實作' : `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : `${named(settings.user).trimStart()}的回覆：${text}`
