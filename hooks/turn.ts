@@ -187,8 +187,8 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (!isMerged(c)) {
     if (c.state !== 'done') out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)
-    // PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上。
-    const ciFailed = current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail'
+    // PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上；本機已有新 commit 沒 push 時該按的是 ⇡ push，不列 g。
+    const ciFailed = current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)
     if ((current === 'build' && !idleBuild) || c.state === 'failed' || ciFailed) out.add('continue')
     if (current === 'check' || idleBuild || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
     if (current === 'review' && !standingVerdict(c)) out.add('review')

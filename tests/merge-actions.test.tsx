@@ -50,12 +50,13 @@ const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 畫面上這件任務的按鈕。 */
 const buttonKeys = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => String(b.key ?? '')).filter((k: string) => k.startsWith(PREFIX)).map((k: string) => k.slice(PREFIX.length))
 
-/** 動作列（按鈕與「退回：」字樣）照排列的順序；showAll 是按了 m 展開全部。 */
-function actionOrder(c: Case, showAll: boolean): string[] {
-  const view = { s: { tutorial: false, cases: [c] }, picks: {}, verifying: {}, queue: [], launching: {}, armed: null, now: 0, logsOpen: null, sent: {}, showAll } as any
+/** 動作列（按鈕與「退回：」字樣）照排列的順序；showAll 是按了 m 展開全部，armed 是按過一次、等確認的動作。 */
+function actionsOf(c: Case, showAll: boolean, armed?: string) {
+  const view = { s: { tutorial: false, cases: [c] }, picks: {}, verifying: {}, queue: [], launching: {}, armed: armed ? { key: `${CARD_B}\n${armed}`, at: 0 } : null, now: 0, logsOpen: null, sent: {}, showAll } as any
   const act = new Proxy({}, { get: () => () => {} }) as any
-  return caseActions(view, c, act).map(a => a.key.slice(PREFIX.length))
+  return caseActions(view, c, act).map(a => ({ ...a, id: a.key.slice(PREFIX.length) }))
 }
+const actionOrder = (c: Case, showAll: boolean) => actionsOf(c, showAll).map(a => a.id)
 
 const PASS_C2: Verify = { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' }
 
@@ -146,6 +147,10 @@ test('merge actions: the merge stage lists no continue, review or verify by defa
   expect(stageActions(failedCi).has('continue')).toBe(true)
   expect(stageActions(failedCi).has('review')).toBe(false)
   expect(stageActions(failedCi).has('verify')).toBe(false)
+  // 失敗的是舊 commit、本機已有新 commit 沒 push：該按的是 ⇡ push，不再列 g
+  const fixedLocally = mergeCase({ chain: { round: 0, passed: true }, pr: failedCi.pr, gitState: { ahead: 1, behind: 0, changed: 0, untracked: 0, upstream: true } })
+  expect(stageActions(fixedLocally).has('push')).toBe(true)
+  expect(stageActions(fixedLocally).has('continue')).toBe(false)
 })
 
 /** AC-4 */
@@ -181,6 +186,21 @@ test('merge actions: show-all puts the retreat actions last, dimmed and labelled
   // PR 開著、CI 失敗：帶頭是 ↗ PR，g 留在本段，審查與檢查一樣排後
   expect(actionOrder(failedCi, false)).toEqual(['continue', 'sync', 'pr', 'open'])
   expect(actionOrder(failedCi, true)).toEqual(['continue', 'sync', 'pr', 'open', 'retreat', 'review', 'verify'])
+  expect(actionsOf(failedCi, true).filter(a => a.isLead).map(a => a.id)).toEqual(['pr'])
+  // 退回的動作按過一次、等確認：照樣加框、寫確認字樣
+  const armedBack = actionsOf(risky, true, 'review').find(a => a.id === 'review')!
+  expect(armedBack.isBoxed).toBe(true)
+  expect(armedBack.label).toContain('再按 w 確認')
+})
+
+/** AC-4：Agent 執行中展開更多動作，開 PR 仍在本段、不算退回。 */
+test('merge actions: show-all while an agent runs keeps open-PR out of the retreat group', () => {
+  const running = mergeCase({ state: 'running', agent: { id: 'x', name: 'desk-beta-1', state: 'working', status: 'busy', kind: 'sync', startedAt: 0 } as any, chain: { round: 0, passed: true, needsHuman: RISK } })
+  const shown = actionsOf(running, true)
+
+  expect(running.pipeline!.current).toBe('merge')
+  expect(shown.map(a => a.id)).toEqual(['stop', 'logs', 'review-file', 'open-pr', 'open', 'retreat', 'verify'])
+  expect(shown.find(a => a.id === 'open-pr')!.isDim).toBeFalsy()
 })
 
 /** AC-4：其他段落展開更多動作時不分組，順序照舊。 */

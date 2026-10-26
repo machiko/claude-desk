@@ -281,13 +281,20 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   return view.showAll ? withRetreat(out, c, inStage, prefix) : out
 }
 
+/** 合併段退回前面段落的鍵：繼續、審查、檢查。 */
+const RETREAT = new Set<string>(['continue', 'review', 'verify'])
+
 /**
- * 展開全部動作（m）時，合併段平常不列的鍵（繼續、審查、檢查）是退回前面的段落：排在本段的動作後面、變淡、不帶頭，
- * 前面插一段不可按的「退回：」。已待確認（加框）的照舊，第一次按了才看得到確認字樣。其他段落不分組。
+ * 展開全部動作（m）時，合併段平常不列的退回鍵（繼續、審查、檢查）排在本段的動作後面、變淡、不帶頭，
+ * 前面插一段不可按的「退回：」。本段列了的（例如 CI 失敗時的繼續、自審的審查）不算退回；
+ * 只看這三個鍵，不拿 stageActions 的補集（Agent 在跑時它不列開 PR）。已待確認（加框）的照舊，第一次按了才看得到確認字樣。其他段落不分組。
  */
 function withRetreat(out: Action[], c: Case, inStage: Set<ActionId>, prefix: string): Action[] {
   if (c.pipeline?.current !== 'merge' || isMerged(c)) return out
-  const isBack = (a: Action) => !!a.onPress && !inStage.has(a.key.slice(prefix.length) as ActionId)
+  const isBack = (a: Action) => {
+    const id = a.key.slice(prefix.length)
+    return RETREAT.has(id) && !inStage.has(id as ActionId)
+  }
   const back = out.filter(isBack)
   if (!back.length) return out
   return [
