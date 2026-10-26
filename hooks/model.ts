@@ -50,13 +50,31 @@ export function isNoise(line: string): boolean {
   if (/\d+(?:\.\d+)?k? tokens|\d+s ·|· ↓|esc to interrupt|\? for shortcuts|^running |^[A-Z][a-z]+ for \d+\s*s/.test(l)) return true
   if (/^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║>·\-=*`()]+$/.test(l)) return true
   if (!/[\u3400-\u9fff]/.test(l) && !/\s/.test(l) && l.length < 16) return true
+  // 重繪剩下的數字碎片（倒數、欄位號）：沒有中文、也沒有連續三個英文字母。
+  if (!/[\u3400-\u9fff]/.test(l) && !/[A-Za-z]{3}/.test(l)) return true
+  // 狀態列：額度百分比（5h:40% 7d:43%）、增刪行數（+20/-22 │ …）。
+  if (/\d+[hd]:\d+%|^\+\d+\/-\d+\s/.test(l)) return true
   return false
 }
 
-/** Agent 記錄的最後一句有意義的話：控制序列與 \r 都當成分行，略過雜訊。 */
+/**
+ * `claude logs` 是整個畫面的重繪紀錄，拆回一行一行的字：顏色與清行拿掉；游標右移、跳到某一欄是字與字之間的空白；
+ * 其他游標移動與 \r 才是分行。連續空白併成一格。
+ */
+export function screenLines(raw: string): string[] {
+  return String(raw ?? '')
+    .replace(/\u001b\[[0-9;:]*m/g, '')
+    .replace(/\u001b\[\d*K/g, '')
+    .replace(/\u001b\[\d*[CG]/g, ' ')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '\n')
+    .split(/[\r\n]+/)
+    .map(l => plain(l).replace(/\s+/g, ' ').trim())
+    .filter(l => l && !isNoise(l))
+}
+
+/** Agent 記錄的最後一句有意義的話（見 screenLines），略過雜訊；行首的轉圈圈、項目符號與 [標籤] 拿掉。 */
 export function lastMeaningful(raw: string, max = 120): string {
-  const lines = String(raw ?? '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '\n').split(/[\r\n]+/).map(l => plain(l).trim()).filter(l => l && !isNoise(l))
-  return (lines.pop() ?? '').replace(/^\[[^\]]*\]\s*/, '').slice(0, max)
+  return (screenLines(raw).pop() ?? '').replace(/^[⏺●✻✽✢✳✶·❯]\s*/, '').replace(/^\[[^\]]*\]\s*/, '').slice(0, max)
 }
 
 /** 模型名稱給人看：claude-opus-5-5 → Opus 5.5；別名（opus、haiku）與其他寫法原樣。 */
