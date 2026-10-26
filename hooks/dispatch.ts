@@ -1,13 +1,14 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
-import { isReleaseLine } from './pipeline'
+import { agentBusy, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, named, parseGate, saysNone } from './card'
 import { agentWaits, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHORT_ID = /^[0-9a-f]{8}$/i
 
-export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply'
+/** publish：合併段派 Agent push 分支、開 PR（或 PR 已開時只 push）；不改程式、不在自動流程裡。 */
+export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish'
 /** 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。 */
 export type ReviewWords = { high: string; security: string; categories: string; template: string }
 export type DispatchSettings = {
@@ -45,7 +46,7 @@ export type JobRecord = { launchName: string; nativeId: string; sessionId: strin
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string }
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
-export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆' }
+export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆', publish: '推送' }
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
@@ -84,7 +85,8 @@ export function modelFor(settings: DispatchSettings, root: string, kind: Dispatc
   const own = settings.projects[normalizeRoot(root)] ?? {}
   const base = { model: own.model ?? settings.model, effort: own.effort ?? settings.effort }
   if (kind === 'sync') return { model: settings.sync.model || base.model, effort: settings.sync.effort || base.effort, fresh: settings.sync.fresh }
-  return { ...base, fresh: kind === 'review' }
+  // 推送只要分支與卡片，開新對話就夠了，不接任務那個越來越長的 session。
+  return { ...base, fresh: kind === 'review' || kind === 'publish' }
 }
 
 export function launchName(now: number, seq: number): string {
@@ -119,15 +121,18 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
   return hits.length === 1 ? hits[0]! : null
 }
 
-/** 每次派工都附的規則；canPush（會改程式的派工）可以 push 自己的分支、開 PR，其他的不寫遠端。專案規則（dispatch.json 的 rules 與任務的 rules）接在最後。 */
-function cardRules(settings: DispatchSettings, root: string, canPush = false): string[] {
+/**
+ * 每次派工都附的規則；canPush（會改程式的派工與推送）可以 push 自己的分支、開 PR，其他的不寫遠端。
+ * publishing（推送）不做實作，關卡與檢查留原樣。專案規則（dispatch.json 的 rules 與任務的 rules）接在最後。
+ */
+function cardRules(settings: DispatchSettings, root: string, canPush = false, publishing = false): string[] {
   return [
     '卡片要精簡：狀態一句話 60 字內、下一步 40 字內，多件事用「；」分開；commit、測試數字、檔案清單等細節寫在卡片下方的歷程，不要塞進這兩欄。',
     '卡片在 .desk/CARD.md（或 .console/STATUS.md）；結束這一輪前把五欄寫回，每欄一行。保留卡片既有的欄位名，不要改名：舊卡用「驗證」「等使用者」，新卡用「檢查」「等你」，工作桌兩種都讀得懂。',
     '寫入前重讀卡片；內容與你開始時讀到的不同就停止並回報衝突，不要覆寫。',
     '檢查欄只放一條可執行的完成檢查（反引號），exit 0 代表做完；發現寫在 狀態 或 .task/REPORT.md。',
     `要${named(settings.user)}決定的事寫進 等你（有選項寫成 問題：A) … B) …）後結束這一輪，不要提問等待。`,
-    '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。',
+    publishing ? PUBLISH_CARD_RULE : '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。',
     '只在此任務根目錄作業；不碰正式環境、不啟動或重建容器、不改 port、不在主工作區切分支。',
     canPush ? PUSH_RULE : NO_PUSH_RULE,
     ...settings.rules,
@@ -138,7 +143,18 @@ function cardRules(settings: DispatchSettings, root: string, canPush = false): s
 /** 會改程式的派工（繼續、回覆、修正）多這一條：照規格做，審查會逐條對照驗收情境。 */
 const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。有實作計畫時照「### 實作計畫」做，不用再停下來交計畫（規格確認時已一起確認）；實際改的檔跟計畫不同時在歷程寫明原因，要改範圍或做法寫進 等你。卡片沒有規格段就照下一步做。'
 
-/** 會改程式的派工（繼續、回覆、修正）可以 push 自己的分支、開 PR；寫遠端的範圍只到這裡。 */
+/** 推送只動遠端與卡片：審查結論（關卡）與完成檢查是之前判定的，改了六段會退回去。 */
+const PUBLISH_CARD_RULE = '這次只推送：關卡與檢查欄保持原樣；狀態寫 PR 與 CI 的現況，下一步寫等 CI 與合併。'
+/** 「⇡ 開 PR」要推送 Agent 做的事；`target` 是基準分支（可帶 origin/），找不到就空白。開不了 PR 的平台寫進等你。 */
+export const openPrRequest = (branch: string, target: string) =>
+  `push ${branch} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束`
+/** 「⇡ push」要推送 Agent 做的事：PR 已開，只 push、不開新 PR。 */
+export const pushRequest = (branch: string, prId?: number) =>
+  `只 push ${branch}（PR${prId ? ` #${prId}` : ''} 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程`
+/** 推送的提示頭；`text` 是 openPrRequest 或 pushRequest 組好的那句。 */
+const publishHead = (text: string) => `推送：${text || openPrRequest('這個分支', '')}。只推已 commit 的：不 commit、不改程式、不 rebase。`
+
+/** 會改程式的派工（繼續、回覆、修正）與推送可以 push 自己的分支、開 PR；寫遠端的範圍只到這裡。 */
 export const PUSH_RULE = '可以 push 這件任務自己的分支（git push -u origin \u003c分支\u003e）並對基準分支開 PR；不 force push、不 push 到其他分支（main、release/* 等）、不合併 PR、不打 tag。push 或開 PR 後把分支頂端 commit 與 PR 網址寫進歷程。'
 /** 同步與審查只讀不寫遠端。 */
 export const NO_PUSH_RULE = '不 push、不開 PR。'
@@ -162,9 +178,11 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : kind === 'continue' ? `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
+    : kind === 'publish' ? publishHead(text)
     : `${named(settings.user).trimStart()}的回覆：${text}`
   const writes = !!fix || kind === 'continue' || kind === 'reply'
-  const base = cardRules(settings, c.root, writes)
+  const publishing = !fix && kind === 'publish'
+  const base = cardRules(settings, c.root, writes || publishing, publishing)
   const rules = writes ? [SPEC_RULE, changelogRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
   return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
@@ -201,6 +219,8 @@ export function dispatchable(c: Case): DispatchKind[] {
   const out: DispatchKind[] = []
   if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && !idleNext(c.next)) out.push('continue')
   if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
+  // 推送只在合併段、還要 push 或開 PR 時（needsPr 已排除要先看過資安審查的高風險改動）。
+  if (needsPr(c) || needsPush(c)) out.push('publish')
   out.push('sync')
   return out
 }
@@ -211,6 +231,7 @@ export const specBlocks = (c: Case) => !!c.specGap && (c.pipeline ? c.pipeline.c
 export const specGapReason = (c: Case) => `規格沒有驗收情境：先輸入 ${CARD_CMD} spec ${slugOf(c)}`
 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
+export const PUBLISH_ONLY_AT_MERGE = '只有合併段還要 push 或開 PR 時才能推送'
 const BUSY = 'Agent 仍在執行'
 
 /** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
@@ -226,7 +247,8 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'reply') return replyRefusal(c)
   if (dispatchable(c).includes(kind)) return ''
   if (c.manual) return MANUAL
-  if (c.state === 'running') return BUSY
+  if (c.state === 'running' || (kind === 'publish' && agentBusy(c))) return BUSY
+  if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
   if (specBlocks(c)) return specGapReason(c)
   if (!c.verify) return '卡片尚缺完成檢查，規格未通過'
   return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'

@@ -9,9 +9,9 @@
 | 角色 | 負責 | 不做 |
 |---|---|---|
 | 主控台對話（開著 `/desk` 的那個 Claude Code 對話） | 規格、完成檢查、關卡判定、兩次失敗後的診斷 | 不在主 repo 切分支、不 push |
-| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時 push 自己的分支、開 PR | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
+| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時（含合併段派的推送 Agent）push 自己的分支、開 PR | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
 | 審查對話（新對話、不接續 Agent） | 只看任務檔、自己重新執行完成檢查、看 diff | 不啟動容器、不改 port、不參考 Agent 的結論 |
-| 你 | 業務決策、合併、打 tag、部署；push、開 PR 可以自己做，或交給 Agent | — |
+| 你 | 業務決策、合併、打 tag、部署；push、開 PR 在面板按「⇡ 開 PR」「⇡ push」派 Agent 做 | — |
 
 ## 六段
 
@@ -21,7 +21,7 @@
 | 2 實作 | 寫程式 | 你按 `g` | Agent（`claude --bg`） | 交給下一段 | Agent 執行中 |
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
 | 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0 | 卡片 `review：CRITICAL n、HIGH n…` |
-| 5 合併 | push、開 PR、CI、按合併 | 你 | CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態） |
+| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態） |
 | 6 上線 | 打 tag、部署、部署後步驟 | 你 | 你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。
@@ -34,7 +34,7 @@
 3. 審查有 CRITICAL 或 HIGH → 自動派「依 .task/REVIEW.md 修正」，回到 1；只有 MEDIUM／LOW → 過關，提醒你開 PR。
 4. 修正最多兩輪（檢查與審查共用），第三次仍未通過就暫停，摘要列亮「● 等你」，動態寫原因。
 5. 審查通過後分支又有新 commit（例如你決定 MEDIUM 現在改、或在面板外改了程式）：那次審查不算數，六段退回「檢查」，流程自動重新檢查、重新審查（只看上次審查之後的 diff），不算修正輪數。只寫回卡片、沒有 commit 的決定不會退回。
-6. 流程碰不到合併與上線。
+6. 流程碰不到合併與上線；合併段派的推送 Agent（push、開 PR）做完不跑檢查、不派審查、不算修正輪。
 
 ## 讓審查越來越準
 

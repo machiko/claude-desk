@@ -181,6 +181,23 @@ export type { PrInfo }
 export const isMerged = (c: Pick<Case, 'pipeline'>) => !!c.pipeline?.stages.some(s => s.id === 'merge' && s.status === 'done')
 
 /**
+ * 有 Agent 在跑：state 是 running，或卡片「等你」有內容（state 是 ask）但 Agent 還在跑。
+ * 開 PR、push 會派工，不能只看 state，否則推送 Agent 在跑時還能再派一個。
+ */
+export const agentBusy = (c: Pick<Case, 'state' | 'agent'>) => c.state === 'running' || !!runningKind(c)
+
+/** 合併段還沒有可用的 PR、沒有 Agent 在跑：要派 Agent push 並開 PR（高風險要先看過資安審查的不算）。 */
+export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !agentBusy(c) && !(!c.pr && c.chain?.needsHuman) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
+
+/**
+ * 合併段、PR 已開，分支又領先遠端（修 CI、審查後修正）：要派 Agent push。
+ * 還沒有可用的 PR 時由「開 PR」一起 push，這裡不重複；示範任務、Agent 在跑、已合併都不算。
+ * 遠端分支找不到（gitState 算不出領先）時不出現：PR 開著，分支一定推過，只是本機看不到。
+ */
+export const needsPush = (c: Case) => !c.demo && !agentBusy(c) && c.pipeline?.current === 'merge' && !isMerged(c)
+  && c.pr?.state === 'OPEN' && (c.gitState?.ahead ?? 0) > 0
+
+/**
  * 六段都過了（每段 done 或不適用）、沒有人要做的事：任務算「完成」。等你、執行中等狀態不受影響。
  * 合併之後流程停住或完成檢查沒過，分支已經進了基準分支，不再算未通過：照上線段走。
  * 規格段還是範本、六段停在規格段：流程停住或檢查沒過也不算未通過（按 g 修不了），要先寫規格。
