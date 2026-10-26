@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, BAND, PANE, CARD_B, REGISTRY, NOW, text } from './fixture'
 import { setFields } from '../hooks/tutorial'
-import { lastMeaningful } from '../hooks/model'
+import { agentsByRoot, asksFor, buildCase, lastMeaningful } from '../hooks/model'
+import { pipeline, stageLabel } from '../hooks/pipeline'
 
 const BETA = '/home/u/wt/beta'
 const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
@@ -45,6 +46,11 @@ test('permission wait: a permission prompt asks you to approve in claude agents,
     expect((await ui.find({ key: `${PREFIX}stop` }))?.props?.hotkey).toBe('k')
     expect((await ui.find({ key: `${PREFIX}logs` }))?.props?.hotkey).toBe('l')
     await ui.unmount()
+
+    // 六段：實作段停在「等你批准權限」，不是「Agent 處理中」（status waiting 也一樣）
+    const info = status === 'waiting' ? agentsByRoot(data.agents)[BETA] : asksFor(data.agents, LAUNCH)
+    const c = buildCase({ name: 'Beta', statusPath: CARD_B }, data.files[CARD_B], NOW, { [BETA]: info! }, undefined)
+    expect(stageLabel(pipeline(c, undefined))).toBe('實作・Agent 等你批准權限')
 
     // 摘要列同樣措辭
     const band = await $.ui.mount(BAND(200))
@@ -147,4 +153,24 @@ test('last line: real claude logs never end on the status line or a repaint frag
   expect(data.asks[0]).toContain(`Agent 提問：${REAL_LOGS[2]![1]}`)
   expect(data.asks[0]).not.toMatch(/stale-ask|\+38\/-0/)
   await ui.unmount()
+})
+
+/** 與 AC-5 同一條規則：按 y 選「照卡片的下一步繼續」時，佔位的下一步也不原樣送給 Agent。 */
+test('reply: a placeholder next step is not sent as the reply', async ($, on) => {
+  const { data, clock } = fixture(on)
+  blocked(data, { status: 'waiting', waitingFor: 'input needed' })
+  const placeholder = '<可以直接派給 Agent 的一件事>'
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 下一步: placeholder })
+  data.answer = '照卡片的下一步繼續'
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(120))
+  await ui.press({ key: `${PREFIX}reply` })
+  await clock.settle()
+  await ui.unmount()
+
+  expect(data.launches).toHaveLength(1)
+  const prompt = String(data.launches[0].argv.at(-1))
+  expect(prompt).toContain('的回覆：依卡片的規格與實作計畫實作')
+  expect(prompt).not.toContain(placeholder)
+  expect(prompt).not.toContain('照卡片的下一步繼續：')
 })

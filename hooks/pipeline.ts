@@ -62,7 +62,8 @@ export function checkStands(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefin
  * 流程記的最後一種是上一次派工的，不是它的。
  */
 export function runningKind(c: Pick<Case, 'agent'>): NonNullable<ChainInfo['lastKind']> | null {
-  if (!c.agent || c.agent.asks || c.agent.status === 'idle') return null
+  // 停在權限提示的 Agent 清單上仍是 status waiting，但它沒在做事，要等人批准。
+  if (!c.agent || c.agent.asks || c.agent.status === 'idle' || c.agent.waitsFor === 'permission') return null
   return c.agent.kind ?? 'continue'
 }
 
