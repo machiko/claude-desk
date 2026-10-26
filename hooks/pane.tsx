@@ -55,7 +55,7 @@ export type PaneActions = {
   logs: (c: Case) => void
   openReview: (c: Case) => void
   openPr: (c: Case) => void
-  /** 合併段還沒有 PR：把「push 分支並對基準分支開 PR」預填進輸入框，由你送出；desk 自己不 push、不開 PR。 */
+  /** 合併段還沒有 PR：把「push 分支並對基準分支開 PR」預填進輸入框，由你送出；desk 自己不 push、不開 PR。高風險改動要按兩次。 */
   fillPr: (c: Case) => void
   /** 合併段、PR 已開又有沒 push 的 commit：把「push 分支」預填進輸入框，由你送出；desk 自己不 push。 */
   fillPush: (c: Case) => void

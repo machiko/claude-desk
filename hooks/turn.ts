@@ -58,8 +58,11 @@ const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
 /** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
 const MISSING_CHECK = '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 
-/** 合併段還沒有可用的 PR：要你 push 並開 PR（高風險要先看過資安審查的不算）。 */
-export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !(!c.pr && c.chain?.needsHuman) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
+/** 合併段還沒有可用的 PR：要你 push 並開 PR。 */
+export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
+
+/** 高風險改動、還沒有 PR：「⇡ 開 PR」照樣出現，但要按兩次（第一次只提醒先看過審查檔）。 */
+export const needsPrConfirm = (c: Case) => needsPr(c) && !c.pr && !!c.chain?.needsHuman
 
 /**
  * 合併段、PR 已開，分支又領先遠端（修 CI、審查後修正）：要你 push。
@@ -156,7 +159,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
 }
 
 function mergeTurn(c: Case): Turn {
-  if (!c.pr && c.chain?.needsHuman) return { who: 'you', text: '高風險改動：看過資安審查（e）後再開 PR', key: 'e' }
+  // 不帶鍵：帶頭的是「⇡ 開 PR」（沒有快捷鍵），e 留在列上但變淡。
+  if (needsPrConfirm(c)) return { who: 'you', text: '高風險改動：看過審查檔（e）後按兩次 ⇡ 開 PR' }
   if (needsPr(c)) return { who: 'you', text: 'push 分支並開 PR' }
   // PR 開著、分支又有新 commit：先 push，CI 才會跑在新 commit 上；這時叫你合併會合到舊的。
   if (needsPush(c)) return { who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 推上去，CI 過了再合併' }
@@ -175,7 +179,7 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   const out = new Set<ActionId>(['open'])
   const current = c.pipeline?.current ?? null
   if (c.agent?.id) out.add('logs')
-  if (c.reviewTop?.length) out.add('review-file')
+  if (c.reviewTop?.length || needsPrConfirm(c)) out.add('review-file')
   if (c.pr?.url) out.add('pr')
   if (c.state === 'ask' && hasChoice(c) && ctx.sent !== 'waiting') out.add('fill')
   if (c.state === 'reply') out.add('reply')
@@ -183,7 +187,9 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (!isMerged(c)) {
     if (c.state !== 'done') out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)
-    if ((current === 'build' && !idleBuild) || c.state === 'failed') out.add('continue')
+    // PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上。
+    const ciFailed = current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail'
+    if ((current === 'build' && !idleBuild) || c.state === 'failed' || ciFailed) out.add('continue')
     if (current === 'check' || idleBuild || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
     if (current === 'review' && !standingVerdict(c)) out.add('review')
     // 自審的結論照算，但留著 w 讓你派獨立審查。

@@ -27,7 +27,7 @@ import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KE
 import type { Timer } from './desk-io'
 import { noticeOf } from './update'
 import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
-import { sentState } from './turn'
+import { needsPrConfirm, sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
 import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, fillPrRequest, fillPushRequest, openCard, reply, stopAgent } from './card-actions'
@@ -737,7 +737,8 @@ export const register: Register = (on, options) => {
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),
       openPr: c => void (c.pr?.url ? openPath($, c.pr.url, ' PR') : undefined),
-      fillPr: c => void fillPrRequest($, options, c),
+      // 高風險改動要按兩次（第一次只換成確認字樣）；其他照舊一按就預填。
+      fillPr: c => void (async () => { if (!needsPrConfirm(c) || await confirmed($, `${c.statusPath}\nopen-pr`)) await fillPrRequest($, options, c) })(),
       fillPush: c => void fillPushRequest($, c),
       next: () => void (async () => {
         const cur = await read($, snapshot)
