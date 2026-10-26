@@ -127,7 +127,10 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: MISSING_CHECK, key: 'o' }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
-      if (idleNext(c.next)) return { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
+      // 有流程紀錄（Agent 派工後）：檢查通過會自動接審查。沒有（主對話開發、done 寫的下一步）：v 只記結果，審查要再按 w。
+      if (idleNext(c.next)) return c.chain
+        ? { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
+        : { who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
       if (checkStageFailed(c)) return { who: 'you', text: `流程已暫停（${c.chain!.stopped}）`, key: 'v' }

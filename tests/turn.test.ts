@@ -78,9 +78,17 @@ test('agent push: an open PR with new commits asks to push, not to merge', () =>
 })
 
 test('idle next: the now card asks for v instead of g', () => {
+  // 沒有流程紀錄（主對話開發、/desk:card done 寫的下一步）：v 單跑只記結果，審查要自己按 w
   const c = mk({ next: '等自動檢查與審查；過了開 PR' })
-  expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' })
   expect(ids(c)).toEqual(['open', 'sync', 'verify'])
+  // /desk:card done 寫的句子也認得
+  expect(turnOf(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual({ who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(ids(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual(['open', 'sync', 'verify'])
+  // 有流程紀錄（Agent 派工後）：檢查通過會自動接審查，照舊說
+  const chained = mk({ next: '到面板按 v 執行完成檢查' }, { chain: { round: 0, lastKind: 'continue', autoReview: true } })
+  expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(ids(chained)).toEqual(['open', 'sync', 'verify'])
   // 有實作的下一步照舊
   expect(turnOf(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual({ who: 'you', text: '按 g 派 Agent：等檢查；補 AC-3 的測試', key: 'g' })
   expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open', 'sync'])

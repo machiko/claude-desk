@@ -1,6 +1,6 @@
 ---
 name: card
-description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；archive <slug> 把卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾並更新登錄表；changelog <版本> 發版時把 changelog.d/*.md 片段合併成 CHANGELOG 的版本段落。配合 /desk 工作桌使用。
+description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；done <slug> <狀態一句> 主對話告一段落時寫回狀態、下一步與 History；archive <slug> 把卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾並更新登錄表；changelog <版本> 發版時把 changelog.d/*.md 片段合併成 CHANGELOG 的版本段落。配合 /desk 工作桌使用。
 ---
 
 # /desk:card
@@ -12,6 +12,7 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
   - `archive` 之後**不要**替使用者刪 worktree 或分支；只印出指令由使用者自己跑。
   - `changelog <版本>`：在主 repo、要發的 PR 都合併之後執行；它把 `changelog.d/*.md` 合併成 `## <版本>` 段並刪掉片段檔，沒有片段、版本段已存在、片段不是 `- ` 開頭都會報錯不改檔。之後改版號、commit、打 tag 都由使用者自己做，不要替他 commit。
 - `spec <目標> ok`：執行 `card.py spec-ok <目標>`（清關卡、狀態改「規格已確認…，可派實作」、記 Decisions／History），輸出原樣給使用者。只有使用者明確說要確認時才跑，不要自己判斷規格夠好就替使用者確認。
+- `done <目標> <狀態一句>`：執行 `card.py done <目標> <狀態一句>`，輸出原樣給使用者。在主對話（不派背景 Agent）改了檔案、commit、跑了測試或做了決策，告一段落時用：狀態改成那句（60 字內，沒驗證的寫「待確認」）、下一步改成「到面板按 v 執行完成檢查」、History 記日期、分支、HEAD 短 sha 與那句（有未提交的檔會註明幾個）；「等你」「關卡」「檢查」不動。規格還沒確認（關卡是 `spec：…` 或認不到填好的 AC）會拒絕。它不會把檢查或審查標成通過，那由面板 `v` 與自動流程記錄。整段流程見 `/desk:flow`。
 - `spec <目標> [需求描述]`：照下面「產生規格」做。
 - 沒帶參數就印用法，不猜。
 

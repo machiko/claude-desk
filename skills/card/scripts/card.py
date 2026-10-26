@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""/desk:card 的卡片操作：開卡、找卡、補空白規格段、改關卡、確認規格、歸檔、發版合併 CHANGELOG 片段。
+"""/desk:card 的卡片操作：開卡、找卡、補空白規格段、改關卡、確認規格、寫回進度、歸檔、發版合併 CHANGELOG 片段。
 
 兩種卡片都支援：
 - 新卡 `.desk/CARD.md`：`<!-- DESK -->` 區塊，欄位「檢查」「等你」。
@@ -11,6 +11,8 @@
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
   card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
+  card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句、下一步改成「到面板按 v 執行完成檢查」、
+                                               History 記分支與 HEAD（有未提交的檔就註明幾個）；規格還沒確認就拒絕
   card.py archive <slug>                       卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
   card.py changelog <版本>                      發版：把所在 repo 的 changelog.d/*.md 合併成 CHANGELOG.md 的「## <版本>」段
                                                （插在「## 未發布」之後、上一版之前；條目依 新增→調整→修復→移除、同類依檔名），刪掉片段檔。
@@ -228,13 +230,18 @@ def git_branch(root):
 
 def set_gate(path, value, fields=None):
     """改區塊的「關卡」；fields 可順便改其他欄（例如 {'狀態': …}），舊卡 rev 只加一次。"""
+    return set_fields(path, {'關卡': value, **(fields or {})}, required=('關卡',))
+
+
+def set_fields(path, fields, required=()):
+    """改區塊裡的欄位（每欄一行）；required 的欄不存在就報錯不寫，其他欄不存在就略過。舊卡 rev 只加一次。"""
     text = read(path)
     fmt, start, end = block(text)
     body = text[start:end]
-    if not re.search(r'^- 關卡：', body, re.M):
-        fail('卡片區塊沒有「關卡」欄')
-    body = re.sub(r'^- 關卡：.*$', lambda _: f'- 關卡：{value}', body, count=1, flags=re.M)
-    for name, new in (fields or {}).items():
+    for name in required:
+        if not re.search(rf'^- {name}：', body, re.M):
+            fail(f'卡片區塊沒有「{name}」欄')
+    for name, new in fields.items():
         body = re.sub(rf'^- {name}：.*$', lambda _, n=name, v=new: f'- {n}：{v}', body, count=1, flags=re.M)
     if fmt == 'CARD':
         # 舊卡：rev + 1，更新時間與來源一起改。
@@ -400,6 +407,33 @@ def cmd_spec_ok(arg):
     print(f'規格已確認（{span}），關卡清為「無」：{path}')
 
 
+DONE_NEXT = '到面板按 v 執行完成檢查'
+
+
+def cmd_done(arg, status):
+    """主對話告一段落時寫回卡片：狀態改成那句、下一步改成去面板按 v、History 記分支與 HEAD；等你、關卡、檢查不動。"""
+    status = ' '.join(status.split())
+    if not status:
+        fail(f'用法：{CMD} done <slug> <狀態一句>')
+    _, path, root = resolve(arg)
+    text = read(path)
+    _, s, e = block(text)
+    if field(text[s:e], '關卡').startswith('spec') or not filled_ac(text):
+        fail(f'先確認規格（按 t 或 {CMD} spec {arg} ok），卡片未動')
+    branch = git_branch(root) or '（分離 HEAD）'
+    sha = git('-C', root, 'rev-parse', '--short', 'HEAD').stdout.strip() or '（沒有 commit）'
+    dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.split('\n') if l.strip()]
+    set_fields(path, {'狀態': status, '下一步': DONE_NEXT}, required=('狀態', '下一步'))
+    note = f'；有 {len(dirty)} 個檔未提交' if dirty else ''
+    line = f'- {datetime.date.today().isoformat()}：{CMD} done（{branch} {sha}）：{status}{note}'
+    write(path, append_line(read(path), '## History', line))
+    print(f'已寫回卡片：{path}')
+    print(f'  狀態：{status}')
+    print(f'  下一步：{DONE_NEXT}')
+    if dirty:
+        print(f'  注意：有 {len(dirty)} 個檔未提交，完成檢查與審查只看 commit 過的內容')
+
+
 def cmd_archive(slug):
     _, path, root = resolve(slug)
     os.makedirs(ARCHIVE, exist_ok=True)
@@ -530,6 +564,8 @@ def main(argv):
         cmd_gate(args[0], ' '.join(args[1:]))
     elif cmd == 'spec-ok' and args:
         cmd_spec_ok(args[0])
+    elif cmd == 'done' and len(args) >= 2:
+        cmd_done(args[0], ' '.join(args[1:]))
     elif cmd == 'archive' and args:
         cmd_archive(args[0])
     elif cmd == 'changelog' and args:
