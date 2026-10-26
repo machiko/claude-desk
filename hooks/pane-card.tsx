@@ -9,7 +9,7 @@ import { gitLine, isArmed } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
-import { cardBehind, needsPr, needsPrConfirm, needsPush, sentState, shipTurn, stageActions, turnOf } from './turn'
+import { cardBehind, needsPr, needsPrConfirm, needsPush, riskyNoPr, sentState, shipTurn, stageActions, turnOf } from './turn'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
 import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
@@ -17,8 +17,11 @@ import type { PaneActions, PaneView } from './pane'
 
 /** 列上的動作鍵；決策選項若撞到這些字母就只能用點的。 */
 export const RESERVED = new Set(['f', 'v', 'o', 'r', 'x', 'h', 'g', 's', 'w', 'y', 'k', 'l', 'n', 'e', 'p', 'i', 'u', 'm', 't'])
-const DISPATCH_HOTKEY: Record<DispatchKind, string> = { continue: 'g', sync: 's', review: 'w', reply: 'y' }
-const DISPATCH_GLYPH: Record<DispatchKind, string> = { continue: '▶', sync: '↻', review: '◆', reply: '↩' }
+/** 有單鍵的派工；推送（publish）走「⇡ 開 PR」「⇡ push」兩顆按鈕，不在這裡。 */
+type KeyedKind = Exclude<DispatchKind, 'publish'>
+const isKeyed = (k: DispatchKind): k is KeyedKind => k !== 'publish'
+const DISPATCH_HOTKEY: Record<KeyedKind, string> = { continue: 'g', sync: 's', review: 'w', reply: 'y' }
+const DISPATCH_GLYPH: Record<KeyedKind, string> = { continue: '▶', sync: '↻', review: '◆', reply: '↩' }
 
 export const KV_LABEL = 8
 const KV_LINES = 2
@@ -137,16 +140,13 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   const prefix = `case-${c.statusPath}-`
   const tailText = `  ${meta.label}${age ? ` · ${age}` : ''}`
   const title = <Text bold color={COLOR.text} wrap="truncate-end">{fit(c.name, Math.max(4, width - 2 - displayWidth(tailText)))}</Text>
-  // 你在清單上選的那件：再點一次任務名取消選取，現在卡與摘要列回到工作桌自己挑的那件。
-  const isPicked = view.selected === c.statusPath
+  // 任務名只是文字：點了不動作。取消選取在「更多動作」裡。
   const rows: any[] = []
 
   rows.push(
     <Box flexDirection="row">
       <Text color={meta.color}>{spin} </Text>
-      <Box flexGrow={1} flexShrink={1} overflow="hidden">{isPicked
-        ? <Button plain key={prefix + 'name'} onPress={() => act.select(c.statusPath)}>{title}</Button>
-        : title}</Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">{title}</Box>
       <Text color={meta.color} bold>{`  ${meta.label}`}</Text>
       {age ? <Text color={COLOR.faint}>{` · ${age}`}</Text> : null}
     </Box>,
@@ -243,7 +243,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   // 決策送出了、等對話寫回：連 m 展開全部也不給 f，免得重送。
   if (choiceCount(decisions) && can('fill') && ctx.sent !== 'waiting') out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
   if (c.statusPath in view.launching) out.push(button({ key: prefix + 'launching', label: `${SPINNER[view.tick % SPINNER.length]} 派工中`, color: COLOR.running }))
-  else for (const k of dispatchable(c).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
+  else for (const k of dispatchable(c).filter(isKeyed).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
     const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
     // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
     const hint = k === 'sync' && cardBehind(c, view.now)
@@ -254,14 +254,16 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
     out.push(button({ key: prefix + 'stop', hotkey: 'k', isBoxed: armed, isLead: armed, isDim: !armed, label: armed ? '再按 k 確認停止' : '■ 停止', onPress: () => act.stop(c) }))
   }
   if (c.agent?.id && can('logs')) out.push(button({ key: prefix + 'logs', hotkey: 'l', isDim: true, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : '≡ 輸出', onPress: () => act.logs(c) }))
-  if ((c.reviewTop?.length || needsPrConfirm(c)) && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
+  if ((c.reviewTop?.length || riskyNoPr(c)) && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
-  if (needsPr(c) && can('open-pr')) {
-    // 高風險要按兩次：第一次只換成確認字樣，提醒先看過審查檔。
-    const armed = needsPrConfirm(c) && isArmed(view.armed, `${c.statusPath}\nopen-pr`, view.now)
-    out.push(button({ key: prefix + 'open-pr', isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? '看過審查檔了？再按一次開 PR' : '⇡ 開 PR', onPress: () => act.fillPr(c) }))
+  // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次確認才派，沒有快捷鍵（寫遠端的事不配單鍵）。高風險改動的第一次按改提醒先看過審查檔。
+  const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
+    const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
+    const ask = id === 'open-pr' && needsPrConfirm(c) ? '看過審查檔了？再按一次' : '再按一次'
+    out.push(button({ key: prefix + id, isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `${ask}確認派 Agent ${doing}（${modelText(view, 'publish')}）` : `⇡ ${doing}`, onPress }))
   }
-  if (needsPush(c) && can('push')) out.push(button({ key: prefix + 'push', isLead: !leadKey, isDim: !!leadKey, label: '⇡ push', onPress: () => act.fillPush(c) }))
+  if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
+  if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
   if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} 檢查中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
   if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)

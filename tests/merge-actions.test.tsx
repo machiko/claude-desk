@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, leaves, text } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, leaves, result, text } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { stageActions } from '../hooks/turn'
@@ -10,7 +10,7 @@ const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'
 const RISK = '高風險改動（認證／中介層），審查已過，請你看過再開 PR'
-const FILL = { text: 'push feature/b 並對 release/v1.4 開 PR', mode: 'replace' }
+const PUBLISH_HEAD = '推送：push feature/b 並對 release/v1.4 開 PR，PR 網址寫進歷程'
 
 /** 只留 Beta 一件：審查過關、還沒有 PR、沒有 Agent 在跑。 */
 function onlyBeta(data: any) {
@@ -34,6 +34,16 @@ function recordExec(data: any) {
   return calls
 }
 const wroteRemote = (calls: any[]) => calls.some(e => (e.argv[0] === 'git' && e.argv.includes('push')) || (e.argv[0] === 'gh' && e.argv.includes('create')))
+
+/** 派工會啟動一個背景 Agent：清單裡多一個同名、在跑的 Agent（照 `claude --bg` 的回應）。 */
+function startsAgents(data: any, clock: any) {
+  data.launch = async (e: any) => {
+    const id = `e000000${data.launches.length}`
+    data.agents = [{ id, kind: 'background', cwd: BETA, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, id)
+  }
+}
+const promptOf = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
 
 async function mount($: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -68,22 +78,23 @@ function mergeCase(over: Partial<Case>, gate = PASSED, v: Verify | undefined = P
 }
 
 /** AC-1 */
-test('merge actions: a high-risk case offers open-PR as the lead and fills the prompt on the second press', async ($, on) => {
+test('merge actions: a high-risk case offers open-PR as the lead and dispatches the publish agent on the second press', async ($, on) => {
   const { data, clock } = fixture(on)
   onlyBeta(data)
   judged(data, RISK)
+  startsAgents(data, clock)
   const calls = recordExec(data)
 
   const ui = await mount($)
   const before = await find(ui, 'open-pr')
   await ui.press({ key: `${PREFIX}open-pr` })
   const armed = await find(ui, 'open-pr')
-  const fillsAfterFirst = data.fills.length
-  // 超過確認時間才按第二次：重新待確認，不預填
+  const launchesAfterFirst = data.launches.length
+  // 超過確認時間才按第二次：重新待確認，不派
   await clock.advance(4000)
   await clock.settle()
   await ui.press({ key: `${PREFIX}open-pr` })
-  const fillsAfterLate = data.fills.length
+  const launchesAfterLate = data.launches.length
   await ui.press({ key: `${PREFIX}open-pr` })
   await clock.settle()
   const after = await find(ui, 'open-pr')
@@ -91,11 +102,15 @@ test('merge actions: a high-risk case offers open-PR as the lead and fills the p
 
   expect(labelOf(before)).toBe('⇡ 開 PR')
   expect(isLead(before)).toBe(true)
-  expect(labelOf(armed)).toBe('看過審查檔了？再按一次開 PR')
-  expect(fillsAfterFirst).toBe(0)
-  expect(fillsAfterLate).toBe(0)
-  expect(data.fills).toEqual([FILL])
-  expect(labelOf(after)).toBe('⇡ 開 PR')
+  expect(labelOf(armed)).toContain('看過審查檔了？再按一次確認派 Agent 開 PR')
+  expect(launchesAfterFirst).toBe(0)
+  expect(launchesAfterLate).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  expect(promptOf(data).split('\n')[0]).toContain(PUBLISH_HEAD)
+  // 推送 Agent 在跑：「⇡ 開 PR」收起，不能再派一個
+  expect(after).toBeUndefined()
+  // desk 自己不 push、不開 PR，也不預填輸入框
+  expect(data.fills).toHaveLength(0)
   expect(data.submitted).toHaveLength(0)
   expect(wroteRemote(calls)).toBe(false)
 })
@@ -112,7 +127,7 @@ test('merge actions: a high-risk case says to read the review file and press ope
   const openPr = await find(ui, 'open-pr')
   await ui.unmount()
 
-  expect(shown).toContain(flat('▶ 輪到你  高風險改動：看過審查檔（e）後按兩次 ⇡ 開 PR'))
+  expect(shown).toContain(flat('▶ 輪到你  高風險改動：看過審查檔（e）後按兩次 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(labelOf(reviewFile)).toBe('↗ 審查檔')
   expect(isLead(reviewFile)).toBe(false)
   expect(reviewFile?.props?.dimColor).toBe(true)
@@ -193,14 +208,13 @@ test('merge actions: show-all puts the retreat actions last, dimmed and labelled
   expect(armedBack.label).toContain('再按 w 確認')
 })
 
-/** AC-4：Agent 執行中展開更多動作，開 PR 仍在本段、不算退回。 */
-test('merge actions: show-all while an agent runs keeps open-PR out of the retreat group', () => {
+/** AC-4：Agent 執行中展開更多動作：開 PR 不列（Agent 在跑不能派推送），退回組只有檢查。 */
+test('merge actions: show-all while an agent runs lists no open-PR and only verify retreats', () => {
   const running = mergeCase({ state: 'running', agent: { id: 'x', name: 'desk-beta-1', state: 'working', status: 'busy', kind: 'sync', startedAt: 0 } as any, chain: { round: 0, passed: true, needsHuman: RISK } })
   const shown = actionsOf(running, true)
 
   expect(running.pipeline!.current).toBe('merge')
-  expect(shown.map(a => a.id)).toEqual(['stop', 'logs', 'review-file', 'open-pr', 'open', 'retreat', 'verify'])
-  expect(shown.find(a => a.id === 'open-pr')!.isDim).toBeFalsy()
+  expect(shown.map(a => a.id)).toEqual(['stop', 'logs', 'review-file', 'open', 'retreat', 'verify'])
 })
 
 /** AC-4：其他段落展開更多動作時不分組，順序照舊。 */
@@ -213,19 +227,27 @@ test('merge actions: show-all outside the merge stage has no retreat group', () 
 })
 
 /** AC-5 */
-test('merge actions: a normal case still fills the prompt on the first press', async ($, on) => {
-  const { data } = fixture(on)
+test('merge actions: a normal case confirms without the review-file reminder and dispatches on the second press', async ($, on) => {
+  const { data, clock } = fixture(on)
   onlyBeta(data)
   judged(data)
+  startsAgents(data, clock)
 
   const ui = await mount($)
-  await ui.press({ key: `${PREFIX}open-pr` })
-  const after = await find(ui, 'open-pr')
   const shown = await screen(ui)
+  await ui.press({ key: `${PREFIX}open-pr` })
+  const armed = await find(ui, 'open-pr')
+  const launchesAfterFirst = data.launches.length
+  await ui.press({ key: `${PREFIX}open-pr` })
+  await clock.settle()
   await ui.unmount()
 
-  expect(data.fills).toEqual([FILL])
-  expect(labelOf(after)).toBe('⇡ 開 PR')
-  expect(shown).toContain(flat('▶ 輪到你  push 分支並開 PR'))
+  expect(shown).toContain(flat('▶ 輪到你  按 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(shown).not.toContain(flat('按兩次'))
+  expect(labelOf(armed)).toContain('再按一次確認派 Agent 開 PR')
+  expect(labelOf(armed)).not.toContain('看過審查檔')
+  expect(launchesAfterFirst).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  expect(promptOf(data).split('\n')[0]).toContain(PUBLISH_HEAD)
+  expect(data.fills).toHaveLength(0)
 })

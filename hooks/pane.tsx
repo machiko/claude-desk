@@ -46,6 +46,8 @@ export type PaneView = {
 }
 export type PaneActions = {
   select: (statusPath: string) => void
+  /** 回到工作桌自己挑的那件（「更多動作」裡，有選取時才出現）。 */
+  deselect: () => void
   pick: (c: Case, index: number, key: string) => void
   fill: (c: Case) => void
   verify: (c: Case) => void
@@ -55,10 +57,10 @@ export type PaneActions = {
   logs: (c: Case) => void
   openReview: (c: Case) => void
   openPr: (c: Case) => void
-  /** 合併段還沒有 PR：把「push 分支並對基準分支開 PR」預填進輸入框，由你送出；desk 自己不 push、不開 PR。高風險改動要按兩次。 */
-  fillPr: (c: Case) => void
-  /** 合併段、PR 已開又有沒 push 的 commit：把「push 分支」預填進輸入框，由你送出；desk 自己不 push。 */
-  fillPush: (c: Case) => void
+  /** 合併段還沒有 PR：派推送 Agent push 分支並對基準分支開 PR（按兩次；高風險改動照樣列出，第一次按提醒先看審查檔）；desk 自己不跑 git push、gh。 */
+  publishPr: (c: Case) => void
+  /** 合併段、PR 已開又有沒 push 的 commit：派推送 Agent 只 push（按兩次）。 */
+  publishPush: (c: Case) => void
   /** 上線確認：清掉 release 關卡（按兩次）。 */
   ship: (c: Case) => void
   /** 真實模式的 t：確認規格（按兩次），效果同 /desk:card spec <slug> ok。 */
@@ -67,7 +69,6 @@ export type PaneActions = {
   archive: (c: Case) => void
   /** 教學模式的 t：確認規格、合併、打 tag。 */
   tutorial: (c: Case) => void
-  next: () => void
   help: () => void
   refresh: () => void
   toggleBand: () => void
@@ -279,7 +280,7 @@ function feedRows(ui: any, view: PaneView, focus: Case | null, width: number): a
 }
 
 const HELP: [string, string][] = [
-  ['1–9', '選其他任務'], ['n', '下一件（需要你的優先）'], ['a b c d', '回答決策'], ['f', '填入決策'],
+  ['1–9', '選其他任務（取消選取在「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／審查／同步（按兩次確認）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）'], ['l', 'Agent 輸出'],
   ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新版本', '把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
@@ -361,8 +362,9 @@ function footerRows(ui: any, view: PaneView, act: PaneActions, width: number, fo
   // 重新整理平常自動做（定時、回合結束、對話改了卡片），按鈕收進「更多動作」，把位置留給這一段的鍵。
   const globals: Action[] = [
     ...(view.showAll ? [{ key: 'refresh', hotkey: 'r', label: `↻ ${WORD.refresh}`, isDim: true, onPress: act.refresh, width: 0 }] : []),
+    // 取消選取不綁快捷鍵：只在「更多動作」展開、而且你選了任務時出現。
+    ...(view.showAll && view.selected ? [{ key: 'deselect', label: '✕ 取消選取', isDim: true, onPress: act.deselect, width: 0 }] : []),
     { key: 'expand', hotkey: 'x', label: view.isExpanded ? '▴ 收合' : '▾ 展開', isDim: true, onPress: act.expand, width: 0 },
-    { key: 'next', hotkey: 'n', label: '→ 下一件', isDim: true, onPress: act.next, width: 0 },
     { key: 'more', hotkey: 'm', label: view.showAll ? '▴ 精簡動作' : '⋯ 更多動作', isDim: true, onPress: act.more, width: 0 },
     { key: 'help', hotkey: 'i', label: view.isHelp ? '▴ 收起說明' : '? 說明', isDim: true, onPress: act.help, width: 0 },
   ].map(a => ({ ...a, width: displayWidth(a.label) + 3 }))

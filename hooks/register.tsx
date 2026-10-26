@@ -5,10 +5,9 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, liveCases, rawAgents, supersede, asksFor, agentInfo, stateOf, plain } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, plain } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
-import { deploySteps, nextCase, parseReminders, reviewTop } from './extras'
-import { sorted } from './model'
+import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey } from './pane'
 import type { PaneActions, PaneView } from './pane'
@@ -27,10 +26,10 @@ import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KE
 import type { Timer } from './desk-io'
 import { noticeOf } from './update'
 import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
-import { needsPrConfirm, sentState } from './turn'
+import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
-import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, fillPrRequest, fillPushRequest, openCard, reply, stopAgent } from './card-actions'
+import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -511,27 +510,29 @@ export let optionsRef: PluginOptions | undefined
 /**
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
  * 從啟動後的 agents 清單用名字對回完整 session id 才算成功；審查與（設了同步模型的）同步開新 session，不改任務的 session。
+ * 回傳有沒有派出去（被拒、按了取消、啟動失敗都是 false）。
  */
-export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}) {
+export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: { text?: string; fix?: FixReason; auto?: boolean; security?: boolean } = {}): Promise<boolean> {
   const text = opts.text ?? ''
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
   const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
-  if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return }
-  if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
+  if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return false }
+  if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return false }
   if (kind === 'continue' && !opts.auto) {
-    if (!(await approveCheck($, c))) return
+    if (!(await approveCheck($, c))) return false
     // 等你回答的這段時間，可能已經從別處派出去了（例如又打了 /desk go）。
-    if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return }
+    if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return false }
   }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
   const jobs = await loadJobs($)
   const rootKey = normalizeRoot(c.root)
   const own: RootJobs = jobs[rootKey] ?? {}
-  // worktree 有不是上一個 Agent 留下的未提交改動（別的對話在改）：不派，免得把它的東西清掉。同步不改程式，不擋；自動流程在派之前已經看過。
-  if (kind !== 'sync' && !opts.auto && !tutorial) {
+  // worktree 有不是上一個 Agent 留下的未提交改動（別的對話在改）：不派，免得把它的東西清掉。
+  // 同步不改程式、推送只推已 commit 的，不擋；自動流程在派之前已經看過。
+  if (kind !== 'sync' && kind !== 'publish' && !opts.auto && !tutorial) {
     const foreign = markRefusal(await worktreeMark($, c.root), own)
-    if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return }
+    if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return false }
   }
   const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
   const now = await $.clock.now()
@@ -570,10 +571,12 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
     await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`, tone: 'suggestion', card: c.statusPath }])
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
+    return true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
     $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
+    return false
   } finally {
     launchKinds = Object.fromEntries(Object.entries(launchKinds).filter(([k]) => k !== c.statusPath))
     await update($, launchingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
@@ -595,6 +598,11 @@ export async function refreshAfterWrite($: any, options: PluginOptions) {
 }
 
 
+
+/** 按兩次確認的動作：第二次按（確認時限內）才做。 */
+async function confirmThen($: any, key: string, then: () => Promise<unknown>) {
+  if (await confirmed($, key)) await then()
+}
 
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
 
@@ -715,7 +723,12 @@ export const register: Register = (on, options) => {
       sent: await readSent($),
     }
     const act: PaneActions = {
-      select: path => void (async () => { await update($, selected, v => (v === path ? null : path)); await update($, contentOffset, () => 0) })(),
+      // 點已經在現在卡的那件不動作；取消選取只走「更多動作」的 deselect。
+      select: path => void (async () => {
+        if ((await read($, selected)) === path) return
+        await update($, selected, () => path); await update($, contentOffset, () => 0)
+      })(),
+      deselect: () => void (async () => { await update($, selected, () => null); await update($, contentOffset, () => 0) })(),
       pick: (c, index, key) => void update($, picksAtom, all => {
         const k = picksKey(c)
         const mine = all[k] ?? {}
@@ -737,18 +750,8 @@ export const register: Register = (on, options) => {
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),
       openPr: c => void (c.pr?.url ? openPath($, c.pr.url, ' PR') : undefined),
-      // 高風險改動要按兩次（第一次只換成確認字樣）；其他照舊一按就預填。
-      fillPr: c => void (async () => { if (!needsPrConfirm(c) || await confirmed($, `${c.statusPath}\nopen-pr`)) await fillPrRequest($, options, c) })(),
-      fillPush: c => void fillPushRequest($, c),
-      next: () => void (async () => {
-        const cur = await read($, snapshot)
-        if (!cur) return
-        // 示範任務只是背景：n 不會跳到它們。
-        const list = sorted(liveCases(cur.cases))
-        const at = await read($, selected) ?? list[0]?.statusPath ?? null
-        const to = nextCase(list, at)
-        if (to) { await update($, selected, () => to); await update($, contentOffset, () => 0) }
-      })(),
+      publishPr: c => void confirmThen($, `${c.statusPath}\nopen-pr`, () => publishPr($, options, c)),
+      publishPush: c => void confirmThen($, `${c.statusPath}\npush`, () => publishPush($, options, c)),
       help: () => void update($, helpAtom, v => !v),
       more: () => void update($, showAllAtom, v => !v),
       refresh: () => { forcePr = true; void refresh($, options) },

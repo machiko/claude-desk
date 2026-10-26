@@ -3,7 +3,7 @@
 import type { Case, SentRecord } from '../types'
 import { slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, canArchive, isMerged, isReleaseLine, runningKind, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, isMerged, isReleaseLine, needsPr, needsPush, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { idleNext } from './dispatch'
@@ -50,6 +50,7 @@ const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
 const RUNNING_TEXT: Partial<Record<string, string>> = {
   continue: 'Agent 在寫程式（l 看輸出）', reply: 'Agent 在寫程式（l 看輸出）', fix: 'Agent 在修正（l 看輸出）',
   sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在審查 diff（新對話）', verify: '完成檢查在跑',
+  publish: 'Agent 在 push、開 PR（l 看輸出）',
 }
 
 const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
@@ -58,19 +59,13 @@ const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
 /** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
 const MISSING_CHECK = '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 
-/** 合併段還沒有可用的 PR：要你 push 並開 PR。 */
-export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
+// 派工（dispatch.ts）也要用，放在 pipeline.ts；這裡照舊匯出。
+export { needsPr, needsPush }
 
-/** 高風險改動、還沒有 PR：「⇡ 開 PR」照樣出現，但要按兩次（第一次只提醒先看過審查檔）。 */
-export const needsPrConfirm = (c: Case) => needsPr(c) && !c.pr && !!c.chain?.needsHuman
-
-/**
- * 合併段、PR 已開，分支又領先遠端（修 CI、審查後修正）：要你 push。
- * 還沒有可用的 PR 時由「開 PR」一起 push，這裡不重複；示範任務、Agent 在跑、已合併都不算。
- * 遠端分支找不到（gitState 算不出領先）時不出現：PR 開著，分支一定推過，只是本機看不到。
- */
-export const needsPush = (c: Case) => !c.demo && c.state !== 'running' && c.pipeline?.current === 'merge' && !isMerged(c)
-  && c.pr?.state === 'OPEN' && (c.gitState?.ahead ?? 0) > 0
+/** 高風險改動、還沒有 PR：審查檔（e）一律列出，不管有沒有 Agent 在跑。 */
+export const riskyNoPr = (c: Case) => !c.pr && !!c.chain?.needsHuman
+/** 高風險改動、還沒有 PR、能派推送：「⇡ 開 PR」照樣出現，但第一次按只提醒先看過審查檔，再按一次才派推送 Agent。 */
+export const needsPrConfirm = (c: Case) => needsPr(c) && riskyNoPr(c)
 
 /**
  * 流程停在檢查段（指令未核准、容器沒啟動、檢查中斷）：說為什麼，按 v；排除後跑完檢查，流程接著走。
@@ -137,7 +132,10 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: MISSING_CHECK, key: 'o' }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
-      if (idleNext(c.next)) return { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
+      // 有流程紀錄（Agent 派工後）：檢查通過會自動接審查。沒有（主對話開發、done 寫的下一步）：v 只記結果，審查要再按 w。
+      if (idleNext(c.next)) return c.chain
+        ? { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
+        : { who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
       if (checkStageFailed(c)) return { who: 'you', text: `流程已暫停（${c.chain!.stopped}）`, key: 'v' }
@@ -158,12 +156,17 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   }
 }
 
+export const PUBLISH_PR_TURN = '按 ⇡ 開 PR 派 Agent push 並開 PR'
+export const PUBLISH_PR_RISKY_TURN = '高風險改動：看過審查檔（e）後按兩次 ⇡ 開 PR 派 Agent push 並開 PR'
+export const PUBLISH_PUSH_TURN = 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併'
+
 function mergeTurn(c: Case): Turn {
   // 不帶鍵：帶頭的是「⇡ 開 PR」（沒有快捷鍵），e 留在列上但變淡。
-  if (needsPrConfirm(c)) return { who: 'you', text: '高風險改動：看過審查檔（e）後按兩次 ⇡ 開 PR' }
-  if (needsPr(c)) return { who: 'you', text: 'push 分支並開 PR' }
+  if (needsPrConfirm(c)) return { who: 'you', text: PUBLISH_PR_RISKY_TURN }
+  // push、開 PR 由 Agent 做：按鈕沒有快捷鍵，這句說按哪一顆。
+  if (needsPr(c)) return { who: 'you', text: PUBLISH_PR_TURN }
   // PR 開著、分支又有新 commit：先 push，CI 才會跑在新 commit 上；這時叫你合併會合到舊的。
-  if (needsPush(c)) return { who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 推上去，CI 過了再合併' }
+  if (needsPush(c)) return { who: 'you', text: PUBLISH_PUSH_TURN }
   if (c.pr!.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 在跑' }
   if (c.pr!.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
   return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
@@ -179,7 +182,7 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   const out = new Set<ActionId>(['open'])
   const current = c.pipeline?.current ?? null
   if (c.agent?.id) out.add('logs')
-  if (c.reviewTop?.length || needsPrConfirm(c)) out.add('review-file')
+  if (c.reviewTop?.length || riskyNoPr(c)) out.add('review-file')
   if (c.pr?.url) out.add('pr')
   if (c.state === 'ask' && hasChoice(c) && ctx.sent !== 'waiting') out.add('fill')
   if (c.state === 'reply') out.add('reply')

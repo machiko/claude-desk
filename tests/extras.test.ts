@@ -1,6 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, reminderWhen, reviewTop, parseGitStatus, gitLine, nextCase } from '../hooks/extras'
-import { buildCase } from '../hooks/model'
+import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, reminderWhen, reviewTop, parseGitStatus, gitLine } from '../hooks/extras'
 
 test('confirm fires only on a second press of the same action within 3 seconds', () => {
   const a = confirmStep(null, 'x\ncontinue', 1000)
@@ -43,15 +42,4 @@ test('git status v2 counts ahead, behind, changed, untracked', () => {
   expect(g).toEqual({ ahead: 3, behind: 1, changed: 2, untracked: 2, upstream: true })
   expect(gitLine(g)).toBe('領先 3 · 落後 1 · 未提交 2 檔 · 未追蹤 2 檔')
   expect(gitLine({ ahead: 0, behind: 0, changed: 0, untracked: 0 })).toBe('與遠端一致、無未提交變更')
-})
-
-test('next case prefers the next one that needs you, then cycles', () => {
-  const card = (ask: string) => `<!-- DESK -->\n- 狀態：x\n- 檢查：\`t\`\n- 等你：${ask}\n- 下一步：y\n- 關卡：無\n<!-- /DESK -->`
-  const a = buildCase({ name: 'A', statusPath: '/a' }, card('無'), 1, {}, undefined)
-  const b = buildCase({ name: 'B', statusPath: '/b' }, card('要嗎？A) 要 B) 不要'), 1, {}, undefined)
-  const c = buildCase({ name: 'C', statusPath: '/c' }, card('無'), 1, {}, undefined)
-  expect(nextCase([a, b, c], '/a')).toBe('/b')
-  expect(nextCase([a, b, c], '/b')).toBe('/c')
-  expect(nextCase([a, c], '/c')).toBe('/a')
-  expect(nextCase([], null)).toBeNull()
 })
