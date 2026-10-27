@@ -1,6 +1,6 @@
 {
   "name": "desk",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "工作桌：每件任務走規格、實作、檢查、審查、合併、上線六段，面板告訴你輪到誰、該按什麼；實作、完成檢查、審查與修正由背景 Agent（claude --bg）自動走完流程。合併段按「⇡ 開 PR」派 Agent push 並開 PR；PR 與 CI 可讀 Bitbucket（MCP）或 GitHub（gh），都是唯讀；desk 不合併、不碰正式環境。",
   "author": {
     "name": "Reyes C"
