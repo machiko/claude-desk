@@ -67,3 +67,8 @@ export function scrollHint(w: ContentWindow, contentRows: number): string {
   const below = Math.max(0, contentRows - w.start - w.size)
   return [above ? `↑${above}` : '', below ? `↓${below}` : ''].filter(Boolean).join(' ')
 }
+
+/** 元素樹畫出來是不是空的：沒有字的 Box／Text 也算空。 */
+export const isEmpty = (node: any): boolean =>
+  node === null || node === undefined || node === false || node === '' ||
+  ((node.type === 'Box' || node.type === 'Text') && (node.children ?? []).every(isEmpty))

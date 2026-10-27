@@ -342,6 +342,29 @@ test('a successful update reloads plugins once after reporting the new version',
   await ui.unmount()
 })
 
+/**
+ * 面板按「⇡ 更新到」成功之後，下一則你打的提示附上更新結果；附過一次就不再附。
+ * fixture 的 /reload-plugins 只記次數、不重跑 register，所以這裡驗不到「重新載入後那筆還在」：那靠 $.state 跨重新載入保留，要在實機驗。
+ */
+test('test_update_result_is_attached_to_next_typed_prompt', async ($, on) => {
+  const { data, clock } = fixture(on)
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  await openDesk($, clock)
+  const ui = await $.ui.mount(PANE(100))
+
+  await ui.press({ key: 'update' })
+  await clock.settle()
+  await ui.unmount()
+  await $.prompt.submit({ text: '更新好了嗎？' } as any)
+  await $.prompt.submit({ text: '再問一次' } as any)
+
+  expect(data.reloads.length).toBe(1)
+  const contexts = data.submitted.slice(-2).map((p: any) => (p.context ?? []).join('\n'))
+  expect(contexts[0]).toContain('面板在對話外做了')
+  expect(contexts[0]).toMatch(new RegExp(`- \\d\\d:\\d\\d ${UPDATED.replace(/[()（）→]/g, '\\$&')}`))
+  expect(contexts[1]).not.toContain(UPDATED)
+})
+
 test('a refused reload prefills /reload-plugins, or asks to type it when the prompt cannot be filled', async ($, on) => {
   const { data, clock } = fixture(on)
   data.reloadable = false

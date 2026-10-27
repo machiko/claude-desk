@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, plain } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, plain, errorText } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
@@ -22,7 +22,8 @@ import type { ChainRun, ChainStep } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, openPath, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
+import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, registryError, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
+import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
@@ -418,13 +419,13 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false): Prom
   return true
 }
 
-const errorText = (error: unknown) => plain(error instanceof Error ? error.message : String(error))
-
 /** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試執行中」、寫進動態；流程停下並寫明原因，不再自動重跑。 */
 async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
   const reason = `檢查中斷：${errorText(error)}`
   $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
+  const now = await $.clock.now()
+  await feedPush($, [{ at: now, text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
+  await tellPanel($, now, reason, { name: c.name, skip: auto || tutorial })
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
   await restage($, c.statusPath)
@@ -439,7 +440,9 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   if (missing.length) {
     const reason = `容器 ${missing.join('、')} 未啟動，請先在主工作區執行 docker compose up -d ${missing.join(' ')}`
     $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
+    const now = await $.clock.now()
+    await feedPush($, [{ at: now, text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
+    await tellPanel($, now, `檢查未執行：${reason}`, { name: c.name, skip: auto || tutorial })
     if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
@@ -453,7 +456,9 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
-  await feedPush($, [{ at: result.at, text: `${c.name} ${result.ok ? '檢查通過' : `檢查未通過（exit ${result.exitCode}）`}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
+  const outcome = result.ok ? '檢查通過' : `檢查未通過（exit ${result.exitCode}）`
+  await feedPush($, [{ at: result.at, text: `${c.name} ${outcome}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
+  await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
   $.ui.toast(`${c.name}：${result.ok ? '檢查通過' : '檢查未通過'}`, { timeoutMs: 6000 })
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
@@ -577,12 +582,15 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
-    await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`, tone: 'suggestion', card: c.statusPath }])
+    const sent = `派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`
+    await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}${sent}`, tone: 'suggestion', card: c.statusPath }])
+    await tellPanel($, now, sent, { name: c.name, skip: opts.auto || tutorial })
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
     return true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
+    await tellPanel($, now, `${KIND_LABEL[kind]}失敗：${message}`, { name: c.name, skip: opts.auto || tutorial })
     $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
     return false
   } finally {
@@ -603,13 +611,6 @@ function notify($: any, text: string) {
 export async function refreshAfterWrite($: any, options: PluginOptions) {
   if (refreshing) await refreshing.catch(() => {})
   return refresh($, options)
-}
-
-
-
-/** 按兩次確認的動作：第二次按（確認時限內）才做。 */
-async function confirmThen($: any, key: string, then: () => Promise<unknown>) {
-  if (await confirmed($, key)) await then()
 }
 
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
@@ -794,7 +795,3 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 }
-
-const isEmpty = (node: any): boolean =>
-  node === null || node === undefined || node === false || node === '' ||
-  ((node.type === 'Box' || node.type === 'Text') && (node.children ?? []).every(isEmpty))

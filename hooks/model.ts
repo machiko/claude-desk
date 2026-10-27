@@ -26,6 +26,9 @@ export const errorLine = (r: { stderr?: string; stdout?: string } | null | undef
 
 export const STALE_MS = 3 * 24 * 60 * 60_000
 
+/** 例外的訊息，去掉控制字元。 */
+export const errorText = (error: unknown) => plain(error instanceof Error ? error.message : String(error))
+
 /**
  * 外部來的文字（Agent 記錄、檢查輸出、卡片）進畫面前清乾淨：拿掉所有終端機控制序列與控制字元。
  * 引擎會整個拒畫含控制字元的文字，面板就會變成一片空白。
