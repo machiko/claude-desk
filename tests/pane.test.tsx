@@ -170,7 +170,7 @@ test('without a registry the pane says so and the band stays quiet', async ($, o
   delete data.files['/home/u/.claude/handoffs/shop/projects-scope.md']
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
-  expect(await ui.find({ type: 'Text', text: /無法讀取登錄表/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /還沒有登錄表/ })).toBeDefined()
   await ui.unmount()
 })
 

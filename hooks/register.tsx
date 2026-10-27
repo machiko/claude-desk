@@ -22,14 +22,14 @@ import type { ChainRun, ChainStep } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
+import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, openPath, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
 import { noticeOf } from './update'
 import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
 import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
-import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
+import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -79,7 +79,9 @@ export async function refresh($: any, options: PluginOptions) {
     const paths = tutorial ? null : await deskPaths($, options)
     const path = tutorial ? tutorialPaths(await home($)).registry : paths!.registry
     const text = path ? await $.fs.read(path).catch(() => null) : null
-    const error = text !== null ? null : tutorial ? `無法讀取教學的登錄表 ${path}；輸入 /desk tutorial end 回到你的任務` : registryError(paths!)
+    // 專案資料夾裡的登錄表還不存在：面板給「建立空的登錄表」。
+    const missing = text === null && !tutorial ? await missingRegistry($, paths!) : null
+    const error = text !== null ? null : tutorial ? `無法讀取教學的登錄表 ${path}；輸入 /desk tutorial end 回到你的任務` : registryError(paths!, missing)
     const rows = parseRegistry(text ?? '', await home($))
     knownPaths = [...(path ? [path] : []), ...rows.map(r => r.statusPath)]
     // 教學不看真的背景 agent，只看模擬的那一個。
@@ -147,7 +149,7 @@ export async function refresh($: any, options: PluginOptions) {
     const deskVersions = await versions($, cases)
     const notice = settings && settings.updateCheck !== 'off' ? noticeOf(await loadUpdateCheck($), deskVersions.desk) : undefined
     // 教學模式：示範任務接在後面當「其他任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
-    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
+    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     // 選取的任務已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
     if (!error && rows.length) {
@@ -173,7 +175,8 @@ export async function refresh($: any, options: PluginOptions) {
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
-    await update($, snapshot, prev => prev ? { ...prev, error: message } : { at: 0, cases: [], error: message, contextPercent: null })
+    // 讀取失敗不代表登錄表不存在：拿掉建立按鈕，錯誤照樣是紅字。
+    await update($, snapshot, prev => prev ? { ...prev, error: message, missingRegistry: undefined } : { at: 0, cases: [], error: message, contextPercent: null })
   }).finally(() => { refreshing = null })
   return refreshing
 }
@@ -759,6 +762,7 @@ export const register: Register = (on, options) => {
       refresh: () => { forcePr = true; void refresh($, options) },
       toggleBand: () => void update($, isBandHidden, v => !v),
       update: () => void runUpdate($),
+      createRegistry: () => { if (s.missingRegistry) void createRegistry($, options, s.missingRegistry) },
       expand: () => void update($, isExpanded, v => !v),
       window: w => { maxOffset = w.maxOffset },
     }

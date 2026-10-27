@@ -9,6 +9,9 @@ const lf = (text: string) => text.replace(/\r\n?/g, '\n')
 /** `~` 開頭換成家目錄，反斜線換成斜線。 */
 export const expandHome = (path: string, home: string) => path.replace(/^~(?=\/|$)/, home).replace(/\\/g, '/')
 
+/** 空的登錄表（只有表頭）：面板的「建立空的登錄表」寫這份，與 skills/card/scripts/card.py 的 REGISTRY_TEMPLATE 同一份。 */
+export const REGISTRY_TEMPLATE = '# 任務登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
+
 const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim().replace(/`/g, ''))
 
 /** 登錄表：任何一列 `| 任務名 | \`路徑\` |` 都算；標題列有 Executor 欄時，該欄寫 manual 的任務不派工。 */

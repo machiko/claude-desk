@@ -9,7 +9,7 @@ import { dueReminders, reminderWhen } from './extras'
 import { STAGE_COLOR } from './band'
 import { contentWindow, flowRows, scrollHint, wrapText } from './layout'
 import type { ContentWindow } from './layout'
-import { caseActions, nowCardRows, picksKey, shortCommand } from './pane-card'
+import { button, caseActions, nowCardRows, picksKey, shortCommand } from './pane-card'
 import { noticeText } from './update'
 import type { Action } from './pane-card'
 import type { DispatchKind } from './dispatch'
@@ -74,6 +74,8 @@ export type PaneActions = {
   toggleBand: () => void
   /** 把 desk 更新到 GitHub 上的最新版本（跟 /desk update 一樣）；只用點的，不綁快捷鍵。 */
   update: () => void
+  /** 新專案還沒有登錄表：在專案資料夾建一份空的（只有表頭）；已經有了就不覆寫。 */
+  createRegistry: () => void
   expand: () => void
   more: () => void
   /** 這次畫出來 content 最多能捲到哪；捲動 hook 用它夾住位置。 */
@@ -215,7 +217,8 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
       : k.down.length ? <Text wrap="truncate-end"><Text color={COLOR.bad} bold>{`✕ ${k.down.join('、')} 未啟動`}</Text><Text color={COLOR.faint}>{`   ${k.running}/${k.total} 執行中`}</Text></Text>
       : <Text wrap="truncate-end"><Text color={COLOR.attention}>{`◆ ${k.unhealthy.join('、')} 狀態異常`}</Text><Text color={COLOR.faint}>{`   ${k.total} 個執行中`}</Text></Text>)
   }
-  if (s.error) rows.push(...wrapText(s.error, width).map(l => <Text color={COLOR.bad} wrap="truncate-end">{l}</Text>))
+  // 新專案還沒有登錄表是正常的起點，不是錯誤：用一般字色，下方動作列有建立按鈕。
+  if (s.error) rows.push(...wrapText(s.error, width).map(l => <Text color={s.missingRegistry ? COLOR.text : COLOR.bad} wrap="truncate-end">{l}</Text>))
   rows.push(<Text color={COLOR.faint}>{'─'.repeat(Math.max(2, width))}</Text>)
   return rows
 }
@@ -370,7 +373,9 @@ function footerRows(ui: any, view: PaneView, act: PaneActions, width: number, fo
   ].map(a => ({ ...a, width: displayWidth(a.label) + 3 }))
   // 更新版本不綁快捷鍵：只用點的（或 Tab 移到它再按 Enter），免得誤按就更新。跟著狀態列走，不多佔一列。
   const upd: Action = { key: 'update', label: `⇡ ${WORD.update}`, isDim: !view.s.update, onPress: act.update, width: displayWidth(WORD.update) + 2 }
-  const mine = focus && view.s.cases.length ? caseActions(view, focus, act) : []
+  // 還沒有任務、也還沒有登錄表：動作列只有建立空登錄表這一個主要動作。
+  const create = view.s.missingRegistry ? [button({ key: 'create-registry', hotkey: 'n', isBoxed: true, label: `＋ ${WORD.createRegistry}`, onPress: act.createRegistry })] : []
+  const mine = focus && view.s.cases.length ? caseActions(view, focus, act) : create
   const rule = hint ? `${'─'.repeat(Math.max(2, width - displayWidth(hint) - 1))} ${hint}` : '─'.repeat(Math.max(2, width))
   const status = statusParts(view)
   const globalsWidth = globals.reduce((n, a) => n + a.width, 0) + 2 * (globals.length - 1)

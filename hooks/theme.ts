@@ -38,7 +38,7 @@ export const WORD = {
   all: '任務',
   others: '其他任務',
   feed: '最近',
-  empty: '尚無任務：請在登錄表新增一列，或輸入 /desk demo 查看示範。',
+  empty: '尚無任務：用 /desk:card new <分支> <任務名> 開第一張卡；第一次用可以輸入 /desk tutorial 看教學。',
   loading: '讀取任務中…',
   off: '此對話未開啟工作桌；輸入 /desk 開啟。',
   verify: '檢查',
@@ -46,5 +46,6 @@ export const WORD = {
   fill: '填入決策',
   refresh: '重新整理',
   update: '更新版本',
+  createRegistry: '建立空的登錄表',
   hide: '收起',
 } as const
