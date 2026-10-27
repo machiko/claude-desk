@@ -33,6 +33,14 @@ class FlowSkillTest(unittest.TestCase):
         for key in ('t', 'v', 'u'):
             self.assertRegex(text, rf'按 `?{key}`?', key)
 
+    def test_flow_skill_says_how_to_pick_the_card_without_a_slug(self):
+        """/desk:flow 沒帶 slug：用目前 worktree 的資料夾名；在主 repo 用 main（審查 MEDIUM-1）。"""
+        text = read(SKILL)
+
+        self.assertIn('沒帶 slug', text)
+        self.assertIn('git rev-parse --show-toplevel', text)
+        self.assertRegex(text, r'主 repo[^\n]*`main`')
+
     def test_flow_skill_ends_with_one_line_claude_md_rule(self):
         text = read(SKILL)
         last = re.findall(r'^## [^\n]*\n', text, re.M)[-1]

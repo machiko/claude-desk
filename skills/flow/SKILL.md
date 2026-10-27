@@ -9,6 +9,8 @@ desk 只讀卡片與 git，看不到對話內容。在主對話（不按 `g` 派
 
 收到 `/desk:flow` 時：讀這份說明，用 `python3 ${CLAUDE_PLUGIN_ROOT}/skills/card/scripts/card.py card <slug>` 看那張卡在哪一段（gate、spec、check），告訴使用者現在在哪一段、下一步做什麼；之後照這份說明做。
 
+哪張卡：`/desk:flow <slug>` 有帶就用它。沒帶 slug 時用目前 worktree 的資料夾名（`basename "$(git rev-parse --show-toplevel)"`；slug 就是 worktree 資料夾名），在主 repo 開發時用 `main`。`card.py card` 回報找不到或不唯一時，把登錄表列出的任務名給使用者選，不要猜。
+
 原則：
 
 - 對話只寫卡片的「狀態」「下一步」與 History（用 `/desk:card done`），不自己把「檢查」「審查」標成通過；那由面板 `v` 與自動流程記錄。
