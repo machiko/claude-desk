@@ -35,7 +35,9 @@ export const isNewer = (latest: string, current: string) => !!latest && !!curren
 export const firstLine = (text: string) => String(text ?? '').split(/\r?\n/).map(l => l.trim()).find(Boolean) ?? ''
 
 export const noticeText = (latest: string) => `有新版本 ${latest}`
-export const updatedText = (from: string, to: string) => `desk 已更新版本：${from} → ${to}，重新啟動 Claude Code 後生效`
+export const updatedText = (from: string, to: string) => `desk 已更新版本：${from} → ${to}，自動重新載入（對話進行中就等回合結束）`
+export const reloadFilledText = 'desk 沒能自動重新載入：已填入 /reload-plugins，按 Esc 回到輸入框再按 Enter 執行，新版才會生效'
+export const reloadTypeText = 'desk 沒能自動重新載入：請輸入 /reload-plugins，新版才會生效'
 export const upToDateText = (version: string) => `desk 已是最新版本（${version}）`
 
 /**

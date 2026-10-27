@@ -5,6 +5,9 @@ import { compareVersions, manifestPath, pickInstall } from '../hooks/update'
 const MARKET_DIR = '/home/u/.claude/plugins/marketplaces/claude-desk'
 const FOLDER = '/home/u/Workspace/claude-desk'
 const DAY = 24 * 60 * 60_000
+const UPDATED = 'desk 已更新版本：0.18.0 → 0.19.0，自動重新載入（對話進行中就等回合結束）'
+const RELOAD_FILLED = 'desk 沒能自動重新載入：已填入 /reload-plugins，按 Esc 回到輸入框再按 Enter 執行，新版才會生效'
+const RELOAD_TYPE = 'desk 沒能自動重新載入：請輸入 /reload-plugins，新版才會生效'
 
 type World = { kind: 'github' | 'folder'; installed: string; latest: string; dirty?: boolean; branch?: string; ahead?: number; fetchFails?: boolean; updateFails?: boolean }
 
@@ -81,11 +84,13 @@ test('update upgrades a GitHub install and reports the old and new version numbe
   const { changes, w } = world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
   await openDesk($, clock)
   const out = await $.command.run({ command: 'desk', args: 'update' } as any) as any
-  expect(out.text).toBe('desk 已更新版本：0.18.0 → 0.19.0，重新啟動 Claude Code 後生效')
+  expect(out.text).toBe(UPDATED)
   expect(w.installed).toBe('0.19.0')
   expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
   expect(out.text).not.toMatch(/main|origin|[0-9a-f]{7}/)
-  expect(data.toasts).toContain('desk 已更新版本：0.18.0 → 0.19.0，重新啟動 Claude Code 後生效')
+  expect(data.toasts).toContain(UPDATED)
+  await clock.settle()
+  expect(data.reloads.length).toBe(1)
   const ui = await $.ui.mount(PANE(100))
   expect(await feedTexts($, ui)).toContain('desk 已更新版本：0.18.0 → 0.19.0')
   expect(await ui.find({ type: 'Text', text: /^ {2}有新版本/ })).toBeUndefined()
@@ -102,14 +107,17 @@ test('update reports the current version when desk is already up to date', async
 })
 
 test('update brings a local folder install up to the latest GitHub version', async ($, on) => {
-  const { data } = fixture(on)
+  const { data, clock } = fixture(on)
   const { changes, calls, w } = world(data, { kind: 'folder', installed: '0.18.0', latest: '0.19.0' })
   const out = await $.command.run({ command: 'desk', args: 'update' } as any) as any
-  expect(out.text).toBe('desk 已更新版本：0.18.0 → 0.19.0，重新啟動 Claude Code 後生效')
+  expect(out.text).toBe(UPDATED)
   expect(w.installed).toBe('0.19.0')
   // 只快轉資料夾目前（預設）分支，再更新已安裝的 desk；不動其他分支、worktree，不 stash、不切換。
   expect(changes).toEqual(['git merge --ff-only --quiet origin/main', 'marketplace update claude-desk', 'update desk@claude-desk --scope user'])
   expect(calls.some(a => a.some(x => /^(stash|checkout|switch|reset|worktree|branch|push)$/.test(x)))).toBe(false)
+  await clock.settle()
+  expect(data.reloads.length).toBe(1)
+  expect(data.fills).toEqual([])
 })
 
 test('update refuses and explains why when the local folder install is dirty, off the default branch, or has local commits', async ($, on) => {
@@ -280,7 +288,7 @@ test('auto check is skipped when updateCheck is off', async ($, on) => {
   await band.unmount()
   // 手動更新不受影響。
   const out = await $.command.run({ command: 'desk', args: 'update' } as any) as any
-  expect(out.text).toBe('desk 已更新版本：0.18.0 → 0.19.0，重新啟動 Claude Code 後生效')
+  expect(out.text).toBe(UPDATED)
 })
 
 test('the pane update button runs the same update as /desk update and has no hotkey', async ($, on) => {
@@ -299,12 +307,86 @@ test('the pane update button runs the same update as /desk update and has no hot
   await clock.settle()
   expect(w.installed).toBe('0.19.0')
   expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
-  expect(data.toasts).toContain('desk 已更新版本：0.18.0 → 0.19.0，重新啟動 Claude Code 後生效')
+  expect(data.toasts).toContain(UPDATED)
+  expect(data.reloads.length).toBe(1)
   // 更新後提示消失（已安裝的就是最新版）。
   expect(await ui.find({ type: 'Text', text: /^ {2}有新版本/ })).toBeUndefined()
   await ui.unmount()
   const help = await $.command.run({ command: 'desk', args: 'nope' } as any) as any
   expect(help.text).toContain('update')
+})
+
+test('a successful update reloads plugins once after reporting the new version', async ($, on) => {
+  const { data, clock } = fixture(on)
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  await openDesk($, clock)
+  const ui = await $.ui.mount(PANE(100))
+  data.feedAtReload = () => feedTexts($, ui)
+  await ui.press({ key: 'update' })
+  await clock.settle()
+  expect(data.toasts).toContain(UPDATED)
+  expect(await feedTexts($, ui)).toContain(UPDATED)
+  // 正好重新載入一次，而且執行的時候 toast 與「最近」都已經寫好新版本。
+  expect(data.reloads.length).toBe(1)
+  expect(data.reloads[0]!.toasts).toContain(UPDATED)
+  expect(data.reloads[0]!.seen).toContain(UPDATED)
+  expect(data.fills).toEqual([])
+  await ui.unmount()
+})
+
+test('a refused reload prefills /reload-plugins, or asks to type it when the prompt cannot be filled', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.reloadable = false
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  await openDesk($, clock)
+  const ui = await $.ui.mount(PANE(100))
+  await ui.press({ key: 'update' })
+  await clock.settle()
+  expect(data.reloads).toEqual([])
+  expect(data.fills).toEqual([{ text: '/reload-plugins', mode: 'replace' }])
+  expect(data.toasts).toContain(UPDATED)
+  expect(data.toasts).toContain(RELOAD_FILLED)
+  expect(data.toasts).not.toContain(RELOAD_TYPE)
+  expect((await ui.findAll({ type: 'Text' })).some((n: any) => /沒能自動重新載入：已填入/.test(n.text) && n.props?.color === 'warning')).toBe(true)
+  await ui.unmount()
+  // 輸入框也無法預填：改請使用者自己輸入。
+  data.fillable = false
+  data.toasts = []
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  const again = await $.ui.mount(PANE(100))
+  await again.press({ key: 'update' })
+  await clock.settle()
+  expect(data.reloads).toEqual([])
+  expect(data.toasts).toContain(RELOAD_TYPE)
+  expect(data.toasts).not.toContain(RELOAD_FILLED)
+  expect((await again.findAll({ type: 'Text' })).some((n: any) => /沒能自動重新載入：請輸入/.test(n.text) && n.props?.color === 'warning')).toBe(true)
+  await again.unmount()
+})
+
+test('no reload when the update is already current, refused or failed', async ($, on) => {
+  const { data, clock } = fixture(on)
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.18.0' })
+  await openDesk($, clock)
+  const cases: [World, string | RegExp][] = [
+    [{ kind: 'github', installed: '0.18.0', latest: '0.18.0' }, 'desk 已是最新版本（0.18.0）'],
+    [{ kind: 'folder', installed: '0.18.0', latest: '0.19.0', dirty: true }, /^desk 無法更新，什麼都沒動：/],
+    [{ kind: 'github', installed: '0.18.0', latest: '0.19.0', updateFails: true }, /^desk 無法更新：更新指令失敗/],
+  ]
+  for (const [w, expected] of cases) {
+    // 輸入 /desk update 與按「⇡ 更新版本」都一樣。
+    world(data, w)
+    const out = await $.command.run({ command: 'desk', args: 'update' } as any) as any
+    if (typeof expected === 'string') expect(out.text).toBe(expected)
+    else expect(out.text).toMatch(expected)
+    world(data, w)
+    const ui = await $.ui.mount(PANE(100))
+    await ui.press({ key: 'update' })
+    await clock.settle()
+    await ui.unmount()
+  }
+  expect(data.reloads).toEqual([])
+  expect(data.fills).toEqual([])
+  expect(data.toasts.some(t => t.includes('重新載入'))).toBe(false)
 })
 
 test('version helpers: compare numbers, pick the loaded install, find the manifest', () => {

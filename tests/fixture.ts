@@ -73,6 +73,12 @@ export function fixture(on: any) {
     exec: null as null | ((e: any) => Promise<any> | any),
     /** 載入中的 desk 版號（plugin 自己的 plugin.json）。 */
     deskVersion: '9.9.9',
+    /** 每次執行 /reload-plugins 時已經跳過的 toast，與 feedAtReload 讀到的畫面（看重新載入是不是在回報之後）。 */
+    reloads: [] as { toasts: string[]; seen?: string }[],
+    /** 執行 /reload-plugins 的當下讀面板畫面（測試掛好面板後設定）。 */
+    feedAtReload: null as null | (() => Promise<string>),
+    /** false 模擬 Claude Code 不讓 plugin 執行 /reload-plugins。 */
+    reloadable: true,
   }
   on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ version: data.deskVersion }) } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
@@ -149,6 +155,14 @@ export function fixture(on: any) {
     data.asks.push(String(q?.question ?? ''))
     data.askOptions.push(labels)
     return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: labels.includes('核准並派工') ? data.approve : data.answer } } }
+  })
+  // 拒絕＝交給核心：測試裡沒有核心的實作，$.command.run 會被拒（跟 Claude Code 不讓 plugin 執行一樣是 reject）。
+  on('command.run', { command: 'reload-plugins' }, async (_: any, e: any, next: any) => {
+    if (!data.reloadable) return next(e)
+    const toasts = [...data.toasts]
+    const seen = data.feedAtReload ? await data.feedAtReload() : undefined
+    data.reloads.push({ toasts, ...(seen === undefined ? {} : { seen }) })
+    return { text: 'Reloaded plugins' }
   })
   on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
   on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })

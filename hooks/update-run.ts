@@ -2,7 +2,7 @@
 // 查到的結果存 $.store，提示掛在快照上；比版號、找安裝位置這些純邏輯在 update.ts。
 import { atom, update } from 'claude-code'
 import { feedPush } from './desk-io'
-import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, updateDesk } from './update'
+import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, reloadFilledText, reloadTypeText, updateDesk } from './update'
 import type { UpdateCheck } from './update'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -59,6 +59,24 @@ export async function runUpdate($: any): Promise<string> {
     }
     await feedPush($, [{ at: now, text: r.text, tone: r.tone }])
     $.ui.toast(r.text, { timeoutMs: r.tone === 'success' ? 10_000 : 8000 })
+    // 等這個 hook 回完才重新載入：從 /desk update 的 command.run hook 裡直接跑會被宿主拒絕（會卡住它占著的回合）；
+    // 也不等它跑完：重新載入排隊到對話閒下來才跑、會重跑 register，updating 旗標與回覆都不能卡在這裡。
+    if (r.tone === 'success') $.clock.after(0, () => void reloadAfterUpdate($, now).catch(() => { /* 只剩寫「最近」失敗，更新本身已回報 */ }))
     return r.text
   } finally { updating = false }
+}
+
+/**
+ * 更新成功後讓新版生效：像使用者輸入一樣執行 /reload-plugins。Claude Code 不讓 plugin 執行時，
+ * 把 /reload-plugins 預填進輸入框；連預填也不行就請使用者自己輸入。兩種都記進「最近」並跳 toast。
+ */
+export async function reloadAfterUpdate($: any, now: number) {
+  try {
+    await $.command.run({ command: 'reload-plugins', args: '' })
+    return
+  } catch { /* 被拒絕，改預填輸入框 */ }
+  const filled = await $.prompt.fill({ text: '/reload-plugins', mode: 'replace' }).catch(() => ({ isFilled: false }))
+  const text = filled?.isFilled ? reloadFilledText : reloadTypeText
+  await feedPush($, [{ at: now, text, tone: 'warning' }])
+  $.ui.toast(text, { timeoutMs: 10_000 })
 }
