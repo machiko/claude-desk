@@ -58,10 +58,9 @@ test('test_panel_archive_is_attached_to_next_typed_prompt', async ($, on) => {
   await ui.unmount()
 })
 
-test('test_panel_actions_attach_in_order_with_case_and_result', async ($, on) => {
-  const { data, clock } = fixture(on)
+/** AC-2 的情境：Beta 停在規格關卡；Gamma 等上線確認（v0.2.0 已打）；Alpha 沒有決策，可以檢查與派實作。 */
+async function fourCases($: any, data: any, clock: any) {
   data.agents = []
-  // Beta 停在規格關卡；Gamma 等上線確認（v0.2.0 已打）；Alpha 沒有決策，可以檢查與派實作。
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', '- 關卡：spec：待確認規格（AC-1～AC-2）') + '\n\n## Decisions\n\n- D-01 2030-01-05 Alex：只匯出 CSV\n\n## History\n\n- 2030-01-05：產生規格草稿\n'
   data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git' }
   data.files[CARD_C] = data.files[CARD_C]!.replace('- 驗證：無', '- 驗證：`npm test`').replace('- 關卡：無', '- 關卡：release：v0.2.0 待上線確認') + '\n\n## History\n\n- 2030-01-04：合併\n'
@@ -79,27 +78,51 @@ test('test_panel_actions_attach_in_order_with_case_and_result', async ($, on) =>
   }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
+  /** 點那件、按兩次那個鍵，再讓時間往前走，下一筆的時間比較晚。 */
   const twice = async (row: string, key: string) => {
     await focus(ui, row)
     await ui.press({ key }); await ui.press({ key })
     await clock.settle()
     await clock.advance(60_000)
   }
+  return { ui, twice }
+}
+
+/** 附上的那段裡，這幾筆都在、而且照給的順序排。 */
+function expectInOrder(context: string, order: RegExp[]) {
+  const at = order.map(re => context.search(re))
+  expect(at.every(i => i >= 0)).toBe(true)
+  expect([...at].sort((x, y) => x - y)).toEqual(at)
+}
+
+/** 確認規格、上線確認依時間附上，每筆有時間、任務名與結果。 */
+test('test_panel_spec_ok_and_ship_attach_in_order_with_case_and_result', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const { ui, twice } = await fourCases($, data, clock)
+
   await twice(CARD_B, `case-${CARD_B}-spec-ok`)
   await twice(CARD_C, `case-${CARD_C}-ship`)
+  await $.prompt.submit({ text: '現在狀況？' } as any)
+
+  expectInOrder(lastContext(data), [line('Beta', '規格已確認，可以派實作'), line('Gamma', '已確認上線（v0.2.0）')])
+  await ui.unmount()
+})
+
+/** 完成檢查、派實作依時間附上，每筆有時間、任務名與結果。 */
+test('test_panel_verify_and_dispatch_attach_in_order_with_case_and_result', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const { ui, twice } = await fourCases($, data, clock)
+
   await focus(ui, CARD_A)
   await ui.press({ key: 'more' })
   await ui.press({ key: `case-${CARD_A}-verify` })
   await clock.settle()
   await clock.advance(60_000)
   await twice(CARD_A, `case-${CARD_A}-continue`)
-  expect(data.launches.length).toBe(1)
   await $.prompt.submit({ text: '現在狀況？' } as any)
-  const context = lastContext(data)
-  const order = [line('Beta', '規格已確認，可以派實作'), line('Gamma', '已確認上線（v0.2.0）'), line('Alpha', '檢查通過'), line('Alpha', '派繼續')]
-  const at = order.map(re => context.search(re))
-  expect(at.every(i => i >= 0)).toBe(true)
-  expect([...at].sort((x, y) => x - y)).toEqual(at)
+
+  expect(data.launches.length).toBe(1)
+  expectInOrder(lastContext(data), [line('Alpha', '檢查通過'), line('Alpha', '派繼續')])
   await ui.unmount()
 })
 
