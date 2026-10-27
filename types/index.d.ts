@@ -110,6 +110,9 @@ export type Picks = Record<string, Record<string, string>>
  */
 export type SentRecord = { ask: string; during?: string; by?: string; done?: boolean }
 
+/** 你在面板做、會改變任務狀態的一個操作（成功或失敗）：等下一則你打的提示附給對話。name：哪件任務，建立登錄表、更新版本這類不屬於任何一件的不填。 */
+export type PanelAction = { at: number; name?: string; text: string }
+
 declare module 'claude-code' {
   interface PluginState {
     desk: {
@@ -120,6 +123,8 @@ declare module 'claude-code' {
       selected: string | null
       /** 從面板送出的決策：卡片路徑 → 送出時的「等你」原文與由哪個回合處理；等你改了就失效。 */
       sent: Record<string, SentRecord>
+      /** 你在面板做了、對話還不知道的操作（依時間順序，最多 20 筆）：下一則你打的提示附上後清掉。 */
+      panelActions: PanelAction[]
       feed: FeedEvent[]
       picks: Picks
       verifies: Record<string, Verify>

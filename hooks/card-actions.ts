@@ -1,5 +1,5 @@
 // 現在卡上的動作：回覆 Agent、派 Agent 開 PR／push、預填決策、預填發版請求、開卡片、確認上線、歸檔、確認規格、停止 Agent；
-// 以及新專案還沒有任務時的建立空登錄表。
+// 以及新專案還沒有任務時的建立空登錄表。會改變任務狀態的操作，結果另外記下來，下一則你打的提示告訴對話（tell）。
 // 從 register.tsx 搬出來（只搬不改）；派工、重新整理仍在 register.tsx，比照 tutorial-run.tsx 從那裡匯入。
 // 跨檔傳 $ 的函式一律用 function 宣告；atom 位址同 register.tsx，各自宣告。
 import { atom, read } from 'claude-code'
@@ -14,7 +14,7 @@ import { canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
-import { feedPush, loadJobs, missingRegistry, openWith, saveChain } from './desk-io'
+import { feedPush, loadJobs, missingRegistry, notePanelAction, openWith, saveChain } from './desk-io'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
@@ -22,6 +22,11 @@ import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
 const picksAtom = atom({ plugin: 'desk', key: 'picks' } as const, {})
 const snapshotAtom = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
+
+/** 面板操作的結果記下來，下一則你打的提示告訴對話；教學模式是沙盒，不記。 */
+async function tell($: any, at: number, text: string, c?: Case) {
+  if (!tutorial) await notePanelAction($, { at, text, ...(c ? { name: c.name } : {}) })
+}
 
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 export async function reply($: any, options: PluginOptions, c: Case, text?: string) {
@@ -99,10 +104,16 @@ export async function confirmShipped($: any, c: Case) {
   const d = new Date(await $.clock.now())
   const two = (n: number) => String(n).padStart(2, '0')
   const next = typeof text === 'string' ? confirmShip(text, `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, `${two(d.getHours())}:${two(d.getMinutes())}`, c.tag ?? '', isReleaseLine(c) ? '等下一版開發' : `${ARCHIVE_WORD}：${CARD_CMD} archive ${slugOf(c)}`, (await loadSettings($, optionsRef!)).user) : null
-  if (!next) { $.ui.toast(`${c.name}：卡片關卡已不是 release，沒有改動`); void refresh($, optionsRef!); return }
+  if (!next) {
+    $.ui.toast(`${c.name}：卡片關卡已不是 release，沒有改動`)
+    await tell($, d.getTime(), '確認上線沒有改動：卡片關卡已不是 release', c)
+    void refresh($, optionsRef!); return
+  }
   const ok = await $.fs.write(c.statusPath, next).then(() => true).catch(() => false)
-  if (!ok) { $.ui.toast(`${c.name}：寫入卡片失敗`); return }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已確認上線${c.tag ? `（${c.tag}）` : ''}`, tone: 'success', card: c.statusPath }])
+  if (!ok) { $.ui.toast(`${c.name}：寫入卡片失敗`); await tell($, d.getTime(), '確認上線失敗：寫入卡片失敗', c); return }
+  const shipped = `已確認上線${c.tag ? `（${c.tag}）` : ''}`
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${shipped}`, tone: 'success', card: c.statusPath }])
+  await tell($, d.getTime(), shipped, c)
   $.ui.toast(`${c.name}：已確認上線，release 關卡已清除`)
   void refresh($, optionsRef!)
 }
@@ -125,6 +136,7 @@ export async function archiveCase($: any, options: PluginOptions, c: Case) {
     const why = reasonLine(r)
     $.ui.toast(`${c.name}：歸檔失敗：${why}`, { timeoutMs: 10_000 })
     await feedPush($, [{ at: now, text: `${c.name} 歸檔失敗：${why}`, tone: 'error', card: c.statusPath }])
+    await tell($, now, `歸檔失敗：${why}`, c)
     void refreshAfterWrite($, options)
     return
   }
@@ -132,6 +144,7 @@ export async function archiveCase($: any, options: PluginOptions, c: Case) {
   $.ui.toast(`${c.name}：已歸檔${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
   // 歸檔後這件離開工作桌：這筆不掛在它的卡上，換到哪件都看得到。
   await feedPush($, [{ at: now, text: `${c.name} 已歸檔（worktree 與分支保留）`, tone: 'success' }])
+  await tell($, now, '已歸檔（worktree 與分支保留）', c)
   void refreshAfterWrite($, options)
 }
 
@@ -146,10 +159,12 @@ export async function confirmSpec($: any, options: PluginOptions, c: Case) {
     const why = reasonLine(r)
     $.ui.toast(`${c.name}：確認規格失敗：${why}`, { timeoutMs: 10_000 })
     await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error', card: c.statusPath }])
+    await tell($, now, `確認規格失敗：${why}`, c)
     void refreshAfterWrite($, options)
     return
   }
   await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success', card: c.statusPath }])
+  await tell($, now, '規格已確認，可以派實作', c)
   void refreshAfterWrite($, options)
 }
 
@@ -159,9 +174,16 @@ export async function stopAgent($: any, c: Case) {
   if (!c.agent?.id || !last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：只能停止 desk 派出去的 Agent`); return }
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
-  if (!r || r.exitCode !== 0) { $.ui.toast(`${c.name}：無法停止（${errorLine(r, 'claude stop 失敗')}）`); return }
+  if (!r || r.exitCode !== 0) {
+    const why = errorLine(r, 'claude stop 失敗')
+    $.ui.toast(`${c.name}：無法停止（${why}）`)
+    await tell($, await $.clock.now(), `停止 Agent 失敗：${why}`, c)
+    return
+  }
   await saveChain($, normalizeRoot(c.root), run => run ? paused(run, AGENT_STOPPED) : run)
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${AGENT_STOPPED}（對話保留）`, tone: 'warning', card: c.statusPath }])
+  const now = await $.clock.now()
+  await feedPush($, [{ at: now, text: `${c.name} ${AGENT_STOPPED}（對話保留）`, tone: 'warning', card: c.statusPath }])
+  await tell($, now, `${AGENT_STOPPED}（對話保留）`, c)
   $.ui.toast(`${c.name}：已停止 Agent`)
   void refresh($, optionsRef!)
 }
@@ -178,8 +200,10 @@ export async function createRegistry($: any, options: PluginOptions, path: strin
     return
   }
   const ok = await $.fs.write(path, REGISTRY_TEMPLATE).then(() => true).catch(() => false)
-  if (!ok) { $.ui.toast(`無法建立登錄表 ${path}`); return }
-  await feedPush($, [{ at: await $.clock.now(), text: `已${WORD.createRegistry}`, tone: 'success' }])
+  if (!ok) { $.ui.toast(`無法建立登錄表 ${path}`); await tell($, await $.clock.now(), `無法建立登錄表 ${path}`); return }
+  const now = await $.clock.now()
+  await feedPush($, [{ at: now, text: `已${WORD.createRegistry}`, tone: 'success' }])
+  await tell($, now, `已${WORD.createRegistry}`)
   $.ui.toast(`已${WORD.createRegistry}；用 ${CARD_CMD} new <分支> <任務名> 開第一張卡`, { timeoutMs: 8000 })
   void refreshAfterWrite($, options)
 }

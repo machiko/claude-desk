@@ -1,10 +1,10 @@
-// 面板與對話同步：選取的任務附在每則提示、從面板送出的決策鎖到對話寫回卡片、對話動到卡片時提早重讀。
+// 面板與對話同步：選取的任務附在每則提示、面板做過的操作附在下一則你打的提示、從面板送出的決策鎖到對話寫回卡片、對話動到卡片時提早重讀。
 // 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、送出的決策與兩個計時器。
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
-import type { SentRecord } from '../types'
+import type { PanelAction, SentRecord } from '../types'
 import { decisionName } from './card'
-import { cardContext, cardKey, cardReminder, decisionContext, feedPush } from './desk-io'
+import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext } from './desk-io'
 import type { Timer } from './desk-io'
 import { touchesDesk } from './touch'
 import { sentState } from './turn'
@@ -13,6 +13,7 @@ import { refreshAfterWrite } from './register'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
 const sentAtom = atom({ plugin: 'desk', key: 'sent' } as const, {})
+const panelActionsAtom = atom({ plugin: 'desk', key: 'panelActions' } as const, [])
 
 export type PromptSyncDeps = {
   /** 這個對話開著工作桌。 */
@@ -109,6 +110,8 @@ async function settleSent($: any, turnId: string | undefined, endedAt: number) {
 
 /** 輸入框打的 ! 指令記進對話的那一列（<bash-input>／<bash-stdout>）。 */
 const BANG_ROW = /<bash-(?:input|stdout|stderr)>/
+/** 同一筆面板操作的識別：附過的那幾筆從清單拿掉時用。 */
+const actionKey = (a: PanelAction) => `${a.at}\n${a.name ?? ''}\n${a.text}`
 const rowText = (message: any) => typeof message?.content === 'string' ? message.content
   : Array.isArray(message?.content) ? message.content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : ''
 
@@ -116,22 +119,30 @@ const rowText = (message: any) => typeof message?.content === 'string' ? message
 export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   // 選取的任務是對話的主角：每次送出都附上它（卡片變了附全文，沒變附一句提醒），取消選取在「更多動作」裡。
   // 從面板填入的決策送出時記下來：面板鎖住那題，等對話寫回卡片。
+  // 面板做過、對話還不知道的操作（歸檔、確認規格、檢查結果、派工…）整段附上，附過就清掉；有沒有選取任務都附。
   on('prompt.submit', async ($, e, next) => {
     if ((e.origin && !TYPED_ORIGINS.has(e.origin.kind)) || e.isMeta || !deps.isActive()) return next(e)
+    // 斜線指令不附：有些指令不進模型，留給下一則你打的提示。
+    const actions: PanelAction[] = e.command ? [] : await read($, panelActionsAtom).catch(() => [])
     const which = await read($, selected).catch(() => null)
     const s = await read($, snapshot).catch(() => null)
     const c = which && s ? s.cases.find(x => x.statusPath === which) ?? null : null
     const name = !deps.isTutorial() && s ? decisionName(String(e.text ?? '')) : null
     const decided = name && s ? s.cases.find(x => !x.demo && x.name === name && x.state === 'ask') ?? null : null
-    if (!c && !decided) return next(e)
+    if (!c && !decided && !actions.length) return next(e)
     const key = c ? cardKey(c) : ''
     // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
-    const extra = [...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...(decided ? [decisionContext(decided, decided !== c)] : [])]
+    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...(decided ? [decisionContext(decided, decided !== c)] : [])]
     if (decided) await update($, sentAtom, v => ({ ...v, [decided.statusPath]: { ask: decided.ask, ...(e.turnId ? { during: e.turnId } : {}) } }))
     const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })
     if (result.drop) { if (decided) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== decided.statusPath))) }
     // 斜線指令（skill 等）附了卡也不算附過：有些指令不進模型，下一則照樣附全文，最多重複一次。
-    else if (c && !e.command) lastAttached = key
+    else {
+      if (c && !e.command) lastAttached = key
+      // 只拿掉這次附上的那幾筆：送出途中面板又做的，留給下一則。
+      const sent = new Set(actions.map(actionKey))
+      if (sent.size) await update($, panelActionsAtom, list => list.filter(a => !sent.has(actionKey(a))))
+    }
     return result
   })
 
