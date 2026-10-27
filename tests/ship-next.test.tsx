@@ -34,10 +34,13 @@ test('a merged case without a tag shows the same next step in the pane and the b
   expect(screen).not.toContain('合併後打 tag')
   // 「▶ 輪到你」那一句與「下一步」列是同一句
   expect((await ui.findAll({ type: 'Text', text: '打 tag 發版' })).length).toBe(2)
+  expect((await ui.findAll({ type: 'Text', text: '打了之後歸檔' })).length).toBe(2)
   await ui.unmount()
   const band = await bandText($)
-  expect(band).toContain('輪到你：打 tag 發版')
-  expect(band).not.toContain('歸檔')
+  // 只說打了 tag 之後才歸檔，不叫你現在歸檔
+  expect(band).toContain('輪到你：打 tag 發版；打了之後歸檔')
+  expect(band).not.toContain('可歸檔')
+  expect(band).not.toContain('archive')
 })
 
 test('the pane next step follows the ship stage and offers archive only once the case is done', async ($, on) => {

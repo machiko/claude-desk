@@ -127,7 +127,7 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
  */
 function cardRules(settings: DispatchSettings, root: string, canPush = false, publishing = false): string[] {
   return [
-    '卡片要精簡：狀態一句話 60 字內、下一步 40 字內，多件事用「；」分開；commit、測試數字、檔案清單等細節寫在卡片下方的歷程，不要塞進這兩欄。',
+    '卡片要精簡：狀態一句話 60 字內、下一步 40 字內，多件事用「；」分開；狀態只寫發生了什麼，不寫下一步，也不寫 commit 編號、AC／D 編號；commit、測試數字、檔案清單等細節寫在卡片下方的歷程，不要塞進這兩欄。',
     '卡片在 .desk/CARD.md（或 .console/STATUS.md）；結束這一輪前把五欄寫回，每欄一行。保留卡片既有的欄位名，不要改名：舊卡用「驗證」「等使用者」，新卡用「檢查」「等你」，工作桌兩種都讀得懂。',
     '寫入前重讀卡片；內容與你開始時讀到的不同就停止並回報衝突，不要覆寫。',
     '檢查欄只放一條可執行的完成檢查（反引號），exit 0 代表做完；發現寫在 狀態 或 .task/REPORT.md。',

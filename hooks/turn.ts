@@ -94,10 +94,29 @@ const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current 
  */
 const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped && !c.chain.passed
 
-/** 上線段該做的事：還沒打 tag 就打 tag；tag 打了、關卡是 release 就部署後按 u。面板合併後的下一步也用它。 */
+/**
+ * 上線段該做的事與做完之後：還沒打 tag 就打 tag（關卡是 release 的接著部署、按 u，否則歸檔）；tag 打了、關卡是 release 就部署後按 u。
+ * 面板合併後的下一步與部署步驟列「全部做完後：」也用這一句。
+ */
 export function shipTurn(c: Case): Turn {
-  if (c.tag && parseGate(c.gate)?.kind === 'release') return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線`, key: 'u' }
-  return { who: 'you', text: '打 tag 發版' }
+  const release = parseGate(c.gate)?.kind === 'release'
+  if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, key: 'u' }
+  return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
+}
+
+/**
+ * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關（register 會排 recheck），
+ * 或流程已經會自己接手（recheck 排好的新一輪、修正輪剛做完：willAutoReview），都是自動重新審查。
+ */
+function checkTurnText(c: Case): string {
+  if (c.chain?.stale) return `審查後有新 commit：按 v 重新執行完成檢查；${(c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? '通過後自動重新審查' : '通過後按 w 重新審查'}`
+  return `按 v 執行完成檢查；${willAutoReview(c) ? '通過後自動審查' : '通過後按 w 派審查'}`
+}
+
+/** 審查段：按 w，以及審查之後會怎樣：擋的自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
+function reviewTurnText(c: Case): string {
+  const head = c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）'
+  return `${head}；有 CRITICAL／HIGH 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
 }
 
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
@@ -146,12 +165,12 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
       if (checkStageFailed(c)) return { who: 'you', text: `流程已暫停（${c.chain!.stopped}）`, key: 'v' }
-      return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 v 重新執行完成檢查' : '按 v 執行完成檢查', key: 'v' }
+      return { who: 'you', text: checkTurnText(c), key: 'v' }
     case 'review':
       if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }
       // 檢查剛通過、流程還沒派出審查（約兩秒）：不用你按 w。
       if (willAutoReview(c)) return { who: 'ai', text: '接著自動審查' }
-      return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）', key: 'w' }
+      return { who: 'you', text: reviewTurnText(c), key: 'w' }
     case 'merge': {
       const t = mergeTurn(c)
       return c.chain?.selfReview && t.who === 'you' ? { ...t, text: t.text + SELF_REVIEW } : t
@@ -176,7 +195,7 @@ function mergeTurn(c: Case): Turn {
   if (needsPush(c)) return { who: 'you', text: PUBLISH_PUSH_TURN }
   if (c.pr!.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 在跑' }
   if (c.pr!.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
-  return { who: 'you', text: '合併 PR（p 開啟）', key: 'p' }
+  return { who: 'you', text: `合併 PR #${c.pr!.id}（p 在瀏覽器開啟）；合併後打 tag 發版`, key: 'p' }
 }
 
 /**

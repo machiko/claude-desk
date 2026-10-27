@@ -366,3 +366,11 @@ test('publish prompt: push and PR only, keeps the gate, no spec or changelog dut
   expect(p).not.toContain('changelog.d/')
   expect(modelFor(parseSettings('{"model":"opus"}'), '/p/a', 'publish')).toEqual({ model: 'opus', effort: '', fresh: true })
 })
+
+/** one-next-step AC-5：派工提示的卡片規則說狀態欄只寫發生了什麼（DESK 範本那半由 skills/card/tests/test_card.py 驗）。 */
+test('card rules tell agents the status field says what happened, not what is next', () => {
+  const rule = '狀態只寫發生了什麼，不寫下一步，也不寫 commit 編號、AC／D 編號'
+  const c = mk('寫測試')
+  for (const kind of ['continue', 'sync', 'review'] as const) expect(buildPrompt(c, kind)).toContain(rule)
+  expect(buildPrompt(c, 'reply', '用 B')).toContain(rule)
+})

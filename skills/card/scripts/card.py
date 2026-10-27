@@ -422,6 +422,8 @@ def cmd_spec_ok(arg):
 
 
 DONE_NEXT = '到面板按 v 執行完成檢查'
+# 狀態只寫發生了什麼：commit（7～40 碼、英數混合的 hex）、AC-n、D-n 這類代號寫在 History。
+STATUS_CODES = re.compile(r'(?<![0-9A-Za-z])(?:(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}|(?:AC|D)[-－]\d+)(?![0-9A-Za-z])', re.I)
 
 
 def cmd_done(arg, status):
@@ -434,6 +436,8 @@ def cmd_done(arg, status):
     _, s, e = block(text)
     if field(text[s:e], '關卡').startswith('spec') or not filled_ac(text):
         fail(f'先確認規格（按 t 或 {CMD} spec {arg} ok），卡片未動')
+    if STATUS_CODES.search(status):
+        fail(f'狀態不放 commit／AC／D 編號（寫在 History），卡片未動：{status}')
     branch = git_branch(root) or '（分離 HEAD）'
     sha = git('-C', root, 'rev-parse', '--short', 'HEAD').stdout.strip() or '（沒有 commit）'
     dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.split('\n') if l.strip()]
