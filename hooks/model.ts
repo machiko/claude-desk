@@ -166,16 +166,16 @@ export function fit(text: string, columns: number): string {
 /** 補空白到 `columns` 格。 */
 export const pad = (text: string, columns: number) => text + ' '.repeat(Math.max(0, columns - displayWidth(text)))
 
-/** 多久以前：剛剛、5 分、3 時、2 天。 */
+/** 多久以前：剛剛、5 分鐘前、3 小時前、2 天前（帶「前」，看得出是過去的時間）。 */
 export function ago(t: number | null, now: number): string {
   if (t === null) return ''
   const s = Math.max(0, Math.round((now - t) / 1000))
   if (s < 60) return '剛剛'
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m} 分鐘`
+  if (m < 60) return `${m} 分鐘前`
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小時`
-  return `${Math.floor(h / 24)} 天`
+  if (h < 24) return `${h} 小時前`
+  return `${Math.floor(h / 24)} 天前`
 }
 
 export const hhmm = (t: number) => {

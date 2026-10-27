@@ -2,7 +2,7 @@
 // 查到的結果存 $.store，提示掛在快照上；比版號、找安裝位置這些純邏輯在 update.ts。
 import { atom, read, update } from 'claude-code'
 import { feedPush } from './desk-io'
-import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, reloadFilledText, reloadTypeText, updateDesk } from './update'
+import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, reloadFilledText, reloadTypeText, updateDesk, versionStateOf } from './update'
 import type { UpdateCheck } from './update'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -43,20 +43,27 @@ export async function autoUpdateCheck($: any, now: number) {
   } catch { /* 查失敗不提示，下一輪再查 */ } finally { checkingUpdate = false }
 }
 
-async function showNotice($: any, check: UpdateCheck) {
+/** 把查到的結果掛到快照：有新版就帶提示；版本格記 newer／latest，正在更新時維持 updating。check 是 null（沒查過）就是 unknown。 */
+async function showNotice($: any, check: UpdateCheck | null) {
   await update($, snapshot, s => {
     if (!s) return s
     const notice = noticeOf(check, s.versions?.desk)
     const { update: _old, ...rest } = s
-    return notice ? { ...rest, update: notice } : rest
+    return { ...rest, ...(notice ? { update: notice } : {}), versionState: updating ? 'updating' : versionStateOf(check, s.versions?.desk) }
   })
 }
 
 let updating = false
-/** 手動更新（/desk update、面板按鈕）：結果記進「最近」並跳 toast；查到的版號給自動檢查沿用。 */
+/** 手動更新正在跑：重新整理組快照時版本格維持「更新中」。 */
+export function isUpdating(): boolean {
+  return updating
+}
+
+/** 手動更新（/desk update、面板按鈕）：結果記進「最近」並跳 toast；查到的版號給自動檢查沿用。跑的時候版本格是「更新中」，結束後依查到的結果畫。 */
 export async function runUpdate($: any): Promise<string> {
   if (updating) return 'desk 正在更新中，請稍候。'
   updating = true
+  await update($, snapshot, s => (s ? { ...s, versionState: 'updating' } : s)).catch(() => { /* 只影響版本格 */ })
   try {
     const now = await $.clock.now()
     const r = await updateDesk($, now)
@@ -72,7 +79,10 @@ export async function runUpdate($: any): Promise<string> {
     // 也不等它跑完：重新載入排隊到對話閒下來才跑、會重跑 register，updating 旗標與回覆都不能卡在這裡。
     if (r.tone === 'success') $.clock.after(0, () => void reloadAfterUpdate($, now).catch(() => { /* 只剩寫「最近」失敗，更新本身已回報 */ }))
     return r.text
-  } finally { updating = false }
+  } finally {
+    updating = false
+    await showNotice($, await loadUpdateCheck($)).catch(() => { /* 只影響版本格，下次重新整理會重畫 */ })
+  }
 }
 
 /**

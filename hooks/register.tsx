@@ -24,8 +24,8 @@ import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
 import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, openPath, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
-import { noticeOf } from './update'
-import { autoUpdateCheck, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
+import { noticeOf, versionStateOf } from './update'
+import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
 import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
@@ -147,9 +147,12 @@ export async function refresh($: any, options: PluginOptions) {
     const usage = await $.session.usage().catch(() => null)
     const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
     const deskVersions = await versions($, cases)
-    const notice = settings && settings.updateCheck !== 'off' ? noticeOf(await loadUpdateCheck($), deskVersions.desk) : undefined
+    // 檢查關閉時當作沒查過：沒有提示，版本格是「檢查並更新」。
+    const check = settings && settings.updateCheck !== 'off' ? await loadUpdateCheck($) : null
+    const notice = noticeOf(check, deskVersions.desk)
+    const versionState = isUpdating() ? 'updating' as const : versionStateOf(check, deskVersions.desk)
     // 教學模式：示範任務接在後面當「其他任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
-    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), ...(tutorial ? { tutorial: true } : {}) }
+    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     // 選取的任務已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
     if (!error && rows.length) {

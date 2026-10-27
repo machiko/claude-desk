@@ -55,7 +55,7 @@ test('verify asks once per command, runs in the case root, and records the resul
   await ui.press({ key })
   await clock.settle()
   expect(data.asks.length).toBe(1)
-  expect(await ui.find({ type: 'Text', text: /✕ 未通過 exit 2/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /✕ 未通過（結束碼 2）/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /boom/ })).toBeDefined()
   expect(data.toasts.filter(t => t.includes('檢查')).length).toBe(2)
   await ui.unmount()
