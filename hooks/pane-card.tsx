@@ -160,7 +160,8 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (c.pr) {
     const pr = c.pr
     const color = pr.state === 'MERGED' ? COLOR.good : pr.state === 'DECLINED' ? COLOR.bad : pr.ci === 'fail' ? COLOR.bad : pr.ci === 'pending' ? COLOR.running : pr.ci === 'pass' ? COLOR.good : COLOR.dim
-    const word = pr.state === 'MERGED' ? '已合併' : pr.state === 'DECLINED' ? '已拒絕' : pr.ci === 'fail' ? 'CI 失敗' : pr.ci === 'pending' ? 'CI 執行中' : pr.ci === 'pass' ? 'CI 通過，可合併' : '已開啟'
+    // CI 通過只有在六段走到合併段才叫「可合併」；審查過期或還沒審查時，說明交給六段那列。
+    const word = pr.state === 'MERGED' ? '已合併' : pr.state === 'DECLINED' ? '已拒絕' : pr.ci === 'fail' ? 'CI 失敗' : pr.ci === 'pending' ? 'CI 執行中' : pr.ci === 'pass' ? (c.pipeline?.current === 'merge' ? 'CI 通過，可合併' : 'CI 通過') : '已開啟'
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.faint}>{`PR #${pr.id}${pr.dest ? ` → ${pr.dest}` : ''}  `}</Text><Text color={color}>{word}</Text></Text></Box>)
   } else if (gitMerged) {
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end" color={COLOR.good}>{`已合併到 ${c.mergedInto!.replace(/^origin\//, '')}（git）`}</Text></Box>)
@@ -207,7 +208,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (gate) {
     rows.push(<Text> </Text>)
     const head = `◆ ${GATE_LABEL[gate.kind]}`
-    const [first, ...rest] = wrapText(`${head}  ${gate.detail}${gate.kind === 'review' && c.chain?.selfReview ? '（自審）' : ''}`, width - INDENT)
+    const [first, ...rest] = wrapText(`${head}  ${gate.detail}${gate.kind === 'review' && c.chain?.selfReview ? '（自審）' : ''}${gate.kind === 'review' && c.chain?.stale ? '（審查後有新 commit，這是舊結論）' : ''}`, width - INDENT)
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.attention} bold>{head}</Text><Text color={COLOR.text}>{(first ?? '').slice(head.length)}</Text></Text></Box>)
     rows.push(...rest.map(line => <Box paddingLeft={INDENT}><Text color={COLOR.text} wrap="truncate-end">{line}</Text></Box>))
   }
