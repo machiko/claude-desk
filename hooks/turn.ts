@@ -3,7 +3,7 @@
 import type { Case, SentRecord } from '../types'
 import { approveText, slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, canArchive, isMerged, isReleaseLine, needsPr, needsPush, runningKind, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { idleNext } from './dispatch'
@@ -42,7 +42,7 @@ export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'chang
   !c.demo && !c.manual && !c.agent && c.state !== 'running' && c.state !== 'nocard' && c.state !== 'done' && !isMerged(c)
   && typeof c.commitAt === 'number' && c.updatedAt !== null && (c.changedAt ?? c.commitAt) - c.updatedAt > BEHIND_MS && now - c.commitAt > SETTLE_MS
 
-export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'push' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'tutorial'
+export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'push' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'release' | 'tutorial'
 
 const isRunning = (c: Case) => c.state === 'running'
 const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
@@ -95,15 +95,20 @@ const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current 
 const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped && !c.chain.passed
 
 /**
- * 上線段該做的事與做完之後：還沒打 tag 就打 tag（關卡是 release 的接著部署、按 u，否則歸檔）；tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。
+ * 上線段該做的事與做完之後：還沒打 tag 就按「⚑ 發版」把發版請求填進輸入框（關卡是 release 的打了 tag 接著部署、按 u，否則歸檔）；
+ * tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。教學模式沒有發版按鈕，照舊叫你打 tag。
  * 面板合併後的下一步與部署步驟列「全部做完後：」也用這一句。
  */
-export function shipTurn(c: Case): Turn {
+export function shipTurn(c: Case, tutorial = false): Turn {
   const release = parseGate(c.gate)?.kind === 'release'
   if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, key: 'u' }
   if (c.tag) return { who: 'you', text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
-  return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
+  if (tutorial) return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
+  // 不帶鍵：帶頭的是「⚑ 發版」（沒有快捷鍵）。
+  return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}` }
 }
+
+export const RELEASE_TURN = '按 ⚑ 發版填入對話（Enter 送出）'
 
 /**
  * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關（register 會排 recheck），
@@ -177,7 +182,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return c.chain?.selfReview && t.who === 'you' ? { ...t, text: t.text + SELF_REVIEW } : t
     }
     case 'ship':
-      return shipTurn(c)
+      return shipTurn(c, ctx.tutorial)
     default:
       return { who: 'none', text: '沒有待辦' }
   }
@@ -232,5 +237,6 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (ctx.tutorial && tutorialStep(c)) out.add('tutorial')
   else if (!ctx.tutorial && awaitsSpecOk(c)) out.add('spec-ok')
   if (!ctx.tutorial && canArchive(c)) out.add('archive')
+  if (!ctx.tutorial && canRelease(c)) out.add('release')
   return out
 }

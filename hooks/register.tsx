@@ -29,7 +29,7 @@ import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
 import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
-import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
+import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -748,6 +748,7 @@ export const register: Register = (on, options) => {
       ship: c => void (async () => { if (await confirmed($, `${c.statusPath}\nship`)) await confirmShipped($, c) })(),
       specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && await confirmed($, `${c.statusPath}\nspec-ok`)) await confirmSpec($, options, c) })(),
       archive: c => void (async () => { if (!tutorial && canArchive(c) && await confirmed($, `${c.statusPath}\narchive`)) await archiveCase($, options, c) })(),
+      release: c => void (tutorial ? undefined : fillRelease($, c)),
       tutorial: c => void tutorialAct($, options, c),
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),

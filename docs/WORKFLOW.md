@@ -22,7 +22,7 @@
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
 | 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0 | 卡片 `review：CRITICAL n、HIGH n…` |
 | 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態） |
-| 6 上線 | 打 tag、部署、部署後步驟 | 你 | 你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
+| 6 上線 | 打 tag、部署、部署後步驟 | 你按「⚑ 發版」交給對話 | 對話照發版步驟做、你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。
 
@@ -80,7 +80,16 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 - 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時只能同步不能派實作）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡，就能按 `g`。審查會逐條對照驗收情境。
 - 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。
 - CHANGELOG：每張卡的條目寫在 `changelog.d/<slug>.md`（`- ` 開頭、動詞開頭的條目，沒有標題），Agent 的派工提示也這樣要求；不改 CHANGELOG.md，分支之間才不會搶「## 未發布」。
-- 發版：要發的 PR 都合併之後，在主 repo `/desk:card changelog <版本>` 把片段合併成 `## <版本>` 段並刪掉片段檔，再改版號、commit、打 tag。沒有片段、版本段已存在、片段格式錯都會報錯不改檔。
+- 發版：要發的 PR 都合併之後，在面板按「⚑ 發版」（上線段、還沒打 tag 的卡帶頭顯示）把列出所有待發版卡的發版請求填進輸入框，按 Enter 送給對話；對話先提版號，你確認後在主 repo 依序做（面板與背景 Agent 都不打 tag）。下面是 desk 本身的步驟，其他專案把版號檔換成自己的：
+  1. 快轉 main 到 origin/main：`git checkout main && git fetch origin && git merge --ff-only origin/main`
+  2. `/desk:card changelog <版本>`：把片段合併成 `## <版本>` 段並刪掉片段檔；沒有片段、版本段已存在、片段格式錯都會報錯不改檔
+  3. 改 `.claude-plugin/plugin.json` 的 `version` 成 `<版本>`
+  4. 跑 `claude plugin validate .` 與整套測試（`claude plugin test .`、`python3 -m unittest discover -s skills/card/tests`）
+  5. 在 main 上 commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
+  6. 打 annotated tag：`git tag -a v<版本> -m "v<版本>"`
+  7. push main 與 tag：`git push origin main v<版本>`
+  8. 等 main 的 CI 通過（`gh run watch` 或到 GitHub Actions 看）
+  9. 把隨版發出的卡歸檔：面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`；有 `release：` 關卡的卡先部署、按 `u` 確認上線再歸檔
 
 ## 常見狀況
 
