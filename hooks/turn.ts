@@ -95,12 +95,13 @@ const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current 
 const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped && !c.chain.passed
 
 /**
- * 上線段該做的事與做完之後：還沒打 tag 就打 tag（關卡是 release 的接著部署、按 u，否則歸檔）；tag 打了、關卡是 release 就部署後按 u。
+ * 上線段該做的事與做完之後：還沒打 tag 就打 tag（關卡是 release 的接著部署、按 u，否則歸檔）；tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。
  * 面板合併後的下一步與部署步驟列「全部做完後：」也用這一句。
  */
 export function shipTurn(c: Case): Turn {
   const release = parseGate(c.gate)?.kind === 'release'
   if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, key: 'u' }
+  if (c.tag) return { who: 'you', text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
   return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
 }
 

@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, plain } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, plain } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
@@ -138,7 +138,9 @@ export async function refresh($: any, options: PluginOptions) {
       const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr, seen) : undefined
       const merged = into ? { ...withState, mergedInto: into } : withState
       const piped = { ...merged, ...(short ? { statusShort: short } : {}), pipeline: stages(merged) }
-      return { ...piped, state: finalState(piped) }
+      // 已合併之後，最後一次派工殘留的提問不再讓任務等回覆。
+      const settled = settleMergedAsk(piped, verifies[row.statusPath])
+      return { ...settled, state: finalState(settled) }
     }))
     const usage = await $.session.usage().catch(() => null)
     const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))

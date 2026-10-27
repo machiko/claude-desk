@@ -411,3 +411,29 @@ test('concurrent git merge detections preserve both entries in gitMerged store',
     [rootB]: { branch: 'feature/b', head: 'b1', into: 'origin/main' },
   })
 })
+
+/** AC-5：合併前派出、停在提問（blocked）沒人回覆的那次，合併後跟結束了的那次一樣收尾：標成已處理，審查的那次歸檔審查檔，不派任何工作。 */
+for (const kind of ['review', 'reply'] as const) {
+  test(`a blocked agent left from before the merge is wrapped up like a finished one (${kind})`, async ($, on) => {
+    const { data, clock } = fixture(on)
+    const root = '/home/u/wt/alpha'
+    const sessionId = 'a0000009-0000-4000-8000-000000000000'
+    data.git[root] = { branch: 'feature/alpha', head: 'h1' }
+    data.prs = [{ id: 7, state: 'MERGED', dest: 'main', url: 'https://bitbucket.org/x/7' }]
+    data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可合併')
+    data.files[`${root}/.task/REVIEW.md`] = '# 審查\n\n- [MEDIUM] 少一條測試\n'
+    data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+    data.store.chains = { [root]: { owner: 'fixture-session', startedAt: 0, round: 0, reviewHead: 'h1' } }
+    data.store.jobs = { [root]: { sessionId, last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId, kind, startedAt: 0, fresh: kind === 'review', owner: 'fixture-session' } } }
+    data.agents = [{ id: 'a0000009', kind: 'background', cwd: root, name: 'desk-x', state: 'blocked', sessionId, startedAt: 0 }]
+
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    await clock.settle()
+    await clock.advance(2500); await clock.settle()
+
+    expect((data.store.jobs as any)[root].last.handled).toBe(true)
+    expect(data.writes.some(w => /\/reviews\/alpha-\d{8}-\d{4}-code\.md$/.test(w))).toBe(kind === 'review')
+    expect(data.launches.length).toBe(0)
+    expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(0)
+  })
+}
