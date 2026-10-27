@@ -78,6 +78,12 @@ async function openDesk($: any, clock: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
 }
+/** desk 載入一次（session.start 記下載入計數）；開新對話由引擎發，測試裡補最底下的回答。 */
+async function loadDesk($: any, on: any) {
+  on('command.register', (_: any, e: any) => ({ value: { command: e.name } }))
+  on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/home/u', surface: null, isInteractive: true } as any)
+}
 
 test('update upgrades a GitHub install and reports the old and new version numbers', async ($, on) => {
   const { data, clock } = fixture(on)
@@ -338,6 +344,8 @@ test('a refused reload prefills /reload-plugins, or asks to type it when the pro
   const { data, clock } = fixture(on)
   data.reloadable = false
   world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  // 被拒時載入計數還是 desk 自己這次：確定沒重新載入，才預填。
+  await loadDesk($, on)
   await openDesk($, clock)
   const ui = await $.ui.mount(PANE(100))
   await ui.press({ key: 'update' })
@@ -361,6 +369,26 @@ test('a refused reload prefills /reload-plugins, or asks to type it when the pro
   expect(data.toasts).not.toContain(RELOAD_FILLED)
   expect((await again.findAll({ type: 'Text' })).some((n: any) => /沒能自動重新載入：請輸入/.test(n.text) && n.props?.color === 'warning')).toBe(true)
   await again.unmount()
+})
+
+/** 重新載入其實已讓新版載入（desk 的載入計數又加了一次），舊版這邊才收到拒絕：新版已生效，不預填也不警告 */
+test('a reload rejected after the new version already loaded neither prefills nor warns', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.reloadable = false
+  data.refuseAfterNewLoad = true
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  await loadDesk($, on)
+  await openDesk($, clock)
+  const ui = await $.ui.mount(PANE(100))
+
+  await ui.press({ key: 'update' })
+  await clock.settle()
+
+  expect(data.toasts).toContain(UPDATED)
+  expect(data.fills).toEqual([])
+  expect(data.toasts.filter(t => /沒能自動重新載入/.test(t))).toEqual([])
+  expect(await feedTexts($, ui)).not.toMatch(/沒能自動重新載入/)
+  await ui.unmount()
 })
 
 test('no reload when the update is already current, refused or failed', async ($, on) => {
