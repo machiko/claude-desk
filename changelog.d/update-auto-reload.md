@@ -1,1 +1,0 @@
-- 調整 「⇡ 更新版本」與 /desk update 更新成功後自動重新載入 desk，不用再手動 /reload-plugins
