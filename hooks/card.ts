@@ -1,6 +1,6 @@
 // 卡片與登錄表的解析：純函式，不碰磁碟。
 // DESK 卡只有五個欄位：狀態、檢查、等你、下一步、關卡；舊版 CARD 的「等使用者」一併接受。
-import type { Decision, Gate } from '../types'
+import type { Case, Decision, Gate } from '../types'
 
 export type RegistryRow = { name: string; statusPath: string; manual?: boolean }
 
@@ -176,6 +176,12 @@ export const allPicked = (decisions: Decision[], picks: Record<string, string>) 
 
 /** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件任務的決策。 */
 export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`
+
+/** 「⚑ 發版」填進輸入框的那句：列出所有已合併待發版的卡（有 PR 的附 PR 編號），請對話先提版號。 */
+export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr'>[]): string {
+  const list = cases.map(c => `「${c.name}」${c.pr ? `PR #${c.pr.id}` : ''}`).join('、')
+  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程，先提版號給我確認`
+}
 
 /** 送出的提示是不是某件任務的決策（以「「任務名」決策：」開頭）：回傳任務名，不是就 null。 */
 export function decisionName(text: string): string | null {

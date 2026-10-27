@@ -4,7 +4,7 @@ import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, spli
 import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
-import { awaitsSpecOk, canArchive, isMerged, parseVerdict, stageParts } from './pipeline'
+import { awaitsSpecOk, canArchive, canRelease, isMerged, parseVerdict, stageParts } from './pipeline'
 import { gitLine, isArmed, mergedAtHead } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
@@ -173,7 +173,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；Agent 在跑、等你時也不換成別的話）。
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
-  const ship = shipTurn(c)
+  const ship = shipTurn(c, view.s.tutorial)
   const afterDeploy = isDone ? archive : ship.text
   // 上線段那句是「要做的事；做完之後」兩段：下一步列兩段都列出來，不收成「還有 1 項」。
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
@@ -261,6 +261,8 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (c.agent?.id && can('logs')) out.push(button({ key: prefix + 'logs', hotkey: 'l', isDim: true, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : '≡ 輸出', onPress: () => act.logs(c) }))
   if ((c.reviewTop?.length || riskyNoPr(c)) && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
+  // 發版：只填輸入框、不寫遠端，按一次就好；沒有快捷鍵（「▶ 輪到你」不帶鍵，它就帶頭）。
+  if (!view.s.tutorial && canRelease(c) && can('release')) out.push(button({ key: prefix + 'release', isLead: !leadKey, isDim: !!leadKey, label: '⚑ 發版', onPress: () => act.release(c) }))
   // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次確認才派，沒有快捷鍵（寫遠端的事不配單鍵）。高風險改動的第一次按改提醒先看過審查檔。
   const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
     const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)

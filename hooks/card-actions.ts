@@ -1,16 +1,16 @@
-// 現在卡上的動作：回覆 Agent、派 Agent 開 PR／push、預填決策、開卡片、確認上線、歸檔、確認規格、停止 Agent；
+// 現在卡上的動作：回覆 Agent、派 Agent 開 PR／push、預填決策、預填發版請求、開卡片、確認上線、歸檔、確認規格、停止 Agent；
 // 以及新專案還沒有任務時的建立空登錄表。
 // 從 register.tsx 搬出來（只搬不改）；派工、重新整理仍在 register.tsx，比照 tutorial-run.tsx 從那裡匯入。
 // 跨檔傳 $ 的函式一律用 function 宣告；atom 位址同 register.tsx，各自宣告。
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
-import type { Case } from '../types'
-import { parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, isPlaceholder, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
+import type { Case, Snapshot } from '../types'
+import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
 import { errorLine, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings } from './probes'
 import { normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
-import { isReleaseLine } from './pipeline'
+import { canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
@@ -21,6 +21,7 @@ import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 
 export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
 const picksAtom = atom({ plugin: 'desk', key: 'picks' } as const, {})
+const snapshotAtom = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 export async function reply($: any, options: PluginOptions, c: Case, text?: string) {
@@ -71,6 +72,19 @@ export async function fillDecision($: any, c: Case) {
   const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
   if (!filled.isFilled) { $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入${text}`); return }
   $.ui.toast(`${c.name}：決策已填入，按 Esc 回到輸入框再按 Enter 送出；此任務的卡片會一併附上`, { timeoutMs: 6000 })
+}
+
+/**
+ * 「⚑ 發版」：把列出所有已合併待發版卡的發版請求填進輸入框，你按 Enter 送給對話；版號由對話提、你確認後照文件的步驟發版。
+ * 面板不打 tag、不 push、不派工、不跑任何指令，也不自動送出。
+ */
+export async function fillRelease($: any, c: Case) {
+  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  const cases = ((await read($, snapshotAtom)) as Snapshot | null)?.cases.filter(canRelease) ?? []
+  const text = releasePrompt(cases.length ? cases : [c])
+  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
+  if (!filled.isFilled) { $.ui.toast(`輸入框無法預填，請直接輸入：${text}`, { timeoutMs: 10_000 }); return }
+  $.ui.toast('發版請求已填入，按 Esc 回到輸入框再按 Enter 送出', { timeoutMs: 6000 })
 }
 
 export async function openCard($: any, c: Case) {

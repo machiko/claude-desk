@@ -73,7 +73,7 @@ test('deploy steps end with the next ship action and point to archive only once 
   await ui.press({ key: `row-${CARD_A}` })
   expect(await ui.find({ type: 'Text', text: '1. php artisan migrate' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '2. 跑回填 --dry-run' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '全部做完後：打 tag 發版' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '全部做完後：按 ⚑ 發版填入對話（Enter 送出）' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /archive alpha/ })).toBeUndefined()
   expect(await ui.find({ key: `case-${CARD_A}-pr` })).toBeDefined()
   // (b) tag 已打、六段全綠：結尾才指向歸檔

@@ -67,6 +67,8 @@ export type PaneActions = {
   specOk: (c: Case) => void
   /** 真實模式的歸檔（按兩次、沒有快捷鍵），效果同 /desk:card archive <slug>；不刪 worktree 與分支。 */
   archive: (c: Case) => void
+  /** 上線段還沒打 tag：把發版請求（列出所有待發版的卡）填進輸入框，Enter 送出；沒有快捷鍵、按一次，面板不打 tag。 */
+  release: (c: Case) => void
   /** 教學模式的 t：確認規格、合併、打 tag。 */
   tutorial: (c: Case) => void
   help: () => void
