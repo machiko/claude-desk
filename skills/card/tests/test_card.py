@@ -508,5 +508,41 @@ class ChangelogTest(unittest.TestCase):
         self.assertEqual(self.fragments(), ['a.md', 'bad.md'])
 
 
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# 發版段的 9 個步驟，依序要出現的關鍵字
+RELEASE_STEPS = [
+    'origin/main',
+    '/desk:card changelog',
+    '.claude-plugin/plugin.json',
+    'claude plugin validate .',
+    'commit',
+    'git tag -a',
+    'git push',
+    'CI',
+    '歸檔',
+]
+
+
+class ReleaseDocsTest(unittest.TestCase):
+    """docs/WORKFLOW.md 的發版段與 README 的動作表。"""
+
+    def release_section(self):
+        lines = read(os.path.join(REPO, 'docs', 'WORKFLOW.md')).splitlines()
+        start = next(i for i, l in enumerate(lines) if l.startswith('- 發版'))
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith(('- ', '#'))), len(lines))
+        return '\n'.join(lines[start:end])
+
+    def test_release_docs_list_every_step(self):
+        section = self.release_section()
+        at = 0
+        for step in RELEASE_STEPS:
+            found = section.find(step, at)
+            self.assertGreaterEqual(found, 0, f'發版段在第 {at} 字之後找不到「{step}」：\n{section}')
+            at = found + len(step)
+        self.assertEqual(len(re.findall(r'^\s+\d+\. ', section, re.M)), len(RELEASE_STEPS))
+        readme = read(os.path.join(REPO, 'README.md'))
+        self.assertRegex(readme, r'(?m)^\| ⚑ 發版 \|')
+
+
 if __name__ == '__main__':
     unittest.main()
