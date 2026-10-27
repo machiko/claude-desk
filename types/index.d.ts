@@ -137,6 +137,8 @@ declare module 'claude-code' {
       showAllActions: boolean
       /** 面板中間 content 捲到第幾列（header 與 footer 常駐不捲）。 */
       contentOffset: number
+      /** desk 在這個 session 載入了幾次（含 /reload-plugins）；更新後判斷新版是否已載入。 */
+      loads: number
     }
   }
 }

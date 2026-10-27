@@ -1,11 +1,20 @@
 // desk 更新的執行面：自動檢查新版本（只提示、不安裝）與手動更新（/desk update、面板按鈕）。
 // 查到的結果存 $.store，提示掛在快照上；比版號、找安裝位置這些純邏輯在 update.ts。
-import { atom, update } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import { feedPush } from './desk-io'
 import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, reloadFilledText, reloadTypeText, updateDesk } from './update'
 import type { UpdateCheck } from './update'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
+const loadsAtom = atom({ plugin: 'desk', key: 'loads' } as const, 0)
+
+/** 這個模組是 desk 在這個 session 第幾次載入；/reload-plugins 載入新的模組時計數再加 1。 */
+let loadNo = 0
+/** session.start（新模組載入時也會跑）：把 $.state 的載入計數加 1，記下自己是第幾次。 */
+export async function markLoaded($: any) {
+  loadNo = (await read($, loadsAtom)) + 1
+  await update($, loadsAtom, () => loadNo)
+}
 
 export async function loadUpdateCheck($: any): Promise<UpdateCheck | null> {
   return parseCheck(await $.store.get(UPDATE_KEY).catch(() => null))
@@ -69,14 +78,21 @@ export async function runUpdate($: any): Promise<string> {
 /**
  * 更新成功後讓新版生效：像使用者輸入一樣執行 /reload-plugins。Claude Code 不讓 plugin 執行時，
  * 把 /reload-plugins 預填進輸入框；連預填也不行就請使用者自己輸入。兩種都記進「最近」並跳 toast。
+ * 拒絕的錯誤沒有可辨識的型態，所以只在確定新版還沒載入時才預填：重新載入其實已經發生、舊模組這邊才收到拒絕，就什麼都不做。
  */
 export async function reloadAfterUpdate($: any, now: number) {
   try {
     await $.command.run({ command: 'reload-plugins', args: '' })
     return
-  } catch { /* 被拒絕，改預填輸入框 */ }
+  } catch { /* 被拒絕；先確定新版真的還沒載入 */ }
+  if (await newerLoaded($)) return
   const filled = await $.prompt.fill({ text: '/reload-plugins', mode: 'replace' }).catch(() => ({ isFilled: false }))
   const text = filled?.isFilled ? reloadFilledText : reloadTypeText
   await feedPush($, [{ at: now, text, tone: 'warning' }])
   $.ui.toast(text, { timeoutMs: 10_000 })
+}
+
+/** 載入計數已不是這個模組的那一號（新版載入了），或讀不到（舊的 $ 已失效）。 */
+async function newerLoaded($: any): Promise<boolean> {
+  try { return (await read($, loadsAtom)) !== loadNo } catch { return true }
 }

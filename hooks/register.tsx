@@ -25,7 +25,7 @@ import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, re
 import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, openPath, registryError, saveChain, statusLine, summarizeStatuses, toggleLogs } from './desk-io'
 import type { Timer } from './desk-io'
 import { noticeOf } from './update'
-import { autoUpdateCheck, loadUpdateCheck, runUpdate } from './update-run'
+import { autoUpdateCheck, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
 import { sentState } from './turn'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
@@ -624,6 +624,8 @@ export const register: Register = (on, options) => {
     checking = null
     launchKinds = {}
     await update($, queueAtom, () => [])
+    // 載入計數：更新後 /reload-plugins 被拒時，看新版是不是其實已經載入了。
+    await markLoaded($)
     await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <任務名> [回覆] 派工；verify|open <任務名> 執行檢查／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範任務）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <任務名>|bar|update|tutorial [end]|off]' })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
     const id = await $.session.id().catch(() => null)

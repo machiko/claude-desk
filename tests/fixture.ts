@@ -79,6 +79,9 @@ export function fixture(on: any) {
     feedAtReload: null as null | (() => Promise<string>),
     /** false 模擬 Claude Code 不讓 plugin 執行 /reload-plugins。 */
     reloadable: true,
+    /** 搭配 reloadable: false：拒絕之前新版其實已經載入了（之後讀到的 desk 載入計數多 1），舊版這邊才收到拒絕。 */
+    refuseAfterNewLoad: false,
+    newerLoaded: false,
   }
   on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ version: data.deskVersion }) } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
@@ -158,11 +161,16 @@ export function fixture(on: any) {
   })
   // 拒絕＝交給核心：測試裡沒有核心的實作，$.command.run 會被拒（跟 Claude Code 不讓 plugin 執行一樣是 reject）。
   on('command.run', { command: 'reload-plugins' }, async (_: any, e: any, next: any) => {
-    if (!data.reloadable) return next(e)
+    if (!data.reloadable) { if (data.refuseAfterNewLoad) data.newerLoaded = true; return next(e) }
     const toasts = [...data.toasts]
     const seen = data.feedAtReload ? await data.feedAtReload() : undefined
     data.reloads.push({ toasts, ...(seen === undefined ? {} : { seen }) })
     return { text: 'Reloaded plugins' }
+  })
+  // 新版已載入：新的模組在 session.start 會把載入計數再加 1，這裡讓舊版之後讀到的計數多 1。
+  on('state.get', async (_: any, e: any, next: any) => {
+    const r = await next(e)
+    return data.newerLoaded && e?.plugin === 'desk' && e?.key === 'loads' ? { value: { ...r.value, value: (r.value?.value ?? 0) + 1 } } : r
   })
   on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
   on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
