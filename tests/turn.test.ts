@@ -157,8 +157,8 @@ test('merge and ship turns say what comes after', async ($, on) => {
   expect(turnOf(merging)).toEqual({ who: 'you', text: '合併 PR #12（p 在瀏覽器開啟）；合併後打 tag 發版', key: 'p' })
   const merged = { pr: { id: 12, state: 'MERGED' as const, ci: 'pass' as const } }
   expect(mk({ gate }, merged).pipeline?.current).toBe('ship')
-  expect(turnOf(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後部署並按 u 確認上線' })
-  expect(turnOf(mk({ gate }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後歸檔' })
+  expect(turnOf(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後部署並按 u 確認上線' })
+  expect(turnOf(mk({ gate }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後歸檔' })
   expect(turnOf(mk({ gate: 'release：v1' }, { ...merged, tag: 'v1' }))).toEqual({ who: 'you', text: '部署 v1 後按 u 確認上線；確認後歸檔', key: 'u' })
 
   // 面板上的部署步驟列：「全部做完後：」接的是「▶ 輪到你」同一句。
@@ -186,7 +186,7 @@ test('ship turn says archive once the tag exists without a release gate', () => 
 
   expect(shipTurn(tagged)).toEqual({ who: 'you', text: 'v0.29.0 已打；輸入 /desk:card archive age-group 歸檔' })
   expect(shipTurn(tagged).text).not.toContain('打 tag 發版')
-  expect(shipTurn(mk({ gate }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後歸檔' })
-  expect(shipTurn(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後部署並按 u 確認上線' })
+  expect(shipTurn(mk({ gate }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後歸檔' })
+  expect(shipTurn(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後部署並按 u 確認上線' })
   expect(shipTurn(mk({ gate: 'release：v0.29.0' }, { ...merged, tag: 'v0.29.0' }))).toEqual({ who: 'you', text: '部署 v0.29.0 後按 u 確認上線；確認後歸檔', key: 'u' })
 })
