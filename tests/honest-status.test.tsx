@@ -200,3 +200,64 @@ test('a stopped chain shows its reason and the key to press instead of the next 
   expect(leaves(verify, 'Text').some((t: any) => t.props?.bold)).toBe(true)
   await ui.unmount()
 })
+
+const PR_OPEN_PASS = [{ number: 12, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }]
+
+/** pr-row-ready-word AC-1 */
+test('the PR row stops saying ready to merge once the review is stale', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { head: 'c2' })
+  judgedAt(data, 'c1')
+  data.gh = PR_OPEN_PASS
+
+  const ui = await mount($)
+  const shown = await screen(ui)
+
+  expect(shown).toContain(flat('PR #12 → main  CI 通過'))
+  expect(shown).not.toContain(flat('CI 通過，可合併'))
+  await ui.unmount()
+})
+
+/** pr-row-ready-word AC-2 */
+test('the review line marks a stale verdict as outdated', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { head: 'c2' })
+  judgedAt(data, 'c1')
+  data.gh = PR_OPEN_PASS
+
+  const ui = await mount($)
+  const shown = await screen(ui)
+
+  expect(shown).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（審查後有新 commit，這是舊結論）'))
+  await ui.unmount()
+})
+
+/** pr-row-ready-word AC-3 */
+test('the PR row still says ready to merge when the review stands at HEAD', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { head: 'c2' })
+  judgedAt(data, 'c2')
+  data.gh = PR_OPEN_PASS
+
+  const ui = await mount($)
+  const shown = await screen(ui)
+
+  expect(shown).toContain(flat('PR #12 → main  CI 通過，可合併'))
+  expect(shown).not.toContain(flat('舊結論'))
+  await ui.unmount()
+})
+
+/** pr-row-ready-word AC-4 */
+test('the PR row does not say ready to merge before any review', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { head: 'c2' })
+  data.files[CARD_B] = data.files[CARD_B]!.replace(PASSED, '- 關卡：無')
+  data.gh = PR_OPEN_PASS
+
+  const ui = await mount($)
+  const shown = await screen(ui)
+
+  expect(shown).toContain(flat('PR #12 → main  CI 通過'))
+  expect(shown).not.toContain(flat('CI 通過，可合併'))
+  await ui.unmount()
+})
