@@ -88,6 +88,12 @@ function checkHold(c: Case): Turn | null {
 /** 流程停住、檢查段因此標 ✕：說停住的原因，按 v 重跑檢查。 */
 const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current === 'check' && c.pipeline.stages.some(s => s.id === 'check' && s.status === 'fail')
 
+/**
+ * 檢查通過後流程會自動派審查：流程是這個對話開的、最後一次派的是實作／回覆且還沒處理（autoReview），沒停下、沒過關。
+ * 只有流程紀錄不夠：紀錄按資料夾永久保存，別的對話開的（foreign）或最後一次派的是同步，按 v 之後不會派審查。
+ */
+const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped && !c.chain.passed
+
 /** 上線段該做的事：還沒打 tag 就打 tag；tag 打了、關卡是 release 就部署後按 u。面板合併後的下一步也用它。 */
 export function shipTurn(c: Case): Turn {
   if (c.tag && parseGate(c.gate)?.kind === 'release') return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線`, key: 'u' }
@@ -133,8 +139,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       return { who: 'you', text: MISSING_CHECK, key: 'o' }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
-      // 有流程紀錄（Agent 派工後）：檢查通過會自動接審查。沒有（主對話開發、done 寫的下一步）：v 只記結果，審查要再按 w。
-      if (idleNext(c.next)) return c.chain
+      // 流程會自動接審查（autoReview）：檢查通過就派審查。不會（主對話開發、done 寫的下一步、別的對話開的流程）：v 只記結果，審查要再按 w。
+      if (idleNext(c.next)) return willAutoReview(c)
         ? { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
         : { who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
@@ -144,7 +150,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
     case 'review':
       if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }
       // 檢查剛通過、流程還沒派出審查（約兩秒）：不用你按 w。
-      if (c.chain?.autoReview && !c.chain.stopped && !c.chain.passed) return { who: 'ai', text: '接著自動審查' }
+      if (willAutoReview(c)) return { who: 'ai', text: '接著自動審查' }
       return { who: 'you', text: c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）', key: 'w' }
     case 'merge': {
       const t = mergeTurn(c)
