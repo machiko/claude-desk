@@ -186,7 +186,7 @@ test('merge actions: show-all puts the retreat actions last, dimmed and labelled
   const risky = mergeCase({ chain: { round: 0, passed: true, needsHuman: RISK } })
   const failedCi = mergeCase({ chain: { round: 0, passed: true }, pr: { id: 12, state: 'OPEN', ci: 'fail', url: 'https://github.com/acme/shop/pull/12' } as any })
 
-  expect(normal).toEqual(['sync', 'review-file', 'open-pr', 'open'])
+  expect(normal).toEqual(['review-file', 'open-pr', 'open'])
   expect(shown).toEqual(['sync', 'review-file', 'open-pr', 'open', 'continue', 'review', 'verify'])
   // 畫面上有一段不可按的「退回：」（不是按鈕）
   expect(labels).toHaveLength(1)
@@ -197,9 +197,9 @@ test('merge actions: show-all puts the retreat actions last, dimmed and labelled
   expect(isLead(openPr)).toBe(true)
   // 「退回：」在本段的動作與退回的動作之間
   expect(actionOrder(risky, true)).toEqual(['sync', 'review-file', 'open-pr', 'open', 'retreat', 'continue', 'review', 'verify'])
-  expect(actionOrder(risky, false)).toEqual(['sync', 'review-file', 'open-pr', 'open'])
+  expect(actionOrder(risky, false)).toEqual(['review-file', 'open-pr', 'open'])
   // PR 開著、CI 失敗：帶頭是 ↗ PR，g 留在本段，審查與檢查一樣排後
-  expect(actionOrder(failedCi, false)).toEqual(['continue', 'sync', 'pr', 'open'])
+  expect(actionOrder(failedCi, false)).toEqual(['continue', 'pr', 'open'])
   expect(actionOrder(failedCi, true)).toEqual(['continue', 'sync', 'pr', 'open', 'retreat', 'review', 'verify'])
   expect(actionsOf(failedCi, true).filter(a => a.isLead).map(a => a.id)).toEqual(['pr'])
   // 退回的動作按過一次、等確認：照樣加框、寫確認字樣

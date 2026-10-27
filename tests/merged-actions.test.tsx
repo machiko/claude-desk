@@ -22,7 +22,7 @@ const NOT_AFTER_MERGE: ActionId[] = ['continue', 'review', 'sync', 'verify']
 test('merged case whose check failed afterwards only offers post-merge actions', () => {
   const c = mk({}, merged, failedCheck)
   expect(c.state).not.toBe('failed')
-  expect(ids(c)).toEqual(['open', 'pr', 'release', 'ship'])
+  expect(ids(c)).toEqual(['open', 'release', 'ship'])
   expect(turnOf(c)).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後歸檔' })
   // 完成檢查在跑或排隊也一樣：合併後不再出現檢查
   for (const ctx of [{ verifying: true }, { queued: true }]) for (const id of NOT_AFTER_MERGE) expect(stageActions(c, ctx).has(id)).toBe(false)
@@ -37,14 +37,14 @@ test('merged case whose chain stopped after merge is not failed and has no conti
 
 test('merged and tagged with a release gate offers ship confirm, never continue or check', () => {
   const c = mk({ gate: 'release：v0.2.0' }, { ...merged, tag: 'v0.2.0', chain: { round: 0, stopped: '完成檢查未通過' } }, failedCheck)
-  expect(ids(c)).toEqual(['open', 'pr', 'ship'])
+  expect(ids(c)).toEqual(['open', 'ship'])
   expect(turnOf(c)).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線；確認後歸檔', key: 'u' })
 })
 
-test('merged, tagged and confirmed with a failed check is done: archive and open only', () => {
+test('merged, tagged and confirmed with a failed check is done: archive only', () => {
   const c = mk({ next: '可歸檔' }, { ...merged, tag: 'v0.2.0' }, failedCheck)
   expect(c.state).toBe('done')
-  expect(ids(c)).toEqual(['archive', 'open', 'pr'])
+  expect(ids(c)).toEqual(['archive'])
 })
 
 test('merged via git (no PR) drops sync and check as well', () => {
@@ -219,7 +219,9 @@ test('a branch reopened under the same name in the same folder is not taken as t
   await clock.advance(6 * 60_000); await refresh()
   const again = await $.ui.mount(PANE(80))
   expect(await again.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
-  expect(await again.find({ key: `case-${CARD_B}-sync` })).toBeDefined()
+  // 沒合併：停在合併段、要開 PR（同步平常不列，不能拿它當沒合併的證據）；也沒有發版鍵
+  expect(await again.find({ key: `case-${CARD_B}-open-pr` })).toBeDefined()
+  expect(await again.find({ key: `case-${CARD_B}-release` })).toBeUndefined()
   await again.unmount()
 })
 
@@ -364,7 +366,9 @@ test('a branch forked from a merged commit in another worktree is not taken as m
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
-  expect(await ui.find({ key: `case-${CARD_B}-sync` })).toBeDefined()
+  // 沒合併：停在合併段、要開 PR；也沒有發版鍵
+  expect(await ui.find({ key: `case-${CARD_B}-open-pr` })).toBeDefined()
+  expect(await ui.find({ key: `case-${CARD_B}-release` })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -386,7 +390,9 @@ test('a branch forked in the same folder from the previous branch\'s reviewed he
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
-  expect(await ui.find({ key: `case-${CARD_B}-sync` })).toBeDefined()
+  // 沒合併：審查紀錄屬於上一條分支，這條停在檢查段、要按 v；也沒有發版鍵
+  expect(await ui.find({ key: `case-${CARD_B}-verify` })).toBeDefined()
+  expect(await ui.find({ key: `case-${CARD_B}-release` })).toBeUndefined()
   await ui.unmount()
 })
 

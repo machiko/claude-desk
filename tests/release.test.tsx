@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, leaves, PANE, CARD_A, CARD_B, CARD_C, REGISTRY } from './fixture'
 import { buildCase } from '../hooks/model'
 import { canRelease, finalState, pipeline } from '../hooks/pipeline'
+import { RELEASE_ASKS } from '../hooks/card'
 import { stageActions, turnOf } from '../hooks/turn'
 import { caseActions } from '../hooks/pane-card'
 import type { Case } from '../types'
@@ -16,7 +17,7 @@ const GITHUB = 'git@github.com:acme/shop.git'
 const LEAD = '按 ⚑ 發版填入對話（Enter 送出）'
 const AFTER_ARCHIVE = '打了 tag 之後歸檔'
 const AFTER_DEPLOY = '打了 tag 之後部署並按 u 確認上線'
-const REQUEST = '發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認'
+const REQUEST = '發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS
 const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送出'
 const pr = (n: number, state = 'MERGED') => ({ number: n, state, baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
@@ -197,6 +198,6 @@ test('a release line gets no release button and is not listed in the request', a
   await ui.press({ key: `row-${CARD_B}` })
   await ui.press({ key: KEY })
   await clock.settle()
-  expect(data.fills).toEqual([{ text: '發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程，先提版號給我確認', mode: 'replace' }])
+  expect(data.fills).toEqual([{ text: '發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS, mode: 'replace' }])
   await ui.unmount()
 })

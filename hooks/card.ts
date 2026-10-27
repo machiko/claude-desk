@@ -177,11 +177,17 @@ export const allPicked = (decisions: Decision[], picks: Record<string, string>) 
 /** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件任務的決策。 */
 export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`
 
-/** 「⚑ 發版」填進輸入框的那句：列出所有已合併待發版的卡（有 PR 的附 PR 編號），請對話先提版號。 */
+/**
+ * 「⚑ 發版」填進輸入框的那句：列出所有已合併待發版的卡（有 PR 的附 PR 編號），請對話先提版號。
+ * 確認點（版號、打 tag 並 push）走卡片「等你」：面板上那張卡會出現選項，按字母＋f 送回決策，不用回對話打字。
+ */
 export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr'>[]): string {
   const list = cases.map(c => `「${c.name}」${c.pr ? `PR #${c.pr.id}` : ''}`).join('、')
-  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程，先提版號給我確認`
+  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程，先提版號給我確認。${RELEASE_ASKS}`
 }
+
+/** 發版請求裡「確認點寫進卡片」那段要求。 */
+export const RELEASE_ASKS = '每個要我確認的點（版號、打 tag 並 push）都寫進這幾張卡的「等你」（寫成 問題：A) … B) …），「狀態」寫做到哪一步；收到我的決策才做下一步，做完把「等你」清成無'
 
 /** 送出的提示是不是某件任務的決策（以「「任務名」決策：」開頭）：回傳任務名，不是就 null。 */
 export function decisionName(text: string): string | null {

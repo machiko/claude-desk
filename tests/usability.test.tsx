@@ -8,6 +8,8 @@ test('a dispatch confirm expires after 3 seconds', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: `row-${CARD_A}` })
+  // 同步平常收在更多動作（m）
+  await ui.press({ key: 'more' })
   await ui.press({ key: `case-${CARD_A}-sync` })
   await clock.advance(3500); await clock.settle()
   await ui.press({ key: `case-${CARD_A}-sync` })
@@ -75,7 +77,8 @@ test('deploy steps end with the next ship action and point to archive only once 
   expect(await ui.find({ type: 'Text', text: '2. 跑回填 --dry-run' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '全部做完後：按 ⚑ 發版填入對話（Enter 送出）' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /archive alpha/ })).toBeUndefined()
-  expect(await ui.find({ key: `case-${CARD_A}-pr` })).toBeDefined()
+  // 合併後 PR 收進更多動作（m）
+  expect(await ui.find({ key: `case-${CARD_A}-pr` })).toBeUndefined()
   // (b) tag 已打、六段全綠：結尾才指向歸檔
   data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1', tag: 'v1.4.0' }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
