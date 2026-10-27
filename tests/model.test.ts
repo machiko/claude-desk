@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { buildCase, sorted, counts, focusCase, summary, events, parseAgents, asksFor, fit, displayWidth, ago, demoSnapshot, errorLine, reasonLine, slugOf } from '../hooks/model'
+import { buildCase, settleMergedAsk, sorted, counts, focusCase, summary, events, parseAgents, asksFor, fit, displayWidth, ago, demoSnapshot, errorLine, reasonLine, slugOf } from '../hooks/model'
+import type { Case, Pipeline } from '../types'
 
 const row = (name: string) => ({ name, statusPath: `/p/${name}/.desk/CARD.md` })
 const card = (f: Partial<Record<'狀態' | '驗證' | '等你' | '下一步' | '關卡', string>>) =>
@@ -101,4 +102,24 @@ test('a failed card script reports its reason line, or the exception line after 
   expect(reasonLine({ stderr: '', stdout: 'only stdout\nmore\n' })).toBe('only stdout')
   expect(reasonLine({ stderr: '  ', stdout: '' })).toBe('沒有輸出')
   expect(reasonLine(null, '腳本失敗')).toBe('腳本失敗')
+})
+
+/** exited-agent-asks：合併之後 desk 不再派 Agent，最後一次派工停在提問一定是合併前留下的，不再讓任務等回覆。 */
+test('settleMergedAsk drops a leftover asking agent once merged, and leaves everything else alone', () => {
+  const stages = (merge: 'done' | 'todo'): Pipeline => ({ current: merge === 'done' ? null : 'merge', note: '', stages: [{ id: 'merge', label: '合併', status: merge }, { id: 'ship', label: '上線', status: merge === 'done' ? 'done' : 'todo' }] } as any)
+  const asks = { name: 'desk-1', state: 'blocked', status: '', asks: true, waitsFor: 'question' as const }
+  const base = buildCase(row('m'), card({ 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }), 1, { '/p/m': asks }, undefined)
+  expect(base.state).toBe('reply')
+
+  const merged = { ...base, pipeline: stages('done') } as Case
+  const settled = settleMergedAsk(merged, undefined)
+  expect(settled.agent).toBeUndefined()
+  expect(settled.state).toBe('ready')
+
+  const open = { ...base, pipeline: stages('todo') } as Case
+  expect(settleMergedAsk(open, undefined)).toBe(open)
+  const busy = { ...merged, agent: { name: 'desk-2', state: 'working', status: 'busy' }, state: 'running' } as Case
+  expect(settleMergedAsk(busy, undefined)).toBe(busy)
+  const permission = { ...merged, agent: { name: 'desk-3', state: 'blocked', status: 'waiting', waitingFor: 'permission prompt', waitsFor: 'permission' as const }, state: 'approve' } as Case
+  expect(settleMergedAsk(permission, undefined)).toBe(permission)
 })

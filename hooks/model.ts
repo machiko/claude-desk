@@ -4,7 +4,7 @@ import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '..
 import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
-import { parseVerdict, blocking, pipeline, standingVerdict } from './pipeline'
+import { parseVerdict, blocking, isMerged, pipeline, standingVerdict } from './pipeline'
 import { isDeskLaunch } from './dispatch'
 
 /** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
@@ -298,6 +298,16 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
   if (verify && verify.command === c.verify && !verify.ok) return 'failed'
   if (saysNone(c.next)) return 'idle'
   return 'ready'
+}
+
+/**
+ * 已合併（合併段過了）之後工作桌不再派 Agent：最後一次派工停在提問（asks）一定是合併前留下的，不再代表任務。
+ * 拿掉那個 Agent、照卡片重算 state；停在提問的 Agent 本來就不算在跑，六段不受影響。其他情況原樣回傳。
+ */
+export function settleMergedAsk<T extends Case>(c: T, verify: Verify | undefined): T {
+  if (!isMerged(c) || !c.agent?.asks) return c
+  const { agent: _left, ...rest } = c
+  return { ...rest, state: stateOf(rest, verify) } as T
 }
 
 export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: number | null, agents: Record<string, AgentInfo>, verify: Verify | undefined): Case {

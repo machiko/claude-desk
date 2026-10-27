@@ -197,3 +197,65 @@ test('no archive button before the case is done or on tutorial and sample cases'
 
   expect(archiveRuns(data)).toHaveLength(0)
 })
+
+const LAUNCH = 'desk-launch-9'
+const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
+const TAG = 'v0.29.0'
+const LAUNCHED_AT = Date.parse('2030-01-05T11:00:00Z')
+
+/** 最後一次派工（回覆）的 Agent 停在 blocked、沒有回覆過；status 不給代表程序已結束（沒有 pid 也沒有 status）。 */
+function leftoverAsk(data: any, status?: string) {
+  data.agents = [{ id: 'bbbbbbbb', kind: 'background', cwd: BETA, name: LAUNCH, sessionId: SID, state: 'blocked', ...(status ? { status } : {}), startedAt: LAUNCHED_AT }]
+  data.store.jobs = { [BETA]: { sessionId: SID, last: { launchName: LAUNCH, nativeId: 'bbbbbbbb', sessionId: SID, kind: 'reply', startedAt: LAUNCHED_AT, fresh: false } } }
+}
+
+/** 卡片標題列右邊的狀態字（「已上線」「等回覆」…）。 */
+const labelShown = async (ui: any, word: string) => (await ui.findAll({ type: 'Text' })).some((n: any) => String(n.text ?? '').trim() === word)
+
+/** 已合併（或 tag 已打）的任務：最後一次派工停在提問是合併前留下的，照六段算完成、可歸檔。 */
+async function expectArchivable(ui: any) {
+  expect(await labelShown(ui, '已上線')).toBe(true)
+  expect(await labelShown(ui, '等回覆')).toBe(false)
+  const shown = await screen(ui)
+  expect(shown).toContain(flat(`✓ 完成 ${TAG}`))
+  expect(shown).toContain(flat('▶ 輪到你 輸入 /desk:card archive beta 歸檔'))
+  expect(shown).not.toContain(flat('Agent 等待你回覆'))
+  expect((await ui.find({ key: KEY }))?.text).toBe('⌫ 歸檔')
+  expect(await ui.find({ key: `case-${CARD_B}-reply` })).toBeUndefined()
+}
+
+/** exited-agent-asks AC-1：PR 已合併、tag 包含 HEAD，殘留的 blocked Agent（程序已結束）不再讓任務停在「等回覆」。 */
+test('a merged case ignores a leftover blocked agent and offers archive', async ($, on) => {
+  const { data } = fixture(on)
+  only(data, PASSED, { tag: TAG })
+  leftoverAsk(data)
+  const ui = await mountBeta($)
+  await expectArchivable(ui)
+  await ui.unmount()
+})
+
+/** exited-agent-asks AC-2：沒有 PR 資訊、只靠 tag 認得已合併，Agent 程序還在（idle）也一樣。 */
+test('a tagged case without PR info ignores an idle blocked agent', async ($, on) => {
+  const { data } = fixture(on)
+  only(data, PASSED, { tag: TAG })
+  data.gh = []
+  leftoverAsk(data, 'idle')
+  const ui = await mountBeta($)
+  await expectArchivable(ui)
+  await ui.unmount()
+})
+
+/** exited-agent-asks AC-3：範圍外：還沒合併時，停在 blocked 的 Agent 照舊等你回覆。 */
+test('an unmerged case still waits for the reply of a blocked agent', async ($, on) => {
+  const { data } = fixture(on)
+  only(data, PASSED, {})
+  data.gh = [{ ...PR_MERGED[0], state: 'OPEN' }]
+  leftoverAsk(data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  expect(await labelShown(ui, '等回覆')).toBe(true)
+  expect(await screen(ui)).toContain(flat('▶ 輪到你 按 y 回覆 Agent 的提問'))
+  expect((await ui.find({ key: `case-${CARD_B}-reply` }))?.text).toBe('↩ 回覆')
+  expect(await ui.find({ key: KEY })).toBeUndefined()
+  await ui.unmount()
+})

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
-import { stageActions, turnOf } from '../hooks/turn'
+import { shipTurn, stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
 import { fixture, CARD_B, PANE, REGISTRY, text } from './fixture'
 
@@ -174,4 +174,19 @@ test('merge and ship turns say what comes after', async ($, on) => {
   expect(shown).toContain('▶輪到你部署v1後按u確認上線；確認後歸檔')
   expect(shown).toContain('1.phpartisanmigrate全部做完後：部署v1後按u確認上線確認後歸檔')
   await ui.unmount()
+})
+
+/** exited-agent-asks AC-4：上線段那一句看 tag：沒有 release 關卡、tag 已打就直接說歸檔，不再叫你打 tag。 */
+test('ship turn says archive once the tag exists without a release gate', () => {
+  const merged = { pr: { id: 12, state: 'MERGED' as const, ci: 'pass' as const } }
+  const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
+  // 另有一題「等你」：任務還沒算完成，上線段那一句照 tag 走
+  const tagged = mk({ gate, ask: '要順便清 log 嗎？A) 要 B) 不要' }, { ...merged, tag: 'v0.29.0' })
+  expect(tagged.state).not.toBe('done')
+
+  expect(shipTurn(tagged)).toEqual({ who: 'you', text: 'v0.29.0 已打；輸入 /desk:card archive age-group 歸檔' })
+  expect(shipTurn(tagged).text).not.toContain('打 tag 發版')
+  expect(shipTurn(mk({ gate }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後歸檔' })
+  expect(shipTurn(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後部署並按 u 確認上線' })
+  expect(shipTurn(mk({ gate: 'release：v0.29.0' }, { ...merged, tag: 'v0.29.0' }))).toEqual({ who: 'you', text: '部署 v0.29.0 後按 u 確認上線；確認後歸檔', key: 'u' })
 })
