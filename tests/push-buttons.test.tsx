@@ -326,7 +326,7 @@ test('push buttons: after publish the stage is merge', async ($, on) => {
   expect(pending).toContain(flat('規格● 實作● 檢查● 審查● 合併◉'))
   expect(pending).toContain(flat('PR 的 CI 在跑'))
   expect(ready).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
-  expect(ready).toContain(flat('▶ 輪到你  合併 PR（p 開啟）'))
+  expect(ready).toContain(flat('▶ 輪到你  合併 PR #12（p 在瀏覽器開啟）；合併後打 tag 發版'))
   // 不跑檢查、不派審查或修正、不算修正輪、不停下流程
   expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh')).toHaveLength(0)
   expect(data.launches).toHaveLength(1)

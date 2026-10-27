@@ -168,14 +168,14 @@ test('a verdict the agent wrote itself counts but is marked self-review with w o
   const independentW = await ui.find({ key: `${PREFIX}review` })
 
   expect(noChain).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（審查是自審，可按 w 派獨立審查）'))
-  expect(noChain).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
+  expect(noChain).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2（自審）'))
   expect(noChainW?.props?.hotkey).toBe('w')
   expect(self).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
   expect(self).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（審查是自審，可按 w 派獨立審查）'))
-  expect(self).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（自審）'))
+  expect(self).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2（自審）'))
   expect(noteOf({ round: 0, selfReview: true }, checkAt('c2'))).toBe('合併・可開 PR（自審）')
   expect(selfW?.props?.hotkey).toBe('w')
-  expect(independent).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'))
+  expect(independent).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2'))
   expect(independent).not.toContain(flat('自審'))
   expect(noteOf({ round: 0, passed: true }, checkAt('c2'))).toBe('合併・可開 PR')
   expect(independentW).toBeUndefined()
@@ -228,7 +228,7 @@ test('the review line marks a stale verdict as outdated', async ($, on) => {
   const ui = await mount($)
   const shown = await screen(ui)
 
-  expect(shown).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併（審查後有新 commit，這是舊結論）'))
+  expect(shown).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2（審查後有新 commit，這是舊結論）'))
   await ui.unmount()
 })
 
@@ -259,5 +259,27 @@ test('the PR row does not say ready to merge before any review', async ($, on) =
 
   expect(shown).toContain(flat('PR #12 → main  CI 通過'))
   expect(shown).not.toContain(flat('CI 通過，可合併'))
+  await ui.unmount()
+})
+
+/** one-next-step AC-3：審查列只陳述分級，不寫結論句裡的指示；讀不出四個分級時照舊顯示原文。 */
+test('the review line shows only the severity counts', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { head: 'c2' })
+  judgedAt(data, 'c2')
+  const ui = await mount($)
+  const independent = await screen(ui)
+  data.store.chains = { [BETA]: { owner: 'other-session', startedAt: 0, round: 0 } }
+  const self = await refreshed($, ui)
+  judgedAt(data, 'c1')
+  const stale = await refreshed($, ui)
+  data.files[CARD_B] = data.files[CARD_B]!.replace(PASSED, '- 關卡：review：大致沒問題，可合併')
+  const unparsed = await refreshed($, ui)
+
+  expect(independent).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2'))
+  expect(self).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2（自審）'))
+  expect(stale).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2（審查後有新 commit，這是舊結論）'))
+  for (const shown of [independent, self, stale]) expect(shown).not.toContain(flat('；可合併'))
+  expect(unparsed).toContain(flat('◆ 審查  大致沒問題，可合併'))
   await ui.unmount()
 })

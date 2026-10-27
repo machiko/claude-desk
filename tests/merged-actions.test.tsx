@@ -23,7 +23,7 @@ test('merged case whose check failed afterwards only offers post-merge actions',
   const c = mk({}, merged, failedCheck)
   expect(c.state).not.toBe('failed')
   expect(ids(c)).toEqual(['open', 'pr', 'ship'])
-  expect(turnOf(c)).toEqual({ who: 'you', text: '打 tag 發版' })
+  expect(turnOf(c)).toEqual({ who: 'you', text: '打 tag 發版；打了之後歸檔' })
   // 完成檢查在跑或排隊也一樣：合併後不再出現檢查
   for (const ctx of [{ verifying: true }, { queued: true }]) for (const id of NOT_AFTER_MERGE) expect(stageActions(c, ctx).has(id)).toBe(false)
 })
@@ -32,13 +32,13 @@ test('merged case whose chain stopped after merge is not failed and has no conti
   const c = mk({}, { ...merged, chain: { round: 0, stopped: '完成檢查要你核准才能執行', stale: true } })
   expect(c.state).not.toBe('failed')
   for (const id of NOT_AFTER_MERGE) expect(stageActions(c).has(id)).toBe(false)
-  expect(turnOf(c).text).toBe('打 tag 發版')
+  expect(turnOf(c).text).toBe('打 tag 發版；打了之後歸檔')
 })
 
 test('merged and tagged with a release gate offers ship confirm, never continue or check', () => {
   const c = mk({ gate: 'release：v0.2.0' }, { ...merged, tag: 'v0.2.0', chain: { round: 0, stopped: '完成檢查未通過' } }, failedCheck)
   expect(ids(c)).toEqual(['open', 'pr', 'ship'])
-  expect(turnOf(c)).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線', key: 'u' })
+  expect(turnOf(c)).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線；確認後歸檔', key: 'u' })
 })
 
 test('merged, tagged and confirmed with a failed check is done: archive and open only', () => {

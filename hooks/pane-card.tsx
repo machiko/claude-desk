@@ -4,7 +4,7 @@ import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, spli
 import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
-import { awaitsSpecOk, canArchive, isMerged, stageParts } from './pipeline'
+import { awaitsSpecOk, canArchive, isMerged, parseVerdict, stageParts } from './pipeline'
 import { gitLine, isArmed, mergedAtHead } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
@@ -174,10 +174,11 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；Agent 在跑、等你時也不換成別的話）。
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
   const ship = shipTurn(c)
-  const afterDeploy = isDone ? archive : ship.key === 'u' ? '按 u 確認上線' : ship.text
+  const afterDeploy = isDone ? archive : ship.text
+  // 上線段那句是「要做的事；做完之後」兩段：下一步列兩段都列出來，不收成「還有 1 項」。
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
     ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${afterDeploy}`, width, true, COLOR.attention)
-    : kvRows(ui, '下一步', isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text, width, false, COLOR.attention, 1)))
+    : kvRows(ui, '下一步', isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text, width, false, COLOR.attention, 2)))
 
   // 決策送出了、對話還在處理：選項只顯示（標出選了哪個），不能再點，免得以為還沒送。
   const isSent = turnCtx(view, c).sent === 'waiting'
@@ -208,7 +209,10 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (gate) {
     rows.push(<Text> </Text>)
     const head = `◆ ${GATE_LABEL[gate.kind]}`
-    const [first, ...rest] = wrapText(`${head}  ${gate.detail}${gate.kind === 'review' && c.chain?.selfReview ? '（自審）' : ''}${gate.kind === 'review' && c.chain?.stale ? '（審查後有新 commit，這是舊結論）' : ''}`, width - INDENT)
+    // 審查列只陳述分級：結論句（例如「可合併」）是指示，交給「▶ 輪到你」；讀不出四個分級時照舊顯示原文。
+    const verdict = gate.kind === 'review' ? parseVerdict(c.gate) : null
+    const detail = verdict ? `CRITICAL ${verdict.critical}、HIGH ${verdict.high}、MEDIUM ${verdict.medium}、LOW ${verdict.low}` : gate.detail
+    const [first, ...rest] = wrapText(`${head}  ${detail}${gate.kind === 'review' && c.chain?.selfReview ? '（自審）' : ''}${gate.kind === 'review' && c.chain?.stale ? '（審查後有新 commit，這是舊結論）' : ''}`, width - INDENT)
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.attention} bold>{head}</Text><Text color={COLOR.text}>{(first ?? '').slice(head.length)}</Text></Text></Box>)
     rows.push(...rest.map(line => <Box paddingLeft={INDENT}><Text color={COLOR.text} wrap="truncate-end">{line}</Text></Box>))
   }

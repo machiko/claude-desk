@@ -3,6 +3,7 @@ import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
 import { stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
+import { fixture, CARD_B, PANE, REGISTRY, text } from './fixture'
 
 const card = (f: { check?: string; ask?: string; next?: string; gate?: string }) =>
   `<!-- DESK -->\n- 狀態：ok\n- 檢查：${f.check ?? '`npm test`'}\n- 等你：${f.ask ?? '無'}\n- 下一步：${f.next ?? '依規格實作'}\n- 關卡：${f.gate ?? '無'}\n<!-- /DESK -->`
@@ -23,7 +24,7 @@ test('each stage says whose turn it is and what to press, in plain words', () =>
   expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派 Agent：依規格實作', key: 'g' })
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
   expect(turnOf(mk({}), { verifying: true }).who).toBe('ai')
-  expect(turnOf(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線', key: 'u' })
+  expect(turnOf(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線；確認後歸檔', key: 'u' })
   expect(turnOf(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '輸入 /desk:card archive age-group 歸檔' })
   expect(turnOf(mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' } })).who).toBe('ai')
 })
@@ -74,7 +75,7 @@ test('agent push: an open PR with new commits asks to push, not to merge', () =>
     expect(turnOf(c)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併' })
     expect(stageActions(c).has('push')).toBe(true)
   }
-  expect(turnOf(inSync)).toEqual({ who: 'you', text: '合併 PR（p 開啟）', key: 'p' })
+  expect(turnOf(inSync)).toEqual({ who: 'you', text: '合併 PR #1（p 在瀏覽器開啟）；合併後打 tag 發版', key: 'p' })
 })
 
 test('idle next: the now card asks for v instead of g', () => {
@@ -115,4 +116,50 @@ test('turn: merge stage asks to dispatch publish', () => {
   // 推送 Agent 在跑：說它在做什麼，六段不退回實作
   expect(running.pipeline?.current).toBe('merge')
   expect(turnOf(running)).toEqual({ who: 'ai', text: 'Agent 在 push、開 PR（l 看輸出）' })
+})
+
+/** one-next-step AC-1：合併段之前輪到你的每一句，都寫出做完之後會怎樣。 */
+test('each user turn before merging says what happens after it', () => {
+  // 檢查段：沒有過期、也沒停下的檢查段（例如流程記錄清掉後）；流程會不會自動接審查決定後半句。
+  const atCheck = (chain?: Case['chain']) => { const c = mk({}, chain ? { chain } : {}); return { ...c, state: 'ready', pipeline: { ...c.pipeline!, current: 'check' } } as Case }
+  expect(turnOf(atCheck({ round: 0, lastKind: 'continue', autoReview: true }))).toEqual({ who: 'you', text: '按 v 執行完成檢查；通過後自動審查', key: 'v' })
+  expect(turnOf(atCheck())).toEqual({ who: 'you', text: '按 v 執行完成檢查；通過後按 w 派審查', key: 'v' })
+  // 審查後有新 commit：流程是這個對話的且已過關才會自動重新審查；別的對話開的、還沒過關的要自己按 w。
+  expect(mk({}, { chain: { round: 0, stale: true, passed: true } }).pipeline?.current).toBe('check')
+  expect(turnOf(mk({}, { chain: { round: 0, stale: true, passed: true } }))).toEqual({ who: 'you', text: '審查後有新 commit：按 v 重新執行完成檢查；通過後自動重新審查', key: 'v' })
+  for (const chain of [{ round: 0, stale: true, passed: true, foreign: true }, { round: 0, stale: true }]) {
+    expect(turnOf(mk({}, { chain }))).toEqual({ who: 'you', text: '審查後有新 commit：按 v 重新執行完成檢查；通過後按 w 重新審查', key: 'v' })
+  }
+  // 審查段：有開著的 PR 過關後合併，沒有就開 PR。
+  const openPr = mk({}, { pr: { id: 12, state: 'OPEN', ci: 'pass' } }, passed)
+  expect(openPr.pipeline?.current).toBe('review')
+  expect(turnOf(openPr)).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 會自動修正，過關後合併 PR', key: 'w' })
+  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 會自動修正，過關後開 PR', key: 'w' })
+})
+
+/** one-next-step AC-2：合併段與上線段也寫出下一步之後是什麼；部署步驟列「全部做完後：」接同一句。 */
+test('merge and ship turns say what comes after', async ($, on) => {
+  const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
+  const merging = mk({ gate }, { pr: { id: 12, state: 'OPEN', ci: 'pass' }, gitState: { ahead: 0, behind: 0, changed: 0, untracked: 0, upstream: true } })
+  expect(merging.pipeline?.current).toBe('merge')
+  expect(turnOf(merging)).toEqual({ who: 'you', text: '合併 PR #12（p 在瀏覽器開啟）；合併後打 tag 發版', key: 'p' })
+  const merged = { pr: { id: 12, state: 'MERGED' as const, ci: 'pass' as const } }
+  expect(mk({ gate }, merged).pipeline?.current).toBe('ship')
+  expect(turnOf(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後部署並按 u 確認上線' })
+  expect(turnOf(mk({ gate }, merged))).toEqual({ who: 'you', text: '打 tag 發版；打了之後歸檔' })
+  expect(turnOf(mk({ gate: 'release：v1' }, { ...merged, tag: 'v1' }))).toEqual({ who: 'you', text: '部署 v1 後按 u 確認上線；確認後歸檔', key: 'u' })
+
+  // 面板上的部署步驟列：「全部做完後：」接的是「▶ 輪到你」同一句。
+  const { data } = fixture(on)
+  data.agents = []
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', '- 關卡：release：v1') + '\n## 部署步驟（合併後）\n1. php artisan migrate\n'
+  data.git['/home/u/wt/beta'] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', tag: 'v1' }
+  data.gh = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  const shown = text(await ui.drawn()).replace(/\s+/g, '')
+  expect(shown).toContain('▶輪到你部署v1後按u確認上線；確認後歸檔')
+  expect(shown).toContain('1.phpartisanmigrate全部做完後：部署v1後按u確認上線確認後歸檔')
+  await ui.unmount()
 })

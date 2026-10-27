@@ -340,6 +340,29 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('先確認規格（按 t 或 /desk:card spec order-export ok）', r.stderr)
         self.assertEqual(read(card), before)
 
+    def test_done_refuses_status_with_commit_or_ac_codes(self):
+        # one-next-step AC-4：狀態只寫發生了什麼；commit、AC／D 編號寫在 History。
+        card, _ = self.confirmed_card_with_commit()
+        before = read(card)
+        for status in ('MEDIUM 照 D-04 修好（52d89ce）', 'AC-3 做完', '修好 a1b2c3d 那次的問題'):
+            r = self.run_card('done', 'order-export', status)
+            self.assertNotEqual(r.returncode, 0, status)
+            self.assertIn('狀態不放 commit／AC／D 編號（寫在 History）', r.stderr)
+            self.assertEqual(read(card), before, status)
+
+        r = self.run_card('done', 'order-export', '修好審查提到的 MEDIUM；本機測試全過')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('- 狀態：修好審查提到的 MEDIUM；本機測試全過\n', read(card))
+
+    def test_new_card_rules_say_status_is_what_happened(self):
+        # one-next-step AC-5 的範本那半：開新卡的「卡片規則」與派工提示（hooks/dispatch.ts）寫同一句。
+        rule = '狀態只寫發生了什麼，不寫下一步，也不寫 commit 編號、AC／D 編號'
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        text = read(self.card_path())
+        rules = text[text.index('## 卡片規則'):text.index('## 規格')]
+        self.assertIn(rule, rules)
+        self.assertIn(rule, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'dispatch.ts')))
+
     def test_done_notes_uncommitted_files(self):
         card, wt = self.confirmed_card_with_commit()
         write(os.path.join(wt, 'export.py'), 'x = 2\n')
