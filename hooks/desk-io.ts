@@ -48,7 +48,7 @@ export async function feedPush($: any, items: FeedEvent[]) {
 export const PANEL_ACTIONS_KEEP = 20
 
 /** 你在面板做了會改變任務狀態的操作（成功或失敗）：記下來，下一則你打的提示附給對話。 */
-export async function notePanelAction($: any, action: PanelAction) {
+async function notePanelAction($: any, action: PanelAction) {
   const clean = { ...action, text: plain(action.text) }
   await update($, panelActionsAtom, list => [...list, clean].slice(-PANEL_ACTIONS_KEEP))
 }

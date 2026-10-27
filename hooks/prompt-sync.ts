@@ -1,5 +1,5 @@
 // 面板與對話同步：選取的任務附在每則提示、面板做過的操作附在下一則你打的提示、從面板送出的決策鎖到對話寫回卡片、對話動到卡片時提早重讀。
-// 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、送出的決策與兩個計時器。
+// 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、面板操作紀錄的附加與清除、送出的決策與兩個計時器。
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
 import type { PanelAction, SentRecord } from '../types'

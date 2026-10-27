@@ -342,8 +342,11 @@ test('a successful update reloads plugins once after reporting the new version',
   await ui.unmount()
 })
 
-/** 面板按「⇡ 更新到」成功、外掛重新載入之後，下一則你打的提示照樣附上更新結果；附過一次就不再附。 */
-test('test_update_result_is_attached_to_next_typed_prompt_after_reload', async ($, on) => {
+/**
+ * 面板按「⇡ 更新到」成功之後，下一則你打的提示附上更新結果；附過一次就不再附。
+ * fixture 的 /reload-plugins 只記次數、不重跑 register，所以這裡驗不到「重新載入後那筆還在」：那靠 $.state 跨重新載入保留，要在實機驗。
+ */
+test('test_update_result_is_attached_to_next_typed_prompt', async ($, on) => {
   const { data, clock } = fixture(on)
   world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
   await openDesk($, clock)

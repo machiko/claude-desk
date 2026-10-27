@@ -1,6 +1,6 @@
 // 現在卡上的動作：回覆 Agent、派 Agent 開 PR／push、預填決策、預填發版請求、開卡片、確認上線、歸檔、確認規格、停止 Agent；
 // 以及新專案還沒有任務時的建立空登錄表。會改變任務狀態的操作，結果另外記下來，下一則你打的提示告訴對話（desk-io 的 tellPanel）。
-// 從 register.tsx 搬出來（只搬不改）；派工、重新整理仍在 register.tsx，比照 tutorial-run.tsx 從那裡匯入。
+// 從 register.tsx 搬出來；派工、重新整理仍在 register.tsx，比照 tutorial-run.tsx 從那裡匯入。
 // 跨檔傳 $ 的函式一律用 function 宣告；atom 位址同 register.tsx，各自宣告。
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
