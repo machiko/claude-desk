@@ -105,11 +105,11 @@ export function shipTurn(c: Case): Turn {
 }
 
 /**
- * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關才會自動重新審查（register 的 recheck）；
- * 其他情況看 willAutoReview。
+ * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關（register 會排 recheck），
+ * 或流程已經會自己接手（recheck 排好的新一輪、修正輪剛做完：willAutoReview），都是自動重新審查。
  */
 function checkTurnText(c: Case): string {
-  if (c.chain?.stale) return `審查後有新 commit：按 v 重新執行完成檢查；${c.chain.passed && !c.chain.foreign ? '通過後自動重新審查' : '通過後按 w 重新審查'}`
+  if (c.chain?.stale) return `審查後有新 commit：按 v 重新執行完成檢查；${(c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? '通過後自動重新審查' : '通過後按 w 重新審查'}`
   return `按 v 執行完成檢查；${willAutoReview(c) ? '通過後自動審查' : '通過後按 w 派審查'}`
 }
 

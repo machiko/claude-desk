@@ -137,6 +137,18 @@ test('each user turn before merging says what happens after it', () => {
   expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 會自動修正，過關後開 PR', key: 'w' })
 })
 
+/** one-next-step D-04：審查後有新 commit，但流程會自己接手（自動排的重新檢查、修正輪剛做完）：新的一輪還沒過關，也照樣是自動重新審查 */
+test('a stale check the chain will pick up by itself says the re-review is automatic', () => {
+  const rechecked = { round: 0, stale: true, lastKind: 'continue' as const, autoReview: true }
+  const fixed = { round: 1, stale: true, lastKind: 'fix' as const, autoReview: true }
+  const stopped = { ...rechecked, stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' }
+
+  const auto = [rechecked, fixed].map(chain => turnOf(mk({}, { chain })))
+
+  for (const t of auto) expect(t).toEqual({ who: 'you', text: '審查後有新 commit：按 v 重新執行完成檢查；通過後自動重新審查', key: 'v' })
+  expect(turnOf(mk({}, { chain: stopped })).text).not.toContain('自動重新審查')
+})
+
 /** one-next-step AC-2：合併段與上線段也寫出下一步之後是什麼；部署步驟列「全部做完後：」接同一句。 */
 test('merge and ship turns say what comes after', async ($, on) => {
   const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
