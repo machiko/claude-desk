@@ -92,7 +92,11 @@ export async function reloadAfterUpdate($: any, now: number) {
   $.ui.toast(text, { timeoutMs: 10_000 })
 }
 
-/** 載入計數已不是這個模組的那一號（新版載入了），或讀不到（舊的 $ 已失效）。 */
+/**
+ * 載入計數已不是這個模組的那一號（新版載入了），或讀不到（舊的 $ 已失效）。
+ * 這個模組沒記過號（session.start 沒跑）就分不出來：當成沒載入，寧可多提示一次也不靜默。
+ */
 async function newerLoaded($: any): Promise<boolean> {
+  if (!loadNo) return false
   try { return (await read($, loadsAtom)) !== loadNo } catch { return true }
 }
