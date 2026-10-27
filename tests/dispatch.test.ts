@@ -313,8 +313,11 @@ test('dispatch: publish is only dispatchable at the merge stage', () => {
   expect(dispatchRefusal(noPr, 'publish')).toBe('')
   expect(dispatchable(pushable)).toContain('publish')
   expect(dispatchRefusal(pushable, 'publish')).toBe('')
-  // 沒有要推的、高風險還沒看過資安審查、不在合併段：拒絕並說原因
-  for (const c of [inSync, risky, building]) {
+  // 高風險改動也能派：面板上照列「⇡ 開 PR」，第一次按只提醒先看審查檔（merge-actions.test.tsx）
+  expect(dispatchable(risky)).toContain('publish')
+  expect(dispatchRefusal(risky, 'publish')).toBe('')
+  // 沒有要推的、不在合併段：拒絕並說原因
+  for (const c of [inSync, building]) {
     expect(dispatchable(c)).not.toContain('publish')
     expect(dispatchRefusal(c, 'publish')).toBe(PUBLISH_ONLY_AT_MERGE)
   }

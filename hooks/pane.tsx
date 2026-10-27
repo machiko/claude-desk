@@ -57,7 +57,7 @@ export type PaneActions = {
   logs: (c: Case) => void
   openReview: (c: Case) => void
   openPr: (c: Case) => void
-  /** 合併段還沒有 PR：派推送 Agent push 分支並對基準分支開 PR（按兩次）；desk 自己不跑 git push、gh。 */
+  /** 合併段還沒有 PR：派推送 Agent push 分支並對基準分支開 PR（按兩次；高風險改動照樣列出，第一次按提醒先看審查檔）；desk 自己不跑 git push、gh。 */
   publishPr: (c: Case) => void
   /** 合併段、PR 已開又有沒 push 的 commit：派推送 Agent 只 push（按兩次）。 */
   publishPush: (c: Case) => void

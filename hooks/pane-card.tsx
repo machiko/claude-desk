@@ -4,12 +4,12 @@ import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, spli
 import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
-import { awaitsSpecOk, canArchive, stageParts } from './pipeline'
+import { awaitsSpecOk, canArchive, isMerged, stageParts } from './pipeline'
 import { gitLine, isArmed } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
-import { cardBehind, needsPr, needsPush, sentState, shipTurn, stageActions, turnOf } from './turn'
+import { cardBehind, needsPr, needsPrConfirm, needsPush, riskyNoPr, sentState, shipTurn, stageActions, turnOf } from './turn'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
 import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
@@ -235,7 +235,8 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   const queuedAt = view.queue.indexOf(c.statusPath)
   const ctx = turnCtx(view, c)
   const leadKey = turnOf(c, ctx).key
-  const allowed = view.showAll ? null : stageActions(c, ctx)
+  const inStage = stageActions(c, ctx)
+  const allowed = view.showAll ? null : inStage
   const can = (id: ActionId) => !allowed || allowed.has(id)
   const prefix = `case-${c.statusPath}-`
   const out: Action[] = []
@@ -253,12 +254,13 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
     out.push(button({ key: prefix + 'stop', hotkey: 'k', isBoxed: armed, isLead: armed, isDim: !armed, label: armed ? '再按 k 確認停止' : '■ 停止', onPress: () => act.stop(c) }))
   }
   if (c.agent?.id && can('logs')) out.push(button({ key: prefix + 'logs', hotkey: 'l', isDim: true, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : '≡ 輸出', onPress: () => act.logs(c) }))
-  if (c.reviewTop?.length && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
+  if ((c.reviewTop?.length || riskyNoPr(c)) && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
-  // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次確認才派，沒有快捷鍵（寫遠端的事不配單鍵）。
+  // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次確認才派，沒有快捷鍵（寫遠端的事不配單鍵）。高風險改動的第一次按改提醒先看過審查檔。
   const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
     const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
-    out.push(button({ key: prefix + id, isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `再按一次確認派 Agent ${doing}（${modelText(view, 'publish')}）` : `⇡ ${doing}`, onPress }))
+    const ask = id === 'open-pr' && needsPrConfirm(c) ? '看過審查檔了？再按一次' : '再按一次'
+    out.push(button({ key: prefix + id, isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `${ask}確認派 Agent ${doing}（${modelText(view, 'publish')}）` : `⇡ ${doing}`, onPress }))
   }
   if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
   if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
@@ -278,5 +280,28 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   const lesson = view.s.tutorial ? tutorialStep(c) : null
   if (lesson && can('tutorial')) out.push(button({ key: prefix + 'tutorial', hotkey: 't', isLead: leadKey === 't', isBoxed: leadKey === 't', isDim: leadKey !== 't', label: TUTORIAL_STEP_LABEL[lesson], onPress: () => act.tutorial(c) }))
   out.push(button({ key: prefix + 'open', hotkey: 'o', isDim: leadKey !== 'o', isLead: leadKey === 'o', label: `↗ ${WORD.open}`, onPress: () => act.open(c) }))
-  return out
+  return view.showAll ? withRetreat(out, c, inStage, prefix) : out
+}
+
+/** 合併段退回前面段落的鍵：繼續、審查、檢查。 */
+const RETREAT = new Set<string>(['continue', 'review', 'verify'])
+
+/**
+ * 展開全部動作（m）時，合併段平常不列的退回鍵（繼續、審查、檢查）排在本段的動作後面、變淡、不帶頭，
+ * 前面插一段不可按的「退回：」。本段列了的（例如 CI 失敗時的繼續、自審的審查）不算退回；
+ * 只看這三個鍵，不拿 stageActions 的補集（Agent 在跑時它不列開 PR）。已待確認（加框）的照舊，第一次按了才看得到確認字樣。其他段落不分組。
+ */
+function withRetreat(out: Action[], c: Case, inStage: Set<ActionId>, prefix: string): Action[] {
+  if (c.pipeline?.current !== 'merge' || isMerged(c)) return out
+  const isBack = (a: Action) => {
+    const id = a.key.slice(prefix.length)
+    return RETREAT.has(id) && !inStage.has(id as ActionId)
+  }
+  const back = out.filter(isBack)
+  if (!back.length) return out
+  return [
+    ...out.filter(a => !isBack(a)),
+    button({ key: prefix + 'retreat', label: '退回：', color: COLOR.faint }),
+    ...back.map(a => (a.isBoxed ? a : { ...a, isLead: false, isDim: true })),
+  ]
 }

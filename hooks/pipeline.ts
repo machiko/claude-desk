@@ -186,8 +186,8 @@ export const isMerged = (c: Pick<Case, 'pipeline'>) => !!c.pipeline?.stages.some
  */
 export const agentBusy = (c: Pick<Case, 'state' | 'agent'>) => c.state === 'running' || !!runningKind(c)
 
-/** 合併段還沒有可用的 PR、沒有 Agent 在跑：要派 Agent push 並開 PR（高風險要先看過資安審查的不算）。 */
-export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !agentBusy(c) && !(!c.pr && c.chain?.needsHuman) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
+/** 合併段還沒有可用的 PR、沒有 Agent 在跑：要派 Agent push 並開 PR。高風險改動也算（按鈕照列，第一次按只提醒看審查檔；見 turn.ts needsPrConfirm）。 */
+export const needsPr = (c: Case) => c.pipeline?.current === 'merge' && !agentBusy(c) && (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED')
 
 /**
  * 合併段、PR 已開，分支又領先遠端（修 CI、審查後修正）：要派 Agent push。

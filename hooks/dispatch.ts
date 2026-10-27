@@ -221,7 +221,7 @@ export function dispatchable(c: Case): DispatchKind[] {
   const out: DispatchKind[] = []
   if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && !idleNext(c.next)) out.push('continue')
   if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
-  // 推送只在合併段、還要 push 或開 PR 時（needsPr 已排除要先看過資安審查的高風險改動）。
+  // 推送只在合併段、還要 push 或開 PR 時；高風險改動也能派，面板上第一次按只提醒先看審查檔。
   if (needsPr(c) || needsPush(c)) out.push('publish')
   out.push('sync')
   return out
