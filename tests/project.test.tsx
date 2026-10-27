@@ -154,6 +154,20 @@ test('no create button for a registryPath set in the options', { options: { regi
   await ui.unmount()
 })
 
+/** registryPath 指到專案資料夾裡的另一個檔：一樣是使用者自己指定的，讀不到照舊紅字報錯，不替他建 */
+test('no create button for a registryPath inside the project folder', { options: { registryPath: '~/.claude/handoffs/blog/all.md' } }, async ($, on) => {
+  const { data } = fixture(on)
+  inBlog(data)
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+
+  const lead = (await ui.findAll({ type: 'Text' })).find((n: any) => /無法讀取登錄表 \/home\/u\/\.claude\/handoffs\/blog\/all\.md/.test(n.text))
+  expect(lead?.props?.color).toBe('error')
+  expect(await ui.find({ key: CREATE })).toBeUndefined()
+  await ui.unmount()
+})
+
 /** 登錄表在、卻讀不到（權限、是資料夾）：照實說讀不到、維持紅字，不給建立按鈕（建了也會被擋下） */
 test('an unreadable registry is reported as unreadable, in red, without a create button', async ($, on) => {
   const { data } = fixture(on)

@@ -12,7 +12,7 @@ import type { RootJobs } from './dispatch'
 import { stageLabel } from './pipeline'
 import { SUMMARY_SYSTEM, cleanSummary, summaryPrompt, textKey } from './digest-status'
 import type { ChainRun } from './chain'
-import { HANDOFFS } from './project'
+import { HANDOFFS, PROJECT_FILES } from './project'
 import { WORD } from './theme'
 
 // 引擎規定：read／update 的 atom 必須在同一個檔案用 const 宣告，所以這裡用到的幾個與 register.tsx 各宣告一次（同 plugin、同 key 就是同一份狀態）。
@@ -63,11 +63,11 @@ export async function me($: any): Promise<string> { return String((await $.sessi
 
 
 /**
- * 專案資料夾裡的登錄表（不是 registryPath 指定的）確定不存在：面板可以替使用者建一份空的，回傳要建的路徑。
- * 存在但讀不到（權限、是資料夾）或確認不了，都不算：建了也只會被擋下。
+ * 專案資料夾預設位置的登錄表確定不存在：面板可以替使用者建一份空的，回傳要建的路徑。
+ * registryPath 指定的（就算放在專案資料夾裡）不算；存在但讀不到（權限、是資料夾）或確認不了也不算：建了也只會被擋下。
  */
 export async function missingRegistry($: any, paths: DeskPaths): Promise<string | null> {
-  const path = paths.project && paths.registry && paths.registry.startsWith(paths.project.dir + '/') ? paths.registry : null
+  const path = paths.project && paths.registry === `${paths.project.dir}/${PROJECT_FILES.registry}` ? paths.registry : null
   return path && (await $.fs.exists(path).catch(() => null)) === false ? path : null
 }
 
