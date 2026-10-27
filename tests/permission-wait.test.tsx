@@ -51,7 +51,7 @@ test('permission wait: a permission prompt asks you to approve in claude agents,
 
     // 六段：實作段停在「等你批准權限」，不是「Agent 處理中」（status waiting 也一樣）
     const info = status === 'waiting' ? agentsByRoot(data.agents)[BETA] : asksFor(data.agents, LAUNCH)
-    const c = buildCase({ name: 'Beta', statusPath: CARD_B }, data.files[CARD_B], NOW, { [BETA]: info! }, undefined)
+    const c = buildCase({ name: 'Beta', statusPath: CARD_B }, data.files[CARD_B]!, NOW, { [BETA]: info! }, undefined)
     expect(stageLabel(pipeline(c, undefined))).toBe('實作・Agent 等你批准權限')
     // 同一 HEAD 有檢查結果也一樣：等批准的 Agent 做到一半，通過的結果不能推進到「待審查」、失敗的不能停在「檢查未通過」
     const held = { ...c, git: data.git[BETA] }

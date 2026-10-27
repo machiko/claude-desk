@@ -151,7 +151,7 @@ test('merge actions: the merge stage lists no continue, review or verify by defa
 
   for (const keys of [normal, risky]) {
     expect(keys).toContain('open-pr')
-    expect(keys.filter(k => k === 'continue' || k === 'review' || k === 'verify')).toEqual([])
+    expect(keys.filter((k: string) => k === 'continue' || k === 'review' || k === 'verify')).toEqual([])
   }
   expect(selfReviewed.pipeline!.current).toBe('merge')
   expect(stageActions(selfReviewed).has('review')).toBe(true)
