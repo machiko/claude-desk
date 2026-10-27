@@ -4,7 +4,8 @@ import type { PluginOptions } from 'claude-code'
 import type { Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
 import { lastMeaningful, plain } from './model'
-import { MODEL_KINDS, REVIEW_FILE, SECURITY_FILE, markOf, modelFor, parseSettings } from './dispatch'
+import { MODEL_KINDS, REVIEW_FILE, SECURITY_FILE, markOf, modelFor, normalizeRoot, parseSettings } from './dispatch'
+import type { ModelKind } from './dispatch'
 import type { DispatchSettings, WorktreeMark } from './dispatch'
 import { READ_TOOL, ciOf, mcpJson, pickPr, prQuery, repoOf, statusQuery } from './bitbucket'
 import type { Repo } from './bitbucket'
@@ -357,18 +358,23 @@ export async function versions($: any, cases: Case[]): Promise<Snapshot['version
   return { ...(deskVersion ? { desk: deskVersion } : {}), ...(live ? { live } : {}), ...(dev ? { dev } : {}) }
 }
 
-/** 這個對話的模型（/model 顯示的那個）與最近一次請求的 effort；派工與同步用的模型與 effort；kinds 只列跟派工不同的種類。 */
-export async function models($: any, options: PluginOptions, turnModel: { model?: string; effort?: string }): Promise<Snapshot['models']> {
+/**
+ * 這個對話的模型（/model 顯示的那個）與最近一次請求的 effort；派工與同步用的模型與 effort；kinds 只列跟派工不同的種類。
+ * 有 projects 覆寫的任務另外列在 byRoot（每種派工實際會用的），確認字照它寫；都用 modelFor 算，跟實際派工同一套規則。
+ */
+export async function models($: any, options: PluginOptions, turnModel: { model?: string; effort?: string }, roots: readonly string[] = []): Promise<Snapshot['models']> {
   const session = turnModel.model || String((await $.session.model().catch(() => '')) ?? '')
   const settings = await loadSettings($, options)
   const sync = modelFor(settings, '', 'sync')
-  const kinds = MODEL_KINDS.map(kind => ({ kind, ...settings.kinds[kind] }))
-    .filter(k => (k.model !== undefined && k.model !== settings.model) || (k.effort !== undefined && k.effort !== settings.effort))
-    .map(k => ({ kind: k.kind, model: k.model ?? settings.model, effort: k.effort ?? settings.effort }))
+  const pick = (root: string, kind: ModelKind) => { const m = modelFor(settings, root, kind); return { model: m.model, effort: m.effort } }
+  const kinds = MODEL_KINDS.map(kind => ({ kind, ...pick('', kind) })).filter(k => k.model !== settings.model || k.effort !== settings.effort)
+  const overridden = [...new Set(roots.map(normalizeRoot))].filter(r => settings.projects[r]?.model !== undefined || settings.projects[r]?.effort !== undefined)
+  const byRoot = Object.fromEntries(overridden.map(r => [r, Object.fromEntries(MODEL_KINDS.map(kind => [kind, pick(r, kind)]))]))
   return {
     ...(session ? { session } : {}), ...(turnModel.effort ? { effort: turnModel.effort } : {}),
     dispatch: { model: settings.model, effort: settings.effort },
     ...(kinds.length ? { kinds } : {}),
+    ...(overridden.length ? { byRoot } : {}),
     sync: { model: settings.sync.model, effort: settings.sync.effort || (settings.sync.model ? '' : settings.effort), fresh: sync.fresh },
   }
 }

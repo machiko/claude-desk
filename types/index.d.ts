@@ -95,7 +95,7 @@ export type Snapshot = {
   reminders?: { date: string; text: string; days: number }[]
   /** 主工作區的容器（docker compose ps）。 */
   containers?: { total: number; running: number; down: string[]; unhealthy: string[]; error?: string }
-  models?: { session?: string; effort?: string; dispatch?: { model: string; effort: string }; sync?: { model: string; effort: string; fresh: boolean }; /** dispatch.json 的 kinds：跟派工不同的種類才列。 */ kinds?: { kind: string; model: string; effort: string }[] }
+  models?: { session?: string; effort?: string; dispatch?: { model: string; effort: string }; sync?: { model: string; effort: string; fresh: boolean }; /** dispatch.json 的 kinds：跟派工不同的種類才列。 */ kinds?: { kind: 'continue' | 'reply' | 'review' | 'publish'; model: string; effort: string }[]; /** 有 projects 覆寫的任務（鍵是根目錄）：每種派工實際會用的模型。 */ byRoot?: Record<string, Partial<Record<'continue' | 'reply' | 'review' | 'publish', { model: string; effort: string }>>> }
 }
 
 /** 一筆動態；card：屬於哪件（卡片路徑），版本更新這類不屬於任何一件的不填。 */

@@ -212,3 +212,26 @@ test('test_footer_and_confirm_text_show_kind_models', async ($, on) => {
   expect(before).not.toContain('審查 opus')
   expect(before).not.toContain('推送 haiku')
 })
+
+/** 這件有 projects 覆寫（model sonnet）、kinds.review 只設 effort：確認字寫的跟實際啟動的一樣是 sonnet · xhigh；沒覆寫的那件照 kinds。 */
+test('test_confirm_text_uses_project_override_with_kind_effort', async ($, on) => {
+  const { data, clock } = fixture(on)
+  threeCases(data, clock, { model: 'opus', effort: 'high', kinds: KINDS, projects: { '/home/u/wt/alpha': { model: 'sonnet' } } })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(160))
+
+  await ui.press({ key: 'more' })
+  await ui.press({ key: `row-${CARD_A}` })
+  await ui.press({ key: `case-${CARD_A}-review` })
+  const own = await ui.find({ key: `case-${CARD_A}-review` })
+  await ui.press({ key: `case-${CARD_A}-review` })
+  await clock.settle()
+  await ui.press({ key: `row-${CARD_B}` })
+  await ui.press({ key: `case-${CARD_B}-open-pr` })
+  const other = await ui.find({ key: `case-${CARD_B}-open-pr` })
+  await ui.unmount()
+
+  expect(own?.text || own?.props?.label).toBe('再按 w 確認審查（sonnet · xhigh）')
+  expect(flags(data.launches[0])).toBe('sonnet xhigh')
+  expect(other?.text || other?.props?.label).toContain('派 Agent 開 PR（haiku · low）')
+})
