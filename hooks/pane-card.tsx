@@ -78,7 +78,7 @@ function buttonWidth(label: string, hotkey?: string, isBoxed = false): number {
   return displayWidth(label) + (hotkey ? 3 : 0) + (isBoxed ? 4 : 0)
 }
 
-function button(a: Omit<Action, 'width'>): Action {
+export function button(a: Omit<Action, 'width'>): Action {
   return { ...a, width: a.onPress ? buttonWidth(a.label, a.hotkey, a.isBoxed) : displayWidth(a.label) }
 }
 

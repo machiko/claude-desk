@@ -77,6 +77,8 @@ export type Snapshot = {
   tutorial?: boolean
   /** 目前專案（repo 資料夾名）；面板只列這個專案登錄表裡的任務。 */
   project?: string
+  /** 專案預設位置的登錄表讀不到：面板提供「建立空的登錄表」，寫到這個路徑。registryPath 指定的不算。 */
+  missingRegistry?: string
   /** 使用額度：five_hour、seven_day 的剩餘百分比與重置時間。 */
   limits?: { kind: string; remaining: number; resetsAt?: string }[]
   /** desk 本身的版本；產品線上版（最新 v* tag）與開發中版本（release/* 分支）。 */

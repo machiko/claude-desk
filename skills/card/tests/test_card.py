@@ -15,6 +15,7 @@ import unittest
 SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts', 'card.py')
 SPEC_CASES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'tests', 'spec-cases.mjs')
 TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'templates', 'DESK-template.md')
+CARD_TS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'hooks', 'card.ts')
 
 
 def read(path):
@@ -60,6 +61,15 @@ class ProjectKeyTest(unittest.TestCase):
         card = load_card()
         for common, key in KEY_CASES:
             self.assertEqual(card.project_key(common), key, common)
+
+
+class RegistryTemplateTest(unittest.TestCase):
+    def test_same_empty_registry_as_the_panel(self):
+        # 面板的「建立空的登錄表」寫 hooks/card.ts 的 REGISTRY_TEMPLATE；跟 /desk:card new 建的要一樣
+        card = load_card()
+        m = re.search(r"^export const REGISTRY_TEMPLATE = '([^']*)'$", read(CARD_TS), re.M)
+        self.assertIsNotNone(m, 'hooks/card.ts 找不到 REGISTRY_TEMPLATE')
+        self.assertEqual(m.group(1).replace('\\n', '\n'), card.REGISTRY_TEMPLATE)
 
 
 class SpecRulesTest(unittest.TestCase):

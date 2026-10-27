@@ -1,10 +1,12 @@
-// 現在卡上的動作：回覆 Agent、派 Agent 開 PR／push、預填決策、預填發版請求、開卡片、確認上線、歸檔、確認規格、停止 Agent。
+// 現在卡上的動作：回覆 Agent、派 Agent 開 PR／push、預填決策、預填發版請求、開卡片、確認上線、歸檔、確認規格、停止 Agent；
+// 以及新專案還沒有任務時的建立空登錄表。
 // 從 register.tsx 搬出來（只搬不改）；派工、重新整理仍在 register.tsx，比照 tutorial-run.tsx 從那裡匯入。
 // 跨檔傳 $ 的函式一律用 function 宣告；atom 位址同 register.tsx，各自宣告。
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
-import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, ARCHIVE_WORD, CARD_CMD, PLAN_STEP } from './card'
+import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
+import { WORD } from './theme'
 import { errorLine, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings } from './probes'
 import { normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
@@ -12,7 +14,7 @@ import { canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
-import { feedPush, loadJobs, openWith, saveChain } from './desk-io'
+import { feedPush, loadJobs, missingRegistry, openWith, saveChain } from './desk-io'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
@@ -162,4 +164,22 @@ export async function stopAgent($: any, c: Case) {
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${AGENT_STOPPED}（對話保留）`, tone: 'warning', card: c.statusPath }])
   $.ui.toast(`${c.name}：已停止 Agent`)
   void refresh($, optionsRef!)
+}
+
+/**
+ * 新專案的「＋ 建立空的登錄表」：在專案資料夾寫一份只有表頭的登錄表（$.fs.write 會建資料夾）。
+ * 按下時重算一次要建的路徑：上次讀取後已經有了（對話或 /desk:card new 建的）、對話換了 repo、確認不了在不在，都不寫，提示後重讀。
+ */
+export async function createRegistry($: any, options: PluginOptions, path: string) {
+  if ((await missingRegistry($, await deskPaths($, options))) !== path) {
+    const exists = await $.fs.exists(path).catch(() => null)
+    $.ui.toast(exists ? '已經有登錄表，沒有覆寫，重新讀取' : '專案或登錄表已經變了，沒有建立，重新讀取')
+    void refreshAfterWrite($, options)
+    return
+  }
+  const ok = await $.fs.write(path, REGISTRY_TEMPLATE).then(() => true).catch(() => false)
+  if (!ok) { $.ui.toast(`無法建立登錄表 ${path}`); return }
+  await feedPush($, [{ at: await $.clock.now(), text: `已${WORD.createRegistry}`, tone: 'success' }])
+  $.ui.toast(`已${WORD.createRegistry}；用 ${CARD_CMD} new <分支> <任務名> 開第一張卡`, { timeoutMs: 8000 })
+  void refreshAfterWrite($, options)
 }

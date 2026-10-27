@@ -301,6 +301,7 @@ def insert_registry_row(row):
     write(REG, '\n'.join(lines))
 
 
+# 與 hooks/card.ts 的 REGISTRY_TEMPLATE 同一份（面板的「建立空的登錄表」寫那份）。
 REGISTRY_TEMPLATE = '# 任務登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
 NAME_SLOT = '<任務名>'
 LEGACY_NAME_SLOT = '<案名>'  # 0.24.0 以前模板的卡名佔位：自訂模板（card.template）可能還寫著它

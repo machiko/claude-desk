@@ -45,6 +45,8 @@ export function fixture(on: any) {
     placeOpen: (_e: any) => true as boolean,
     usage: { startedAt: NOW, context: { percent: 34 }, rateLimits: [] as any[] } as any,
     writes: [] as string[],
+    /** 存在但讀不到的檔案（權限不對、是資料夾）：fs.exists 照樣回 true，fs.read 拒絕。 */
+    unreadable: [] as string[],
     status: undefined as string | undefined,
     prs: [] as any[],
     statuses: [] as string[],
@@ -80,7 +82,7 @@ export function fixture(on: any) {
     /** false 模擬 Claude Code 不讓 plugin 執行 /reload-plugins。 */
     reloadable: true,
   }
-  on('fs.read', (_: any, e: any) => data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ version: data.deskVersion }) } : { deny: 'ENOENT' })
+  on('fs.read', (_: any, e: any) => data.unreadable.includes(e.path) ? { deny: 'EACCES' } : data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ version: data.deskVersion }) } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
   on('fs.exists', (_: any, e: any) => ({ value: data.files[e.path] !== undefined }))
   on('fs.write', (_: any, e: any) => { data.files[e.path] = e.text; data.writes.push(e.path); return { value: undefined } })

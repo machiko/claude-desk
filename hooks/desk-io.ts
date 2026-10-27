@@ -12,6 +12,8 @@ import type { RootJobs } from './dispatch'
 import { stageLabel } from './pipeline'
 import { SUMMARY_SYSTEM, cleanSummary, summaryPrompt, textKey } from './digest-status'
 import type { ChainRun } from './chain'
+import { HANDOFFS, PROJECT_FILES } from './project'
+import { WORD } from './theme'
 
 // 引擎規定：read／update 的 atom 必須在同一個檔案用 const 宣告，所以這裡用到的幾個與 register.tsx 各宣告一次（同 plugin、同 key 就是同一份狀態）。
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -60,9 +62,22 @@ export async function saveChain($: any, key: string, change: (run: ChainRun | un
 export async function me($: any): Promise<string> { return String((await $.session.id().catch(() => '')) ?? '') }
 
 
-export function registryError(paths: DeskPaths): string {
+/**
+ * 專案資料夾預設位置的登錄表確定不存在：面板可以替使用者建一份空的，回傳要建的路徑。
+ * registryPath 指定的（就算放在專案資料夾裡）不算；存在但讀不到（權限、是資料夾）或確認不了也不算：建了也只會被擋下。
+ */
+export async function missingRegistry($: any, paths: DeskPaths): Promise<string | null> {
+  const path = paths.project && paths.registry === `${paths.project.dir}/${PROJECT_FILES.registry}` ? paths.registry : null
+  return path && (await $.fs.exists(path).catch(() => null)) === false ? path : null
+}
+
+/** 讀不到登錄表時面板的說明；missing 是 missingRegistry 的結果。 */
+export function registryError(paths: DeskPaths, missing: string | null): string {
   if (!paths.registry) return '目前資料夾不在 git repo 裡；desk 依 repo 找登錄表，請在專案裡開 /desk'
-  if (paths.project && paths.registry.startsWith(paths.project.dir + '/')) return `無法讀取登錄表：專案「${paths.project.key}」還沒建，建立 ${paths.registry} 後就會列出這個專案的任務`
+  if (missing && paths.project) {
+    const shown = `${HANDOFFS}/${paths.project.key}${missing.slice(paths.project.dir.length)}`
+    return `專案「${paths.project.key}」還沒有登錄表。按下方「＋ ${WORD.createRegistry}」建在 ${shown}，或用 /desk:card new <分支> <任務名> 開第一張卡（會一併建立）。`
+  }
   return `無法讀取登錄表 ${paths.registry}`
 }
 

@@ -73,7 +73,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
    { "card": { "main": "~/code/shop", "base": "origin/main" } }
    ```
 
-2. 在 repo 裡開一件任務：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。
+2. 在 repo 裡開一件任務：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。想先開工作桌、還不開卡，就在面板按 `n`（「＋ 建立空的登錄表」）。
 3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後在面板按兩次 `t` 確認（或輸入 `/desk:card spec order-export ok`）。
 4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派 Agent）。
 
@@ -194,7 +194,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
 
-不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，不會列出別的專案的任務。共用的設定（`model`、`effort`、`sync`、`user`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`sync`、`user`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
