@@ -30,20 +30,20 @@ test('each stage says whose turn it is and what to press, in plain words', () =>
 })
 
 test('only the actions that make sense now are listed: passed stages drop their keys', () => {
-  // 規格段：只能開卡片、同步
-  expect(ids(mk({ check: '無' }))).toEqual(['open', 'sync'])
+  // 規格段：只能開卡片（同步只在卡片落後時列）
+  expect(ids(mk({ check: '無' }))).toEqual(['open'])
   // 實作段：繼續；還沒有檢查與審查
-  expect(ids(mk({}))).toEqual(['continue', 'open', 'sync'])
+  expect(ids(mk({}))).toEqual(['continue', 'open'])
   // 審查過了（有結論、零擋）、還沒有 PR：沒有 v、沒有 w，多了開 PR（派推送 Agent）
-  expect(ids(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過' }), {})).toEqual(['open', 'open-pr', 'sync'])
+  expect(ids(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過' }), {})).toEqual(['open', 'open-pr'])
   // 上線段：上線確認；合併過了不再同步
   expect(ids(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual(['open', 'ship'])
-  // 完成：開卡片與歸檔
-  expect(ids(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual(['archive', 'open'])
+  // 完成：只剩歸檔（開卡片收進 m）
+  expect(ids(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual(['archive'])
   // 執行中：停止與輸出，不能再派
   expect(ids(mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' } }))).toEqual(['logs', 'open', 'stop'])
   // 檢查未通過：可以讓 Agent 修，也可以重跑
-  expect(ids(mk({}, {}, { ...passed, ok: false, exitCode: 1 }))).toEqual(['continue', 'open', 'sync', 'verify'])
+  expect(ids(mk({}, {}, { ...passed, ok: false, exitCode: 1 }))).toEqual(['continue', 'open', 'verify'])
 })
 
 test('processing lines say who is doing what, without repeating that it is in progress', () => {
@@ -82,14 +82,14 @@ test('idle next: the now card asks for v instead of g', () => {
   // 沒有流程紀錄（主對話開發、/desk:card done 寫的下一步）：v 單跑只記結果，審查要自己按 w
   const c = mk({ next: '等自動檢查與審查；過了開 PR' })
   expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' })
-  expect(ids(c)).toEqual(['open', 'sync', 'verify'])
+  expect(ids(c)).toEqual(['open', 'verify'])
   // /desk:card done 寫的句子也認得
   expect(turnOf(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual({ who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' })
-  expect(ids(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual(['open', 'sync', 'verify'])
+  expect(ids(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual(['open', 'verify'])
   // 有流程紀錄（Agent 派工後）：檢查通過會自動接審查，照舊說
   const chained = mk({ next: '到面板按 v 執行完成檢查' }, { chain: { round: 0, lastKind: 'continue', autoReview: true } })
   expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
-  expect(ids(chained)).toEqual(['open', 'sync', 'verify'])
+  expect(ids(chained)).toEqual(['open', 'verify'])
   // 有流程紀錄但不會自動接審查（別的對話開的、最後一次派的是同步、已停下）：照「通過後按 w」說
   const manual = '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事'
   for (const chain of [{ round: 0, foreign: true, lastKind: 'continue' as const }, { round: 0, lastKind: 'sync' as const }, { round: 0, lastKind: 'continue' as const, autoReview: true, stopped: '修了 3 輪' }]) {
@@ -97,7 +97,7 @@ test('idle next: the now card asks for v instead of g', () => {
   }
   // 有實作的下一步照舊
   expect(turnOf(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual({ who: 'you', text: '按 g 派 Agent：等檢查；補 AC-3 的測試', key: 'g' })
-  expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open', 'sync'])
+  expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open'])
 })
 
 /** AC-5 */

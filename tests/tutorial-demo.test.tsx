@@ -82,6 +82,8 @@ test('after a sync in the tutorial the spec step still offers t', async ($, on) 
   const { data, clock } = await startTutorial($, on)
   const ui = await $.ui.mount(PANE(72))
   const KEY = (what: string) => `case-${P.card}-${what}`
+  // 同步平常收在更多動作（m）
+  await ui.press({ key: 'more' })
   await ui.press({ key: KEY('sync') })
   await ui.press({ key: KEY('sync') })
   await clock.advance(2500); await clock.settle()

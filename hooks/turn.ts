@@ -16,8 +16,8 @@ export type Turn = {
   key?: string
 }
 
-/** 畫面上才知道的事：完成檢查執行中、排隊中、派工中、決策送出了沒，以及現在是不是教學模式。 */
-export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean; sent?: SentState }
+/** 畫面上才知道的事：完成檢查執行中、排隊中、派工中、決策送出了沒、現在是不是教學模式，以及現在幾點（判斷卡片落後）。 */
+export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean; sent?: SentState; now?: number }
 
 /** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
 export type SentState = 'waiting' | 'unwritten'
@@ -205,23 +205,28 @@ function mergeTurn(c: Case): Turn {
 }
 
 /**
- * 這一刻該出現的動作：只列現在可以做、而且有意義的。開卡片永遠在；同步在沒有人執行、還沒合併時都在。
+ * 這一刻該出現的動作：只列現在可以做、而且有意義的。同步只在卡片落後分支時列（ctx.now 判斷）；平常收在「更多動作」（m）。
  * 已經過了的段落不再出現它的鍵（檢查過了沒有 v、審查過了沒有 w）；之後有新 commit，六段會退回去，鍵也會回來。
- * 合併之後只剩上線、歸檔、開卡片與 PR：不再繼續、審查、同步、檢查。
+ * 合併之後只列該段的主動作：沒打 tag 是發版與開卡片，有 release 關卡是上線確認與開卡片，可歸檔只剩歸檔；
+ * 輸出、審查檔、PR 都收進 m（Agent 在跑時照舊能看輸出、停掉它）。
  */
 export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.demo) return new Set()
-  const out = new Set<ActionId>(['open'])
+  const busy = isRunning(c) || c.state === 'approve'
+  const merged = isMerged(c) && !busy
+  const out = new Set<ActionId>(merged && canArchive(c) ? [] : ['open'])
   const current = c.pipeline?.current ?? null
-  if (c.agent?.id) out.add('logs')
-  if (c.reviewTop?.length || riskyNoPr(c)) out.add('review-file')
-  if (c.pr?.url) out.add('pr')
+  if (!merged) {
+    if (c.agent?.id) out.add('logs')
+    if (c.reviewTop?.length || riskyNoPr(c)) out.add('review-file')
+    if (c.pr?.url) out.add('pr')
+  }
   if (c.state === 'ask' && hasChoice(c) && ctx.sent !== 'waiting') out.add('fill')
   if (c.state === 'reply') out.add('reply')
   // 等權限批准：回覆放行不了工具；能做的只有看輸出、停掉它。
-  if (isRunning(c) || c.state === 'approve') { out.add('stop'); return out }
-  if (!isMerged(c)) {
-    if (c.state !== 'done') out.add('sync')
+  if (busy) { out.add('stop'); return out }
+  if (!merged) {
+    if (ctx.now !== undefined && cardBehind(c, ctx.now)) out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)
     // PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上；本機已有新 commit 沒 push 時該按的是 ⇡ push，不列 g。
     const ciFailed = current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)

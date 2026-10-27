@@ -31,7 +31,7 @@ export const picksKey = (c: Case) => `${c.statusPath}\n${c.ask}`
 
 /** 畫面上才知道、turnOf 需要的事。 */
 export function turnCtx(view: PaneView, c: Case): TurnCtx {
-  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, tutorial: !!view.s.tutorial, sent: sentState(view.sent, c) }
+  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now }
 }
 
 const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '◐ 處理中', none: '— 沒有待辦' }
@@ -106,20 +106,23 @@ function wrappedRows(ui: any, text: string, width: number, color: string, indent
   return wrapText(text, width - indent).map(line => <Box paddingLeft={indent}><Text color={color} bold={bold} wrap="truncate-end">{line}</Text></Box>)
 }
 
-/** 完成檢查：結果一列、指令一列；失敗或展開時附輸出尾巴。 */
+/** 完成檢查：結果一列、指令一列；失敗或展開時附輸出尾巴。可歸檔時已經沒有要檢查的事，只留結果一列（x 展開照舊）。 */
 function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, view: PaneView, queuedAt: number, width: number): any[] {
   const { Box, Text } = ui
   if (!c.verify) return []
   const stale = v && v.command !== c.verify
   const show = v && !stale ? v : undefined
+  const brief = canArchive(c) && !view.isExpanded
   const tail = show && (!show.ok || view.isExpanded) ? show.tail : []
   const room = Math.max(10, width - INDENT - KV_LABEL)
   const result = running ? <Text color={COLOR.running}>執行中</Text>
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
-    : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? `✓ 通過 ${hhmm(show.at)}` : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}`}</Text>
+    : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}`}</Text>
     : <Text color={COLOR.faint}>{v && v.command === c.verify ? '有新 commit，需重新執行' : '尚未執行'}</Text>
+  const head = <Box flexDirection="row" paddingLeft={INDENT}><Text color={COLOR.faint}>{pad('檢查', KV_LABEL)}</Text>{result}</Box>
+  if (brief) return [head]
   return [
-    <Box flexDirection="row" paddingLeft={INDENT}><Text color={COLOR.faint}>{pad('檢查', KV_LABEL)}</Text>{result}</Box>,
+    head,
     <Box flexDirection="row" paddingLeft={INDENT + KV_LABEL}><Text color={COLOR.faint} wrap="truncate-end">{fit(shortCommand(c.verify), room)}</Text></Box>,
     ...tail.map(line => <Box flexDirection="row" paddingLeft={INDENT + KV_LABEL}><Text color={show!.ok ? COLOR.dim : COLOR.bad} wrap="truncate-end">{fit(line, room)}</Text></Box>),
   ]
@@ -286,7 +289,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   }
   const lesson = view.s.tutorial ? tutorialStep(c) : null
   if (lesson && can('tutorial')) out.push(button({ key: prefix + 'tutorial', hotkey: 't', isLead: leadKey === 't', isBoxed: leadKey === 't', isDim: leadKey !== 't', label: TUTORIAL_STEP_LABEL[lesson], onPress: () => act.tutorial(c) }))
-  out.push(button({ key: prefix + 'open', hotkey: 'o', isDim: leadKey !== 'o', isLead: leadKey === 'o', label: `↗ ${WORD.open}`, onPress: () => act.open(c) }))
+  if (can('open')) out.push(button({ key: prefix + 'open', hotkey: 'o', isDim: leadKey !== 'o', isLead: leadKey === 'o', label: `↗ ${WORD.open}`, onPress: () => act.open(c) }))
   return view.showAll ? withRetreat(out, c, inStage, prefix) : out
 }
 
