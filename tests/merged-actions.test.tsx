@@ -219,7 +219,8 @@ test('a branch reopened under the same name in the same folder is not taken as t
   await clock.advance(6 * 60_000); await refresh()
   const again = await $.ui.mount(PANE(80))
   expect(await again.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
-  // 沒合併：沒有發版鍵（同步平常不列，不能拿它當沒合併的證據）
+  // 沒合併：停在合併段、要開 PR（同步平常不列，不能拿它當沒合併的證據）；也沒有發版鍵
+  expect(await again.find({ key: `case-${CARD_B}-open-pr` })).toBeDefined()
   expect(await again.find({ key: `case-${CARD_B}-release` })).toBeUndefined()
   await again.unmount()
 })
@@ -365,6 +366,8 @@ test('a branch forked from a merged commit in another worktree is not taken as m
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
+  // 沒合併：停在合併段、要開 PR；也沒有發版鍵
+  expect(await ui.find({ key: `case-${CARD_B}-open-pr` })).toBeDefined()
   expect(await ui.find({ key: `case-${CARD_B}-release` })).toBeUndefined()
   await ui.unmount()
 })
@@ -387,6 +390,8 @@ test('a branch forked in the same folder from the previous branch\'s reviewed he
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /已合併到 main/ })).toBeUndefined()
+  // 沒合併：審查紀錄屬於上一條分支，這條停在檢查段、要按 v；也沒有發版鍵
+  expect(await ui.find({ key: `case-${CARD_B}-verify` })).toBeDefined()
   expect(await ui.find({ key: `case-${CARD_B}-release` })).toBeUndefined()
   await ui.unmount()
 })
