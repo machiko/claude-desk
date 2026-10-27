@@ -3,7 +3,7 @@ import type { Case, Verify } from '../types'
 import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
 import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
-import { KIND_LABEL, dispatchable } from './dispatch'
+import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
 import { awaitsSpecOk, canArchive, canRelease, isMerged, parseVerdict, stageParts } from './pipeline'
 import { gitLine, isArmed, mergedAtHead } from './extras'
 import { compactStatus } from './digest-status'
@@ -61,10 +61,11 @@ export const canShip = (c: Case) => c.pipeline?.current === 'ship' && !!c.tag &&
 /** 只有 desk 派出去、正在跑的那個才能從面板停止。 */
 const canStop = (c: Case) => (c.state === 'running' || c.state === 'approve') && !!c.agent?.id && /^desk-/.test(c.agent.name)
 
-/** 確認文字裡的模型：同步用同步模型，其他用派工模型。 */
-function modelText(view: PaneView, k: DispatchKind): string {
+/** 確認文字裡的模型：同步用同步模型；這件有 projects 覆寫就用它實際會用的；其他看 kinds，再來是派工模型。 */
+function modelText(view: PaneView, k: DispatchKind, c: Case): string {
   const m = view.s.models
-  const pick = k === 'sync' && m?.sync?.model ? m.sync : m?.dispatch
+  const own = k === 'sync' ? undefined : m?.byRoot?.[normalizeRoot(c.root)]?.[k]
+  const pick = k === 'sync' && m?.sync?.model ? m.sync : own ?? m?.kinds?.find(e => e.kind === k) ?? m?.dispatch
   return pick?.model ? `${pick.model}${pick.effort ? ` · ${pick.effort}` : ''}` : '預設模型'
 }
 
@@ -255,7 +256,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
     const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
     // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
     const hint = k === 'sync' && cardBehind(c, view.now)
-    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${KIND_LABEL[k]}（${modelText(view, k)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
+    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
   }
   if (canStop(c) && can('stop')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nstop`, view.now)
@@ -270,7 +271,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
     const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
     const ask = id === 'open-pr' && needsPrConfirm(c) ? '看過審查檔了？再按一次' : '再按一次'
-    out.push(button({ key: prefix + id, isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `${ask}確認派 Agent ${doing}（${modelText(view, 'publish')}）` : `⇡ ${doing}`, onPress }))
+    out.push(button({ key: prefix + id, isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `${ask}確認派 Agent ${doing}（${modelText(view, 'publish', c)}）` : `⇡ ${doing}`, onPress }))
   }
   if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
   if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))

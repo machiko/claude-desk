@@ -30,7 +30,7 @@
     "dispatchSettingsPath": {
       "type": "string",
       "title": "派工設定",
-      "description": "全域 dispatch.json：model／effort、projects 覆寫、sync.claude.model 同步模型、user 人名等共用設定。目前專案的 ~/.claude/handoffs/<repo>/dispatch.json 會疊在上面（頂層同名鍵以專案的為準），rules、review、risk.high、checkServices、composeDir、card 建議寫在專案那份。",
+      "description": "全域 dispatch.json：model／effort、kinds 依派工種類（continue、reply、review、publish）各設 model／effort（種類 > projects 覆寫 > 全域）、projects 覆寫、sync.claude.model 同步模型、user 人名等共用設定。目前專案的 ~/.claude/handoffs/<repo>/dispatch.json 會疊在上面（頂層同名鍵以專案的為準），rules、review、risk.high、checkServices、composeDir、card 建議寫在專案那份。",
       "default": "~/.claude/handoffs/dispatch.json"
     },
     "bitbucketServer": {

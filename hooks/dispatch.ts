@@ -9,11 +9,16 @@ const SHORT_ID = /^[0-9a-f]{8}$/i
 
 /** publish：合併段派 Agent push 分支、開 PR（或 PR 已開時只 push）；不改程式、不在自動流程裡。 */
 export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish'
+/** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude。 */
+export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
+export type ModelKind = typeof MODEL_KINDS[number]
 /** 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。 */
 export type ReviewWords = { high: string; security: string; categories: string; template: string }
 export type DispatchSettings = {
   model: string; effort: string; sync: { model: string; effort: string; fresh: boolean }
   projects: Record<string, { model?: string; effort?: string; rules?: string[] }>
+  /** 依派工種類的模型與 effort，優先於任務覆寫與全域。 */
+  kinds: Partial<Record<ModelKind, { model?: string; effort?: string }>>
   /** 寫進提示詞與卡片的人名（「要 <user> 決定的事」「<user> 在工作桌確認」）。 */
   user: string
   /** 每次派工都附上的專案規則（例如測試只能怎麼跑）；任務的 rules 接在後面。 */
@@ -50,7 +55,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '' }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '' }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -61,6 +66,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     if (d?.projects && typeof d.projects === 'object') for (const [root, v] of Object.entries<any>(d.projects)) {
       out.projects[normalizeRoot(root)] = { ...(typeof v?.model === 'string' ? { model: v.model.trim() } : {}), ...(typeof v?.effort === 'string' ? { effort: v.effort.trim() } : {}), ...(strList(v?.rules).length ? { rules: strList(v.rules) } : {}) }
     }
+    out.kinds = parseKinds(d?.kinds)
     out.user = str(d?.user) || DEFAULT_USER
     out.rules = strList(d?.rules)
     out.review = { high: str(d?.review?.high) || DEFAULT_REVIEW.high, security: str(d?.review?.security) || DEFAULT_REVIEW.security, categories: str(d?.review?.categories) || DEFAULT_REVIEW.categories, template: str(d?.review?.template) }
@@ -78,15 +84,30 @@ export function parseSettings(text: string | null): DispatchSettings {
   return out
 }
 
+/** kinds 只收 MODEL_KINDS 的鍵、值是物件的；欄位不是字串或是空白就當沒寫。其他的（sync、不認得的鍵、型別錯的值）略過。 */
+function parseKinds(v: unknown): DispatchSettings['kinds'] {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: DispatchSettings['kinds'] = {}
+  for (const k of MODEL_KINDS) {
+    const e = (v as Record<string, unknown>)[k]
+    if (!e || typeof e !== 'object' || Array.isArray(e)) continue
+    const { model, effort } = e as Record<string, unknown>
+    const pick = { ...(str(model) ? { model: str(model) } : {}), ...(str(effort) ? { effort: str(effort) } : {}) }
+    if (pick.model || pick.effort) out[k] = pick
+  }
+  return out
+}
+
 export const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
 
-/** 這件任務這種派工用的 model／effort：任務覆寫 > 全域；同步另有自己的模型。 */
+/** 這件任務這種派工用的 model／effort：種類（kinds）> 任務覆寫 > 全域；同步另有自己的模型。 */
 export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind): { model: string; effort: string; fresh: boolean } {
   const own = settings.projects[normalizeRoot(root)] ?? {}
   const base = { model: own.model ?? settings.model, effort: own.effort ?? settings.effort }
   if (kind === 'sync') return { model: settings.sync.model || base.model, effort: settings.sync.effort || base.effort, fresh: settings.sync.fresh }
+  const byKind = settings.kinds[kind] ?? {}
   // 推送只要分支與卡片，開新對話就夠了，不接任務那個越來越長的 session。
-  return { ...base, fresh: kind === 'review' || kind === 'publish' }
+  return { model: byKind.model ?? base.model, effort: byKind.effort ?? base.effort, fresh: kind === 'review' || kind === 'publish' }
 }
 
 export function launchName(now: number, seq: number): string {
