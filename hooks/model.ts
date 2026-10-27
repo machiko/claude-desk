@@ -41,22 +41,92 @@ export function plain(text: string): string {
 
 /**
  * 不算「有意義的一行」：太短、轉圈圈的狀態字（含被截斷的半個字）、秒數與 token 計數、按鍵提示、純框線、
- * 沒有空白也沒有中文的單一英文片段。
+ * 沒有空白也沒有中文的單一英文片段、畫面最底的 UI 列（輸入框上框線夾名字、模式列、努力度）。
  */
 export function isNoise(line: string): boolean {
   const l = line.trim()
   if (displayWidth(l) < 4) return true
+  // 輸入框上框線「──…── <名字> ─」、模式列「⏸ manual mode on · ← for agents」「⏵⏵ accept edits on」（只認 ⏸／⏵⏵ 開頭的，提問裡的「mode on」不算）、努力度「● high · /effort」。
+  if (/^─{10,} .* ─$/.test(l) || /^(?:⏸|⏵⏵)\s*(?:[a-z]+ mode|accept edits|bypass permissions) on\b|← (?:for|\d+) agents|· \/effort$/.test(l)) return true
   if (/…/.test(l) && displayWidth(l) < 40) return true
-  if (/\d+(?:\.\d+)?k? tokens|\d+s ·|· ↓|esc to interrupt|\? for shortcuts|^running |^[A-Z][a-z]+ for \d+\s*s/.test(l)) return true
+  if (/\d+(?:\.\d+)?k? tokens|\d+s ·|· ↓|esc to interrupt|\? for shortcuts|shift\+tab|^running |^[A-Z][a-z]+ for \d+\s*s/.test(l)) return true
   if (/^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║>·\-=*`()]+$/.test(l)) return true
   if (!/[\u3400-\u9fff]/.test(l) && !/\s/.test(l) && l.length < 16) return true
-  return false
+  // 重繪剩下的數字碎片（倒數、欄位號）：沒有中文、也沒有連續三個英文字母。
+  if (!/[\u3400-\u9fff]/.test(l) && !/[A-Za-z]{3}/.test(l)) return true
+  // 額度列（5h:40% 7d:43%）。
+  if (/\d+[hd]:\d+%/.test(l)) return true
+  return isStatusLine(l)
 }
 
-/** Agent 記錄的最後一句有意義的話：控制序列與 \r 都當成分行，略過雜訊。 */
+/**
+ * 畫面最底的狀態列「<分支> │ +n/-m │ <worktree>」（沒有改動時沒有中段）：用 │ 分欄、每欄是一個詞（或它的重繪碎片，例如「r leas v14.2.6」）。
+ * 兩端都是 │ 的是框線裡的句子（權限提示框、表格），不算。
+ */
+export function isStatusLine(line: string): boolean {
+  const l = line.trim()
+  if (!/│/.test(l)) return false
+  if (/\+\d+\/-\d+/.test(l)) return true
+  if (/[\u3400-\u9fff]/.test(l) || (l.startsWith('│') && l.endsWith('│'))) return false
+  return l.split('│').every(seg => seg.trim().split(/\s+/).length <= 3)
+}
+
+/** 東亞寬字（CJK、全形、韓文）在終端機佔兩格。 */
+const isWide = (code: number) => code >= 0x1100 && (code <= 0x115f || (code >= 0x2e80 && code <= 0xa4cf) || (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff00 && code <= 0xff60) || (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x20000 && code <= 0x3fffd))
+
+/**
+ * `claude logs` 是整個畫面的重繪紀錄（每次只畫有變的格子），把它重播成最後的畫面，一列一個字串，由上到下。
+ * 只追游標與格子：游標移動（上下左右、跳欄、定位）、清行、清畫面照做；顏色、模式切換與其他序列略過。
+ * 真實紀錄列與列之間是 \r（回到行首），列由緊接的 \e[nB、\e[n;mH 決定；\n 當一般換行。
+ * 同一列多次重繪會疊在同一列上，所以不會把「c mmand.run」這種只畫了變動格子的碎片當成一句話；
+ * 紀錄開始前就畫好的格子還是看不到（狀態列常只剩碎片），那些由 isNoise 擋。
+ * 短 session 的紀錄從整頁畫起，畫面最底的輸入框（只剩提示符 ❯ 的那列）與它以下的框線、模型列、分支列、模式列都是 UI 元件，整段丟掉。
+ */
+export function screenLines(raw: string): string[] {
+  const text = String(raw ?? '')
+  const rows = new Map<number, string[]>()
+  let r = 0
+  let c = 0
+  const row = () => { const got = rows.get(r); if (got) return got; const made: string[] = []; rows.set(r, made); return made }
+  const re = /\u001b\[([0-?]*)[ -/]*([@-~])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]|\r|\n|[^\u001b\r\n]+/g
+  for (const m of text.matchAll(re)) {
+    const s = m[0]
+    if (s === '\r') { c = 0; continue }
+    if (s === '\n') { r++; c = 0; continue }
+    if (s[0] !== '\u001b') {
+      for (const ch of s) {
+        const code = ch.codePointAt(0) ?? 0
+        if (code < 32 || (code >= 0x7f && code <= 0x9f)) continue
+        const cells = row()
+        cells[c++] = ch
+        if (isWide(code)) cells[c++] = ''
+      }
+      continue
+    }
+    if (m[2] === undefined) continue
+    const args = (m[1] ?? '').split(';').map(x => parseInt(x, 10))
+    const arg = (i: number, fallback: number) => { const v = args[i]; return v === undefined || Number.isNaN(v) ? fallback : v }
+    switch (m[2]) {
+      case 'A': r = Math.max(0, r - arg(0, 1)); break
+      case 'B': r += arg(0, 1); break
+      case 'C': c += arg(0, 1); break
+      case 'D': c = Math.max(0, c - arg(0, 1)); break
+      case 'G': c = Math.max(0, arg(0, 1) - 1); break
+      case 'H': case 'f': r = Math.max(0, arg(0, 1) - 1); c = Math.max(0, arg(1, 1) - 1); break
+      case 'K': { const cells = row(); const k = arg(0, 0); if (k === 0) cells.length = Math.min(cells.length, c); else if (k === 1) cells.fill(' ', 0, c + 1); else cells.length = 0; break }
+      case 'J': { const k = arg(0, 0); for (const key of [...rows.keys()]) if (k === 2 || (k === 0 && key > r) || (k === 1 && key < r)) rows.delete(key); if (k === 0) row().length = Math.min(row().length, c); break }
+      default: break
+    }
+  }
+  const lines = [...rows.keys()].sort((a, b) => a - b)
+    .map(k => plain(Array.from(rows.get(k)!, x => x ?? ' ').join('')).replace(/\s+/g, ' ').trim())
+  const prompt = lines.lastIndexOf('❯')
+  return (prompt < 0 ? lines : lines.slice(0, prompt)).filter(l => l && !isNoise(l))
+}
+
+/** Agent 最後畫面上最下面一句有意義的話（見 screenLines），略過雜訊；行首的轉圈圈、項目符號與 [標籤] 拿掉。 */
 export function lastMeaningful(raw: string, max = 120): string {
-  const lines = String(raw ?? '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '\n').split(/[\r\n]+/).map(l => plain(l).trim()).filter(l => l && !isNoise(l))
-  return (lines.pop() ?? '').replace(/^\[[^\]]*\]\s*/, '').slice(0, max)
+  return (screenLines(raw).pop() ?? '').replace(/^[⏺●✻✽✢✳✶·❯]\s*/, '').replace(/^\[[^\]]*\]\s*/, '').slice(0, max)
 }
 
 /** 模型名稱給人看：claude-opus-5-5 → Opus 5.5；別名（opus、haiku）與其他寫法原樣。 */
@@ -73,7 +143,7 @@ export function displayWidth(text: string): number {
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0
     if (code < 32) continue
-    w += code >= 0x1100 && (code <= 0x115f || (code >= 0x2e80 && code <= 0xa4cf) || (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff00 && code <= 0xff60) || (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x20000 && code <= 0x3fffd)) ? 2 : 1
+    w += isWide(code) ? 2 : 1
   }
   return w
 }
@@ -165,8 +235,21 @@ export function supersede(list: readonly any[], last: Readonly<Record<string, La
 }
 
 export function agentInfo(a: any): AgentInfo {
-  return { ...(typeof a.id === 'string' ? { id: a.id } : {}), name: plain(String(a.name ?? a.id ?? '')), ...(typeof a.sessionId === 'string' ? { sessionId: a.sessionId } : {}), state: String(a.state ?? ''), status: String(a.status ?? ''), ...(a.waitingFor ? { waitingFor: plain(String(a.waitingFor)) } : {}), ...(typeof a.startedAt === 'number' ? { startedAt: a.startedAt } : {}) }
+  const waitsFor = waitsOf(a)
+  return { ...(typeof a.id === 'string' ? { id: a.id } : {}), name: plain(String(a.name ?? a.id ?? '')), ...(typeof a.sessionId === 'string' ? { sessionId: a.sessionId } : {}), state: String(a.state ?? ''), status: String(a.status ?? ''), ...(a.waitingFor ? { waitingFor: plain(String(a.waitingFor)) } : {}), ...(waitsFor ? { waitsFor } : {}), ...(typeof a.startedAt === 'number' ? { startedAt: a.startedAt } : {}) }
 }
+
+/** 停下來的 Agent 在等什麼：waitingFor 提到 permission 是權限提示；其他停下來的（blocked 或 status waiting）當成提問。 */
+function waitsOf(a: any): AgentInfo['waitsFor'] {
+  if (/permission/i.test(String(a?.waitingFor ?? ''))) return 'permission'
+  return String(a?.state ?? '').toLowerCase() === 'blocked' || String(a?.status ?? '').toLowerCase() === 'waiting' ? 'question' : undefined
+}
+
+/** Agent 停在權限提示：要到終端機的 claude agents 批准，面板代替不了。 */
+export const approvalWait = (a: AgentInfo | undefined) => a?.waitsFor === 'permission'
+
+/** 等權限批准時給人看的那句：現在卡最上方、摘要列與列表都用它。 */
+export const approveText = (c: Pick<Case, 'agent'>) => `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准`
 
 /** 工作桌派出去的那一次（按啟動名）做完後停在提問：state blocked 且不再 busy。 */
 export function asksFor(list: any[], launchName: string | undefined): AgentInfo | null {
@@ -199,6 +282,7 @@ export const agentWaits = (a: AgentInfo | undefined) => !!a && (!!a.waitingFor |
 export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): CaseState {
   if (!c.hasCard) return 'nocard'
   if (!saysNone(c.ask)) return 'ask'
+  if (approvalWait(c.agent)) return 'approve'
   if (agentWaits(c.agent)) return 'reply'
   const running = !!c.agent && !c.agent.asks
   const verdict = parseVerdict(c.gate)
@@ -236,7 +320,7 @@ export function sorted(cases: readonly Case[]): Case[] {
 }
 
 export function counts(cases: readonly Case[]): Record<CaseState, number> {
-  const out = { ask: 0, reply: 0, gate: 0, failed: 0, running: 0, ready: 0, done: 0, idle: 0, nocard: 0 }
+  const out = { ask: 0, reply: 0, approve: 0, gate: 0, failed: 0, running: 0, ready: 0, done: 0, idle: 0, nocard: 0 }
   for (const c of cases) out[c.state]++
   return out
 }
@@ -255,6 +339,7 @@ export function focusCase(cases: readonly Case[]): Case | null {
 /** 一件任務在列表上的那句話：等你的題目、關卡、agent 等什麼、否則下一步。 */
 export function summary(c: Case): string {
   if (c.state === 'ask') { const d = parseDecisions(c.ask)[0]; return d ? d.title || c.ask : c.ask }
+  if (c.state === 'approve') return approveText(c)
   if (c.state === 'reply') return c.agent?.waitingFor ? `Agent 等待：${c.agent.waitingFor}` : c.agent?.last ? `Agent 提問：${c.agent.last}` : 'Agent 等待你回覆'
   if (c.state === 'gate') { const g = parseGate(c.gate)!; return g.detail || c.gate }
   if (c.state === 'nocard') return '找不到卡片'
@@ -278,9 +363,10 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     if (!p) { push(`${c.name} 加入工作桌`, 'subtle'); continue }
     if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) push(`${c.name} 等你：${fit(summary(c), 40)}`, 'warning')
     else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning')
+    else if (c.state === 'approve' && p.state !== 'approve') push(`${c.name} Agent 等你批准權限`, 'warning')
     else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning')
     else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
-    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply') push(`${c.name} Agent 已完成`, 'subtle')
+    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent 已完成`, 'subtle')
     else if (c.state === 'failed' && p.state !== 'failed') push(`${c.name} 檢查未通過`, 'error')
   }
   return out

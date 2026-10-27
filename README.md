@@ -162,6 +162,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - 預設的發版慣例：發版線是 `release/*` 分支、上線看 `v*` tag。用 main 直接發版也可以，只是「開發中版本」那一欄不會出現。
 - PR 狀態只讀 GitHub 與 Bitbucket；其他平台（或沒裝 `gh`）的合併靠 git 判斷，只認得 merge commit，squash、rebase、fast-forward 合併看不出來，要自己在卡片寫回。
 - 背景 Agent 的權限照你的 Claude Code 設定；desk 只在提示詞裡限制 push 的範圍（只推自己的分支、不合併）與不碰正式環境，不是沙盒。
+- 背景 Agent 停在權限提示時，面板只會標「等批准」並告訴你到終端機跑 `claude agents` 批准；Claude Code 沒有給面板代為批准的介面。
 
 ## 設定
 

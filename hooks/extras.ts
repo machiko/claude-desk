@@ -1,5 +1,5 @@
 // 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態。不碰磁碟。
-import { isNoise, plain } from './model'
+import { plain, screenLines } from './model'
 
 /** 二次確認：同一個動作 3 秒內按第二次才執行。 */
 export const CONFIRM_MS = 3000
@@ -12,13 +12,7 @@ export const isArmed = (armed: Armed | null, key: string, now: number) => !!arme
 
 /** Agent 最近幾行有意義的輸出：清掉控制序列、略過雜訊與連續重複。 */
 export function logLines(raw: string, n = 10): string[] {
-  const out: string[] = []
-  for (const l of String(raw ?? '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '\n').split(/[\r\n]+/)) {
-    const line = plain(l).trim()
-    if (!line || isNoise(line) || out[out.length - 1] === line) continue
-    out.push(line.slice(0, 160))
-  }
-  return out.slice(-n)
+  return screenLines(raw).filter((line, i, all) => line !== all[i - 1]).map(line => line.slice(0, 160)).slice(-n)
 }
 
 /** 卡片「## 部署…」段落裡的步驟（編號或項目符號），略過還沒填的空項目。 */

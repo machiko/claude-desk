@@ -1,8 +1,8 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
 import { agentBusy, isReleaseLine, needsPr, needsPush } from './pipeline'
-import { CARD_CMD, named, parseGate, saysNone } from './card'
-import { agentWaits, slugOf } from './model'
+import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
+import { agentWaits, approvalWait, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHORT_ID = /^[0-9a-f]{8}$/i
@@ -175,7 +175,8 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
   const head = fix ? (fix.from === 'check'
       ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
       : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
-    : kind === 'continue' ? `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`
+    // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
+    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : kind === 'publish' ? publishHead(text)
@@ -212,6 +213,8 @@ export function idleNext(next: string): string {
 export function dispatchable(c: Case): DispatchKind[] {
   if (c.manual || c.state === 'running' || c.state === 'nocard') return []
   if (c.state === 'reply') return ['reply', 'sync']
+  // 等權限批准：回覆放行不了工具，只能同步。
+  if (c.state === 'approve') return ['sync']
   // 已上線：沒有要實作或審查的東西，只能同步。
   if (c.state === 'done') return ['sync']
   // 規格還沒確認（關卡 spec：…）：不派實作也不審查，只能同步。
@@ -240,6 +243,8 @@ const BUSY = 'Agent 仍在執行'
 export function replyRefusal(c: Case): string {
   if (c.demo) return '示範任務只能看'
   if (c.manual) return MANUAL
+  // 權限提示要到 claude agents 批准；回覆會被當成一則新訊息，不會放行那個工具。
+  if (c.state === 'approve' || approvalWait(c.agent)) return 'Agent 在等權限批准，不是提問'
   if (c.state === 'reply' || agentWaits(c.agent)) return ''
   return c.state === 'running' || c.agent?.status === 'busy' ? BUSY : 'Agent 沒有在等你回覆'
 }

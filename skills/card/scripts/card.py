@@ -181,6 +181,16 @@ def field(text, name):
     return m.group(1).strip() if m else ''
 
 
+def is_placeholder(value):
+    """整段被 `<` `>` 包住的是範本佔位；規則與 hooks/card.ts 的 isPlaceholder 相同。"""
+    v = value.strip()
+    return v.startswith('<') and v.endswith('>')
+
+
+# spec-ok 時取代範本佔位的下一步。
+SPEC_NEXT = '依規格與實作計畫實作'
+
+
 def has_spec(text):
     return re.search(r'^## 規格\s*$', text, re.M) is not None
 
@@ -397,7 +407,11 @@ def cmd_spec_ok(arg):
     if not plan:
         fail(f'「### 實作計畫」還沒填（改哪些檔、各改什麼），沒有實作計畫，不能確認；用 {CMD} spec 補上')
     span = f'{ids[0]}～{ids[-1]}' if len(ids) > 1 else ids[0]
-    set_gate(path, '無', {'狀態': f'規格已確認（{span}），可派實作'})
+    fields = {'狀態': f'規格已確認（{span}），可派實作'}
+    # 下一步還是範本佔位：派工時才不會把 `<…>` 原樣交給 Agent。已經是具體的一句就不動。
+    if is_placeholder(field(text[s:e], '下一步')):
+        fields['下一步'] = SPEC_NEXT
+    set_gate(path, '無', fields)
     text = read(path)
     today = datetime.date.today().isoformat()
     n = len(re.findall(r'^- D-\d+', text, re.M)) + 1

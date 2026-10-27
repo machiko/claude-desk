@@ -4,7 +4,7 @@
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case } from '../types'
-import { parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, ARCHIVE_WORD, CARD_CMD } from './card'
+import { parseDecisions, decisionAnswer, decisionPrompt, allPicked, confirmShip, isPlaceholder, ARCHIVE_WORD, CARD_CMD, PLAN_STEP } from './card'
 import { errorLine, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings } from './probes'
 import { normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
@@ -31,7 +31,8 @@ export async function reply($: any, options: PluginOptions, c: Case, text?: stri
     const asked = c.agent?.last || (tutorial ? '' : await lastLine($, c.agent?.id))
     const picked = await $.ui.ask(`${asked ? `Agent 提問：${asked}` : '讀不到 Agent 的提問，按 l 看輸出'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
     if (!picked || picked === '取消') return
-    answer = picked === '照卡片的下一步繼續' ? `照卡片的下一步繼續：${c.next || '依卡片'}` : picked
+    // 下一步還是範本佔位（舊卡沒跑 spec-ok）：與派工同一條規則，不把佔位文字原樣送給 Agent。
+    answer = picked !== '照卡片的下一步繼續' ? picked : isPlaceholder(c.next) ? PLAN_STEP : `照卡片的下一步繼續：${c.next || '依卡片'}`
   }
   // 不先把上一次派工標成已回覆：派出成功時 dispatch 會換上新的那筆；派工失敗時要留著，Agent 才仍算在等你、可以再回覆。
   await dispatch($, options, c, 'reply', { text: answer })

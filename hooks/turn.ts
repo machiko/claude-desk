@@ -1,7 +1,7 @@
 // 輪到誰、該做什麼：依六段與任務狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case, SentRecord } from '../types'
-import { slugOf } from './model'
+import { approveText, slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, isMerged, isReleaseLine, needsPr, needsPush, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
@@ -107,6 +107,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 等你沒有選項（例如請你登入）：直接說那句話，沒有字母可按、也沒有東西可填。
   if (c.state === 'ask') return hasChoice(c) ? { who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' } : { who: 'you', text: c.ask }
   if (c.state === 'reply') return { who: 'you', text: '按 y 回覆 Agent 的提問', key: 'y' }
+  if (c.state === 'approve') return { who: 'you', text: approveText(c), key: 'l' }
   // 處理中：標籤已經說了「不用動手」，這句只講誰在做什麼。
   if (ctx.verifying) return { who: 'ai', text: '完成檢查在跑' }
   if (ctx.queued) return { who: 'ai', text: '完成檢查排隊中' }
@@ -186,7 +187,8 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.pr?.url) out.add('pr')
   if (c.state === 'ask' && hasChoice(c) && ctx.sent !== 'waiting') out.add('fill')
   if (c.state === 'reply') out.add('reply')
-  if (isRunning(c)) { out.add('stop'); return out }
+  // 等權限批准：回覆放行不了工具；能做的只有看輸出、停掉它。
+  if (isRunning(c) || c.state === 'approve') { out.add('stop'); return out }
   if (!isMerged(c)) {
     if (c.state !== 'done') out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)

@@ -56,6 +56,12 @@ export function parseGate(value: string | undefined): Gate | null {
 
 export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '審查', release: '上線', unknown: '關卡' }
 
+/** 整段被 `<` `>` 包住的是範本佔位（例如 `<可以直接派給 Agent 的一件事>`）；規則與 card.py 的 is_placeholder 相同。 */
+export const isPlaceholder = (text: string) => { const t = text.trim(); return t.startsWith('<') && t.endsWith('>') }
+
+/** 下一步還是佔位時交給 Agent 的那句（派工的 continue 與回覆的「照卡片的下一步繼續」共用）。 */
+export const PLAN_STEP = '依卡片的規格與實作計畫實作'
+
 /**
  * 這段文字像不像一條可執行指令：整段被 `<` `>` 包住的是範本佔位；第一個 token 含中文或全形標點（非 ASCII 可見字元）的是說明句。
  * 用黑名單而不是白名單：`FOO="a b" cmd`、`[ -f x ] && …`、`( … )`、`"/path with space/x"`、`! cmd` 這些 ASCII 開頭的都是合法 shell，不能誤殺。
@@ -63,7 +69,7 @@ export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review
  */
 export function looksLikeCommand(text: string): boolean {
   const raw = text.trim()
-  if (!raw || (raw.startsWith('<') && raw.endsWith('>'))) return false
+  if (!raw || isPlaceholder(raw)) return false
   return !/[^\x21-\x7E]/.test(raw.split(/\s+/)[0]!)
 }
 

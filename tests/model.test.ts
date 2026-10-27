@@ -27,7 +27,7 @@ test('sorted puts what needs a person first, newest first within a state; focus 
   const c = buildCase(row('c'), card({}), 9, {}, undefined)
   const d = buildCase(row('d'), card({ 等你: '問' }), 7, {}, undefined)
   expect(sorted([a, b, c, d]).map(x => x.name)).toEqual(['d', 'b', 'c', 'a'])
-  expect(counts([a, b, c, d])).toEqual({ ask: 2, reply: 0, gate: 0, failed: 0, running: 0, ready: 1, done: 0, idle: 1, nocard: 0 })
+  expect(counts([a, b, c, d])).toEqual({ ask: 2, reply: 0, approve: 0, gate: 0, failed: 0, running: 0, ready: 1, done: 0, idle: 1, nocard: 0 })
   expect(focusCase([a, b, c, d])?.name).toBe('d')
   expect(focusCase([a])).toBeNull()
   expect(summary(b)).toBe('問')

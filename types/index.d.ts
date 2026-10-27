@@ -8,11 +8,11 @@ export type Gate = { kind: 'spec' | 'review' | 'release' | 'unknown'; detail: st
 /** 工作桌自己跑過的驗證結果，按卡片路徑記住。 */
 export type Verify = { command: string; at: number; ok: boolean; exitCode: number; tail: string[]; truncated: boolean; /** 跑的時候分支的 HEAD；之後有新 commit 這次檢查就不算數。 */ head?: string }
 
-/** 一件任務的狀態詞：等你 > 回覆 > 關卡 > 進行 > 失敗 > 可做 > 閒置 > 無卡。 */
-export type CaseState = 'ask' | 'reply' | 'gate' | 'running' | 'failed' | 'ready' | 'done' | 'idle' | 'nocard'
+/** 一件任務的狀態詞：等你 > 回覆／批准權限 > 關卡 > 進行 > 失敗 > 可做 > 閒置 > 無卡。 */
+export type CaseState = 'ask' | 'reply' | 'approve' | 'gate' | 'running' | 'failed' | 'ready' | 'done' | 'idle' | 'nocard'
 
 /** 任務根目錄裡跑著的背景 agent（`claude agents --json --all`）。 */
-export type AgentInfo = { id?: string; name: string; sessionId?: string; state: string; status: string; waitingFor?: string; startedAt?: number; /** `claude logs` 的最後一句，進行中才讀。 */ last?: string; /** 這是工作桌派出去、做完後停在提問的那一次。 */ asks?: boolean; /** 工作桌派的那一次是什麼工作（對得上最後一次派工才有）。 */ kind?: ChainInfo['lastKind'] }
+export type AgentInfo = { id?: string; name: string; sessionId?: string; state: string; status: string; waitingFor?: string; startedAt?: number; /** `claude logs` 的最後一句，進行中才讀。 */ last?: string; /** 這是工作桌派出去、做完後停在提問的那一次。 */ asks?: boolean; /** 停下來在等什麼：權限提示（waitingFor 提到 permission）或提問；沒停下來就沒有。 */ waitsFor?: 'permission' | 'question'; /** 工作桌派的那一次是什麼工作（對得上最後一次派工才有）。 */ kind?: ChainInfo['lastKind'] }
 
 export type StageId = 'spec' | 'build' | 'check' | 'review' | 'merge' | 'ship'
 /** done 過了・active 有人在做・wait 等你或等下一步・fail 卡住・todo 還沒到・na 這件任務不適用 */

@@ -288,6 +288,16 @@ test('worktree mark: clean, same or foreign leftovers', () => {
   expect(markRefusal(two, own({ kind: 'sync', ended: { how: 'finished' } }))).toBe(refused)
 })
 
+// 下一步還是範本佔位（例如舊卡沒跑 spec-ok）：不把佔位文字原樣送給 Agent。
+test('dispatch: a placeholder next step is not sent to the agent', () => {
+  const p = buildPrompt(mk('<可以直接派給 Agent 的一件事>'), 'continue')
+  expect(p.startsWith('依卡片的規格與實作計畫實作')).toBe(true)
+  expect(p).not.toContain('依卡片的下一步繼續')
+  expect(p).not.toContain('<可以直接派給 Agent 的一件事>')
+  // 具體的下一步照舊
+  expect(buildPrompt(mk('寫測試'), 'continue').startsWith('依卡片的下一步繼續：寫測試')).toBe(true)
+})
+
 /** 合併段的 Case：審查過關、檢查在 h 過了；PR、git 狀態、Agent 由呼叫端給。 */
 function atMerge(over: Partial<Case> = {}): Case {
   const passedCard = card('合併').replace('- 關卡：無', '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1；可合併')
