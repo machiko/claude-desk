@@ -43,3 +43,12 @@ test('git status v2 counts ahead, behind, changed, untracked', () => {
   expect(gitLine(g)).toBe('領先 3 · 落後 1 · 未提交 2 檔 · 未追蹤 2 檔')
   expect(gitLine({ ahead: 0, behind: 0, changed: 0, untracked: 0 })).toBe('與遠端一致、無未提交變更')
 })
+
+/** AC-3 */
+test('gitLine reports a deleted remote branch only when merged and without upstream', () => {
+  const noUpstream = { ahead: 0, behind: 0, changed: 1, untracked: 0, upstream: false }
+  expect(gitLine(noUpstream, true)).toBe('已合併，遠端分支已刪除 · 未提交 1 檔')
+  expect(gitLine({ ahead: 0, behind: 0, changed: 0, untracked: 0, upstream: true }, true)).toBe('與遠端一致、無未提交變更')
+  expect(gitLine({ ...noUpstream, changed: 0 }, false)).toBe('未 push（沒有遠端分支）')
+  expect(gitLine(noUpstream)).toBe('未 push（沒有遠端分支） · 未提交 1 檔')
+})

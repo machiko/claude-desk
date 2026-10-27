@@ -64,6 +64,21 @@ test('git line says not pushed when the branch has no upstream', async ($, on) =
   await ui.unmount()
 })
 
+/** 合併後遠端分支被 GitHub 自動刪除：沒有 upstream 不算未 push */
+test('git line says the remote branch was deleted when the merged branch has no upstream', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data, { upstream: false })
+  data.gh = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
+  judgedAt(data, 'c2')
+
+  const ui = await mount($)
+  const merged = await screen(ui)
+
+  expect(merged).toContain(flat('feature/b · 已合併，遠端分支已刪除'))
+  expect(merged).not.toContain(flat('未 push（沒有遠端分支）'))
+  await ui.unmount()
+})
+
 /** AC-2 */
 test('a new commit after review sends the case back to check, while old branch-name records stay valid', async ($, on) => {
   const { data } = fixture(on)

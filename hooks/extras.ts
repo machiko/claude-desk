@@ -75,7 +75,9 @@ export function parseGitStatus(text: string): GitState {
   }
   return st
 }
-export function gitLine(g: GitState): string {
-  const parts = [g.upstream === false ? '未 push（沒有遠端分支）' : '', g.ahead ? `領先 ${g.ahead}` : '', g.behind ? `落後 ${g.behind}` : '', g.changed ? `未提交 ${g.changed} 檔` : '', g.untracked ? `未追蹤 ${g.untracked} 檔` : ''].filter(Boolean)
+/** merged：已合併的分支沒有 upstream 多半是遠端分支被自動刪除，不算未 push。 */
+export function gitLine(g: GitState, merged = false): string {
+  const noUpstream = merged ? '已合併，遠端分支已刪除' : '未 push（沒有遠端分支）'
+  const parts = [g.upstream === false ? noUpstream : '', g.ahead ? `領先 ${g.ahead}` : '', g.behind ? `落後 ${g.behind}` : '', g.changed ? `未提交 ${g.changed} 檔` : '', g.untracked ? `未追蹤 ${g.untracked} 檔` : ''].filter(Boolean)
   return parts.length ? parts.join(' · ') : '與遠端一致、無未提交變更'
 }
