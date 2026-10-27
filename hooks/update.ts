@@ -50,6 +50,12 @@ export function noticeOf(check: UpdateCheck | null, loaded = ''): { latest: stri
   return isNewer(check.latest, current) ? { latest: check.latest } : undefined
 }
 
+/** footer 版本格：沒查過（或沒查成功）是 unknown；查到的比已安裝的新是 newer，否則 latest。更新中由呼叫端判斷。 */
+export function versionStateOf(check: UpdateCheck | null, loaded = ''): 'newer' | 'latest' | 'unknown' {
+  if (!check) return 'unknown'
+  return noticeOf(check, loaded) ? 'newer' : 'latest'
+}
+
 export function parseCheck(v: unknown): UpdateCheck | null {
   const c = v as UpdateCheck | null
   return c && typeof c === 'object' && typeof c.at === 'number' && typeof c.latest === 'string' && typeof c.current === 'string' ? c : null

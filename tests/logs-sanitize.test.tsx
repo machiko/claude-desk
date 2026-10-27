@@ -36,7 +36,7 @@ test('a failed check with colored output still draws the pane', async ($, on) =>
   await ui.press({ key: 'more' }) // 這張卡在等你決定，檢查鍵平常不出現；測檢查本身先展開全部動作
   await ui.press({ key: 'case-/home/u/wt/alpha/.desk/CARD.md-verify' })
   await clock.settle()
-  expect(await ui.find({ type: 'Text', text: /✕ 未通過 exit 1/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /✕ 未通過（結束碼 1）/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Tests:  1 failed/ })).toBeDefined()
   await ui.unmount()
 })

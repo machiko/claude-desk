@@ -45,7 +45,11 @@ export const WORD = {
   open: '開啟',
   fill: '填入決策',
   refresh: '重新整理',
-  update: '更新版本',
+  updateTo: '更新到',
+  checkUpdate: '檢查並更新',
+  updating: '更新中…',
+  upToDate: '已是最新版本',
+  readAt: '讀取',
   createRegistry: '建立空的登錄表',
   hide: '收起',
 } as const

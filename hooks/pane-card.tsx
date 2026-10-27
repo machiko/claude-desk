@@ -116,7 +116,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   const room = Math.max(10, width - INDENT - KV_LABEL)
   const result = running ? <Text color={COLOR.running}>執行中</Text>
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
-    : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? `✓ 通過 ${hhmm(show.at)}` : `✕ 未通過 exit ${show.exitCode}  ${hhmm(show.at)}`}</Text>
+    : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? `✓ 通過 ${hhmm(show.at)}` : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}`}</Text>
     : <Text color={COLOR.faint}>{v && v.command === c.verify ? '有新 commit，需重新執行' : '尚未執行'}</Text>
   return [
     <Box flexDirection="row" paddingLeft={INDENT}><Text color={COLOR.faint}>{pad('檢查', KV_LABEL)}</Text>{result}</Box>,
@@ -169,7 +169,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   if (c.status) rows.push(...(view.isExpanded ? kvRows(ui, '狀態', c.status, width, true, COLOR.dim) : kvRows(ui, '狀態', c.statusShort ?? compactStatus(c.status), width, false, COLOR.text, 1)))
   if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState, mergedAtHead(c))}`, width, false, COLOR.dim, 1))
   // 面板外有新的變更、卡片沒跟著寫：提示同步（新對話只讀卡片與 git，把五欄寫回）。
-  if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}前）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
+  if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；Agent 在跑、等你時也不換成別的話）。
   const archive = `${CARD_CMD} archive ${slugOf(c)}`

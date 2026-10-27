@@ -2,14 +2,14 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, NOW } from './fixture'
 import { resetText, remainColor, limitParts, gridLayout } from '../hooks/pane'
 
-test('reset time: today shows the time, other days add date and weekday, short form drops both', () => {
+test('reset time: today shows the time, within a week adds the weekday, short form keeps only the day', () => {
   const at = (h: number) => new Date(NOW + h * 3_600_000).toISOString()
   const d = new Date(NOW + 2 * 3_600_000)
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   const same = new Date(NOW).getDate() === d.getDate()
-  expect(resetText(at(2), NOW)).toBe(same ? `${hm} 重置` : resetText(at(2), NOW))
-  expect(resetText(at(72), NOW)).toMatch(/^\d{1,2}\/\d{1,2}（[日一二三四五六]）\d{2}:\d{2} 重置$/)
-  expect(resetText(at(72), NOW, true)).toMatch(/^\d{1,2}\/\d{1,2} 重置$/)
+  expect(resetText(at(2), NOW)).toBe(same ? `${hm} 重置` : `明天 ${hm} 重置`)
+  expect(resetText(at(72), NOW)).toMatch(/^週[日一二三四五六] \d{2}:\d{2} 重置$/)
+  expect(resetText(at(72), NOW, true)).toMatch(/^週[日一二三四五六]$/)
   expect(resetText(undefined, NOW)).toBe('')
   expect(remainColor(80)).toBe('success')
   expect(remainColor(35)).toBe('warning')
@@ -23,10 +23,10 @@ test('the header shows desk version and remaining quota; product versions sit in
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   expect(await ui.find({ type: 'Text', text: ' 9.9.9' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '5 小時 ' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '5 小時' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '剩 78%' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '本週 ' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '剩 31%' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '本週' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' 剩 31%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '開發中 v1.4' })).toBeDefined()
   await ui.unmount()
   const narrow = await $.ui.mount(PANE(44))
@@ -35,11 +35,12 @@ test('the header shows desk version and remaining quota; product versions sit in
   await narrow.unmount()
 })
 
-test('quota parts drop reset times, then names, as the header narrows; low quota keeps its reset longest', () => {
+test('quota parts drop the weekly reset, then the five-hour reset, then names, as the header narrows', () => {
   const s: any = { limits: [{ kind: 'five_hour', remaining: 30, resetsAt: new Date(NOW + 3_600_000).toISOString() }, { kind: 'seven_day', remaining: 80, resetsAt: new Date(NOW + 86_400_000).toISOString() }] }
   const join = (room: number) => limitParts(s, NOW, room).map(p => p.text).join('')
-  expect(join(200)).toMatch(/^5 小時 剩 30%（.+重置）  本週 剩 80%（.+重置）$/)
-  expect(join(40)).toMatch(/^5 小時 剩 30%（.+重置）  本週 剩 80%$/)
+  expect(join(200)).toMatch(/^5 小時（.+ 重置）剩 30%  本週（明天 \d{2}:\d{2} 重置）剩 80%$/)
+  expect(join(46)).toMatch(/^5 小時（.+ 重置）剩 30%  本週（明天）剩 80%$/)
+  expect(join(40)).toMatch(/^5 小時（.+ 重置）剩 30%  本週 剩 80%$/)
   expect(join(26)).toBe('5 小時 剩 30%  本週 剩 80%')
   expect(join(10)).toBe('剩 30%  剩 80%')
 })
@@ -89,12 +90,12 @@ test('the grid gives every row the same name width so the six stages line up, an
   expect(3 + 2 + tight.nameWidth + 2 + 30 + (tight.ageWidth ? tight.ageWidth + 1 : 0) <= 50).toBe(true)
 })
 
-test('the header shows only the update time and the list is titled 其他任務', async ($, on) => {
+test('the header shows only the read time and the list is titled 其他任務', async ($, on) => {
   fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   expect(await ui.find({ type: 'Text', text: /件 ·/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^ *\d{2}:\d{2} 更新$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ *\d{2}:\d{2} 讀取$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^其他任務 *$/ })).toBeDefined()
   await ui.unmount()
 })

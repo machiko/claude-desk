@@ -5,7 +5,7 @@ Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張�
 > **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH findings for up to two rounds. The UI and prompts are in Traditional Chinese.
 
 ```
- desk 0.18.0  5 小時 剩 78%  本週 剩 31%            教學模式 · 20:00 更新
+ desk 0.18.0  5 小時 剩 78%  本週 剩 31%            教學模式 · 20:00 讀取
  ──────────────────────────────────────────────────────────────────────
  現在
  ◆ 教學：會員折扣  關卡
@@ -20,12 +20,12 @@ Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張�
            python3 -m unittest -q
 
  其他任務（示範，只能看）       規格 實作 檢查 審查 合併 上線
- 1 ● 主工作區（release/v1.4）   ·    ·    ◆    ·    ·    ○     20 分鐘
+ 1 ● 主工作區（release/v1.4）   ·    ·    ◆    ·    ·    ○   20 分鐘前
       CHANGELOG 日期要現在補還是發版時補？
- 2 ◆ 部署流程改版               ●    ◆    ○    ○    ○    ○      5 小時
+ 2 ◆ 部署流程改版               ●    ◆    ○    ○    ○    ○    5 小時前
       合併取捨已完成，請確認 node:22 釘版
- 3 ◐ 訂單匯出 CSV               ●    ◉    ○    ○    ○    ○      3 分鐘
- 4 ○ 會員登入改版               ●    ○    ○    ○    ○    ○        2 天
+ 3 ◐ 訂單匯出 CSV               ●    ◉    ○    ○    ○    ○    3 分鐘前
+ 4 ○ 會員登入改版               ●    ○    ○    ○    ○    ○      2 天前
  ──────────────────────────────────────────────────────────────────────
  s ↻ 同步  t ✓ 確認規格  o ↗ 開啟
  r ↻ 重新整理  x ▾ 展開  m ⋯ 更多動作  i ? 說明
@@ -93,7 +93,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk verify <任務名>` | 執行卡片的完成檢查（第一次會先確認） |
 | `/desk open <任務名>` | 用系統預設程式開卡片 |
 | `/desk bar` | 收起／顯示摘要列 |
-| `/desk update` | 把 desk 自己更新到 GitHub 上的最新版本（面板 footer 的「⇡ 更新版本」按鈕相同，只用點的、不綁快捷鍵）；更新後自動重新載入（不行就預填 `/reload-plugins`） |
+| `/desk update` | 把 desk 自己更新到 GitHub 上的最新版本（面板 footer 有新版時的「⇡ 更新到 <版本>」、沒查過時的「⇡ 檢查並更新」按鈕相同，只用點的、不綁快捷鍵；已是最新只顯示「✓ 已是最新版本」字樣，要重查就用這個指令）；更新後自動重新載入（不行就預填 `/reload-plugins`） |
 | `/desk tutorial` | 教學：在沙盒裡把六段走一遍，旁邊配幾件示範任務（`/desk tutorial end` 結束並刪除沙盒） |
 | `/desk off` | 這個對話關閉工作桌 |
 | `/desk:card new <分支> <卡名> [base]` | 建 worktree、DESK 卡、登錄表列 |

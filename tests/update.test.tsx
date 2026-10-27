@@ -304,7 +304,7 @@ test('the pane update button runs the same update as /desk update and has no hot
   await clock.settle()
   const ui = await $.ui.mount(PANE(100))
   const button = await ui.find({ key: 'update' })
-  expect(button?.text).toContain('更新版本')
+  expect(button?.text).toBe('⇡ 更新到 0.19.0')
   expect(button?.props?.hotkey).toBeUndefined()
   // 面板上其他按鈕的快捷鍵都沒有被它佔用、也沒有重複。
   const hotkeys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props?.hotkey).filter(Boolean)
@@ -315,8 +315,10 @@ test('the pane update button runs the same update as /desk update and has no hot
   expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
   expect(data.toasts).toContain(UPDATED)
   expect(data.reloads.length).toBe(1)
-  // 更新後提示消失（已安裝的就是最新版）。
+  // 更新後提示消失（已安裝的就是最新版），版本格改成「已是最新版本」淡字。
   expect(await ui.find({ type: 'Text', text: /^ {2}有新版本/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '✓ 已是最新版本' })).toBeDefined()
+  expect(await ui.find({ key: 'update' })).toBeUndefined()
   await ui.unmount()
   const help = await $.command.run({ command: 'desk', args: 'nope' } as any) as any
   expect(help.text).toContain('update')
@@ -357,10 +359,12 @@ test('a refused reload prefills /reload-plugins, or asks to type it when the pro
   expect(data.toasts).not.toContain(RELOAD_TYPE)
   expect((await ui.findAll({ type: 'Text' })).some((n: any) => /沒能自動重新載入：已填入/.test(n.text) && n.props?.color === 'warning')).toBe(true)
   await ui.unmount()
-  // 輸入框也無法預填：改請使用者自己輸入。
+  // 輸入框也無法預填：改請使用者自己輸入。上一次已更新到最新（版本格沒有按鈕），重來一次：裝回 0.18.0、重新查到新版。
   data.fillable = false
   data.toasts = []
   world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  delete data.store.updateCheck
+  await openDesk($, clock)
   const again = await $.ui.mount(PANE(100))
   await again.press({ key: 'update' })
   await clock.settle()
@@ -420,14 +424,17 @@ test('no reload when the update is already current, refused or failed', async ($
     [{ kind: 'github', installed: '0.18.0', latest: '0.19.0', updateFails: true }, /^desk 無法更新：更新指令失敗/],
   ]
   for (const [w, expected] of cases) {
-    // 輸入 /desk update 與按「⇡ 更新版本」都一樣。
+    // 輸入 /desk update 與按版本格的按鈕都一樣。上一輪查到的結果先清掉（當作沒查過），版本格才是「⇡ 檢查並更新」按鈕。
+    delete data.store.updateCheck
     world(data, w)
     const out = await $.command.run({ command: 'desk', args: 'update' } as any) as any
     if (typeof expected === 'string') expect(out.text).toBe(expected)
     else expect(out.text).toMatch(expected)
     world(data, w)
     const ui = await $.ui.mount(PANE(100))
-    await ui.press({ key: 'update' })
+    // 已是最新：查到的結果記下來了，版本格只剩「已是最新版本」字樣，沒有按鈕可按。
+    if (typeof expected === 'string') expect(await ui.find({ key: 'update' })).toBeUndefined()
+    else await ui.press({ key: 'update' })
     await clock.settle()
     await ui.unmount()
   }

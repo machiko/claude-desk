@@ -118,17 +118,20 @@ export function gridLayout(names: string[], ages: string[], width: number): { na
   return { nameWidth, ageWidth: keepAge ? ageWidth : 0, lead: 3 + 2 + nameWidth + 2 }
 }
 
-/** 重置時間：今天只寫時分，其他日子加日期與星期。 */
+/** 重置時間：今天只寫時分，明天寫「明天」，7 天內寫星期，更遠寫日期；short 只留哪一天（今天、明天、週三、1/12）。 */
 const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
+const DAY_MS = 86_400_000
+const WEEK_DAYS = 7
 export function resetText(iso: string | undefined, now: number, short = false): string {
   const t = iso ? Date.parse(iso) : NaN
   if (!Number.isFinite(t)) return ''
   const d = new Date(t)
   const n = new Date(now)
-  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
-  if (short) return sameDay ? `${time} 重置` : `${d.getMonth() + 1}/${d.getDate()} 重置`
-  return sameDay ? `${time} 重置` : `${d.getMonth() + 1}/${d.getDate()}（${WEEKDAY[d.getDay()]}）${time} 重置`
+  // 比日曆日：兩邊都取當地午夜再相減（四捨五入吸收日光節約的一小時）。
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()) / DAY_MS)
+  const day = days <= 0 ? '' : days === 1 ? '明天' : days < WEEK_DAYS ? `週${WEEKDAY[d.getDay()]}` : `${d.getMonth() + 1}/${d.getDate()}`
+  if (short) return day || '今天'
+  return `${day ? `${day} ` : ''}${hhmm(t)} 重置`
 }
 
 /** 剩餘量的顏色：40% 以下提醒、20% 以下警示。 */
@@ -138,25 +141,37 @@ const LIMIT_NAME: Record<string, string> = { five_hour: '5 小時', seven_day: '
 type Part = { text: string; color: string; bold?: boolean }
 const partsWidth = (parts: Part[]) => parts.reduce((n, p) => n + displayWidth(p.text), 0)
 
-/** header 右側的額度：放得下就附重置時間，否則只有偏低的附，再不行只剩百分比。 */
+/** 放不下時依序退一級：本週只留星期 → 本週不寫重置 → 5 小時也不寫重置 → 拿掉名稱。 */
+type QuotaLevel = { week: 'full' | 'day' | 'none'; five: boolean; named: boolean }
+const QUOTA_LEVELS: QuotaLevel[] = [
+  { week: 'full', five: true, named: true },
+  { week: 'day', five: true, named: true },
+  { week: 'none', five: true, named: true },
+  { week: 'none', five: false, named: true },
+  { week: 'none', five: false, named: false },
+]
+
+/** header 右側的額度：「5 小時（22:30 重置）剩 78%  本週（週三 09:00 重置）剩 31%」，放不下就照 QUOTA_LEVELS 縮。 */
 export function limitParts(s: Snapshot, now: number, room: number): Part[] {
   const limits = (s.limits ?? []).filter(l => LIMIT_NAME[l.kind])
   if (!limits.length) return [{ text: '額度尚無資料', color: COLOR.faint }]
-  const one = (l: { kind: string; remaining: number; resetsAt?: string }, reset: 'all' | 'low' | 'none', named: boolean): Part[] => {
+  const one = (l: { kind: string; remaining: number; resetsAt?: string }, lv: QuotaLevel): Part[] => {
     const left = Math.max(0, Math.min(100, Math.round(l.remaining)))
-    const r = reset === 'all' || (reset === 'low' && left <= 40) ? resetText(l.resetsAt, now, true) : ''
+    const reset = l.kind === 'seven_day'
+      ? (lv.week === 'none' ? '' : resetText(l.resetsAt, now, lv.week === 'day'))
+      : (lv.five ? resetText(l.resetsAt, now) : '')
     return [
-      ...(named ? [{ text: `${LIMIT_NAME[l.kind]} `, color: COLOR.dim }] : []),
-      { text: `剩 ${left}%`, color: remainColor(left), bold: left <= 40 },
-      ...(r ? [{ text: `（${r}）`, color: COLOR.faint }] : []),
+      ...(lv.named ? [{ text: LIMIT_NAME[l.kind]!, color: COLOR.dim }] : []),
+      ...(lv.named && reset ? [{ text: `（${reset}）`, color: COLOR.faint }] : []),
+      { text: `${lv.named && !reset ? ' ' : ''}剩 ${left}%`, color: remainColor(left), bold: left <= 40 },
     ]
   }
-  const join = (reset: 'all' | 'low' | 'none', named: boolean) => limits.flatMap((l, i) => [...(i ? [{ text: '  ', color: COLOR.faint }] : []), ...one(l, reset, named)])
-  for (const [reset, named] of [['all', true], ['low', true], ['none', true], ['none', false]] as const) {
-    const parts = join(reset, named)
+  const join = (lv: QuotaLevel) => limits.flatMap((l, i) => [...(i ? [{ text: '  ', color: COLOR.faint }] : []), ...one(l, lv)])
+  for (const lv of QUOTA_LEVELS) {
+    const parts = join(lv)
     if (partsWidth(parts) <= room) return parts
   }
-  return join('none', false)
+  return join(QUOTA_LEVELS[QUOTA_LEVELS.length - 1]!)
 }
 
 function line(ui: any, parts: Part[], key?: string) {
@@ -188,9 +203,10 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
   const { Box, Text } = ui
   const s = view.s
   const brand = `${WORD.brand}${s.versions?.desk ? ` ${s.versions.desk}` : ''}${s.project ? ` · ${s.project}` : ''}`
-  const time = `${s.demo ? '示範資料 · ' : s.tutorial ? '教學模式 · ' : ''}${hhmm(s.at)} 更新`
+  const time = `${s.demo ? '示範資料 · ' : s.tutorial ? '教學模式 · ' : ''}${hhmm(s.at)} ${WORD.readAt}`
   const notice = s.update ? `  ${noticeText(s.update.latest)}` : ''
-  const limits = limitParts(s, view.now, width - displayWidth(brand) - displayWidth(notice) - displayWidth(time) - 6)
+  // 時間前固定空 3 格，品牌與額度之間至少留 2 格。
+  const limits = limitParts(s, view.now, width - displayWidth(brand) - displayWidth(notice) - displayWidth(time) - 3 - 2)
   const rows: any[] = [
     <Box flexDirection="row">
       <Text bold color={COLOR.text}>{WORD.brand}</Text>
@@ -287,7 +303,7 @@ function feedRows(ui: any, view: PaneView, focus: Case | null, width: number): a
 const HELP: [string, string][] = [
   ['1–9', '選其他任務（取消選取在「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／審查／同步（按兩次確認）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）'], ['l', 'Agent 輸出'],
-  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新版本', '把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
+  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
   ['● ◉ ◆ ✕ ○ ·', '已過／進行中／等你／卡住／未到／不適用'], ['✓（綠）', '六段全過、已上線，可歸檔'],
 ]
@@ -340,17 +356,29 @@ function statusParts(view: PaneView): Part[] {
   const s = view.s
   const groups: Part[][] = []
   const ctx = s.contextPercent
-  if (typeof ctx === 'number' && ctx >= 50) groups.push([{ text: `上下文 ${ctx}%`, color: ctx >= 70 ? COLOR.bad : COLOR.attention }])
+  if (typeof ctx === 'number' && ctx >= 50) groups.push([{ text: `上下文已用 ${ctx}%`, color: ctx >= 70 ? COLOR.bad : COLOR.attention }])
   const k = s.containers
-  if (k && !k.error && k.total > 0 && !k.down.length && !k.unhealthy.length) groups.push([{ text: '●', color: COLOR.good }, { text: ` 容器 ${k.total}`, color: COLOR.dim }])
+  if (k && !k.error && k.total > 0 && !k.down.length && !k.unhealthy.length) groups.push([{ text: '●', color: COLOR.good }, { text: ` 容器 ${k.running}/${k.total} 執行中`, color: COLOR.dim }])
   const m = s.models
-  if (m?.session) groups.push([{ text: modelLabel(m.session), color: COLOR.dim, bold: true }, ...(m.effort ? [{ text: ` ${m.effort}`, color: COLOR.faint }] : [])])
+  if (m?.session) groups.push([{ text: '本對話 ', color: COLOR.faint }, { text: modelLabel(m.session), color: COLOR.dim, bold: true }, ...(m.effort ? [{ text: ` ${m.effort}`, color: COLOR.faint }] : [])])
   if (m?.dispatch?.model) groups.push([{ text: `派工 ${m.dispatch.model}${m.dispatch.effort ? ` ${m.dispatch.effort}` : ''}`, color: COLOR.faint }])
   if (m?.sync?.model) groups.push([{ text: `同步 ${m.sync.model}${m.sync.effort ? ` ${m.sync.effort}` : ''}${m.sync.fresh ? '・新對話' : ''}`, color: COLOR.faint }])
   const v = s.versions
   if (v?.live) groups.push([{ text: `線上 ${v.live}`, color: COLOR.dim }])
   if (v?.dev) groups.push([{ text: `開發中 ${v.dev}`, color: COLOR.running }])
   return groups.flatMap((g, i) => (i ? [{ text: ' · ', color: COLOR.faint }, ...g] : g))
+}
+
+/**
+ * footer 的版本格，跟著狀態列走、不多佔一列：有新版「⇡ 更新到 x」、沒查過「⇡ 檢查並更新」（都只用點的，不綁快捷鍵，免得誤按就更新）；
+ * 已是最新只是淡字（要重查用 /desk update），更新中也只是字。
+ */
+function updateSlot(s: Snapshot, act: PaneActions): Action {
+  const state = s.versionState ?? (s.update ? 'newer' : 'unknown')
+  if (state === 'updating') return button({ key: 'update-status', label: `◐ ${WORD.updating}`, color: COLOR.running })
+  if (state === 'latest') return button({ key: 'update-status', label: `✓ ${WORD.upToDate}`, color: COLOR.faint })
+  if (state === 'newer' && s.update) return button({ key: 'update', label: `⇡ ${WORD.updateTo} ${s.update.latest}`, onPress: act.update })
+  return button({ key: 'update', label: `⇡ ${WORD.checkUpdate}`, isDim: true, onPress: act.update })
 }
 
 function actionNode(ui: any, a: Action) {
@@ -373,8 +401,7 @@ function footerRows(ui: any, view: PaneView, act: PaneActions, width: number, fo
     { key: 'more', hotkey: 'm', label: view.showAll ? '▴ 精簡動作' : '⋯ 更多動作', isDim: true, onPress: act.more, width: 0 },
     { key: 'help', hotkey: 'i', label: view.isHelp ? '▴ 收起說明' : '? 說明', isDim: true, onPress: act.help, width: 0 },
   ].map(a => ({ ...a, width: displayWidth(a.label) + 3 }))
-  // 更新版本不綁快捷鍵：只用點的（或 Tab 移到它再按 Enter），免得誤按就更新。跟著狀態列走，不多佔一列。
-  const upd: Action = { key: 'update', label: `⇡ ${WORD.update}`, isDim: !view.s.update, onPress: act.update, width: displayWidth(WORD.update) + 2 }
+  const upd = updateSlot(view.s, act)
   // 還沒有任務、也還沒有登錄表：動作列只有建立空登錄表這一個主要動作。
   const create = view.s.missingRegistry ? [button({ key: 'create-registry', hotkey: 'n', isBoxed: true, label: `＋ ${WORD.createRegistry}`, onPress: act.createRegistry })] : []
   const mine = focus && view.s.cases.length ? caseActions(view, focus, act) : create

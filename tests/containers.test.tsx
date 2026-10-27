@@ -36,7 +36,7 @@ test('container trouble shows in the header; all running is one mark in the foot
   data.compose = [svc('app'), svc('mysql')].join('\n')
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   ui = await $.ui.mount(PANE(80))
-  expect(await ui.find({ type: 'Text', text: ' 容器 2' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' 容器 2/2 執行中' })).toBeDefined()
   await ui.unmount()
   data.compose = null
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
