@@ -12,6 +12,7 @@ import type { ContentWindow } from './layout'
 import { button, caseActions, nowCardRows, picksKey, shortCommand } from './pane-card'
 import { noticeText } from './update'
 import type { Action } from './pane-card'
+import { KIND_LABEL } from './dispatch'
 import type { DispatchKind } from './dispatch'
 
 export { picksKey, shortCommand }
@@ -362,6 +363,7 @@ function statusParts(view: PaneView): Part[] {
   const m = s.models
   if (m?.session) groups.push([{ text: '本對話 ', color: COLOR.faint }, { text: modelLabel(m.session), color: COLOR.dim, bold: true }, ...(m.effort ? [{ text: ` ${m.effort}`, color: COLOR.faint }] : [])])
   if (m?.dispatch?.model) groups.push([{ text: `派工 ${m.dispatch.model}${m.dispatch.effort ? ` ${m.dispatch.effort}` : ''}`, color: COLOR.faint }])
+  for (const k of m?.kinds ?? []) groups.push([{ text: `${KIND_LABEL[k.kind as DispatchKind] ?? k.kind} ${[k.model, k.effort].filter(Boolean).join(' ')}`, color: COLOR.faint }])
   if (m?.sync?.model) groups.push([{ text: `同步 ${m.sync.model}${m.sync.effort ? ` ${m.sync.effort}` : ''}${m.sync.fresh ? '・新對話' : ''}`, color: COLOR.faint }])
   const v = s.versions
   if (v?.live) groups.push([{ text: `線上 ${v.live}`, color: COLOR.dim }])

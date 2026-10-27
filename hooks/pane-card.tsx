@@ -61,10 +61,10 @@ export const canShip = (c: Case) => c.pipeline?.current === 'ship' && !!c.tag &&
 /** 只有 desk 派出去、正在跑的那個才能從面板停止。 */
 const canStop = (c: Case) => (c.state === 'running' || c.state === 'approve') && !!c.agent?.id && /^desk-/.test(c.agent.name)
 
-/** 確認文字裡的模型：同步用同步模型，其他用派工模型。 */
+/** 確認文字裡的模型：同步用同步模型，kinds 有設的用那一種的，其他用派工模型。 */
 function modelText(view: PaneView, k: DispatchKind): string {
   const m = view.s.models
-  const pick = k === 'sync' && m?.sync?.model ? m.sync : m?.dispatch
+  const pick = k === 'sync' && m?.sync?.model ? m.sync : m?.kinds?.find(e => e.kind === k) ?? m?.dispatch
   return pick?.model ? `${pick.model}${pick.effort ? ` · ${pick.effort}` : ''}` : '預設模型'
 }
 

@@ -194,7 +194,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
 
-不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`sync`、`user`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
@@ -203,6 +203,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
   "model": "opus",
   "effort": "high",
   "sync": { "claude": { "model": "haiku" }, "session": "fresh" },
+  "kinds": { "review": { "effort": "xhigh" }, "publish": { "model": "haiku", "effort": "low" } },
   "projects": { "~/code/shop-worktrees/order-export": { "effort": "xhigh", "rules": ["只改 api/ 底下"] } },
   "user": "Alex",
   "rules": ["測試只能用 make test，不要自己起資料庫"],
@@ -229,6 +230,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 |---|---|
 | `model`／`effort`、`projects.<根目錄>` | 派工用的模型與 effort，任務可以覆寫 |
 | `sync` | 同步用的模型；`session: fresh` 每次開新對話 |
+| `kinds.<種類>` | 依派工種類各設 `model`／`effort`，可設 `continue`（繼續與修正輪）、`reply`（回覆）、`review`（審查與資安審查）、`publish`（推送）；只寫其中一個的，另一個沿用任務覆寫或全域。優先順序：種類 > 任務覆寫 > 全域；同步仍用 `sync`。面板狀態列在「派工」後列出跟派工不同的種類 |
 | `user` | 寫進提示詞與卡片的人名（預設「使用者」） |
 | `rules`、`projects.<根目錄>.rules` | 每次派工都附上的專案規則 |
 | `review.high`／`security`／`categories` | 審查分級說明、資安審查範圍、類別範例 |

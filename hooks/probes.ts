@@ -4,7 +4,7 @@ import type { PluginOptions } from 'claude-code'
 import type { Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
 import { lastMeaningful, plain } from './model'
-import { REVIEW_FILE, SECURITY_FILE, markOf, modelFor, parseSettings } from './dispatch'
+import { MODEL_KINDS, REVIEW_FILE, SECURITY_FILE, markOf, modelFor, parseSettings } from './dispatch'
 import type { DispatchSettings, WorktreeMark } from './dispatch'
 import { READ_TOOL, ciOf, mcpJson, pickPr, prQuery, repoOf, statusQuery } from './bitbucket'
 import type { Repo } from './bitbucket'
@@ -357,14 +357,18 @@ export async function versions($: any, cases: Case[]): Promise<Snapshot['version
   return { ...(deskVersion ? { desk: deskVersion } : {}), ...(live ? { live } : {}), ...(dev ? { dev } : {}) }
 }
 
-/** 這個對話的模型（/model 顯示的那個）與最近一次請求的 effort；派工與同步用的模型與 effort。 */
+/** 這個對話的模型（/model 顯示的那個）與最近一次請求的 effort；派工與同步用的模型與 effort；kinds 只列跟派工不同的種類。 */
 export async function models($: any, options: PluginOptions, turnModel: { model?: string; effort?: string }): Promise<Snapshot['models']> {
   const session = turnModel.model || String((await $.session.model().catch(() => '')) ?? '')
   const settings = await loadSettings($, options)
   const sync = modelFor(settings, '', 'sync')
+  const kinds = MODEL_KINDS.map(kind => ({ kind, ...settings.kinds[kind] }))
+    .filter(k => (k.model !== undefined && k.model !== settings.model) || (k.effort !== undefined && k.effort !== settings.effort))
+    .map(k => ({ kind: k.kind, model: k.model ?? settings.model, effort: k.effort ?? settings.effort }))
   return {
     ...(session ? { session } : {}), ...(turnModel.effort ? { effort: turnModel.effort } : {}),
     dispatch: { model: settings.model, effort: settings.effort },
+    ...(kinds.length ? { kinds } : {}),
     sync: { model: settings.sync.model, effort: settings.sync.effort || (settings.sync.model ? '' : settings.effort), fresh: sync.fresh },
   }
 }
