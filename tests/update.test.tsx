@@ -391,6 +391,25 @@ test('a reload rejected after the new version already loaded neither prefills no
   await ui.unmount()
 })
 
+/** 這次載入的 desk 沒記到自己的載入次數（session.start 沒跑），session 裡卻已有載入記錄：分不出新版有沒有載入，寧可照樣預填提示，不靜默 */
+test('a refused reload still prefills when this load was never counted', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.reloadable = false
+  data.refuseAfterNewLoad = true
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  await openDesk($, clock)
+  const ui = await $.ui.mount(PANE(100))
+
+  await ui.press({ key: 'update' })
+  await clock.settle()
+
+  expect(data.toasts).toContain(UPDATED)
+  expect(data.fills).toEqual([{ text: '/reload-plugins', mode: 'replace' }])
+  expect(data.toasts).toContain(RELOAD_FILLED)
+  expect((await ui.findAll({ type: 'Text' })).some((n: any) => /沒能自動重新載入：已填入/.test(n.text) && n.props?.color === 'warning')).toBe(true)
+  await ui.unmount()
+})
+
 test('no reload when the update is already current, refused or failed', async ($, on) => {
   const { data, clock } = fixture(on)
   world(data, { kind: 'github', installed: '0.18.0', latest: '0.18.0' })
