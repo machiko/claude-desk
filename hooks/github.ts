@@ -13,7 +13,7 @@ export function githubRepoOf(remote: string): GhRepo | null {
 }
 
 export function ghPrArgs(r: GhRepo, branch: string): string[] {
-  return ['gh', ...GH_READ, '--repo', `${r.owner}/${r.repo}`, '--head', branch, '--state', 'all', '--limit', '5', '--json', 'number,state,baseRefName,url,headRepositoryOwner,statusCheckRollup']
+  return ['gh', ...GH_READ, '--repo', `${r.owner}/${r.repo}`, '--head', branch, '--state', 'all', '--limit', '5', '--json', 'number,state,baseRefName,url,headRefOid,headRepositoryOwner,statusCheckRollup']
 }
 
 const FAIL = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
@@ -43,5 +43,6 @@ export function pickGhPr(data: unknown, owner = ''): PrInfo | null {
   return {
     id: p.number, state, ci: state === 'OPEN' ? ghCiOf(p.statusCheckRollup) : 'none',
     ...(typeof p.baseRefName === 'string' ? { dest: p.baseRefName } : {}), ...(typeof p.url === 'string' ? { url: p.url } : {}),
+    ...(typeof p.headRefOid === 'string' && p.headRefOid ? { head: p.headRefOid } : {}),
   }
 }

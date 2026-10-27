@@ -5,7 +5,7 @@ import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable } from './dispatch'
 import { awaitsSpecOk, canArchive, isMerged, stageParts } from './pipeline'
-import { gitLine, isArmed } from './extras'
+import { gitLine, isArmed, mergedAtHead } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
@@ -166,7 +166,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end" color={COLOR.good}>{`已合併到 ${c.mergedInto!.replace(/^origin\//, '')}（git）`}</Text></Box>)
   }
   if (c.status) rows.push(...(view.isExpanded ? kvRows(ui, '狀態', c.status, width, true, COLOR.dim) : kvRows(ui, '狀態', c.statusShort ?? compactStatus(c.status), width, false, COLOR.text, 1)))
-  if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState)}`, width, false, COLOR.dim, 1))
+  if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState, mergedAtHead(c))}`, width, false, COLOR.dim, 1))
   // 面板外有新的變更、卡片沒跟著寫：提示同步（新對話只讀卡片與 git，把五欄寫回）。
   if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}前）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))

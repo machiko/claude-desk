@@ -20,7 +20,7 @@ test('the query names the repo and the branch and asks for json', () => {
   expect(args[args.indexOf('--repo') + 1]).toBe('acme/shop')
   expect(args[args.indexOf('--head') + 1]).toBe('feature/a')
   expect(args[args.indexOf('--state') + 1]).toBe('all')
-  expect(args[args.indexOf('--json') + 1]).toBe('number,state,baseRefName,url,headRepositoryOwner,statusCheckRollup')
+  expect(args[args.indexOf('--json') + 1]).toBe('number,state,baseRefName,url,headRefOid,headRepositoryOwner,statusCheckRollup')
 })
 
 test('open wins; closed reads as declined; ci only for open', () => {
@@ -55,4 +55,14 @@ test('a PR from someone else\'s fork with the same branch name is not ours', () 
   expect(pickGhPr([fork, mine], 'acme')?.id).toBe(4)
   expect(pickGhPr([fork], 'acme')).toBeNull()
   expect(ghPrArgs({ owner: 'acme', repo: 'shop' }, 'main').join(' ')).toContain('headRepositoryOwner')
+})
+
+/** 合併時 PR 的 head（headRefOid）帶出來，用來判斷合併後分支上有沒有新 commit */
+test('the PR head commit comes along when gh reports it', () => {
+  const merged = { number: 3, state: 'MERGED', baseRefName: 'main', headRefOid: 'abc123def456abc123def456abc123def456abcd', statusCheckRollup: [] }
+
+  const pr = pickGhPr([merged])
+
+  expect(pr?.head).toBe('abc123def456abc123def456abc123def456abcd')
+  expect('head' in pickGhPr([{ ...merged, headRefOid: '' }])!).toBe(false)
 })
