@@ -29,3 +29,14 @@ test('results: open wins, ci rolls up', () => {
   expect(ciOf(['SUCCESSFUL'])).toBe('pass')
   expect(ciOf([])).toBe('none')
 })
+
+/** 合併時 PR 的 head（source.commit.hash，Bitbucket 給 12 碼）帶出來 */
+test('the PR head commit comes along when bitbucket reports it', () => {
+  const r = (v: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(v) }], isError: false })
+
+  const pr = pickPr(mcpJson(r([{ id: 7, state: 'MERGED', dest: 'main', head: 'abc123def456' }])))
+
+  expect(prQuery({ workspace: 'w', repo: 'r' }, 'feature/a').jq).toContain('head: source.commit.hash')
+  expect(pr).toEqual({ id: 7, state: 'MERGED', dest: 'main', head: 'abc123def456' })
+  expect('head' in pickPr(mcpJson(r([{ id: 7, state: 'MERGED', head: null }])))!).toBe(false)
+})

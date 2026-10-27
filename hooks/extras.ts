@@ -1,4 +1,5 @@
 // 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態。不碰磁碟。
+import type { Case } from '../types'
 import { plain, screenLines } from './model'
 
 /** 二次確認：同一個動作 3 秒內按第二次才執行。 */
@@ -63,7 +64,7 @@ export function reviewTop(text: string | null, n = 3): string[] {
 }
 
 /** `git status --porcelain=v2 --branch`：領先、落後、未提交、未追蹤，以及有沒有遠端分支（upstream）。 */
-export type GitState = { ahead: number; behind: number; changed: number; untracked: number; /** false：分支從沒 push 過。沒填（舊資料）當作有。 */ upstream?: boolean }
+export type GitState = { ahead: number; behind: number; changed: number; untracked: number; /** false：origin 上沒有這個分支（從沒 push 過，或合併後遠端分支被刪、fetch --prune 過）。沒填（舊資料）當作有。 */ upstream?: boolean }
 export function parseGitStatus(text: string): GitState {
   const st: GitState = { ahead: 0, behind: 0, changed: 0, untracked: 0, upstream: false }
   for (const l of String(text ?? '').split(/\r?\n/)) {
@@ -75,7 +76,16 @@ export function parseGitStatus(text: string): GitState {
   }
   return st
 }
-/** merged：已合併的分支沒有 upstream 多半是遠端分支被自動刪除，不算未 push。 */
+/**
+ * PR 已合併、PR 的 head 就是現在的 HEAD：沒有 upstream 是合併後遠端分支被自動刪掉，分支上沒有沒推的 commit。
+ * 合併後又 commit（head 不同）、PR 沒帶 head、沒有 PR（git 判斷的合併不會刪遠端分支）都不算。Bitbucket 的 head 是 12 碼短 sha，比前綴。
+ */
+export function mergedAtHead(c: Pick<Case, 'git' | 'pr'>): boolean {
+  const head = c.git?.head ?? ''
+  const prHead = c.pr?.state === 'MERGED' ? c.pr.head ?? '' : ''
+  return !!head && !!prHead && (head.startsWith(prHead) || prHead.startsWith(head))
+}
+/** merged：見 mergedAtHead；成立時沒有 upstream 不算未 push。 */
 export function gitLine(g: GitState, merged = false): string {
   const noUpstream = merged ? '已合併，遠端分支已刪除' : '未 push（沒有遠端分支）'
   const parts = [g.upstream === false ? noUpstream : '', g.ahead ? `領先 ${g.ahead}` : '', g.behind ? `落後 ${g.behind}` : '', g.changed ? `未提交 ${g.changed} 檔` : '', g.untracked ? `未追蹤 ${g.untracked} 檔` : ''].filter(Boolean)

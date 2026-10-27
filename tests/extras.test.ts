@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, reminderWhen, reviewTop, parseGitStatus, gitLine } from '../hooks/extras'
+import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, reminderWhen, reviewTop, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
 
 test('confirm fires only on a second press of the same action within 3 seconds', () => {
   const a = confirmStep(null, 'x\ncontinue', 1000)
@@ -51,4 +51,19 @@ test('gitLine reports a deleted remote branch only when merged and without upstr
   expect(gitLine({ ahead: 0, behind: 0, changed: 0, untracked: 0, upstream: true }, true)).toBe('與遠端一致、無未提交變更')
   expect(gitLine({ ...noUpstream, changed: 0 }, false)).toBe('未 push（沒有遠端分支）')
   expect(gitLine(noUpstream)).toBe('未 push（沒有遠端分支） · 未提交 1 檔')
+})
+
+/** AC-5：只有「PR 已合併、PR 的 head 就是現在的 HEAD」才算遠端分支被合併刪掉；合併後又 commit、沒有 head、git 判斷合併都不算 */
+test('mergedAtHead only trusts a merged PR whose head is the current HEAD', () => {
+  const git = { branch: 'feature/b', head: 'c2c2c2c2c2c2c2c2c2c2' }
+  const pr = { id: 12, state: 'MERGED' as const, ci: 'none' as const, head: 'c2c2c2c2c2c2c2c2c2c2' }
+  const byGit = { git, mergedInto: 'origin/main' }
+
+  expect(mergedAtHead({ git, pr })).toBe(true)
+  expect(mergedAtHead({ git, pr: { ...pr, head: 'c2c2c2c2c2c2' } })).toBe(true)
+  expect(mergedAtHead({ git, pr: { ...pr, head: 'c1c1c1c1c1c1c1c1c1c1' } })).toBe(false)
+  expect(mergedAtHead({ git, pr: { id: 12, state: 'MERGED', ci: 'none' } })).toBe(false)
+  expect(mergedAtHead(byGit)).toBe(false)
+  expect(mergedAtHead({ git, pr: { ...pr, state: 'OPEN' } })).toBe(false)
+  expect(mergedAtHead({ pr })).toBe(false)
 })

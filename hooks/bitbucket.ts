@@ -16,7 +16,7 @@ export function prQuery(r: Repo, branch: string) {
   return {
     path: `/repositories/${r.workspace}/${r.repo}/pullrequests`,
     queryParams: { q: `source.branch.name="${safe}" AND (state="OPEN" OR state="MERGED" OR state="DECLINED")`, sort: '-updated_on', pagelen: '3' },
-    jq: 'values[*].{id: id, state: state, dest: destination.branch.name, url: links.html.href}',
+    jq: 'values[*].{id: id, state: state, dest: destination.branch.name, url: links.html.href, head: source.commit.hash}',
     outputFormat: 'json' as const,
   }
 }
@@ -38,7 +38,7 @@ export function pickPr(data: unknown): Omit<PrInfo, 'ci'> | null {
   const prs = list.filter((x: any) => typeof x?.id === 'number' && typeof x?.state === 'string')
   const open = prs.find((x: any) => x.state === 'OPEN')
   const p: any = open ?? prs[0]
-  return p ? { id: p.id, state: p.state, ...(typeof p.dest === 'string' ? { dest: p.dest } : {}), ...(typeof p.url === 'string' ? { url: p.url } : {}) } : null
+  return p ? { id: p.id, state: p.state, ...(typeof p.dest === 'string' ? { dest: p.dest } : {}), ...(typeof p.url === 'string' ? { url: p.url } : {}), ...(typeof p.head === 'string' && p.head ? { head: p.head } : {}) } : null
 }
 
 /** 建置狀態：有任何 FAILED／STOPPED 就紅；有 INPROGRESS 就跑中；全部 SUCCESSFUL 才綠；一筆都沒有算 none。 */
