@@ -96,14 +96,14 @@ const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped &&
 
 /**
  * 上線段該做的事與做完之後：還沒打 tag 就按「⚑ 發版」把發版請求填進輸入框（關卡是 release 的打了 tag 接著部署、按 u，否則歸檔）；
- * tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。教學模式沒有發版按鈕，照舊叫你打 tag。
+ * tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。沒有發版按鈕的（教學模式、發版線）照舊叫你打 tag。
  * 面板合併後的下一步與部署步驟列「全部做完後：」也用這一句。
  */
 export function shipTurn(c: Case, tutorial = false): Turn {
   const release = parseGate(c.gate)?.kind === 'release'
   if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, key: 'u' }
   if (c.tag) return { who: 'you', text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
-  if (tutorial) return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
+  if (tutorial || !canRelease(c)) return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
   // 不帶鍵：帶頭的是「⚑ 發版」（沒有快捷鍵）。
   return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}` }
 }

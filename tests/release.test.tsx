@@ -172,3 +172,31 @@ test('no release button once tagged, before merge, in the tutorial or on sample 
   expect(stageActions(demo).has('release')).toBe(false)
   expect(hasRelease(demo)).toBe(false)
 })
+
+/** AC-6（D-03）：發版線（release/* 分支本身）走到上線段、沒打 tag，不是「已合併待發版」的卡：沒有發版鍵、不列進請求，輪到你照舊叫你打 tag。 */
+test('a release line gets no release button and is not listed in the request', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
+  data.files[CARD_C] = '<!-- DESK -->\n- 狀態：v1.4 發版線\n- 檢查：`npm test`\n- 等你：無\n- 下一步：打 tag 發版\n- 關卡：無\n<!-- /DESK -->'
+  data.git[GAMMA] = { branch: 'release/v1.4', head: 'c1', remote: GITHUB }
+  data.store.verifies = { [CARD_C]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c1' } }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+
+  // 發版線：輪到你照舊叫你打 tag，沒有發版鍵（展開全部動作也沒有）
+  if (await ui.find({ key: `row-${CARD_C}` })) await ui.press({ key: `row-${CARD_C}` })
+  expect(JSON.stringify(await ui.drawn())).toContain('打 tag 發版')
+  expect(await texts(ui, LEAD)).toBe(0)
+  expect(await ui.find({ key: `case-${CARD_C}-release` })).toBeUndefined()
+  await ui.press({ key: 'more' })
+  expect(await ui.find({ key: `case-${CARD_C}-release` })).toBeUndefined()
+  await ui.press({ key: 'more' })
+
+  // Beta 的發版請求只列 Beta
+  await ui.press({ key: `row-${CARD_B}` })
+  await ui.press({ key: KEY })
+  await clock.settle()
+  expect(data.fills).toEqual([{ text: '發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程，先提版號給我確認', mode: 'replace' }])
+  await ui.unmount()
+})

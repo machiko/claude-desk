@@ -42,8 +42,11 @@ export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate
 /** 可以從面板歸檔：六段全過（finalState 已排除 Agent 在跑、等你），不是發版線，也不是示範任務。教學模式由呼叫端另外排除。 */
 export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo && c.state === 'done' && !isReleaseLine(c)
 
-/** 可以從面板按「⚑ 發版」：走到上線段、還沒有 tag 包含它，也不是示範任務。教學模式由呼叫端另外排除（教學照舊按 t 打 tag）。 */
-export const canRelease = (c: Pick<Case, 'demo' | 'pipeline' | 'tag'>) => !c.demo && c.pipeline?.current === 'ship' && !c.tag
+/**
+ * 可以從面板按「⚑ 發版」：走到上線段、還沒有 tag 包含它，也不是示範任務。教學模式由呼叫端另外排除（教學照舊按 t 打 tag）。
+ * 發版線（release/* 分支本身）不算：它不是「已合併待發版」的卡，打 tag 就是它自己的上線。
+ */
+export const canRelease = (c: Pick<Case, 'demo' | 'pipeline' | 'tag' | 'git'>) => !c.demo && c.pipeline?.current === 'ship' && !c.tag && !isReleaseLine(c)
 
 /**
  * 記下的 HEAD 之後分支有沒有新 commit。0.21.1 以前存的是分支名稱（gitProbe 讀錯），那種紀錄沒有 commit 可比，當作沒有。
