@@ -13,11 +13,11 @@ test('header and footer stay while only the content scrolls, and the footer says
   const ui = await $.ui.mount(PANE(72, 'inline', 16))
   await ui.press({ key: 'help' }) // 說明讓 content 變長
   expect(rowsOf(await ui.drawn())).toBeLessThanOrEqual(16)
-  expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^現在 · / })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /↓\d+$/ })).toBeDefined()
 
   await scrollBy($, 100)
-  expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^現在 · / })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: / ↑\d+$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ' 9.9.9' })).toBeDefined() // header 還在
   expect(await ui.find({ key: 'more' })).toBeDefined() // footer 還在（r 收進「更多動作」，改看 m）
@@ -25,7 +25,7 @@ test('header and footer stay while only the content scrolls, and the footer says
   expect(rowsOf(await ui.drawn())).toBeLessThanOrEqual(16)
 
   await scrollBy($, -100)
-  expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^現在 · / })).toBeDefined()
   await ui.unmount()
 })
 
@@ -35,7 +35,7 @@ test('a pane that fits draws whole with no scroll hint, and scrolling does nothi
   const ui = await $.ui.mount(PANE(72, 'inline', 60))
   expect(await ui.find({ type: 'Text', text: /[↑↓]\d+$/ })).toBeUndefined()
   await scrollBy($, 5)
-  expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^現在 · / })).toBeDefined()
   await ui.unmount()
 })
 
@@ -61,10 +61,10 @@ test('cancelling the selection scrolls the content back to the top', async ($, o
   expect(await ui.find({ type: 'Text', text: /^Beta$/ })).toBeDefined()
   await ui.press({ key: 'help' })
   await scrollBy($, 100)
-  expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^現在 · / })).toBeUndefined()
   await ui.press({ key: 'more' })
   await ui.press({ key: 'deselect' })
-  expect(await ui.find({ type: 'Text', text: /^現在$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^現在 · / })).toBeDefined()
   await ui.unmount()
 })
 

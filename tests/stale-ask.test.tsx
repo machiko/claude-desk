@@ -9,7 +9,7 @@ const BETA = '/home/u/wt/beta'
 const GAMMA = '/home/u/wt/gamma'
 const PREFIX = `case-${CARD_B}-`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'
-const flat = (x: string) => x.replace(/\s+/g, '')
+const flat = (x: string) => x.replace(/\s+|▎/g, '') // ▎ 是現在卡每列的狀態邊條，換行處會插進句子
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 11:38 派出、停在提問的那個；13:58 又派了一次，已做完。 */

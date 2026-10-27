@@ -7,12 +7,14 @@ test('the now card shows the case that needs a person; the list holds the rest w
   const ui = await $.ui.mount(PANE(72))
   expect(await ui.find({ type: 'Text', text: /^Alpha$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /要 push 嗎？/ })).toBeDefined()
+  // 清單列出全部任務（含現在卡的 Alpha），數字鍵依完整清單編號。
+  expect((await ui.find({ key: `row-${CARD_A}` }))?.props?.hotkey).toBe('1')
   const beta = await ui.find({ key: '/home/u/wt/beta/.desk/CARD.md'.replace(/^/, 'row-') })
   expect(beta?.text).toContain('Beta')
   expect(beta?.text.replace(/\s+/g, '')).toContain('●◉○○○○')
-  expect(beta?.props?.hotkey).toBe('1')
+  expect(beta?.props?.hotkey).toBe('2')
   const gamma = await ui.find({ key: 'row-/home/u/wt/gamma/.desk/CARD.md' })
-  expect(gamma?.props?.hotkey).toBe('2')
+  expect(gamma?.props?.hotkey).toBe('3')
   expect(data.toasts.length).toBe(0)
   await ui.unmount()
 })
@@ -130,7 +132,9 @@ test('pane: clicking the auto-picked now card does nothing', async ($, on) => {
   expect(before.band.startsWith('● Alpha')).toBe(true)
   // 工作桌自己挑的 Alpha：標題只是文字，沒有按鈕可按，也沒有取消選取。
   await expect(ui.press({ key: `case-${CARD_A}-name` })).rejects.toThrow()
-  expect((await ui.findAll({ type: 'Button' })).some((b: any) => String(b.text ?? '').includes('Alpha'))).toBe(false)
+  // 清單上的 Alpha 那列是它唯一的按鈕；自動挑的不標 ▸。
+  expect((await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.text ?? '').includes('Alpha')).map((b: any) => b.key)).toEqual([`row-${CARD_A}`])
+  expect((await ui.find({ key: `row-${CARD_A}` }))?.text).not.toContain('▸')
   expect(await line()).toBe(before.band)
   expect(await line()).not.toContain('已選')
   expect(await pane()).toBe(before.pane)
@@ -255,7 +259,7 @@ test('an ask without options shows its text and offers no fill', async ($, on) =
   // 「▶ 輪到你」那句就是卡片上的原句，任務仍是等你。
   expect(await ui.find({ type: 'Text', text: '▶ 輪到你  ' })).toBeDefined()
   expect(await shows(ui, 'gh auth login', '好了說一聲')).toBe(true)
-  expect(await ui.find({ type: 'Text', text: '  等你' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' 等你 ' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /按選項字母/ })).toBeUndefined()
   expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /填入決策/ })).toBeUndefined()

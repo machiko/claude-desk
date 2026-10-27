@@ -181,6 +181,15 @@ export function ago(t: number | null, now: number): string {
   return `${Math.floor(h / 24)} 天前`
 }
 
+/** 跑了多久：12 秒、4 分 12 秒、1 小時 3 分（一小時以上不寫秒）。 */
+export function elapsedText(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s} 秒`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} 分 ${s % 60} 秒`
+  return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+}
+
 export const hhmm = (t: number) => {
   const d = new Date(t)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`

@@ -159,6 +159,7 @@ test('test_ages_read_as_time_ago', async ($, on) => {
   data.mtimes[CARD_B] = NOW - 30_000
   data.mtimes[CARD_C] = NOW - 2 * 86_400_000
   data.git['/home/u/wt/gamma'] = { branch: 'feature/c', head: 'h3', commitAt: NOW - 3 * 60_000 }
+  data.agents = [] // Agent 在跑的那列改寫已執行多久；這裡看的是「多久前」
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(130))
   // 現在卡 Alpha 20 分鐘前；進度表 Beta 剛剛、Gamma 2 天前。

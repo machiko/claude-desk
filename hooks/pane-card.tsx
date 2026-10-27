@@ -1,8 +1,8 @@
 // 現在卡：一列一個元素（content 會捲動，列數要算得出來），操作按鈕另外列成清單交給常駐的 footer 排。
 import type { Case, Verify } from '../types'
 import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
-import { ago, displayWidth, fit, hhmm, pad, slugOf, summary } from './model'
-import { COLOR, SPINNER, STATE, WORD } from './theme'
+import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary } from './model'
+import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
 import { awaitsSpecOk, canArchive, canRelease, isMerged, parseVerdict, stageParts } from './pipeline'
 import { gitLine, isArmed, mergedAtHead } from './extras'
@@ -25,7 +25,8 @@ const DISPATCH_GLYPH: Record<KeyedKind, string> = { continue: '▶', sync: '↻'
 
 export const KV_LABEL = 8
 const KV_LINES = 2
-const INDENT = 2
+/** 現在卡內容的縮排：左邊的「▎ 」邊條已經佔掉原本的 2 格縮排，內容不再另外縮。 */
+const INDENT = 0
 
 export const picksKey = (c: Case) => `${c.statusPath}\n${c.ask}`
 
@@ -34,16 +35,20 @@ export function turnCtx(view: PaneView, c: Case): TurnCtx {
   return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now }
 }
 
-const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '◐ 處理中', none: '— 沒有待辦' }
+const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '處理中', none: '— 沒有待辦' }
 const TURN_COLOR: Record<Turn['who'], string> = { you: COLOR.attention, ai: COLOR.running, none: COLOR.faint }
 
+/** 現在卡邊條佔的格數：「▎」加一格空白。 */
+const EDGE_WIDTH = 2
+
 /** 現在卡最上方那一句：輪到誰＋該做什麼（寫給人看，不是卡片給 Agent 的下一步）。 */
-/** 輪到誰那一句：最重要的指示，寫不下就換行（接在文字底下對齊），不截斷。 */
-function turnRows(ui: any, t: Turn, width: number): any[] {
+/** 輪到誰那一句：最重要的指示，寫不下就換行（接在文字底下對齊），不截斷。處理中的圖示跟著 tick 轉，Agent 在跑時同列寫已執行多久。 */
+function turnRows(ui: any, t: Turn, width: number, tick: number, elapsed = ''): any[] {
   const { Box, Text } = ui
-  const label = TURN_LABEL[t.who]
+  const label = t.who === 'ai' ? `${SPINNER[tick % SPINNER.length]} ${TURN_LABEL.ai}` : TURN_LABEL[t.who]
   const lead = displayWidth(label) + 2
-  const lines = wrapText(t.text, Math.max(4, width - INDENT - lead))
+  // 已執行多久接在同列文字的開頭，不算進標籤，免得懸掛縮排變寬、把那句擠成好幾列。
+  const lines = wrapText(elapsed ? `已執行 ${elapsed} · ${t.text}` : t.text, Math.max(4, width - INDENT - lead))
   const color = t.who === 'you' ? COLOR.text : COLOR.dim
   return lines.map((line, i) => (
     <Box flexDirection="row" paddingLeft={i ? INDENT + lead : INDENT}>
@@ -129,8 +134,21 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   ]
 }
 
-/** 現在卡的內容列：任務名、六段、PR、狀態、git、審查、部署、決策、Agent、下一步、檢查。 */
+/** 現在卡：每一列最左邊是狀態色的「▎」，一眼分得出現在卡與清單；邊條佔掉原本的縮排，內容寬度與列數不變。 */
 export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act: PaneActions): any[] {
+  const { Box, Text } = ui
+  const color = STATE[c.state].color
+  return nowCardBody(ui, view, c, width - EDGE_WIDTH, act).map(row => (
+    <Box flexDirection="row">
+      <Text color={color}>{EDGE}</Text>
+      <Text> </Text>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">{row}</Box>
+    </Box>
+  ))
+}
+
+/** 現在卡的內容列：任務名、六段、PR、狀態、git、審查、部署、決策、Agent、下一步、檢查。 */
+function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneActions): any[] {
   const { Box, Text, Button } = ui
   const meta = STATE[c.state]
   const spin = c.state === 'running' ? SPINNER[view.tick % SPINNER.length] : meta.glyph
@@ -142,7 +160,8 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   const picks = view.picks[picksKey(c)] ?? {}
   const gate = parseGate(c.gate)
   const prefix = `case-${c.statusPath}-`
-  const tailText = `  ${meta.label}${age ? ` · ${age}` : ''}`
+  // 狀態字是反白徽章：前後各多一格。
+  const tailText = `   ${meta.label} ${age ? ` · ${age}` : ''}`
   const title = <Text bold color={COLOR.text} wrap="truncate-end">{fit(c.name, Math.max(4, width - 2 - displayWidth(tailText)))}</Text>
   // 任務名只是文字：點了不動作。取消選取在「更多動作」裡。
   const rows: any[] = []
@@ -151,14 +170,23 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
     <Box flexDirection="row">
       <Text color={meta.color}>{spin} </Text>
       <Box flexGrow={1} flexShrink={1} overflow="hidden">{title}</Box>
-      <Text color={meta.color} bold>{`  ${meta.label}`}</Text>
+      <Text>{'  '}</Text>
+      <Text color={meta.color} bold inverse>{` ${meta.label} `}</Text>
       {age ? <Text color={COLOR.faint}>{` · ${age}`}</Text> : null}
     </Box>,
   )
-  rows.push(...turnRows(ui, turnOf(c, turnCtx(view, c)), width))
+  const turn = turnOf(c, turnCtx(view, c))
+  // Agent 在跑：「處理中」同列寫已執行多久，下一列是它最後一句輸出（取代下方的 Agent 列，列數不變）。
+  const isWorking = c.state === 'running' && turn.who === 'ai'
+  const elapsed = isWorking && c.agent?.startedAt ? elapsedText(view.now - c.agent.startedAt) : ''
+  const latest = isWorking ? c.agent?.last ?? '' : ''
+  rows.push(...turnRows(ui, turn, width, view.tick, elapsed))
+  if (latest) rows.push(...(view.isExpanded ? wrapText(`└ 最新：${latest}`, width - INDENT) : [fit(`└ 最新：${latest}`, width - INDENT)]).map(line => <Box paddingLeft={INDENT}><Text color={COLOR.dim} wrap="truncate-end">{line}</Text></Box>))
   // 完成的任務：六段全部轉綠，後面接「✓ 完成 <tag>」。六段的備註（例如「可繼續實作」）由上一列的話取代。
   const isDone = c.state === 'done'
-  if (c.pipeline) rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end">{stageParts(c.pipeline, width < 30).map((p, i) => <Text key={`st${i}`} color={isDone ? COLOR.good : STAGE_COLOR[p.status]}>{(i && width >= 30 ? ' ' : '') + p.text}</Text>)}{isDone ? <Text color={COLOR.good} bold>{`   ✓ 完成${c.tag ? ` ${c.tag}` : ''}`}</Text> : null}</Text></Box>)
+  // 執行中：進行中那段在 ◉／◎ 間交替，跟著 tick 動。
+  const pulse = (p: { text: string; status: string }) => c.state === 'running' && p.status === 'active' ? p.text.replace(ACTIVE_PULSE[0]!, ACTIVE_PULSE[view.tick % ACTIVE_PULSE.length]!) : p.text
+  if (c.pipeline) rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end">{stageParts(c.pipeline, width < 30).map((p, i) => <Text key={`st${i}`} color={isDone ? COLOR.good : STAGE_COLOR[p.status]}>{(i && width >= 30 ? ' ' : '') + pulse(p)}</Text>)}{isDone ? <Text color={COLOR.good} bold>{`   ✓ 完成${c.tag ? ` ${c.tag}` : ''}`}</Text> : null}</Text></Box>)
   // 沒有 PR 可看、git 判斷已合併（只在審查過後才算）
   const gitMerged = !c.pr && !!c.mergedInto && c.pipeline?.stages.find(s => s.id === 'merge')?.status === 'done'
   if (c.pr) {
@@ -220,7 +248,7 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.attention} bold>{head}</Text><Text color={COLOR.text}>{(first ?? '').slice(head.length)}</Text></Text></Box>)
     rows.push(...rest.map(line => <Box paddingLeft={INDENT}><Text color={COLOR.text} wrap="truncate-end">{line}</Text></Box>))
   }
-  if (c.state === 'running') rows.push(...kvRows(ui, 'Agent', c.agent?.last || c.next, width, view.isExpanded, COLOR.running))
+  if (c.state === 'running' && !latest) rows.push(...kvRows(ui, 'Agent', c.agent?.last || c.next, width, view.isExpanded, COLOR.running))
   if (view.logsOpen === c.statusPath) {
     const lines = view.logView[c.statusPath] ?? []
     if (!lines.length) rows.push(<Box paddingLeft={INDENT + KV_LABEL}><Text color={COLOR.faint}>讀取中…</Text></Box>)

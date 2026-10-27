@@ -8,7 +8,7 @@ const ROOT = '/home/u/wt/alpha'
 const PREFIX = `case-${CARD_A}-`
 const SID = 'a0000009-0000-4000-8000-000000000000'
 const FOREIGN = '不是上一個 Agent 留下的'
-const flat = (x: string) => x.replace(/\s+/g, '')
+const flat = (x: string) => x.replace(/\s+|▎/g, '') // ▎ 是現在卡每列的狀態邊條，換行處會插進句子
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh').length
 

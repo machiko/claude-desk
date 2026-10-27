@@ -17,7 +17,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   }
   const step = async () => { await clock.advance(2500); await clock.settle() }
   // 輪到你那一句會依欄寬換行：去掉空白後比對，不管斷在哪裡。
-  const flat = (x: string) => x.replace(/\s+/g, '')
+  const flat = (x: string) => x.replace(/\s+|▎/g, '') // ▎ 是現在卡每列的狀態邊條，換行處會插進句子
   const turn = async (ui: any, phrase: string) => {
     const screen = flat(text(await ui.drawn()))
     if (!screen.includes(flat(phrase))) console.log(`找不到「${phrase}」：\n${text(await ui.drawn())}`)

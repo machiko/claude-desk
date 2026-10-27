@@ -2,7 +2,7 @@
 // 只有 content（現在卡、其他任務進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
-import { displayWidth, feedOf, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
+import { displayWidth, elapsedText, feedOf, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
 import { dueReminders, reminderWhen } from './extras'
@@ -242,13 +242,26 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
   return rows
 }
 
-/** 進度表（其他任務）：標題列放六段的字，每列「數字 圖示 任務名 六段 時間」對齊。 */
+/** 選取標記「▸ 」佔的格數：從那一列的任務名扣，六段照樣對齊。 */
+const MARK_WIDTH = 2
+
+/** 清單的時間欄：Agent 在跑的寫「▶ 已跑多久」，其他寫多久前更新。 */
+function ageText(c: Case, now: number): string {
+  return c.state === 'running' && c.agent?.startedAt ? `▶ ${elapsedText(now - c.agent.startedAt)}` : ago(c.updatedAt, now)
+}
+
+/**
+ * 進度表（其他任務）：標題列放六段的字，每列「數字 圖示 任務名 六段 時間」對齊。
+ * 清單列出全部任務（含現在卡那件），數字鍵依完整清單編號，選取前後不變；你選的那件以「▸」開頭並反白。
+ */
 function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: PaneActions, focus: Case | null): any[] {
   const { Box, Text, Button } = ui
-  if (!cases.length) return [section(ui, WORD.others, width), <Text color={COLOR.faint}>{focus ? '其他任務都閒置' : ''}</Text>]
+  if (!cases.length) return [section(ui, WORD.others, width)]
   const narrow = width < NARROW
-  const ages = cases.map(c => ago(c.updatedAt, view.now))
-  const g = gridLayout(cases.map(c => c.name), ages, width)
+  const ages = cases.map(c => ageText(c, view.now))
+  const isPickedRow = (c: Case) => !c.demo && view.selected === c.statusPath
+  // 名稱欄寬把「▸ 」算進去，選中那件的名字不會被標記擠掉。
+  const g = gridLayout(cases.map(c => (isPickedRow(c) ? `▸ ${c.name}` : c.name)), ages, width)
   const heads = (cases.find(c => c.pipeline)?.pipeline?.stages ?? STAGES).map(st => st.label)
   const rows: any[] = []
   // 教學模式的背景是示範任務：標題寫明只能看。
@@ -267,24 +280,32 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
     const hot = n >= 0 && n < 9 ? String(n + 1) : undefined
     const glyph = c.state === 'running' ? SPINNER[view.tick % SPINNER.length] : meta.glyph
     const strip = stageStrip(c)
-    const name = narrow ? fit(c.name, Math.max(4, width - 3 - 2 - 2 - 6)) : pad(fit(c.name, g.nameWidth), g.nameWidth)
+    const isPicked = isPickedRow(c)
+    const mark = isPicked ? MARK_WIDTH : 0
+    const nameRoom = (narrow ? Math.max(4, width - 3 - 2 - 2 - 6) : g.nameWidth) - mark
+    const name = narrow ? fit(c.name, Math.max(2, nameRoom)) : pad(fit(c.name, Math.max(2, nameRoom)), Math.max(2, nameRoom))
     const cells = strip.length
       ? strip.map((p, j) => <Text key={`s${j}`} color={c.state === 'done' ? COLOR.good : STAGE_COLOR[p.status as keyof typeof STAGE_COLOR]}>{narrow ? p.text : (j === strip.length - 1 ? ` ${p.text}` : pad(` ${p.text}`, STAGE_COL))}</Text>)
       : [<Text key="label" color={meta.color}>{narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)}</Text>]
     const age = !narrow && g.ageWidth ? ages[i]! : ''
-    const used = 3 + 2 + (narrow ? displayWidth(name) : g.nameWidth) + 2 + (strip.length ? (narrow ? strip.length : (STAGES.length - 1) * STAGE_COL + 2) : displayWidth(narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)))
-    const line = [
-      <Text key="g" color={meta.color}>{glyph}</Text>, ' ', <Text key="n" color={COLOR.text} bold={c.state === 'ask' || c.state === 'reply' || c.state === 'approve'}>{name}</Text>,
+    const used = 3 + 2 + mark + (narrow ? displayWidth(name) : Math.max(2, nameRoom)) + 2 + (strip.length ? (narrow ? strip.length : (STAGES.length - 1) * STAGE_COL + 2) : displayWidth(narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)))
+    const isRunningAge = c.state === 'running' && !!c.agent?.startedAt
+    const parts = [
+      ...(isPicked ? [<Text key="mark" color={COLOR.text} bold>{'▸ '}</Text>] : []),
+      <Text key="g" color={meta.color}>{glyph}</Text>, ' ', <Text key="n" color={COLOR.text} bold={isPicked || c.state === 'ask' || c.state === 'reply' || c.state === 'approve'}>{name}</Text>,
       <Text key="gap">{'  '}</Text>,
       ...cells,
-      age ? <Text key="age" color={COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null,
+      age ? <Text key="age" color={isRunningAge ? COLOR.running : COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null,
     ]
+    // 你選的那件整列反白：還是一顆按鈕（再按不會換人）。
+    const line = isPicked ? [<Text key="picked" inverse>{parts}</Text>] : parts
     rows.push(c.demo
       // 示範任務：同樣的排版，前面空出數字鍵的位置，沒有按鈕。
       ? <Box key={`demo-${c.statusPath}`} flexDirection="row"><Text>{'   '}</Text>{line}</Box>
       : <Button plain key={`row-${c.statusPath}`} hotkey={hot} dimColor={c.state === 'idle' || c.state === 'nocard'} onPress={() => act.select(c.statusPath)}>{line}</Button>,
     )
-    const note = summary(c)
+    // 現在卡那件的那句話已經在現在卡上，清單只留一列。
+    const note = c === focus ? '' : summary(c)
     if (!narrow && note && (c.state === 'ask' || c.state === 'reply' || c.state === 'approve' || c.state === 'gate' || c.state === 'failed')) rows.push(<Box paddingLeft={5}><Text color={COLOR.dim} wrap="truncate-end">{fit(note, width - 5)}</Text></Box>)
   })
   return rows
@@ -302,7 +323,7 @@ function feedRows(ui: any, view: PaneView, focus: Case | null, width: number): a
 }
 
 const HELP: [string, string][] = [
-  ['1–9', '選其他任務（取消選取在「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
+  ['1–9', '選任務（數字依清單固定，選了不會換號；取消選取在「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／審查／同步（按兩次確認；同步平常收在 m，卡片落後分支時才出現）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）'], ['l', 'Agent 輸出'],
   ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
@@ -326,22 +347,24 @@ function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): 
   const s = view.s
   if (!s.cases.length) return wrapText(s.error ? '' : WORD.empty, width).map(l => <Text color={COLOR.dim} wrap="truncate-end">{l}</Text>)
   const focus = focusOf(view)
-  const others = sorted(s.cases).filter(c => c !== focus)
+  const list = sorted(s.cases)
   const wide = view.columns >= WIDE
+  // 區段標題說出現在卡是誰挑的。
+  const nowLabel = view.selected && focus?.statusPath === view.selected ? WORD.nowPicked : WORD.nowAuto
   const tail = [...feedRows(ui, view, focus, width), ...helpRows(ui, view, act, width)]
   if (!wide) {
     return [
-      label(ui, WORD.now),
+      label(ui, nowLabel),
       ...(focus ? nowCardRows(ui, view, focus, width, act) : []),
       <Text> </Text>,
-      ...gridRows(ui, view, others, width, act, focus),
+      ...gridRows(ui, view, list, width, act, focus),
       ...tail,
     ]
   }
   const listWidth = Math.min(64, Math.floor(width * 0.5))
   const nowWidth = width - listWidth - GUTTER
-  const left = [label(ui, WORD.now), ...(focus ? nowCardRows(ui, view, focus, nowWidth, act) : [])]
-  const right = gridRows(ui, view, others, listWidth, act, focus)
+  const left = [label(ui, nowLabel), ...(focus ? nowCardRows(ui, view, focus, nowWidth, act) : [])]
+  const right = gridRows(ui, view, list, listWidth, act, focus)
   const zipped = Array.from({ length: Math.max(left.length, right.length) }, (_, i) => (
     <Box flexDirection="row">
       <Box width={nowWidth} flexShrink={0} overflow="hidden">{left[i] ?? <Text> </Text>}</Box>

@@ -170,7 +170,7 @@ test('merge and ship turns say what comes after', async ($, on) => {
   data.gh = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
-  const shown = text(await ui.drawn()).replace(/\s+/g, '')
+  const shown = text(await ui.drawn()).replace(/\s+|▎/g, '') // ▎ 是現在卡每列的狀態邊條
   expect(shown).toContain('▶輪到你部署v1後按u確認上線；確認後歸檔')
   expect(shown).toContain('1.phpartisanmigrate全部做完後：部署v1後按u確認上線確認後歸檔')
   await ui.unmount()

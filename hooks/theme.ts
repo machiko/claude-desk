@@ -31,10 +31,15 @@ export const STATE: Record<CaseState, { glyph: string; label: string; color: str
 export const BAND_STATES: CaseState[] = ['ask', 'reply', 'approve', 'gate', 'failed', 'running', 'ready']
 
 export const SPINNER = ['◐', '◓', '◑', '◒']
+/** 現在卡每一列最左邊的狀態色邊條。 */
+export const EDGE = '▎'
+/** 六段裡進行中那段：執行中時在兩個字形間交替，看得出在動。 */
+export const ACTIVE_PULSE = ['◉', '◎']
 
 export const WORD = {
   brand: 'desk',
-  now: '現在',
+  nowPicked: '現在 · 你選的',
+  nowAuto: '現在 · 自動挑選',
   all: '任務',
   others: '其他任務',
   feed: '最近',

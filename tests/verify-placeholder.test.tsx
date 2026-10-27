@@ -9,7 +9,7 @@ const PROSE = '`待 spec 定，先不跑`'
 const MISSING_TURN = '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 const REFUSED = 'Beta：目前無法繼續（卡片尚缺完成檢查，規格未通過）'
 const SPEC = '\n\n## 規格\n\n- 目標：匯出 CSV\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | 有訂單 | 按匯出 | 下載 CSV | `export` |\n\n### 實作計畫\n\n| 檔案 | 改什麼 |\n| --- | --- |\n| `a.ts` | 加匯出 |\n'
-const flat = (x: string) => x.replace(/\s+/g, '')
+const flat = (x: string) => x.replace(/\s+|▎/g, '') // ▎ 是現在卡每列的狀態邊條，換行處會插進句子
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh')
 
