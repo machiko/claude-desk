@@ -342,6 +342,26 @@ test('a successful update reloads plugins once after reporting the new version',
   await ui.unmount()
 })
 
+/** 面板按「⇡ 更新到」成功、外掛重新載入之後，下一則你打的提示照樣附上更新結果；附過一次就不再附。 */
+test('test_update_result_is_attached_to_next_typed_prompt_after_reload', async ($, on) => {
+  const { data, clock } = fixture(on)
+  world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
+  await openDesk($, clock)
+  const ui = await $.ui.mount(PANE(100))
+
+  await ui.press({ key: 'update' })
+  await clock.settle()
+  await ui.unmount()
+  await $.prompt.submit({ text: '更新好了嗎？' } as any)
+  await $.prompt.submit({ text: '再問一次' } as any)
+
+  expect(data.reloads.length).toBe(1)
+  const contexts = data.submitted.slice(-2).map((p: any) => (p.context ?? []).join('\n'))
+  expect(contexts[0]).toContain('面板在對話外做了')
+  expect(contexts[0]).toMatch(new RegExp(`- \\d\\d:\\d\\d ${UPDATED.replace(/[()（）→]/g, '\\$&')}`))
+  expect(contexts[1]).not.toContain(UPDATED)
+})
+
 test('a refused reload prefills /reload-plugins, or asks to type it when the prompt cannot be filled', async ($, on) => {
   const { data, clock } = fixture(on)
   data.reloadable = false

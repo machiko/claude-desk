@@ -53,6 +53,11 @@ export async function notePanelAction($: any, action: PanelAction) {
   await update($, panelActionsAtom, list => [...list, clean].slice(-PANEL_ACTIONS_KEEP))
 }
 
+/** 面板操作的結果（檢查、派工、歸檔…）記給對話：name 是任務名；skip（自動流程派的、教學模式的沙盒）就不記。 */
+export async function tellPanel($: any, at: number, text: string, opts: { name?: string; skip?: boolean } = {}) {
+  if (!opts.skip) await notePanelAction($, { at, text, ...(opts.name ? { name: opts.name } : {}) })
+}
+
 /** 附在提示裡的那一段：對話之前不知道的面板操作，依時間順序一筆一行。 */
 export function panelActionsContext(list: readonly PanelAction[]): string {
   const lines = list.map(a => `- ${hhmm(a.at)} ${a.name ? `「${a.name}」` : ''}${a.text}`)
@@ -144,6 +149,11 @@ export async function confirmed($: any, key: string): Promise<boolean> {
   await update($, armedAtom, () => step.armed)
   if (step.armed) $.clock.after(CONFIRM_MS + 100, () => void update($, armedAtom, a => (a && a.key === key && a.at === step.armed!.at ? null : a)))
   return step.fire
+}
+
+/** 按兩次確認的動作：第二次按（確認時限內）才做。 */
+export async function confirmThen($: any, key: string, then: () => Promise<unknown>) {
+  if (await confirmed($, key)) await then()
 }
 
 

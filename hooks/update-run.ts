@@ -1,7 +1,7 @@
 // desk 更新的執行面：自動檢查新版本（只提示、不安裝）與手動更新（/desk update、面板按鈕）。
 // 查到的結果存 $.store，提示掛在快照上；比版號、找安裝位置這些純邏輯在 update.ts。
 import { atom, read, update } from 'claude-code'
-import { feedPush, notePanelAction } from './desk-io'
+import { feedPush, tellPanel } from './desk-io'
 import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, reloadFilledText, reloadTypeText, updateDesk, versionStateOf } from './update'
 import type { UpdateCheck } from './update'
 
@@ -74,7 +74,7 @@ export async function runUpdate($: any): Promise<string> {
       await showNotice($, check)
     }
     await feedPush($, [{ at: now, text: r.text, tone: r.tone }])
-    await notePanelAction($, { at: now, text: r.text })
+    await tellPanel($, now, r.text)
     $.ui.toast(r.text, { timeoutMs: r.tone === 'success' ? 10_000 : 8000 })
     // 等這個 hook 回完才重新載入：從 /desk update 的 command.run hook 裡直接跑會被宿主拒絕（會卡住它占著的回合）；
     // 也不等它跑完：重新載入排隊到對話閒下來才跑、會重跑 register，updating 旗標與回覆都不能卡在這裡。
