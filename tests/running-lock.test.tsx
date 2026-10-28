@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, NOW, REGISTRY, text, flat } from './fixture'
+import { fixture, BAND, PANE, CARD_A, CARD_B, NOW, REGISTRY, result, text, flat } from './fixture'
 
 const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
@@ -224,6 +224,107 @@ test('test_actions_unlock_after_agent_finishes', async ($, on) => {
       expect((await ui.find({ key: PREFIX + id }))?.text).toBe(LOCKABLE[id].label)
       expect(await lockedText(ui, id)).toBeUndefined()
     }
+    await ui.unmount()
+  }
+})
+
+/** AC-6：卡片停在 release 關卡（state 是 gate）、Agent 在跑：現在卡與摘要列都說處理中，不叫你按已鎖住的 u。 */
+test('test_turn_line_says_processing_while_agent_runs_on_gated_case', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, data.files[CARD_B]!)
+  STAGES.find(s => s.name === 'ship')!.setup(data)
+  data.agents = [RUNNING]
+  const ui = await mount($, clock)
+  const pane = await screen(ui)
+  expect(pane).toContain(flat('處理中'))  // 前面的圖示會轉，不比對字形
+  expect(pane).not.toContain(flat('按 u 確認上線'))
+  const band = await $.ui.mount(BAND(120))
+  const top = flat(text(await band.drawn()))
+  expect(top).toContain(flat('處理中'))
+  expect(top).not.toContain(flat('按 u'))
+  await band.unmount()
+  await ui.unmount()
+})
+
+/** AC-7：排進隊伍後、或停在第一次執行的核准對話框時 Agent 開始跑：輪到它／按「執行」都不跑檢查，提示原因，隊伍接著走。 */
+test('test_queued_or_approved_check_does_not_run_once_agent_started', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, data.files[CARD_B]!)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 等你：.*$/m, '- 等你：無')
+  data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: GITHUB }
+  let finishAlpha = () => {}
+  data.run = (e: any) => e.argv.join(' ') === 'sh -c node test.mjs' ? new Promise(done => { finishAlpha = () => done(result(0, 'ok\n')) }) : Promise.resolve(result(0, 'ok\n'))
+  const ui = await mount($, clock)
+  // Alpha 的檢查在跑；Beta 排進隊伍
+  await ui.press({ key: `row-${CARD_A}` })
+  await ui.press({ key: `case-${CARD_A}-verify` })
+  await clock.settle()
+  await ui.press({ key: `row-${CARD_B}` })
+  await ui.press({ key: `${PREFIX}verify` })
+  await clock.settle()
+  expect(data.toasts.some((t: string) => t.startsWith('Beta：已排隊'))).toBe(true)
+  // 排隊期間 Beta 的 Agent 開始跑，然後 Alpha 跑完
+  data.agents = [RUNNING]
+  finishAlpha()
+  await clock.settle()
+  expect(data.toasts).toContain('Beta：Agent 仍在執行，完成後再檢查')
+  expect(data.processCalls.some((c: any) => c.argv.join(' ') === 'sh -c npm test')).toBe(false)
+  expect(await screen(ui)).not.toContain(flat('排隊中'))
+  await ui.unmount()
+
+  // 核准對話框：問的時候還閒置，回答的這段時間 Agent 開始跑
+  onlyBeta(data, data.files[CARD_B]!)
+  data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: GITHUB }
+  Object.defineProperty(data, 'answer', { configurable: true, get: () => { data.agents = [RUNNING]; return '執行' } })
+  const again = await mount($, clock)
+  await again.press({ key: `${PREFIX}verify` })
+  await clock.settle()
+  expect(data.asks).toHaveLength(1)
+  expect(data.toasts).toContain('Beta：Agent 仍在執行，完成後再檢查')
+  expect(data.processCalls.some((c: any) => c.argv.join(' ') === 'sh -c npm test')).toBe(false)
+  await again.unmount()
+})
+
+/** AC-7：對執行中的任務輸入 /desk verify：不跑檢查，回覆寫原因。 */
+test('test_desk_verify_command_refuses_while_agent_runs', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, data.files[CARD_B]!)
+  data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: GITHUB }
+  data.agents = [RUNNING]
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const out = await $.command.run({ command: 'desk', args: 'verify Beta' } as any)
+  await clock.settle()
+  expect(String((out as any).text)).toBe('Beta：Agent 仍在執行，完成後再檢查')
+  expect(data.processCalls.some((c: any) => c.argv.join(' ') === 'sh -c npm test')).toBe(false)
+  expect(data.asks).toHaveLength(0)
+})
+
+/** AC-8：t、u、歸檔第一次按只看快照、立刻待確認，不問 claude agents；第二次按（真的要做）才查。 */
+test('test_first_press_arms_without_querying_agents', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const base = data.files[CARD_B]!
+  // 動作的副作用：寫檔（上線確認寫卡片、歸檔寫登錄表與歸檔檔）加上跑指令（確認規格跑卡片腳本）。
+  const effects = () => data.writes.length + data.processCalls.length
+  // 每次查 claude agents 當下已經有幾個副作用：看查詢是不是發生在動作之前（動作之後面板重新整理也會查，那不算）。
+  let queries: number[] = []
+  data.exec = (e: any) => { if (e.argv[0] === 'claude' && e.argv[1] === 'agents') queries.push(effects()); return null }
+  for (const stage of STAGES) {
+    onlyBeta(data, base)
+    stage.setup(data)
+    const ui = await mount($, clock)
+    const id = stage.ids.find(x => x !== 'verify')!
+    queries = []
+    await ui.press({ key: PREFIX + id })
+    await clock.settle()
+    expect(queries).toEqual([])
+    expect(String((await ui.find({ key: PREFIX + id }))?.props?.label ?? '')).toContain('再按')
+    const before = effects()
+    await ui.press({ key: PREFIX + id })
+    await clock.settle()
+    // 第二次按：動作之前先查了一次，而且動作真的做了
+    expect(queries[0]).toBe(before)
+    expect(effects()).toBeGreaterThan(before)
     await ui.unmount()
   }
 })

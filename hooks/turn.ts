@@ -142,7 +142,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 處理中：標籤已經說了「不用動手」，這句只講誰在做什麼。
   if (ctx.verifying) return { who: 'ai', text: '完成檢查在跑' }
   if (ctx.queued) return { who: 'ai', text: '完成檢查排隊中' }
-  if (isRunning(c)) return { who: 'ai', text: runningText(c) }
+  // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
+  if (isBusy(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
   const hold = checkHold(c)
