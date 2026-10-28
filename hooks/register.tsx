@@ -27,7 +27,8 @@ import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
-import { sentState } from './turn'
+import { isBusy, sentState } from './turn'
+import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
 import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
@@ -367,6 +368,29 @@ async function togglePane($: any) {
   const pane = ((await $.ui.panes().catch(() => [])) as { id: string; isPlaced: boolean; isShown: boolean }[]).find(p => p.id === PANE)
   if (pane?.isPlaced && pane.isShown) { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}) }
   else await openPane($)
+}
+
+/** 按下時再問一次背景 agent 清單的上限：查不到就照快照，不讓按鈕卡太久。 */
+const PRESS_AGENTS_MS = 10_000
+
+/**
+ * 面板上的檢查、確認規格、上線確認、歸檔按下時才看最新狀態：按鈕可能是 Agent 開始前畫的，
+ * 那件現在執行中或等批准就不動 worktree 與卡片、也不待確認，toast 說明。自動流程的檢查不經過這裡。
+ */
+async function busyRefused($: any, c: Case, doing: string): Promise<boolean> {
+  const latest = (await read($, snapshot))?.cases.find(x => x.statusPath === c.statusPath) ?? c
+  if (!isBusy(latest) && !(await startedSince($, latest))) return false
+  $.ui.toast(`${c.name}：${WORD.busyRefused}${doing}`)
+  return true
+}
+
+/** 快照之後才開始跑的 Agent：下一輪重新整理前快照還不知道，按下時直接問 claude agents。 */
+async function startedSince($: any, c: Case): Promise<boolean> {
+  if (tutorial || c.demo) return false
+  const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: PRESS_AGENTS_MS }).catch(() => null)
+  if (!out || out.exitCode !== 0) return false
+  const agent = agentsByRoot(supersede(rawAgents(out.stdout), lastLaunches(await loadJobs($))).list)[c.root]
+  return !!agent && isBusy({ ...c, agent })
 }
 
 /** 完成檢查：第一次跑某條指令先問；之後同一條直接跑。結果記在 $.store，重開也在。 */
@@ -747,16 +771,16 @@ export const register: Register = (on, options) => {
         return { ...others, [k]: mine[String(index)] === key ? Object.fromEntries(Object.entries(mine).filter(([i]) => i !== String(index))) : { ...mine, [String(index)]: key } }
       }),
       fill: c => void fillDecision($, c),
-      verify: c => void runVerify($, c),
+      verify: c => void (async () => { if (!(await busyRefused($, c, '檢查'))) await runVerify($, c) })(),
       open: c => void openCard($, c),
       dispatch: (c, kind) => void (async () => {
         if (kind === 'reply') return reply($, options, c)
         if (await confirmed($, `${c.statusPath}\n${kind}`)) await dispatch($, options, c, kind)
       })(),
       stop: c => void (async () => { if (await confirmed($, `${c.statusPath}\nstop`)) await stopAgent($, c) })(),
-      ship: c => void (async () => { if (await confirmed($, `${c.statusPath}\nship`)) await confirmShipped($, c) })(),
-      specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && await confirmed($, `${c.statusPath}\nspec-ok`)) await confirmSpec($, options, c) })(),
-      archive: c => void (async () => { if (!tutorial && canArchive(c) && await confirmed($, `${c.statusPath}\narchive`)) await archiveCase($, options, c) })(),
+      ship: c => void (async () => { if (!(await busyRefused($, c, '確認上線')) && await confirmed($, `${c.statusPath}\nship`)) await confirmShipped($, c) })(),
+      specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && !(await busyRefused($, c, '確認規格')) && await confirmed($, `${c.statusPath}\nspec-ok`)) await confirmSpec($, options, c) })(),
+      archive: c => void (async () => { if (!tutorial && canArchive(c) && !(await busyRefused($, c, '歸檔')) && await confirmed($, `${c.statusPath}\narchive`)) await archiveCase($, options, c) })(),
       release: c => void (tutorial ? undefined : fillRelease($, c)),
       tutorial: c => void tutorialAct($, options, c),
       logs: c => void toggleLogs($, c),

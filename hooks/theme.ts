@@ -58,4 +58,8 @@ export const WORD = {
   readAt: '讀取',
   createRegistry: '建立空的登錄表',
   hide: '收起',
+  /** 執行中鎖住的動作：標籤後面接這句，不能按。 */
+  busyLocked: '（執行中，完成後可用）',
+  /** 處理端擋下時的 toast：「<任務名>：Agent 仍在執行，完成後再<動作>」。 */
+  busyRefused: 'Agent 仍在執行，完成後再',
 } as const

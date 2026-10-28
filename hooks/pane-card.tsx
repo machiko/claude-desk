@@ -4,12 +4,12 @@ import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, spli
 import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
-import { awaitsSpecOk, canArchive, canRelease, isMerged, parseVerdict, stageParts } from './pipeline'
+import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
 import { gitLine, isArmed, mergedAtHead } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
-import { cardBehind, needsPr, needsPrConfirm, needsPush, riskyNoPr, sentState, shipTurn, stageActions, turnOf } from './turn'
+import { cardBehind, isBusy, needsPr, needsPrConfirm, needsPush, riskyNoPr, sentState, shipTurn, stageActions, turnOf } from './turn'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
 import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
@@ -65,6 +65,11 @@ export type Action = { key: string; label: string; hotkey?: string; isDim?: bool
 export const canShip = (c: Case) => c.pipeline?.current === 'ship' && !!c.tag && parseGate(c.gate)?.kind === 'release'
 /** 只有 desk 派出去、正在跑的那個才能從面板停止。 */
 const canStop = (c: Case) => (c.state === 'running' || c.state === 'approve') && !!c.agent?.id && /^desk-/.test(c.agent.name)
+/** Agent 不在時的這件：執行中鎖住的確認規格、歸檔照原本的條件判斷要不要列（Agent 在跑時那兩個條件本來就不成立）。 */
+function withoutAgent(c: Case): Case {
+  const { agent: _running, ...rest } = c
+  return c.state === 'running' || c.state === 'approve' ? { ...rest, state: finalState({ ...rest, state: 'ready' }) } : rest
+}
 
 /** 確認文字裡的模型：同步用同步模型；這件有 projects 覆寫就用它實際會用的；其他看 kinds，再來是派工模型。 */
 function modelText(view: PaneView, k: DispatchKind, c: Case): string {
@@ -277,6 +282,10 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   const can = (id: ActionId) => !allowed || allowed.has(id)
   const prefix = `case-${c.statusPath}-`
   const out: Action[] = []
+  // Agent 執行中或等批准：會搶 worktree／卡片的動作只列成淡色文字、寫原因，連 m 展開也按不了。
+  const busy = isBusy(c)
+  const idle = busy ? withoutAgent(c) : c
+  const locked = (id: ActionId, label: string) => out.push(button({ key: prefix + id, label: `${label}${WORD.busyLocked}`, color: COLOR.faint }))
   // 決策送出了、等對話寫回：連 m 展開全部也不給 f，免得重送。
   if (choiceCount(decisions) && can('fill') && ctx.sent !== 'waiting') out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
   if (c.statusPath in view.launching) out.push(button({ key: prefix + 'launching', label: `${SPINNER[view.tick % SPINNER.length]} 派工中`, color: COLOR.running }))
@@ -303,16 +312,20 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   }
   if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
   if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
-  if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} 檢查中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
-  if (canShip(c) && can('ship')) {
+  if (c.verify && can('verify') && busy) locked('verify', `▶ ${WORD.verify}`)
+  else if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} 檢查中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
+  if (canShip(c) && can('ship') && busy) locked('ship', '✓ 上線確認')
+  else if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)
     out.push(button({ key: prefix + 'ship', hotkey: 'u', isBoxed: armed, isLead: armed || leadKey === 'u', label: armed ? '再按 u 確認已上線（清除 release 關卡）' : '✓ 上線確認', onPress: () => act.ship(c) }))
   }
-  if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {
+  if (!view.s.tutorial && busy && awaitsSpecOk(idle) && can('spec-ok')) locked('spec-ok', '✓ 確認規格')
+  else if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nspec-ok`, view.now)
     out.push(button({ key: prefix + 'spec-ok', hotkey: 't', isBoxed: armed || leadKey === 't', isLead: armed || leadKey === 't', isDim: !armed && leadKey !== 't', label: armed ? '再按 t 確認規格' : '✓ 確認規格', onPress: () => act.specOk(c) }))
   }
-  if (!view.s.tutorial && canArchive(c) && can('archive')) {
+  if (!view.s.tutorial && busy && canArchive(idle) && can('archive')) locked('archive', '⌫ 歸檔')
+  else if (!view.s.tutorial && canArchive(c) && can('archive')) {
     const armed = isArmed(view.armed, `${c.statusPath}\narchive`, view.now)
     out.push(button({ key: prefix + 'archive', isBoxed: armed, isLead: armed, isDim: !armed, label: armed ? '再按一次確認歸檔' : '⌫ 歸檔', onPress: () => act.archive(c) }))
   }

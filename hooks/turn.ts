@@ -1,7 +1,7 @@
 // 輪到誰、該做什麼：依六段與任務狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case, SentRecord } from '../types'
-import { approveText, slugOf } from './model'
+import { agentWaits, approvalWait, approveText, slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
@@ -205,6 +205,12 @@ function mergeTurn(c: Case): Turn {
 }
 
 /**
+ * Agent 執行中或等批准：會跟它搶 worktree 或卡片的動作（檢查、確認規格、上線確認、歸檔）都鎖住。
+ * 看 Agent 本身，不只看 state：卡片有關卡或等你時 state 是 gate／ask，Agent 照樣在跑；停著等回覆的不算。
+ */
+export const isBusy = (c: Case) => isRunning(c) || c.state === 'approve' || approvalWait(c.agent) || (!!runningKind(c) && !agentWaits(c.agent))
+
+/**
  * 這一刻該出現的動作：只列現在可以做、而且有意義的。同步只在卡片落後分支時列（ctx.now 判斷）；平常收在「更多動作」（m）。
  * 已經過了的段落不再出現它的鍵（檢查過了沒有 v、審查過了沒有 w）；之後有新 commit，六段會退回去，鍵也會回來。
  * 合併之後只列該段的主動作：沒打 tag 是發版與開卡片，有 release 關卡是上線確認與開卡片，可歸檔只剩歸檔；
@@ -212,7 +218,7 @@ function mergeTurn(c: Case): Turn {
  */
 export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.demo) return new Set()
-  const busy = isRunning(c) || c.state === 'approve'
+  const busy = isBusy(c)
   const merged = isMerged(c) && !busy
   const out = new Set<ActionId>(merged && canArchive(c) ? [] : ['open'])
   const current = c.pipeline?.current ?? null
