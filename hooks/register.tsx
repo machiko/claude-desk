@@ -9,7 +9,7 @@ import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOn
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
-import { renderPane, picksKey } from './pane'
+import { renderPane, picksKey, focusOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
@@ -51,7 +51,8 @@ const armedAtom = atom({ plugin: 'desk', key: 'armed' } as const, null)
 const logsOpenAtom = atom({ plugin: 'desk', key: 'logsOpen' } as const, null)
 const logViewAtom = atom({ plugin: 'desk', key: 'logView' } as const, {})
 const helpAtom = atom({ plugin: 'desk', key: 'isHelp' } as const, false)
-const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, false)
+/** 「更多動作」（m）展開當下現在卡的卡片路徑（沒有現在卡是空字串）；收合是 null。現在卡換人就不算展開。 */
+const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, null)
 /** 最近一次畫面 content 最多能捲到第幾列；捲動 hook 用它夾住位置（模組變數，重載後下一次畫就補上）。 */
 let maxOffset = 0
 
@@ -164,6 +165,7 @@ export async function refresh($: any, options: PluginOptions) {
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
     await update($, snapshot, () => cur)
+    await collapseMoreIfMoved($)
     await feedPush($, fresh)
     for (const e of fresh) if (e.tone === 'warning' || e.tone === 'error') { $.ui.toast(e.text, { timeoutMs: 8000 }); notify($, e.text) }
     const openLogs = await read($, logsOpenAtom)
@@ -357,8 +359,19 @@ async function stop($: any) {
   if (typeof id === 'string' && list.includes(id)) await $.store.set(SESSIONS_KEY, list.filter(x => x !== id))
 }
 
+/** 現在卡換人（選別件、取消選取、自動挑選改了）就收回「更多動作」：換回原本那件也是收合的。 */
+async function collapseMoreIfMoved($: any) {
+  const shownFor = await read($, showAllAtom)
+  if (shownFor === null) return
+  const s = await read($, snapshot)
+  const focus = s ? focusOf({ s, selected: await read($, selected) } as PaneView) : null
+  if (shownFor !== (focus?.statusPath ?? '')) await update($, showAllAtom, () => null)
+}
+
 export async function openPane($: any) {
   await update($, isPaneOpen, () => true)
+  // 重新開啟面板一律從精簡動作開始。
+  await update($, showAllAtom, () => null)
   const opened = await $.ui.open({ id: PANE, title: 'desk', focus: true, closeOnEscape: true, rows: 18, columns: 72 })
   if (opened && opened.isPlaced === false) $.ui.toast(`工作桌面板尚未顯示（${plain(String(opened.reason ?? ''))}）；輸入 /desk 開啟`)
 }
@@ -766,7 +779,7 @@ export const register: Register = (on, options) => {
     const { Text } = ui
     const s = await read($, snapshot)
     if (!s) return <Text color="subtle">{active ? '讀取任務中…' : '此對話未開啟工作桌；輸入 /desk refresh 開啟。'}</Text>
-    const view: PaneView = {
+    const base: PaneView = {
       s, now: await $.clock.now(), columns: Math.max(20, e.props.bodyColumns ?? 80), isFocused: !!e.props.isFocused,
       bodyRows: e.props.scroll?.bodyRows, placement: e.props.placement, offset: await read($, contentOffset),
       selected: await read($, selected), feed: await read($, feedAtom), picks: await read($, picksAtom),
@@ -777,16 +790,20 @@ export const register: Register = (on, options) => {
       logsOpen: await read($, logsOpenAtom),
       logView: await read($, logViewAtom),
       isHelp: await read($, helpAtom),
-      showAll: await read($, showAllAtom),
+      showAll: false,
       sent: await readSent($),
     }
+    // 展開只對展開當下那件有效；舊版存的 true／false 不是路徑，一律當收合。
+    const focusKey = focusOf(base)?.statusPath ?? ''
+    const shownFor = await read($, showAllAtom)
+    const view: PaneView = { ...base, showAll: typeof shownFor === 'string' && shownFor === focusKey }
     const act: PaneActions = {
       // 點已經在現在卡的那件不動作；取消選取只走「更多動作」的 deselect。
       select: path => void (async () => {
         if ((await read($, selected)) === path) return
-        await update($, selected, () => path); await update($, contentOffset, () => 0)
+        await update($, selected, () => path); await update($, contentOffset, () => 0); await collapseMoreIfMoved($)
       })(),
-      deselect: () => void (async () => { await update($, selected, () => null); await update($, contentOffset, () => 0) })(),
+      deselect: () => void (async () => { await update($, selected, () => null); await update($, contentOffset, () => 0); await collapseMoreIfMoved($) })(),
       pick: (c, index, key) => void update($, picksAtom, all => {
         const k = picksKey(c)
         const mine = all[k] ?? {}
@@ -812,7 +829,7 @@ export const register: Register = (on, options) => {
       publishPr: c => void confirmThen($, `${c.statusPath}\nopen-pr`, () => publishPr($, options, c)),
       publishPush: c => void confirmThen($, `${c.statusPath}\npush`, () => publishPush($, options, c)),
       help: () => void update($, helpAtom, v => !v),
-      more: () => void update($, showAllAtom, v => !v),
+      more: () => void update($, showAllAtom, () => view.showAll ? null : focusKey),
       refresh: () => { forcePr = true; void refresh($, options) },
       toggleBand: () => void update($, isBandHidden, v => !v),
       update: () => void runUpdate($),

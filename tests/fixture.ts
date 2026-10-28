@@ -85,6 +85,8 @@ export function fixture(on: any) {
     /** 搭配 reloadable: false：拒絕之前新版其實已經載入了（之後讀到的 desk 載入計數多 1），舊版這邊才收到拒絕。 */
     refuseAfterNewLoad: false,
     newerLoaded: false,
+    /** desk 的 state 還沒寫過之前讀到的值（模擬舊版存下的值）；desk 寫過那個 key 後就不再套用。 */
+    seedState: {} as Record<string, unknown>,
   }
   on('fs.read', (_: any, e: any) => data.unreadable.includes(e.path) ? { deny: 'EACCES' } : data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ version: data.deskVersion }) } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
@@ -173,6 +175,7 @@ export function fixture(on: any) {
   // 新版已載入：新的模組在 session.start 會把載入計數再加 1，這裡讓舊版之後讀到的計數多 1。
   on('state.get', async (_: any, e: any, next: any) => {
     const r = await next(e)
+    if (e?.plugin === 'desk' && e?.key in data.seedState) return { value: { ...r.value, value: data.seedState[e.key] } }
     return data.newerLoaded && e?.plugin === 'desk' && e?.key === 'loads' ? { value: { ...r.value, value: (r.value?.value ?? 0) + 1 } } : r
   })
   on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
