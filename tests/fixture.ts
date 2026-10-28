@@ -175,7 +175,8 @@ export function fixture(on: any) {
   // 新版已載入：新的模組在 session.start 會把載入計數再加 1，這裡讓舊版之後讀到的計數多 1。
   on('state.get', async (_: any, e: any, next: any) => {
     const r = await next(e)
-    if (e?.plugin === 'desk' && e?.key in data.seedState) return { value: { ...r.value, value: data.seedState[e.key] } }
+    // 只在 desk 還沒寫過這個 key（讀不到值）時套用；寫過之後（連 null 也算）就讀真正的值。
+    if (e?.plugin === 'desk' && e?.key in data.seedState && r.value?.value === undefined) return { value: { ...r.value, value: data.seedState[e.key] } }
     return data.newerLoaded && e?.plugin === 'desk' && e?.key === 'loads' ? { value: { ...r.value, value: (r.value?.value ?? 0) + 1 } } : r
   })
   on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })

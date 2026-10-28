@@ -9,7 +9,7 @@ import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOn
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
-import { renderPane, picksKey, focusOf } from './pane'
+import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
@@ -363,9 +363,7 @@ async function stop($: any) {
 async function collapseMoreIfMoved($: any) {
   const shownFor = await read($, showAllAtom)
   if (shownFor === null) return
-  const s = await read($, snapshot)
-  const focus = s ? focusOf({ s, selected: await read($, selected) } as PaneView) : null
-  if (shownFor !== (focus?.statusPath ?? '')) await update($, showAllAtom, () => null)
+  if (shownFor !== moreKeyOf(await read($, snapshot), await read($, selected))) await update($, showAllAtom, () => null)
 }
 
 export async function openPane($: any) {
@@ -794,7 +792,7 @@ export const register: Register = (on, options) => {
       sent: await readSent($),
     }
     // 展開只對展開當下那件有效；舊版存的 true／false 不是路徑，一律當收合。
-    const focusKey = focusOf(base)?.statusPath ?? ''
+    const focusKey = moreKeyOf(base.s, base.selected)
     const shownFor = await read($, showAllAtom)
     const view: PaneView = { ...base, showAll: typeof shownFor === 'string' && shownFor === focusKey }
     const act: PaneActions = {

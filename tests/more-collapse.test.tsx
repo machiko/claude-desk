@@ -140,10 +140,6 @@ test('test_more_actions_stay_open_for_the_same_case', async ($, on) => {
 test('test_legacy_boolean_more_state_reads_as_collapsed', async ($, on) => {
   const { data } = fixture(on)
   data.seedState = { showAllActions: true }
-  on('state.set', (_: any, e: any, next: any) => {
-    if (e?.plugin === 'desk' && e?.key === 'showAllActions') data.seedState = {}
-    return next(e)
-  })
 
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(100))
