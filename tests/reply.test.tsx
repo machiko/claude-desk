@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, NOW, result, text } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, NOW, result, text, flat } from './fixture'
 import { setFields, tutorialPaths } from '../hooks/tutorial'
 
 const BETA = '/home/u/wt/beta'
@@ -7,7 +7,6 @@ const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
 const LAUNCH = 'desk-launch-1'
 const KEY = `case-${CARD_B}-reply`
 const MISMATCH = '卡片狀態不符'
-const flat = (x: string) => x.replace(/\s+/g, '')
 const prompt = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
 
 /** 只留 Beta 一件：工作桌派出去的那次做完後停在提問（blocked、不再 busy）。 */

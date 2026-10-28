@@ -1,11 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 declare const console: { log: (...args: unknown[]) => void }
-import { fixture, BAND, PANE, result, text } from './fixture'
+import { fixture, BAND, PANE, result, text, flat } from './fixture'
 import { setFields, tutorialPaths } from '../hooks/tutorial'
 
 const P = tutorialPaths('/home/u')
 const DEMO_BETA = '/demo/beta/.desk/CARD.md'
-const flat = (x: string) => x.replace(/\s+/g, '')
 
 async function startTutorial($: any, on: any) {
   const { data, clock } = fixture(on)

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, leaves, result, text } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, leaves, result, text, flat } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { stageActions } from '../hooks/turn'
@@ -54,7 +54,6 @@ const find = (ui: any, id: string) => ui.find({ key: `${PREFIX}${id}` })
 const labelOf = (b: any) => b?.text || b?.props?.label
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
 const isLead = (b: any) => b?.props?.variant === 'primary' || leaves(b, 'Text').some((t: any) => t.props?.bold)
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 畫面上這件任務的按鈕。 */

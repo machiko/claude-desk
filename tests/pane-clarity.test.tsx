@@ -1,11 +1,10 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, leaves, result, text } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, leaves, result, text, flat } from './fixture'
 import { limitParts, resetText } from '../hooks/pane'
 import { hhmm } from '../hooks/model'
 
 /** 面板上每段字（巢狀的 Text 併成一段），保留空白，比對完整句子。 */
 const pieces = async (ui: any): Promise<string[]> => leaves(await ui.drawn(), 'Text').map(text)
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat((await pieces(ui)).join(''))
 
 /** NOW 當地日期往後 days 天的 h:m（ISO 字串，跟 session.usage 的 resetsAt 一樣）。 */
@@ -159,6 +158,7 @@ test('test_ages_read_as_time_ago', async ($, on) => {
   data.mtimes[CARD_B] = NOW - 30_000
   data.mtimes[CARD_C] = NOW - 2 * 86_400_000
   data.git['/home/u/wt/gamma'] = { branch: 'feature/c', head: 'h3', commitAt: NOW - 3 * 60_000 }
+  data.agents = [] // Agent 在跑的那列改寫已執行多久；這裡看的是「多久前」
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(130))
   // 現在卡 Alpha 20 分鐘前；進度表 Beta 剛剛、Gamma 2 天前。

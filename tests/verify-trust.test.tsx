@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, REGISTRY, result, leaves, text } from './fixture'
+import { fixture, PANE, CARD_A, REGISTRY, result, leaves, text, flat } from './fixture'
 import { AGENT_STOPPED } from '../hooks/chain'
 
 // 完成檢查的核准：按 g 開始一輪流程時就問；流程停在檢查段時說得出為什麼，排除後按 v 就接著走。
@@ -9,7 +9,6 @@ const CHANGED = '完成檢查的指令改過、還沒經你核准：按 v 看指
 const COMPOSE = { options: { composeDir: '/home/u/app' } }
 const IN_APP = 'docker compose exec -T app php artisan test'
 const svc = (Service: string, State = 'running') => JSON.stringify({ Service, State, Health: '' })
-const flat = (x: string) => x.replace(/\s+/g, '')
 const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh').length
 
 /** 只看 Alpha：卡片沒有待決策、沒有別的 Agent；每次派工都換一個背景 agent，跑到 finish() 才結束。 */

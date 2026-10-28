@@ -3,7 +3,7 @@ import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
 import { shipTurn, stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
-import { fixture, CARD_B, PANE, REGISTRY, text } from './fixture'
+import { fixture, CARD_B, PANE, REGISTRY, flat, text } from './fixture'
 
 const card = (f: { check?: string; ask?: string; next?: string; gate?: string }) =>
   `<!-- DESK -->\n- 狀態：ok\n- 檢查：${f.check ?? '`npm test`'}\n- 等你：${f.ask ?? '無'}\n- 下一步：${f.next ?? '依規格實作'}\n- 關卡：${f.gate ?? '無'}\n<!-- /DESK -->`
@@ -170,7 +170,7 @@ test('merge and ship turns say what comes after', async ($, on) => {
   data.gh = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
-  const shown = text(await ui.drawn()).replace(/\s+/g, '')
+  const shown = flat(text(await ui.drawn()))
   expect(shown).toContain('▶輪到你部署v1後按u確認上線；確認後歸檔')
   expect(shown).toContain('1.phpartisanmigrate全部做完後：部署v1後按u確認上線確認後歸檔')
   await ui.unmount()

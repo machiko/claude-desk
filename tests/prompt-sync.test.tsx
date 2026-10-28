@@ -1,9 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, REGISTRY, NOW, leaves, text } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, REGISTRY, NOW, leaves, text, flat } from './fixture'
 import { touchesDesk } from '../hooks/touch'
 
 const BETA = '/home/u/wt/beta'
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(leaves(await ui.drawn(), 'Text').map(text).join(''))
 const agentReads = (data: any) => data.processCalls.length + data.launches.length
 /** 讓對話的工具呼叫有人回答：Write 寫進假的檔案系統，Bash 什麼都不做。 */

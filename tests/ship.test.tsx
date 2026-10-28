@@ -40,7 +40,7 @@ test('the ship button shows only when a tag holds the commit and the gate is rel
   expect(data.files[CARD_B]).toContain('- 下一步：可歸檔：/desk:card archive beta')
   // 重新整理後：任務變成「完成」，現在卡寫已上線與 ✓ 完成，只能同步
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
-  expect(await ui.find({ type: 'Text', text: '  已上線' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' 已上線 ' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /✓ 完成 v0\.2\.0/ })).toBeDefined()
   expect(await ui.find({ key: `case-${CARD_B}-continue` })).toBeUndefined()
   expect(await ui.find({ key: `case-${CARD_B}-ship` })).toBeUndefined()

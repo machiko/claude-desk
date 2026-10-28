@@ -1,10 +1,9 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, text } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, text, flat } from './fixture'
 import { setFields } from '../hooks/tutorial'
 import { events, feedOf, feedOnDesk, keepFeed } from '../hooks/model'
 import type { Case, FeedEvent } from '../types'
 
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 const ev = (text: string, card?: string, at = NOW): FeedEvent => ({ at, text, tone: 'subtle', ...(card ? { card } : {}) })
 const kase = (statusPath: string) => ({ statusPath }) as Case

@@ -89,12 +89,13 @@ test('band: clicking the now card title keeps it selected', async ($, on) => {
   expect(lead).toContain('已選')
   // 點現在卡的標題：標題只是文字，沒有按鈕可按；Beta 仍是現在卡、仍標「已選」，不會掉回其他任務。
   await expect(pane.press({ key: `case-${CARD_B}-name` })).rejects.toThrow()
-  expect((await pane.findAll({ type: 'Button' })).some((b: any) => String(b.text ?? '').includes('Beta'))).toBe(false)
+  // 清單照舊留著 Beta 那列（以 ▸ 開頭），是 Beta 唯一的按鈕。
+  expect((await pane.findAll({ type: 'Button' })).filter((b: any) => String(b.text ?? '').includes('Beta')).map((b: any) => b.key)).toEqual([`row-${CARD_B}`])
   const still = await line()
   expect(still.slice(0, still.indexOf('● Alpha'))).toContain('Beta')
   expect(still).toContain('已選')
   expect(await pane.find({ type: 'Text', text: /^Beta$/ })).toBeDefined()
-  expect(await pane.find({ key: `row-${CARD_B}` })).toBeUndefined()
+  expect((await pane.find({ key: `row-${CARD_B}` }))?.text.startsWith('▸')).toBe(true)
   await pane.unmount()
   await band.unmount()
 })

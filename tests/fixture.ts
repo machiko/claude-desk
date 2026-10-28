@@ -1,4 +1,5 @@
 import { mock } from 'claude-code/testing'
+import { EDGE } from '../hooks/theme'
 
 export const NOW = Date.parse('2030-01-05T12:00:00Z')
 /** 對話所在的 repo（shop）；它的登錄表與設定在 ~/.claude/handoffs/shop/。 */
@@ -182,3 +183,5 @@ export function fixture(on: any) {
 
 export const leaves = (node: any, type: string): any[] => typeof node === 'string' ? [] : node?.type === type ? [node] : (node?.children ?? []).flatMap((child: any) => leaves(child, type))
 export const text = (node: any): string => typeof node === 'string' ? node : (node?.children ?? []).map(text).join('')
+/** 畫面字串去掉空白與現在卡每列的狀態邊條（換行處會插進句子），用來比對整句。 */
+export const flat = (x: string): string => x.replace(/\s+/g, '').split(EDGE).join('')

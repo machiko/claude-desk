@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, result, text } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, result, text, flat } from './fixture'
 import { appendTo, setFields } from '../hooks/tutorial'
 import { awaitsSpecOk } from '../hooks/pipeline'
 import { stageActions } from '../hooks/turn'
@@ -9,7 +9,6 @@ const KEY = `case-${CARD_B}-spec-ok`
 const SPEC_GATE = '- 關卡：spec：待確認規格（AC-1～AC-2）'
 const CONFIRMED = '規格已確認（AC-1～AC-2），可派實作'
 // 輪到你那一句會依欄寬換行：去掉空白後比對，不管斷在哪裡。
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 const specRuns = (data: any) => data.processCalls.filter((c: any) => c.argv.includes('spec-ok'))
 

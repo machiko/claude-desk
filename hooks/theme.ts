@@ -20,7 +20,8 @@ export const STATE: Record<CaseState, { glyph: string; label: string; color: str
   gate: { glyph: '◆', label: '關卡', color: COLOR.attention, weight: 2 },
   failed: { glyph: '✕', label: '失敗', color: COLOR.bad, weight: 3 },
   running: { glyph: '▶', label: '進行中', color: COLOR.running, weight: 4 },
-  ready: { glyph: '▸', label: '待辦', color: COLOR.text, weight: 5 },
+  /** 圖示不用「▸」：清單上的「▸」只代表你選的那件。 */
+  ready: { glyph: '▷', label: '待辦', color: COLOR.text, weight: 5 },
   /** 六段全部過了（已上線、上線已確認）：排在待辦之後，可歸檔。 */
   done: { glyph: '✓', label: '已上線', color: COLOR.good, weight: 6 },
   idle: { glyph: '○', label: '閒置', color: COLOR.faint, weight: 7 },
@@ -31,10 +32,15 @@ export const STATE: Record<CaseState, { glyph: string; label: string; color: str
 export const BAND_STATES: CaseState[] = ['ask', 'reply', 'approve', 'gate', 'failed', 'running', 'ready']
 
 export const SPINNER = ['◐', '◓', '◑', '◒']
+/** 現在卡每一列最左邊的狀態色邊條。 */
+export const EDGE = '▎'
+/** 六段裡進行中那段：執行中時在兩個字形間交替，看得出在動。 */
+export const ACTIVE_PULSE = ['◉', '◎']
 
 export const WORD = {
   brand: 'desk',
-  now: '現在',
+  nowPicked: '現在 · 你選的',
+  nowAuto: '現在 · 自動挑選',
   all: '任務',
   others: '其他任務',
   feed: '最近',
