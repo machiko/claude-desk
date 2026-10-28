@@ -1,11 +1,10 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, leaves, result, text } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, leaves, result, text, flat } from './fixture'
 import { limitParts, resetText } from '../hooks/pane'
 import { hhmm } from '../hooks/model'
 
 /** 面板上每段字（巢狀的 Text 併成一段），保留空白，比對完整句子。 */
 const pieces = async (ui: any): Promise<string[]> => leaves(await ui.drawn(), 'Text').map(text)
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat((await pieces(ui)).join(''))
 
 /** NOW 當地日期往後 days 天的 h:m（ISO 字串，跟 session.usage 的 resetsAt 一樣）。 */

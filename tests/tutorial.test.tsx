@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, result, text } from './fixture'
+import { fixture, PANE, result, text, flat } from './fixture'
 declare const console: { log: (...args: unknown[]) => void }
 import { setFields, tutorialPaths, TUTORIAL_TAG } from '../hooks/tutorial'
 
@@ -17,7 +17,6 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   }
   const step = async () => { await clock.advance(2500); await clock.settle() }
   // 輪到你那一句會依欄寬換行：去掉空白後比對，不管斷在哪裡。
-  const flat = (x: string) => x.replace(/\s+|▎/g, '') // ▎ 是現在卡每列的狀態邊條，換行處會插進句子
   const turn = async (ui: any, phrase: string) => {
     const screen = flat(text(await ui.drawn()))
     if (!screen.includes(flat(phrase))) console.log(`找不到「${phrase}」：\n${text(await ui.drawn())}`)
@@ -121,7 +120,6 @@ test('choosing C in the tutorial commits the change and the chain goes back to c
     return result(0, '')
   }
   const step = async () => { await clock.advance(2500); await clock.settle() }
-  const flat = (x: string) => x.replace(/\s+/g, '')
   await $.command.run({ command: 'desk', args: 'tutorial' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: KEY('tutorial') })

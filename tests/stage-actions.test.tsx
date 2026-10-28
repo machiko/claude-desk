@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, leaves, text, PANE, CARD_B, NOW, REGISTRY } from './fixture'
+import { fixture, leaves, text, PANE, CARD_B, NOW, REGISTRY, flat } from './fixture'
 import { releasePrompt } from '../hooks/card'
 import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
@@ -17,7 +17,6 @@ const PASS = { command: 'npm test', at: NOW - 60_000, ok: true, exitCode: 0, tai
 
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
 const isLead = (b: any) => b?.props?.variant === 'primary' || leaves(b, 'Text').some((t: any) => t.props?.bold)
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 畫面上這件任務的按鈕（不含決策選項）。 */
 const caseKeys = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => String(b.key ?? '')).filter((k: string) => k.startsWith(PREFIX) && !k.startsWith(`${PREFIX}opt`)).map((k: string) => k.slice(PREFIX.length)).sort()

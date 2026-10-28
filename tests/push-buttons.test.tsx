@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, result, text } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, result, text, flat } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { needsPr, needsPush, stageActions } from '../hooks/turn'
@@ -72,7 +72,6 @@ test('push buttons: an untracked branch already pushed to origin offers no push'
   await ui.unmount()
 })
 
-const flat = (x: string) => x.replace(/\s+|▎/g, '') // ▎ 是現在卡每列的狀態邊條，換行處會插進句子
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 沒設追蹤分支、origin 上有同名分支：git 列照它算（與遠端一致、領先 n），不再說「未 push（沒有遠端分支）」；origin 沒有才說。 */

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, PROJECT_DIR, text } from './fixture'
+import { fixture, PANE, PROJECT_DIR, text, flat } from './fixture'
 import { mergeSettingsText, projectKey, projectOf } from '../hooks/project'
 import { REGISTRY_TEMPLATE } from '../hooks/card'
 import { tutorialPaths } from '../hooks/tutorial'
@@ -9,7 +9,6 @@ const BLOG_REGISTRY = '/home/u/.claude/handoffs/blog/projects-scope.md'
 /** 面板建的與 /desk:card new 建的一樣；兩份模板一致由 skills/card/tests/test_card.py 檢查。 */
 const EMPTY_REGISTRY = REGISTRY_TEMPLATE
 const TUTORIAL = tutorialPaths('/home/u')
-const flat = (x: string) => x.replace(/\s+/g, '')
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 對話換到另一個 repo（blog），它還沒有自己的登錄表。 */
 const inBlog = (data: any) => { data.root = '/home/u/blog'; data.repos['/home/u/blog'] = '/home/u/blog/.git' }

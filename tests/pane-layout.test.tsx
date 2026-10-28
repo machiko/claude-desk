@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, leaves, text } from './fixture'
 import { SPIN_MS } from '../hooks/desk-io'
-import { COLOR, STATE } from '../hooks/theme'
+import { COLOR, EDGE, STATE } from '../hooks/theme'
 import type { CaseState } from '../types'
 
 const ASK = '要 push 嗎？A) 要 B) 等'
@@ -27,7 +27,7 @@ async function listOrder(ui: any): Promise<string[]> {
 
 /** 現在卡的邊條：每列一個「▎」。 */
 async function edges(ui: any): Promise<any[]> {
-  return leaves(await ui.drawn(), 'Text').filter((t: any) => text(t) === '▎')
+  return leaves(await ui.drawn(), 'Text').filter((t: any) => text(t) === EDGE)
 }
 
 /** 現在卡逐列的字（以「▎」分列，去掉邊條後那一格空白）；最後一列之後的清單等不算。 */
@@ -35,7 +35,7 @@ async function cardRows(ui: any): Promise<{ text: string; color?: string }[][]> 
   const out: { text: string; color?: string }[][] = []
   for (const t of leaves(await ui.drawn(), 'Text')) {
     const s = text(t)
-    if (s === '▎') { out.push([]); continue }
+    if (s === EDGE) { out.push([]); continue }
     if (out.length) out[out.length - 1]!.push({ text: s, color: t.props?.color })
   }
   return out.map(row => row.filter((p, i) => !(i === 0 && p.text === ' ')))
