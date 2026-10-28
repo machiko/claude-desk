@@ -46,7 +46,18 @@ export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo &
  * 可以從面板按「⚑ 發版」：走到上線段、還沒有 tag 包含它，也不是示範任務。教學模式由呼叫端另外排除（教學照舊按 t 打 tag）。
  * 發版線（release/* 分支本身）不算：它不是「已合併待發版」的卡，打 tag 就是它自己的上線。
  */
-export const canRelease = (c: Pick<Case, 'demo' | 'pipeline' | 'tag' | 'git'>) => !c.demo && c.pipeline?.current === 'ship' && !c.tag && !isReleaseLine(c)
+export const canRelease = (c: Pick<Case, 'demo' | 'pipeline' | 'tag' | 'git' | 'pr' | 'mergedInto'>) =>
+  !c.demo && c.pipeline?.current === 'ship' && !c.tag && !isReleaseLine(c) && !shipsWith(c)
+
+/**
+ * 合併進發版線（release/…）的功能卡隨那條線發版：回傳發版線的分支名，否則 null。
+ * PR 已合併看 PR 的目標分支；沒有 PR 看 git 判斷併進的分支（去掉 origin/）。發版線本身不算。
+ */
+export function shipsWith(c: Pick<Case, 'git' | 'pr' | 'mergedInto'>): string | null {
+  if (isReleaseLine(c)) return null
+  const into = c.pr ? (c.pr.state === 'MERGED' ? c.pr.dest : undefined) : c.mergedInto?.replace(/^origin\//, '')
+  return into && /^release\//.test(into) ? into : null
+}
 
 /**
  * 記下的 HEAD 之後分支有沒有新 commit。0.21.1 以前存的是分支名稱（gitProbe 讀錯），那種紀錄沒有 commit 可比，當作沒有。
@@ -161,7 +172,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
         if (c.chain?.selfReview && notes.merge) notes.merge += '（自審）'
         break
       case 'ship':
-        set('wait', c.tag ? `${c.tag} 已打，待確認上線` : '待打 tag')
+        if (c.tag) set('wait', `${c.tag} 已打，待確認上線`)
+        else { const line = shipsWith(c); set('wait', line ? `隨 ${line} 發版，待打 tag` : '待打 tag') }
         break
     }
   }

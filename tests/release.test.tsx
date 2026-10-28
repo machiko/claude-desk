@@ -19,7 +19,7 @@ const AFTER_ARCHIVE = '打了 tag 之後歸檔'
 const AFTER_DEPLOY = '打了 tag 之後部署並按 u 確認上線'
 const REQUEST = '發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS
 const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送出'
-const pr = (n: number, state = 'MERGED') => ({ number: n, state, baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
+const pr = (n: number, state = 'MERGED', dest = 'main') => ({ number: n, state, baseRefName: dest, headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
 const isLead = (b: any) => b?.props?.variant === 'primary' || leaves(b, 'Text').some((t: any) => t.props?.bold)
 
@@ -27,14 +27,14 @@ const isLead = (b: any) => b?.props?.variant === 'primary' || leaves(b, 'Text').
  * Alpha 還沒合併（等你決定）；Beta PR #12、Gamma PR #13 已合併、都沒打 tag。
  * gh 依 --head 回各自分支的 PR；所有外部指令（含 git）記在回傳的陣列裡。
  */
-function setup(data: any, gates: { beta?: string; gamma?: string } = {}) {
+function setup(data: any, gates: { beta?: string; gamma?: string } = {}, betaPrs: any[] = [pr(12)]) {
   data.agents = []
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', gates.beta ?? PASSED)
   data.files[CARD_C] = data.files[CARD_C]!.replace('- 關卡：無', gates.gamma ?? PASSED)
   data.git[ALPHA] = { branch: 'feature/a', head: 'a1', remote: GITHUB }
   data.git[BETA] = { branch: 'feature/b', head: 'b1', remote: GITHUB }
   data.git[GAMMA] = { branch: 'feature/c', head: 'c1', remote: GITHUB }
-  const byBranch: Record<string, any[]> = { 'feature/a': [], 'feature/b': [pr(12)], 'feature/c': [pr(13)] }
+  const byBranch: Record<string, any[]> = { 'feature/a': [], 'feature/b': betaPrs, 'feature/c': [pr(13)] }
   const calls: any[] = []
   data.exec = (e: any) => {
     calls.push(e)
@@ -200,4 +200,72 @@ test('a release line gets no release button and is not listed in the request', a
   await clock.settle()
   expect(data.fills).toEqual([{ text: '發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS, mode: 'replace' }])
   await ui.unmount()
+})
+
+const LINE = 'release/v26.2.7'
+const WITH_LINE = `隨 ${LINE} 發版`
+const AFTER_LINE_TAG = '發版線打 tag 後歸檔'
+const ONLY_GAMMA = '發版：已合併待發版 1 件（「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS
+
+/**
+ * 合併進發版線的 Beta：上線段說隨那條線發版、待打 tag，下一步與輪到你同一句；沒有發版鍵（展開全部也沒有）、沒有歸檔，
+ * 從 Gamma 按發版時請求不列它。
+ */
+async function shipsWithLine(ui: any, data: any, clock: any) {
+  expect(await texts(ui, WITH_LINE)).toBe(2)
+  expect(await texts(ui, AFTER_LINE_TAG)).toBe(2)
+  expect(await texts(ui, LEAD)).toBe(0)
+  expect(await ui.find({ key: KEY })).toBeUndefined()
+  expect(await ui.find({ key: `case-${CARD_B}-archive` })).toBeUndefined()
+  await ui.press({ key: 'more' })
+  expect(await ui.find({ key: KEY })).toBeUndefined()
+  expect(await ui.find({ key: `case-${CARD_B}-archive` })).toBeUndefined()
+  await ui.press({ key: 'more' })
+  await ui.press({ key: `row-${CARD_C}` })
+  await ui.press({ key: `case-${CARD_C}-release` })
+  await clock.settle()
+  expect(data.fills).toEqual([{ text: ONLY_GAMMA, mode: 'replace' }])
+}
+
+/** AC-1：PR 合併進 release/v26.2.7、還沒有 tag 包含 HEAD：隨發版線發版，沒有自己的發版鍵。 */
+test('a case merged into a release line ships with that line and gets no release button', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, {}, [pr(12, 'MERGED', LINE)])
+  const ui = await mountBeta($)
+  await shipsWithLine(ui, data, clock)
+  await ui.unmount()
+
+  // 上線段備註
+  const merged = mk('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過', { pr: { id: 12, state: 'MERGED', ci: 'none', dest: LINE } })
+  expect(merged.pipeline?.current).toBe('ship')
+  expect(merged.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
+  expect(turnOf(merged)).toEqual({ who: 'you', text: `${WITH_LINE}；${AFTER_LINE_TAG}` })
+
+  // 關卡是 release 的：做完之後是部署並按 u
+  const gated = mk('release：待上線', { pr: { id: 12, state: 'MERGED', ci: 'none', dest: LINE } })
+  expect(gated.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
+  expect(canRelease(gated)).toBe(false)
+  expect(turnOf(gated).text).toBe(`${WITH_LINE}；發版線打 tag 後部署並按 u 確認上線`)
+  expect(turnOf(gated).key).toBeUndefined()
+  expect(stageActions(gated).has('release')).toBe(false)
+  // 合併進 main 的照舊有發版鍵
+  expect(canRelease(mk('release：待上線'))).toBe(true)
+})
+
+/** AC-2：沒有 PR，git 看到審查過的分支已併進 origin/release/v26.2.7：一樣隨發版線發版。 */
+test('a case merged into a release line through git alone also ships with that line', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, {}, [])
+  data.git[BETA] = { branch: 'feature/b', head: 'g2', remote: GITHUB, releases: `origin/${LINE}`, originHead: 'origin/main', merged: [`origin/${LINE}`], firstParent: 'm2\nm1\n', parents: { m1: 'base0' } }
+  const ui = await mountBeta($)
+  expect(await ui.find({ type: 'Text', text: new RegExp(`已合併到 ${LINE}（git）`) })).toBeDefined()
+  await shipsWithLine(ui, data, clock)
+  await ui.unmount()
+
+  // 上線段備註：分支名去掉 origin/
+  const merged = mk('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過', { pr: undefined, mergedInto: `origin/${LINE}` })
+  expect(merged.pipeline?.current).toBe('ship')
+  expect(merged.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
+  expect(canRelease(merged)).toBe(false)
+  expect(turnOf(merged)).toEqual({ who: 'you', text: `${WITH_LINE}；${AFTER_LINE_TAG}` })
 })

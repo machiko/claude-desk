@@ -459,11 +459,31 @@ def cmd_done(arg, status):
         print(f'  注意：有 {len(dirty)} 個檔未提交，完成檢查與審查只看 commit 過的內容')
 
 
+DEPLOY_STEP = re.compile(r'^\s*(?:\d+[.)、]|[-*])\s+(.*\S)\s*$')
+
+
+def deploy_steps(text):
+    """卡片「## 部署…」段已填的步驟；略過空白編號與 `<…>` 佔位（與 hooks/extras.ts 的 deploySteps 同規則）。"""
+    lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    start = next((i for i, l in enumerate(lines) if re.match(r'##\s*部署', l)), None)
+    if start is None:
+        return []
+    steps = []
+    for l in lines[start + 1:]:
+        if re.match(r'##\s', l):
+            break
+        m = DEPLOY_STEP.match(l)
+        if m and not re.fullmatch(r'<.*>', m.group(1)):
+            steps.append(m.group(1))
+    return steps
+
+
 def cmd_archive(slug):
     _, path, root = resolve(slug)
     os.makedirs(ARCHIVE, exist_ok=True)
     dest = os.path.join(ARCHIVE, f'{slug}-CARD.md')
-    write(dest, read(path))
+    card = read(path)
+    write(dest, card)
     task = os.path.join(root, '.task')
     for f in sorted(os.listdir(task)) if os.path.isdir(task) else []:
         if re.match(r'(REVIEW|SECURITY|PLAN|REPORT|review-.*)\.md$', f):
@@ -484,6 +504,13 @@ def cmd_archive(slug):
         lines.insert(j, note)
     write(REG, '\n'.join(lines))
     print(f'歸檔完成：{dest}（登錄表移除 {len(removed)} 列）')
+    # 部署步驟跟著卡片歸檔：只提醒，不自動搬（隨發版線發版的卡，步驟要在發版線部署時做）。
+    steps = deploy_steps(card)
+    if steps:
+        print(f'部署步驟 {len(steps)} 項：')
+        for i, step in enumerate(steps, 1):
+            print(f'  {i}. {step}')
+        print('請確認已搬到發版線卡片或登錄表「## 提醒」，歸檔後這張卡不會再提醒')
     print('worktree 與分支請自己確認後再刪：')
     print(f'  git -C {MAIN or "<主 repo>"} worktree remove {root}')
 

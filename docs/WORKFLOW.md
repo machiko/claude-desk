@@ -78,8 +78,9 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 
 - 開卡：`/desk:card new <分支> <卡名> [base]`（建 worktree＋DESK 卡＋登錄表列）。
 - 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時不能派實作，只能同步：同步平常收在「更多動作」m 裡）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡，就能按 `g`。審查會逐條對照驗收情境。
-- 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。
+- 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。卡片「## 部署步驟」有已填的步驟時，腳本與面板的完成提示會列出筆數並提醒：步驟跟著卡片歸檔，隨發版線發版的卡要先把步驟搬到發版線卡片或登錄表「## 提醒」（只提醒，不自動搬）。
 - CHANGELOG：每張卡的條目寫在 `changelog.d/<slug>.md`（`- ` 開頭、動詞開頭的條目，沒有標題），Agent 的派工提示也這樣要求；不改 CHANGELOG.md，分支之間才不會搶「## 未發布」。專案的 CHANGELOG 用 Keep a Changelog 時，在專案 dispatch.json 設 `card.changelog.format = "keepachangelog"`，發版合併就改成 `## [Unreleased]`／`## [<版本>] - <日期>` 與 `### Added／Fixed…` 小節（動詞對照見 `/desk:card` 的 changelog 說明）。
+- 合併到發版線：PR 目標（或 git 看到併進的分支）是 `release/*` 的卡，隨那條發版線發版：上線段寫「隨 <發版線> 發版，待打 tag」，沒有自己的「⚑ 發版」，也不列進別張卡的發版請求；發版線打了 tag、tag 包含這張卡的 HEAD 後才能歸檔。
 - 發版：要發的 PR 都合併之後，在面板按「⚑ 發版」（上線段、還沒打 tag 的卡帶頭顯示）把列出所有待發版卡的發版請求填進輸入框，按 Enter 送給對話；對話先提版號，你確認後在主 repo 依序做（面板與背景 Agent 都不打 tag）。每個要你確認的點（版號、打 tag 並 push）對話都寫進要發版那幾張卡的「等你」（`問題：A) … B) …`），「狀態」寫做到哪一步；你在面板按選項字母＋`f` 送出「「任務名」決策：…」，對話收到決策才做下一步，做完把「等你」清成無。下面是 desk 本身的步驟，其他專案把版號檔換成自己的：
   1. 快轉 main 到 origin/main：`git checkout main && git fetch origin && git merge --ff-only origin/main`
   2. `/desk:card changelog <版本>`：把片段合併成 `## <版本>` 段並刪掉片段檔；沒有片段、版本段已存在、片段格式錯都會報錯不改檔
