@@ -66,10 +66,10 @@ test('test_digit_hotkeys_stay_fixed_after_selecting', async ($, on) => {
 
 /**
  * AC-2：選取的那件留在清單原位，該列以「▸」開頭並反白；區段標題寫「現在 · 你選的」。
- * 取消選取後標題改回「現在 · 自動挑選」，清單沒有「▸」。
+ * 取消選取後標題改回「現在 · 自動挑選」，清單沒有「▸」；清單上有待辦任務時也一樣，「▸」只標你選的那件。
  */
 test('test_selected_case_stays_in_list_marked_and_title_says_who_picked', async ($, on) => {
-  fixture(on)
+  const { data } = fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
   const order = await listOrder(ui)
@@ -90,7 +90,31 @@ test('test_selected_case_stays_in_list_marked_and_title_says_who_picked', async 
   expect(await listOrder(ui)).toEqual(order)
   for (const key of order) expect((await ui.find({ key }))?.text).not.toContain('▸')
   await ui.unmount()
+
+  // 清單上有待辦任務：「▸」只代表選取，待辦的圖示不能跟它撞字。
+  data.files[CARD_A] = data.files[CARD_A]!.replace(ASK, '無')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const withReady = await $.ui.mount(PANE(72))
+  const marked = async () => {
+    const out: string[] = []
+    for (const key of await listOrder(withReady)) if ((await withReady.find({ key }))?.text.includes('▸')) out.push(key)
+    return out
+  }
+  expect((await withReady.find({ key: `row-${CARD_A}` }))?.text).toContain(STATE.ready.glyph)
+  expect(await marked()).toEqual([])
+  await pressDigit(withReady, (await digitEntry(withReady, CARD_A))!)
+  expect(await marked()).toEqual([`row-${CARD_A}`])
+  // 「更多動作」上一段已經展開過，還開著就直接按取消選取。
+  if (!(await withReady.find({ key: 'deselect' }))) await withReady.press({ key: 'more' })
+  await withReady.press({ key: 'deselect' })
+  expect(await marked()).toEqual([])
+  await withReady.unmount()
 })
+
+/** 某一件在清單上綁的數字鍵。 */
+async function digitEntry(ui: any, card: string): Promise<string | undefined> {
+  return Object.entries(await digitMap(ui)).find(([, key]) => key === `row-${card}`)?.[0]
+}
 
 /** 讓現在卡落在某個狀態：等你是 Alpha 原樣；關卡、失敗改 Alpha 的卡；執行中讓 Alpha 退成待辦，現在卡換成在跑的 Beta。 */
 const SETUP: Record<'ask' | 'gate' | 'failed' | 'running', (data: any) => void> = {

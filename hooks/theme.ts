@@ -20,7 +20,8 @@ export const STATE: Record<CaseState, { glyph: string; label: string; color: str
   gate: { glyph: '◆', label: '關卡', color: COLOR.attention, weight: 2 },
   failed: { glyph: '✕', label: '失敗', color: COLOR.bad, weight: 3 },
   running: { glyph: '▶', label: '進行中', color: COLOR.running, weight: 4 },
-  ready: { glyph: '▸', label: '待辦', color: COLOR.text, weight: 5 },
+  /** 圖示不用「▸」：清單上的「▸」只代表你選的那件。 */
+  ready: { glyph: '▷', label: '待辦', color: COLOR.text, weight: 5 },
   /** 六段全部過了（已上線、上線已確認）：排在待辦之後，可歸檔。 */
   done: { glyph: '✓', label: '已上線', color: COLOR.good, weight: 6 },
   idle: { glyph: '○', label: '閒置', color: COLOR.faint, weight: 7 },
