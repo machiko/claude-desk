@@ -641,7 +641,8 @@ def cmd_changelog_kac(version):
         lines = lines[:at] + [KAC_UNRELEASED] + lines[at:]
     end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith('## ')), len(lines))
     loose, sections = split_unreleased(lines[at + 1:end])
-    if not fragments and not loose and not sections:
+    # 只有空的 ### 小節標題也算空，不然會發出沒有內容的版本段
+    if not fragments and not loose and not any(body for _, body in sections):
         fail(f'沒有片段檔，{KAC_UNRELEASED} 也是空的，沒有東西可以發版，不改檔')
     section = kac_section(version, loose, sections, fragments)
     merged = trim_blank(lines[:at]) + ['', KAC_UNRELEASED, '', *section, *trim_blank(lines[end:])]
