@@ -95,10 +95,15 @@ const STAGE_COL = 5
 const NAME_MIN = 12
 
 /** 現在卡上的那一件：選取的優先，否則工作桌自己挑。 */
-export function focusOf(view: PaneView): Case | null {
+export function focusOf(view: Pick<PaneView, 's' | 'selected'>): Case | null {
   const picked = view.selected ? view.s.cases.find(c => c.statusPath === view.selected) ?? null : null
   // 教學只有一件：做完了也留在現在卡，讓「教學完成」那句看得到。
   return picked ?? focusCase(view.s.cases) ?? (view.s.tutorial ? view.s.cases[0] ?? null : null)
+}
+
+/** 「更多動作」展開時記下的那件：現在卡的路徑，沒有現在卡是空字串。畫面與換件收回共用這條規則。 */
+export function moreKeyOf(s: PaneView['s'] | null, selected: PaneView['selected']): string {
+  return (s ? focusOf({ s, selected })?.statusPath : undefined) ?? ''
 }
 
 /** 清單上的六段：每段一個圖示，不適用的段落用「·」佔位，讓各列對齊。 */

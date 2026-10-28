@@ -145,8 +145,8 @@ declare module 'claude-code' {
       logView: Record<string, string[]>
       /** 顯示快捷鍵說明。 */
       isHelp: boolean
-      /** footer 展開全部動作（m）。 */
-      showAllActions: boolean
+      /** footer 展開全部動作（m）：展開當下現在卡的卡片路徑（沒有現在卡是空字串），收合是 null。 */
+      showAllActions: string | null
       /** 面板中間 content 捲到第幾列（header 與 footer 常駐不捲）。 */
       contentOffset: number
       /** desk 在這個 session 載入了幾次（含 /reload-plugins）；更新後判斷新版是否已載入。 */

@@ -195,8 +195,9 @@ test('test_running_case_keeps_stop_logs_open_and_other_cases_unlocked', async ($
   expect(data.files[CARD_B]).toBe(card)
   expect(data.toasts.some((t: string) => t.includes('Agent 仍在執行'))).toBe(false)
 
-  // 另一件閒置的任務：檢查照常執行
+  // 另一件閒置的任務：檢查照常執行（換件後「更多動作」收回，重新展開）
   await ui.press({ key: `row-${CARD_A}` })
+  await ui.press({ key: 'more' })
   const verify = await ui.find({ key: `case-${CARD_A}-verify` })
   expect(verify?.type).toBe('Button')
   expect(verify?.props?.hotkey).toBe('v')
@@ -256,11 +257,13 @@ test('test_queued_or_approved_check_does_not_run_once_agent_started', async ($, 
   let finishAlpha = () => {}
   data.run = (e: any) => e.argv.join(' ') === 'sh -c node test.mjs' ? new Promise(done => { finishAlpha = () => done(result(0, 'ok\n')) }) : Promise.resolve(result(0, 'ok\n'))
   const ui = await mount($, clock)
-  // Alpha 的檢查在跑；Beta 排進隊伍
+  // Alpha 的檢查在跑；Beta 排進隊伍（每換一件「更多動作」都收回，重新展開）
   await ui.press({ key: `row-${CARD_A}` })
+  await ui.press({ key: 'more' })
   await ui.press({ key: `case-${CARD_A}-verify` })
   await clock.settle()
   await ui.press({ key: `row-${CARD_B}` })
+  await ui.press({ key: 'more' })
   await ui.press({ key: `${PREFIX}verify` })
   await clock.settle()
   expect(data.toasts.some((t: string) => t.startsWith('Beta：已排隊'))).toBe(true)
