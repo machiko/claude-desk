@@ -6,7 +6,9 @@ import { setFields, tutorialPaths, TUTORIAL_TAG } from '../hooks/tutorial'
 const P = tutorialPaths('/home/u')
 const KEY = (what: string) => `case-${P.card}-${what}`
 
-test('the tutorial walks all six stages with scripted agents, never launches claude, and cleans up', async ($, on) => {
+// 端到端走完六段：單獨跑約 0.8 秒，整套 50 檔並行時實測 2～5.6 秒，預設 5 秒會偶發逾時。
+// 單獨跑超過 2 秒就該查效能，不是再調上限。
+test('the tutorial walks all six stages with scripted agents, never launches claude, and cleans up', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock } = fixture(on)
   data.git[P.wt] = { branch: 'feature/discount', head: 'h0' }
   data.git[P.main] = { branch: 'release/v1.0', head: 'm0' }
