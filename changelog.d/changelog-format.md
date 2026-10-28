@@ -1,1 +1,0 @@
-- 新增 dispatch.json 的 card.changelog.format：設成 "keepachangelog" 時，`/desk:card changelog <版本>` 依 Keep a Changelog 合併片段，`## [Unreleased]` 的手寫內容一起移進 `## [<版本>] - <日期>` 段，條目依動詞分進 Added／Changed／Removed／Fixed／Security 小節，工程專區這類手寫小節原樣保留
