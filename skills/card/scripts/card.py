@@ -17,6 +17,10 @@
   card.py changelog <版本>                      發版：把所在 repo 的 changelog.d/*.md 合併成 CHANGELOG.md 的「## <版本>」段
                                                （插在「## 未發布」之後、上一版之前；條目依 新增→調整→修復→移除、同類依檔名），刪掉片段檔。
                                                沒有片段、版本段已存在、片段有一行不是「- 」開頭都報錯、不改檔。
+                                               card.changelog.format 設 keepachangelog 時改依 Keep a Changelog：
+                                               「## [Unreleased]」的手寫內容與片段一起移進「## [<版本>] - <今天>」段，
+                                               條目依動詞分進 ### Added／Changed／Removed／Fixed／Security，其他手寫小節原樣排最後；
+                                               片段動詞不在對照表、版本段已存在、沒有片段且 [Unreleased] 是空的都報錯、不改檔。
 
 CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree 資料夾名），內容是一行或多行「- 」開頭、
 動詞開頭的條目，沒有標題；不改 CHANGELOG.md，發版時才用 changelog 合併，各分支就不會再搶「## 未發布」。
@@ -33,6 +37,8 @@ CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree �
   card.template   DESK 卡模板（預設 plugin 內附的 templates/DESK-template.md）
   card.archive    歸檔資料夾（預設登錄表旁邊的 archive/）
   card.specRules  寫規格時要額外遵守的專案規則（字串陣列）
+  card.changelog.format  changelog 的格式：不設是「## 未發布」＋扁平條目；"keepachangelog" 依 Keep a Changelog
+                  （動詞對照：新增→Added、調整→Changed、移除→Removed、修復→Fixed、修補→Security）
 """
 import datetime
 import json
@@ -495,12 +501,12 @@ def repo_root():
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else os.getcwd()
 
 
-def read_fragments(frag_dir):
-    """changelog.d 裡的 (檔名, [條目]) 依檔名排序；空檔或有一行不是「- 」開頭就報錯。"""
+def read_fragments(frag_dir, allow_empty=False):
+    """changelog.d 裡的 (檔名, [條目]) 依檔名排序；空檔或有一行不是「- 」開頭就報錯。allow_empty：沒有片段檔回傳空串列。"""
     if not os.path.isdir(frag_dir):
         fail(f'沒有片段檔資料夾 {frag_dir}：每張卡的條目寫在 {FRAGMENT_DIR}/<slug>.md，發版時才合併')
     names = sorted(f for f in os.listdir(frag_dir) if f.endswith('.md') and not f.startswith('.'))
-    if not names:
+    if not names and not allow_empty:
         fail(f'{frag_dir} 裡沒有片段檔（*.md），沒有東西可以發版，不改檔')
     out = []
     for name in names:
@@ -547,7 +553,111 @@ def insert_version(text, version, entries):
     return '\n'.join(merged).rstrip('\n') + '\n'
 
 
+KAC = 'keepachangelog'
+KAC_UNRELEASED = '## [Unreleased]'
+# Keep a Changelog 模式：條目開頭的動詞決定放進哪個小節；小節依這個順序，其他手寫小節排最後。
+KAC_TYPES = (('新增', 'Added'), ('調整', 'Changed'), ('移除', 'Removed'), ('修復', 'Fixed'), ('修補', 'Security'))
+KAC_SECTIONS = tuple(t for _, t in KAC_TYPES)
+
+
+def changelog_format():
+    """card.changelog.format：沒設就是原本的格式（空字串），keepachangelog 走 Keep a Changelog；其他值報錯。"""
+    conf = CFG.get('changelog')
+    fmt = conf.get('format') if isinstance(conf, dict) else None
+    fmt = fmt.strip() if isinstance(fmt, str) else ''
+    if fmt not in ('', KAC):
+        fail(f'dispatch.json 的 card.changelog.format 只能是 "{KAC}" 或不設：{fmt}')
+    return fmt
+
+
+def kac_type(entry):
+    verb = entry[2:].lstrip()
+    return next((t for v, t in KAC_TYPES if verb.startswith(v)), None)
+
+
+def trim_blank(lines):
+    """去掉頭尾的空行。"""
+    lines = list(lines)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
+def split_unreleased(lines):
+    """[Unreleased] 段的內容 → (小節前的散落內容, [(小節名, [內容行])])；同名小節合併，保留第一次出現的順序。"""
+    loose, sections, current = [], {}, None
+    for line in lines:
+        if line.startswith('### '):
+            current = line[4:].strip()
+            sections.setdefault(current, [])
+        elif current is None:
+            loose.append(line)
+        else:
+            sections[current].append(line)
+    return trim_blank(loose), [(name, trim_blank(body)) for name, body in sections.items()]
+
+
+def kac_section(version, loose, sections, fragments):
+    """組「## [版本] - 日期」段：散落內容在最前，Added…Security（手寫在前、片段在後），其他小節原樣排最後。"""
+    hand = dict(sections)
+    from_frags = {t: [e for _, entries in fragments for e in entries if kac_type(e) == t] for t in KAC_SECTIONS}
+    parts = [loose] if loose else []
+    for t in KAC_SECTIONS:
+        body = hand.get(t, []) + from_frags[t]
+        if body:
+            parts.append([f'### {t}', '', *body])
+    parts += [[f'### {name}', '', *body] if body else [f'### {name}'] for name, body in sections if name not in KAC_SECTIONS]
+    out = [f'## [{version}] - {datetime.date.today().isoformat()}', '']
+    for p in parts:
+        out += [*p, '']
+    return out
+
+
+def cmd_changelog_kac(version):
+    """Keep a Changelog：[Unreleased] 的手寫內容與片段一起移進新版本段，[Unreleased] 留空標題。"""
+    if not re.fullmatch(r'v?\d+(\.\d+)+(-[0-9A-Za-z.]+)?', version):
+        fail(f'版本要像 v26.2.7 或 0.27.0：{version or "空白"}')
+    root = repo_root()
+    changelog = os.path.join(root, CHANGELOG)
+    if not os.path.isfile(changelog):
+        fail(f'找不到 {changelog}')
+    text = read(changelog)
+    bare = version.lstrip('v')
+    if re.search(rf'^## \[v?{re.escape(bare)}\]', text, re.M):
+        fail(f'{CHANGELOG} 已存在「## [{version}]」段，不重複合併；要補條目請直接改那一段，片段檔未動')
+    fragments = read_fragments(os.path.join(root, FRAGMENT_DIR), allow_empty=True)
+    unknown = [(name, e) for name, entries in fragments for e in entries if not kac_type(e)]
+    if unknown:
+        verbs = '、'.join(v for v, _ in KAC_TYPES)
+        listed = '\n'.join(f'  {FRAGMENT_DIR}/{name}：{e}' for name, e in unknown)
+        fail(f'這些條目的動詞不在對照表（{verbs}），不知道放哪個小節；未改任何檔：\n{listed}')
+    lines = text.rstrip('\n').split('\n')
+    at = next((i for i, l in enumerate(lines) if l.strip() == KAC_UNRELEASED), None)
+    if at is None:
+        # 沒有 [Unreleased] 就補在第一個 ## 段之前（或檔尾）。
+        at = next((i for i, l in enumerate(lines) if l.startswith('## ')), len(lines))
+        lines = lines[:at] + [KAC_UNRELEASED] + lines[at:]
+    end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith('## ')), len(lines))
+    loose, sections = split_unreleased(lines[at + 1:end])
+    if not fragments and not loose and not sections:
+        fail(f'沒有片段檔，{KAC_UNRELEASED} 也是空的，沒有東西可以發版，不改檔')
+    section = kac_section(version, loose, sections, fragments)
+    merged = trim_blank(lines[:at]) + ['', KAC_UNRELEASED, '', *section, *trim_blank(lines[end:])]
+    write(changelog, '\n'.join(trim_blank(merged)) + '\n')
+    for name, _ in fragments:
+        os.remove(os.path.join(root, FRAGMENT_DIR, name))
+    count = sum(len(entries) for _, entries in fragments)
+    print(f'已把 {KAC_UNRELEASED} 與 {len(fragments)} 個片段檔（{count} 條）合併進 {CHANGELOG} 的「## [{version}]」段，片段檔已刪：')
+    for name, items in fragments:
+        print(f'  {FRAGMENT_DIR}/{name}（{len(items)} 條）')
+    print(f'接著：改版號 → git add {CHANGELOG} {FRAGMENT_DIR} → commit → tag {version}')
+
+
 def cmd_changelog(version):
+    if changelog_format() == KAC:
+        return cmd_changelog_kac(version.strip())
     version = version.strip().lstrip('v')
     if not re.fullmatch(r'\d+(\.\d+)+(-[0-9A-Za-z.]+)?', version):
         fail(f'版本要像 0.27.0（可以帶 v 開頭）：{version or "空白"}')

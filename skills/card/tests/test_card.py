@@ -518,6 +518,106 @@ class ChangelogTest(unittest.TestCase):
         self.assertEqual(self.fragments(), ['a.md', 'bad.md'])
 
 
+KAC_BEFORE = '# Changelog\n\n## [Unreleased]\n\n## [v26.2.6] - 2026-10-22\n\n### Fixed\n\n- 修復 舊的事\n'
+TODAY = datetime.date.today().isoformat()
+
+
+class KeepAChangelogTest(unittest.TestCase):
+    """dispatch.json 設 card.changelog.format = "keepachangelog" 時，`changelog <版本>` 依 Keep a Changelog 合併。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = self.tmp.name
+        git('init', '-q', '-b', 'main', cwd=self.root)
+        self.frag = os.path.join(self.root, 'changelog.d')
+        os.makedirs(self.frag)
+        write(os.path.join(self.frag, '.gitkeep'), '')
+        self.changelog = os.path.join(self.root, 'CHANGELOG.md')
+        write(self.changelog, KAC_BEFORE)
+        self.settings = os.path.join(self.root, 'settings.json')
+        write(self.settings, json.dumps({'card': {'changelog': {'format': 'keepachangelog'}}}))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_changelog(self, version):
+        env = {**os.environ, 'DESK_SETTINGS': self.settings, 'DESK_PROJECT_DIR': ''}
+        return subprocess.run([sys.executable, SCRIPT, 'changelog', version], capture_output=True, text=True, env=env, cwd=self.root)
+
+    def fragments(self):
+        return sorted(f for f in os.listdir(self.frag) if f.endswith('.md'))
+
+    def test_keepachangelog_merges_fragments_into_typed_sections(self):
+        """AC-1：[Unreleased] 留空標題，下方新增版本段，依 Added→Fixed→Security 分小節；片段刪掉、.gitkeep 留著、舊版本段不變。"""
+        write(os.path.join(self.frag, 'a.md'), '- 修補 甲\n- 修復 乙\n')
+        write(os.path.join(self.frag, 'b.md'), '- 新增 丙\n')
+
+        r = self.run_changelog('v26.2.7')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read(self.changelog), (
+            '# Changelog\n\n## [Unreleased]\n\n'
+            f'## [v26.2.7] - {TODAY}\n\n'
+            '### Added\n\n- 新增 丙\n\n'
+            '### Fixed\n\n- 修復 乙\n\n'
+            '### Security\n\n- 修補 甲\n\n'
+            '## [v26.2.6] - 2026-10-22\n\n### Fixed\n\n- 修復 舊的事\n'
+        ))
+        self.assertEqual(self.fragments(), [])
+        self.assertTrue(os.path.isfile(os.path.join(self.frag, '.gitkeep')))
+
+    def test_keepachangelog_moves_unreleased_content_and_keeps_extra_sections(self):
+        """AC-2：[Unreleased] 的手寫內容一起移進版本段：同類併在同一小節（手寫在前），其他小節原樣放最後；[Unreleased] 清空。"""
+        write(self.changelog, KAC_BEFORE.replace(
+            '## [Unreleased]\n\n',
+            '## [Unreleased]\n\n### 工程專區\n\n1. 跑 migration\n2. 清快取\n\n### Fixed\n\n- 修復 手寫的\n\n',
+        ))
+        write(os.path.join(self.frag, 'a.md'), '- 修復 片段的\n- 新增 丙\n')
+
+        r = self.run_changelog('v26.2.7')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(read(self.changelog), (
+            '# Changelog\n\n## [Unreleased]\n\n'
+            f'## [v26.2.7] - {TODAY}\n\n'
+            '### Added\n\n- 新增 丙\n\n'
+            '### Fixed\n\n- 修復 手寫的\n- 修復 片段的\n\n'
+            '### 工程專區\n\n1. 跑 migration\n2. 清快取\n\n'
+            '## [v26.2.6] - 2026-10-22\n\n### Fixed\n\n- 修復 舊的事\n'
+        ))
+        self.assertEqual(self.fragments(), [])
+
+    def test_keepachangelog_refuses_unknown_verb(self):
+        """AC-3：片段條目的動詞不在對照表就報錯並指出檔名與條目，CHANGELOG 與片段檔都不動。"""
+        write(os.path.join(self.frag, 'a.md'), '- 修復 乙\n')
+        write(os.path.join(self.frag, 'odd.md'), '- 優化 載入速度\n')
+
+        r = self.run_changelog('v26.2.7')
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('odd.md', r.stderr)
+        self.assertIn('優化 載入速度', r.stderr)
+        self.assertEqual(read(self.changelog), KAC_BEFORE)
+        self.assertEqual(self.fragments(), ['a.md', 'odd.md'])
+
+    def test_keepachangelog_refuses_existing_version_or_nothing_to_release(self):
+        """AC-4：版本段已存在，或沒有片段且 [Unreleased] 是空的，都報錯、什麼都不改。"""
+        r = self.run_changelog('v26.2.7')
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('沒有', r.stderr)
+        self.assertEqual(read(self.changelog), KAC_BEFORE)
+
+        write(os.path.join(self.frag, 'a.md'), '- 修復 乙\n')
+
+        r = self.run_changelog('v26.2.6')
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('已存在', r.stderr)
+        self.assertEqual(read(self.changelog), KAC_BEFORE)
+        self.assertEqual(self.fragments(), ['a.md'])
+
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 # 發版段的 9 個步驟，依序要出現的關鍵字
 RELEASE_STEPS = [
