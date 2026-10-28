@@ -27,7 +27,8 @@ import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
-import { sentState } from './turn'
+import { isBusy, sentState } from './turn'
+import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, stopSuperseded } from './stale-agents'
 import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
@@ -369,6 +370,44 @@ async function togglePane($: any) {
   else await openPane($)
 }
 
+/** 按下時再問一次背景 agent 清單的上限：查不到就照快照，不讓按鈕卡太久。 */
+const PRESS_AGENTS_MS = 10_000
+
+/**
+ * 面板上的檢查、確認規格、上線確認、歸檔按下時才看最新狀態：按鈕可能是 Agent 開始前畫的，
+ * 那件現在執行中或等批准就不動 worktree 與卡片、也不待確認，toast 說明。自動流程的檢查不經過這裡。
+ */
+async function busyRefused($: any, c: Case, doing: string, live = true): Promise<boolean> {
+  if (!(await busyNow($, c, live))) return false
+  $.ui.toast(`${c.name}：${WORD.busyRefused}${doing}`)
+  return true
+}
+
+/**
+ * 那件現在是不是執行中或等批准：先看最新快照；live 再問一次 claude agents（約 0.7 秒）。
+ * 要按兩次的動作第一次只看快照，免得查詢拖過確認時限；真的要做的那一次才 live。
+ */
+async function busyNow($: any, c: Case, live: boolean): Promise<boolean> {
+  const latest = (await read($, snapshot))?.cases.find(x => x.statusPath === c.statusPath) ?? c
+  if (isBusy(latest)) return true
+  return live && await startedSince($, latest)
+}
+
+/** 按兩次確認的動作：第一次只看快照就待確認，第二次（真的要做）才即時查 Agent。 */
+async function confirmedIdle($: any, c: Case, key: string, doing: string): Promise<boolean> {
+  if (await busyRefused($, c, doing, false)) return false
+  return await confirmed($, `${c.statusPath}\n${key}`) && !(await busyRefused($, c, doing))
+}
+
+/** 快照之後才開始跑的 Agent：下一輪重新整理前快照還不知道，按下時直接問 claude agents。 */
+async function startedSince($: any, c: Case): Promise<boolean> {
+  if (tutorial || c.demo) return false
+  const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: PRESS_AGENTS_MS }).catch(() => null)
+  if (!out || out.exitCode !== 0) return false
+  const agent = agentsByRoot(supersede(rawAgents(out.stdout), lastLaunches(await loadJobs($))).list)[c.root]
+  return !!agent && isBusy({ ...c, agent })
+}
+
 /** 完成檢查：第一次跑某條指令先問；之後同一條直接跑。結果記在 $.store，重開也在。 */
 /** 排隊等著跑的檢查（同一時間只跑一個：測試共用主工作區的容器與資料庫，同時跑會互相干擾）。 */
 const checkQueue: { statusPath: string; auto: boolean }[] = []
@@ -393,6 +432,8 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false): Prom
     const answer = await $.ui.ask(`在 ${c.root} 執行完成檢查：\n${c.verify}\n之後同一條指令不再問，自動流程也會用它。`, { header: `${c.name} 檢查`, options: ['執行', '取消'] }).catch(() => '')
     if (answer !== '執行') return false
     await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
+    // 對話框可能開了很久：回答的這段時間 Agent 開始跑了，就不在它的 worktree 上跑檢查。
+    if (await busyRefused($, c, '檢查')) return false
   }
   // 問完之後再看一次：等你回答的這段時間，它可能已經被排進隊伍或開始跑了。
   if (checking === c.statusPath || (!fromQueue && isQueued(c.statusPath))) return false
@@ -511,7 +552,8 @@ async function nextInQueue($: any) {
   if (!next) return
   const c = (await read($, snapshot))?.cases.find(x => x.statusPath === next.statusPath)
   if (!c) { void nextInQueue($); return }
-  const took = await runVerify($, c, next.auto, true).catch(error => {
+  // 排隊期間這件的 Agent 開始跑了（派工不看隊伍）：不跟它搶 worktree，當成沒接手、換下一件。
+  const took = await busyRefused($, c, '檢查') ? false : await runVerify($, c, next.auto, true).catch(error => {
     $.ui.toast(`${c.name}：排隊的檢查沒跑成（${errorText(error)}）`, { timeoutMs: 10_000 })
     return false
   })
@@ -676,7 +718,12 @@ export const register: Register = (on, options) => {
       // 回覆示範任務要說清楚是示範任務，不只是找不到。
       const c = caseNamed(s, m[2]!) ?? (m[1] === 'reply' ? s?.cases.find(x => x.demo && x.name.includes(m[2]!)) ?? null : null)
       if (!c) return { text: `找不到任務「${m[2]}」。` }
-      if (m[1] === 'verify') { void runVerify($, c); return { text: `${c.name}：完成檢查已開始。` } }
+      if (m[1] === 'verify') {
+        // 跟面板的 v 同一個鎖：Agent 在跑就不在它的 worktree 上跑檢查。
+        if (await busyNow($, c, true)) return { text: `${c.name}：${WORD.busyRefused}檢查` }
+        void runVerify($, c)
+        return { text: `${c.name}：完成檢查已開始。` }
+      }
       if (m[1] === 'open') { await openCard($, c); return { text: `${c.name}：已開啟 ${c.statusPath}` } }
       if (m[1] === 'reply') {
         const why = replyRefusal(c)
@@ -747,16 +794,16 @@ export const register: Register = (on, options) => {
         return { ...others, [k]: mine[String(index)] === key ? Object.fromEntries(Object.entries(mine).filter(([i]) => i !== String(index))) : { ...mine, [String(index)]: key } }
       }),
       fill: c => void fillDecision($, c),
-      verify: c => void runVerify($, c),
+      verify: c => void (async () => { if (!(await busyRefused($, c, '檢查'))) await runVerify($, c) })(),
       open: c => void openCard($, c),
       dispatch: (c, kind) => void (async () => {
         if (kind === 'reply') return reply($, options, c)
         if (await confirmed($, `${c.statusPath}\n${kind}`)) await dispatch($, options, c, kind)
       })(),
       stop: c => void (async () => { if (await confirmed($, `${c.statusPath}\nstop`)) await stopAgent($, c) })(),
-      ship: c => void (async () => { if (await confirmed($, `${c.statusPath}\nship`)) await confirmShipped($, c) })(),
-      specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && await confirmed($, `${c.statusPath}\nspec-ok`)) await confirmSpec($, options, c) })(),
-      archive: c => void (async () => { if (!tutorial && canArchive(c) && await confirmed($, `${c.statusPath}\narchive`)) await archiveCase($, options, c) })(),
+      ship: c => void (async () => { if (await confirmedIdle($, c, 'ship', '確認上線')) await confirmShipped($, c) })(),
+      specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && await confirmedIdle($, c, 'spec-ok', '確認規格')) await confirmSpec($, options, c) })(),
+      archive: c => void (async () => { if (!tutorial && canArchive(c) && await confirmedIdle($, c, 'archive', '歸檔')) await archiveCase($, options, c) })(),
       release: c => void (tutorial ? undefined : fillRelease($, c)),
       tutorial: c => void tutorialAct($, options, c),
       logs: c => void toggleLogs($, c),

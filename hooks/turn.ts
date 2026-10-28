@@ -1,7 +1,7 @@
 // 輪到誰、該做什麼：依六段與任務狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case, SentRecord } from '../types'
-import { approveText, slugOf } from './model'
+import { agentWaits, approvalWait, approveText, slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
@@ -142,7 +142,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 處理中：標籤已經說了「不用動手」，這句只講誰在做什麼。
   if (ctx.verifying) return { who: 'ai', text: '完成檢查在跑' }
   if (ctx.queued) return { who: 'ai', text: '完成檢查排隊中' }
-  if (isRunning(c)) return { who: 'ai', text: runningText(c) }
+  // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
+  if (isBusy(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
   const hold = checkHold(c)
@@ -205,6 +206,12 @@ function mergeTurn(c: Case): Turn {
 }
 
 /**
+ * Agent 執行中或等批准：會跟它搶 worktree 或卡片的動作（檢查、確認規格、上線確認、歸檔）都鎖住。
+ * 看 Agent 本身，不只看 state：卡片有關卡或等你時 state 是 gate／ask，Agent 照樣在跑；停著等回覆的不算。
+ */
+export const isBusy = (c: Case) => isRunning(c) || c.state === 'approve' || approvalWait(c.agent) || (!!runningKind(c) && !agentWaits(c.agent))
+
+/**
  * 這一刻該出現的動作：只列現在可以做、而且有意義的。同步只在卡片落後分支時列（ctx.now 判斷）；平常收在「更多動作」（m）。
  * 已經過了的段落不再出現它的鍵（檢查過了沒有 v、審查過了沒有 w）；之後有新 commit，六段會退回去，鍵也會回來。
  * 合併之後只列該段的主動作：沒打 tag 是發版與開卡片，有 release 關卡是上線確認與開卡片，可歸檔只剩歸檔；
@@ -212,7 +219,7 @@ function mergeTurn(c: Case): Turn {
  */
 export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.demo) return new Set()
-  const busy = isRunning(c) || c.state === 'approve'
+  const busy = isBusy(c)
   const merged = isMerged(c) && !busy
   const out = new Set<ActionId>(merged && canArchive(c) ? [] : ['open'])
   const current = c.pipeline?.current ?? null
