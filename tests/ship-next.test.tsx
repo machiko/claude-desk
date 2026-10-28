@@ -96,3 +96,25 @@ test('after the merge the next step stays the ship step while an Agent runs on t
   expect(await ui.find({ type: 'Text', text: /全部做完後：.*Agent/ })).toBeUndefined()
   await ui.unmount()
 })
+
+/** AC-4：合併進 release/v26.2.7 的卡，發版線打了 v26.2.7、tag 包含它的 HEAD，關卡不是 release：六段全過、可歸檔。 */
+test('a case merged into a release line offers archive once that line is tagged', async ($, on) => {
+  const { data } = fixture(on)
+  only(data, PASSED)
+  data.gh = [{ ...PR_MERGED[0], baseRefName: 'release/v26.2.7' }]
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  let ui = await $.ui.mount(PANE(80))
+  expect(await ui.find({ key: `case-${CARD_B}-archive` })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '隨 release/v26.2.7 發版' })).toBeDefined()
+  await ui.unmount()
+  // 發版線打 tag 之後的下一次重新整理
+  data.git[BETA] = { ...data.git[BETA], tag: 'v26.2.7' }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  ui = await $.ui.mount(PANE(80))
+  // 完成的任務不搶「現在」，點它的列看詳情
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ type: 'Text', text: /✓ 完成 v26\.2\.7/ })).toBeDefined()
+  expect((await ui.find({ key: `case-${CARD_B}-archive` }))?.text).toBe('⌫ 歸檔')
+  expect(await ui.find({ type: 'Text', text: /隨 release\/v26\.2\.7 發版/ })).toBeUndefined()
+  await ui.unmount()
+})

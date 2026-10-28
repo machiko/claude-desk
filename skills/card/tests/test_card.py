@@ -432,6 +432,36 @@ class CardScriptTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(archive, 'order-export-REVIEW.md')))
         self.assertFalse(os.path.exists(os.path.join(archive, 'order-export-notes.md')))
 
+    def test_archive_reminds_filled_deploy_steps(self):
+        """卡片「## 部署步驟」有 2 項已填（另有一項空白 1.）：照常歸檔，印出筆數、逐項列出與搬移提醒。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = os.path.join(self.main + '-worktrees', 'order-export', '.desk', 'CARD.md')
+        text = read(card)
+        self.assertIn('## 部署步驟', text)
+        head = text.index('## 部署步驟')
+        rest = text.index('\n## ', head + 1)
+        write(card, text[:head] + '## 部署步驟（合併後）\n\n1.\n2. php artisan migrate\n3. 重啟 queue worker\n' + text[rest:])
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'order-export-CARD.md')))
+        self.assertNotIn('| 訂單匯出 |', read(self.reg))
+        self.assertIn('部署步驟 2 項', r.stdout)
+        self.assertIn('  1. php artisan migrate\n  2. 重啟 queue worker\n', r.stdout)
+        self.assertIn('請確認已搬到發版線卡片或登錄表「## 提醒」', r.stdout)
+        self.assertIn('worktree remove', r.stdout)
+
+    def test_archive_without_deploy_steps_prints_no_reminder(self):
+        """範本的部署步驟只有空白 1.：照常歸檔，不出現提醒。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('部署步驟', r.stdout)
+        self.assertNotIn('發版線卡片', r.stdout)
+
     def test_unknown_target_lists_cases(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         r = self.run_card('card', 'nope')

@@ -3,7 +3,7 @@
 import type { Case, SentRecord } from '../types'
 import { agentWaits, approvalWait, approveText, slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { idleNext } from './dispatch'
@@ -96,13 +96,17 @@ const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped &&
 
 /**
  * 上線段該做的事與做完之後：還沒打 tag 就按「⚑ 發版」把發版請求填進輸入框（關卡是 release 的打了 tag 接著部署、按 u，否則歸檔）；
- * tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。沒有發版按鈕的（教學模式、發版線）照舊叫你打 tag。
+ * tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。合併進發版線（release/*）的卡隨那條線發版，等它打 tag；
+ * 其他沒有發版按鈕的（教學模式、發版線本身）照舊叫你打 tag。
  * 面板合併後的下一步與部署步驟列「全部做完後：」也用這一句。
  */
 export function shipTurn(c: Case, tutorial = false): Turn {
   const release = parseGate(c.gate)?.kind === 'release'
   if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, key: 'u' }
   if (c.tag) return { who: 'you', text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
+  // 合併進發版線的卡：發版線打 tag 就是它的上線，沒有自己的發版鍵；不帶鍵。
+  const line = tutorial ? null : shipsWith(c)
+  if (line) return { who: 'you', text: `隨 ${line} 發版；${release ? '發版線打 tag 後部署並按 u 確認上線' : '發版線打 tag 後歸檔'}` }
   if (tutorial || !canRelease(c)) return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
   // 不帶鍵：帶頭的是「⚑ 發版」（沒有快捷鍵）。
   return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}` }

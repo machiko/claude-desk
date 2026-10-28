@@ -87,8 +87,9 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
   expect(run[0].init.cwd).toBe(BETA)
   expect(data.files[ARCHIVED]).toContain('- 關卡：review：CRITICAL 0')
   expect(data.files[REGISTRY]).not.toContain(`\`${CARD_B}\``)
-  // 提示列出刪 worktree 的指令，「最近」記一筆成功
+  // 提示列出刪 worktree 的指令，「最近」記一筆成功；卡片沒有已填的部署步驟，不提醒搬步驟
   expect(data.toasts.some(t => t.includes('已歸檔') && t.includes(`git -C /home/u/shop worktree remove ${BETA}`))).toBe(true)
+  expect(data.toasts.some(t => t.includes('部署步驟'))).toBe(false)
   const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 已歸檔/.test(n.text) && n.props?.color === 'success')
   expect(feed).toBeDefined()
 
@@ -102,6 +103,24 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
   expect(all.some((e: any) => /worktree remove|branch -[dD]|rm -rf/.test(e.argv.join(' ')))).toBe(false)
   expect(data.files[CARD_B]).toBeDefined()
   expect(data.launches).toHaveLength(0)
+  await ui.unmount()
+})
+
+/** AC-5：卡片有 2 項已填的部署步驟（另有一項空白）：照常歸檔，完成提示帶搬步驟的提醒。 */
+test('archiving a card with deploy steps toasts a reminder to move them', async ($, on) => {
+  const { data, clock } = fixture(on)
+  only(data)
+  data.files[CARD_B] += '\n## 部署步驟（合併後）\n\n1.\n2. php artisan migrate\n3. 重啟 queue worker\n'
+  scriptOk(data)
+  const ui = await mountBeta($)
+  await ui.press({ key: KEY })
+  await ui.press({ key: KEY })
+  await clock.settle()
+  expect(archiveRuns(data)).toHaveLength(1)
+  expect(data.files[ARCHIVED]).toContain('php artisan migrate')
+  const done = data.toasts.find(t => t.includes('已歸檔'))
+  expect(done).toContain('部署步驟 2 項：確認已搬到發版線卡片或 ## 提醒')
+  expect(done).toContain(`git -C /home/u/shop worktree remove ${BETA}`)
   await ui.unmount()
 })
 

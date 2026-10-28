@@ -121,9 +121,11 @@ async function runCardScript($: any, options: PluginOptions, c: Case, cmd: 'spec
     .catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
 }
 
+export const deployReminder = (n: number) => `部署步驟 ${n} 項：確認已搬到發版線卡片或 ## 提醒`
+
 /**
  * 真實模式的歸檔：執行 /desk:card archive <slug> 用的同一支腳本；卡片與審查檔由腳本複製、登錄表由腳本改。
- * 不刪 worktree 與分支，只把腳本印出的刪除指令放進提示。失敗就提示錯誤原因（腳本印的第一行），任務留著。
+ * 不刪 worktree 與分支，只把腳本印出的刪除指令放進提示；卡片有部署步驟時提示一併提醒搬走。失敗就提示錯誤原因（腳本印的第一行），任務留著。
  */
 export async function archiveCase($: any, options: PluginOptions, c: Case) {
   const r = await runCardScript($, options, c, 'archive')
@@ -137,7 +139,9 @@ export async function archiveCase($: any, options: PluginOptions, c: Case) {
     return
   }
   const removeCmd = String(r.stdout ?? '').split(/\r?\n/).map((l: string) => l.trim()).find((l: string) => /\bworktree remove\b/.test(l))
-  $.ui.toast(`${c.name}：已歸檔${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
+  // 部署步驟跟著卡片歸檔：隨發版線發版的卡，步驟要搬到發版線卡片或登錄表才不會漏做（只提醒，不自動搬）。
+  const steps = c.deploySteps?.length ? `；${deployReminder(c.deploySteps.length)}` : ''
+  $.ui.toast(`${c.name}：已歸檔${steps}${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
   // 歸檔後這件離開工作桌：這筆不掛在它的卡上，換到哪件都看得到。
   await feedPush($, [{ at: now, text: `${c.name} 已歸檔（worktree 與分支保留）`, tone: 'success' }])
   await tellPanel($, now, '已歸檔（worktree 與分支保留）', { name: c.name, skip: tutorial })

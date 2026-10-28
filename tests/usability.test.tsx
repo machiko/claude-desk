@@ -69,13 +69,14 @@ test('deploy steps end with the next ship action and point to archive only once 
   data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1' }
   data.prs = [{ id: 7, state: 'MERGED', dest: 'release/v1.4', url: 'https://bitbucket.org/x/7' }]
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無') + '\n## 部署步驟（合併後）\n1. php artisan migrate\n2. 跑回填 --dry-run\n'
-  // (a) 還沒有 tag：做完部署步驟之後要打 tag，不是歸檔
+  // (a) 還沒有 tag：做完部署步驟之後等發版線（PR 目標 release/v1.4）打 tag，不是歸檔
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: `row-${CARD_A}` })
   expect(await ui.find({ type: 'Text', text: '1. php artisan migrate' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '2. 跑回填 --dry-run' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '全部做完後：按 ⚑ 發版填入對話（Enter 送出）' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '全部做完後：隨 release/v1.4 發版' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '發版線打 tag 後歸檔' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /archive alpha/ })).toBeUndefined()
   // 合併後 PR 收進更多動作（m）
   expect(await ui.find({ key: `case-${CARD_A}-pr` })).toBeUndefined()
