@@ -328,3 +328,31 @@ test('test_first_press_arms_without_querying_agents', async ($, on) => {
     await ui.unmount()
   }
 })
+
+/**
+ * AC-6：PR 已合併、Agent 在跑：「下一步」列與部署列的「全部做完後」不叫你按已鎖住的 u，
+ * 寫 Agent 完成後再確認上線（六段全過的寫再歸檔）；部署步驟照常列出。
+ */
+test('test_next_step_rows_do_not_ask_for_u_while_agent_runs', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const base = data.files[CARD_B]!
+  const cases = [
+    { stage: 'ship', steps: false, says: 'Agent 執行中，完成後再確認上線' },
+    { stage: 'ship', steps: true, says: '全部做完後：Agent 執行中，完成後再確認上線' },
+    { stage: 'done', steps: false, says: 'Agent 執行中，完成後再歸檔' },
+  ]
+  for (const k of cases) {
+    onlyBeta(data, base)
+    STAGES.find(s => s.name === k.stage)!.setup(data)
+    data.gh = [MERGED_PR]
+    if (k.steps) data.files[CARD_B] = data.files[CARD_B]! + '\n## 部署步驟（合併後）\n1. php artisan migrate\n'
+    data.agents = [RUNNING]
+    const ui = await mount($, clock)
+    const shown = await screen(ui)
+    expect(shown).toContain(flat(k.says))
+    if (k.steps) expect(shown).toContain(flat('1. php artisan migrate'))
+    expect(shown).not.toContain(flat('按 u'))
+    expect(shown).not.toContain(flat('/desk:card archive'))
+    await ui.unmount()
+  }
+})

@@ -208,14 +208,18 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   // 面板外有新的變更、卡片沒跟著寫：提示同步（新對話只讀卡片與 git，把五欄寫回）。
   if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
-  // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；Agent 在跑、等你時也不換成別的話）。
+  // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；等你時也不換成別的話）。
+  // Agent 在跑時 u 與歸檔都鎖著：已打 tag（要你按 u 或歸檔）或六段全過時不叫你做，只說它完成後再做；
+  // 還沒打 tag 的發版那句照舊（發版只填輸入框，不鎖）。部署步驟照常列出，可以先看。
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
   const ship = shipTurn(c, view.s.tutorial)
-  const afterDeploy = isDone ? archive : ship.text
+  const toShip = !!c.tag && parseGate(c.gate)?.kind === 'release' && !isDone
+  const waitAgent = isBusy(c) && (isDone || !!c.tag) ? `Agent 執行中，完成後再${toShip ? '確認上線' : '歸檔'}` : ''
+  const afterDeploy = waitAgent || (isDone ? archive : ship.text)
   // 上線段那句是「要做的事；做完之後」兩段：下一步列兩段都列出來，不收成「還有 1 項」。
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
     ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${afterDeploy}`, width, true, COLOR.attention)
-    : kvRows(ui, '下一步', isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text, width, false, COLOR.attention, 2)))
+    : kvRows(ui, '下一步', waitAgent || (isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text), width, false, COLOR.attention, 2)))
 
   // 決策送出了、對話還在處理：選項只顯示（標出選了哪個），不能再點，免得以為還沒送。
   const isSent = turnCtx(view, c).sent === 'waiting'
