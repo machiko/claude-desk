@@ -617,6 +617,17 @@ class KeepAChangelogTest(unittest.TestCase):
         self.assertEqual(read(self.changelog), KAC_BEFORE)
         self.assertEqual(self.fragments(), ['a.md'])
 
+    def test_keepachangelog_refuses_unreleased_with_only_empty_headings(self):
+        """AC-4：[Unreleased] 只有空的 ### 小節標題、又沒有片段，也算沒東西可發，報錯、什麼都不改。"""
+        before = KAC_BEFORE.replace('## [Unreleased]\n', '## [Unreleased]\n\n### Added\n\n### 工程專區\n')
+        write(self.changelog, before)
+
+        r = self.run_changelog('v26.2.7')
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('沒有東西可以發版', r.stderr)
+        self.assertEqual(read(self.changelog), before)
+
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 # 發版段的 9 個步驟，依序要出現的關鍵字
