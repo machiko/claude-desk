@@ -270,10 +270,10 @@ test('a case merged into a release line through git alone also ships with that l
   expect(turnOf(merged)).toEqual({ who: 'you', text: `${WITH_LINE}；${AFTER_LINE_TAG}` })
 })
 
-/** AC-2：PR 還開著（目標 main）或被關掉，分支卻用 git 併進 origin/release/v26.2.7：一樣隨發版線發版，不給「⚑ 發版」。 */
+/** AC-2：PR 還開著（目標 main）、被拒絕或被取代，分支卻用 git 併進 origin/release/v26.2.7：一樣隨發版線發版，不給「⚑ 發版」。 */
 test('a case whose PR is not merged but git merged into a release line also ships with that line', async () => {
-  for (const state of ['OPEN', 'CLOSED'] as const) {
-    const c = mk('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過', { pr: { id: 12, state, ci: 'none', url: 'https://github.com/acme/shop/pull/12', dest: 'main' } as Case['pr'], mergedInto: `origin/${LINE}` })
+  for (const state of ['OPEN', 'DECLINED', 'SUPERSEDED'] as const) {
+    const c = mk('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過', { pr: { id: 12, state, ci: 'none', url: 'https://github.com/acme/shop/pull/12', dest: 'main' }, mergedInto: `origin/${LINE}` })
 
     expect(c.pipeline?.current).toBe('ship')
     expect(c.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
