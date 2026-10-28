@@ -51,11 +51,11 @@ export const canRelease = (c: Pick<Case, 'demo' | 'pipeline' | 'tag' | 'git' | '
 
 /**
  * 合併進發版線（release/…）的功能卡隨那條線發版：回傳發版線的分支名，否則 null。
- * PR 已合併看 PR 的目標分支；沒有 PR 看 git 判斷併進的分支（去掉 origin/）。發版線本身不算。
+ * PR 已合併看 PR 的目標分支；其他（沒有 PR，或 PR 還開著、被關掉）看 git 判斷併進的分支（去掉 origin/）。發版線本身不算。
  */
 export function shipsWith(c: Pick<Case, 'git' | 'pr' | 'mergedInto'>): string | null {
   if (isReleaseLine(c)) return null
-  const into = c.pr ? (c.pr.state === 'MERGED' ? c.pr.dest : undefined) : c.mergedInto?.replace(/^origin\//, '')
+  const into = c.pr?.state === 'MERGED' ? c.pr.dest : c.mergedInto?.replace(/^origin\//, '')
   return into && /^release\//.test(into) ? into : null
 }
 
