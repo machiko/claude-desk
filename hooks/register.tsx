@@ -498,7 +498,7 @@ async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
   await feedPush($, [{ at: now, text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, reason, { name: c.name, skip: auto || tutorial })
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
+  if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
   await restage($, c.statusPath)
   await spin($, false)
 }
@@ -514,7 +514,7 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
     const now = await $.clock.now()
     await feedPush($, [{ at: now, text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
     await tellPanel($, now, `檢查未執行：${reason}`, { name: c.name, skip: auto || tutorial })
-    if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
+    if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
     return false
