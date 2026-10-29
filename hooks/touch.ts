@@ -32,3 +32,14 @@ export function touchesDesk(call: ToolTouch, known: readonly string[]): boolean 
   }
   return false
 }
+
+/** Bash 指令裡的 `card.py spec-ok <目標>`（目標可加引號）。 */
+const SPEC_OK = /card\.py["']?\s+spec-ok\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|"']+))/
+
+/** 這次工具呼叫是不是跑 /desk:card spec <目標> ok 的腳本：是就回目標（slug、任務名或 main），其他回 null。 */
+export function specOkTarget(call: ToolTouch): string | null {
+  if (call.tool !== 'Bash' || typeof call.command !== 'string') return null
+  const m = call.command.match(SPEC_OK)
+  const target = (m?.[1] ?? m?.[2] ?? m?.[3] ?? '').trim()
+  return target || null
+}

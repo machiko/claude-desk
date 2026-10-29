@@ -12,6 +12,7 @@ import type { SimWork, TutorialState } from './tutorial'
 import { CHAIN_KEY, JOBS_KEY, TRUST_KEY, VERIFIES_KEY, feedPush, loadChains, loadJobs } from './desk-io'
 import type { Timer } from './desk-io'
 import { refreshing, refresh, openPane, optionsRef } from './register'
+import { dispatchAfterSpec } from './card-actions'
 
 // 引擎規定：read／update 的 atom 必須在同一個檔案用 const 宣告（同 plugin、同 key 就是同一份狀態）。
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
@@ -129,7 +130,7 @@ export async function tutorialDecision($: any, c: Case, answer: string) {
   await refresh($, optionsRef!)
 }
 
-/** 教學按鈕 t：確認規格（真的執行 /desk:card 的腳本）、本機合併、打 tag。 */
+/** 教學按鈕 t：確認規格（真的執行 /desk:card 的腳本，確認後自動派模擬 Agent）、本機合併、打 tag。 */
 export async function tutorialAct($: any, options: PluginOptions, c: Case) {
   if (!tutorial || c.demo) return
   const step = tutorialStep(c)
@@ -157,6 +158,8 @@ export async function tutorialAct($: any, options: PluginOptions, c: Case) {
     await feedPush($, [{ at: now, text: `${c.name} 已打 ${TUTORIAL_TAG}`, tone: 'success', card: c.statusPath }])
   } else return
   await refresh($, options)
+  // 跟真實模式一樣，確認規格後自動派實作（教學的檢查開始時已核准；派出的是模擬 Agent）。
+  if (step === 'spec-ok') await dispatchAfterSpec($, options, c.statusPath)
 }
 
 /** 開始教學：建沙盒（git repo＋worktree＋卡片＋登錄表），完成檢查先授權，面板切到教學。 */

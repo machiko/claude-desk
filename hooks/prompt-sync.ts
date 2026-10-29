@@ -1,14 +1,16 @@
-// 面板與對話同步：選取的任務附在每則提示、面板做過的操作附在下一則你打的提示、從面板送出的決策鎖到對話寫回卡片、對話動到卡片時提早重讀。
+// 面板與對話同步：選取的任務附在每則提示、面板做過的操作附在下一則你打的提示、從面板送出的決策鎖到對話寫回卡片、對話動到卡片時提早重讀、
+// 主對話確認規格（/desk:card spec … ok）的回合結束後自動派實作。
 // 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、面板操作紀錄的附加與清除、送出的決策與兩個計時器。
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
-import type { PanelAction, SentRecord } from '../types'
+import type { Case, PanelAction, SentRecord } from '../types'
 import { decisionName } from './card'
 import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext } from './desk-io'
 import type { Timer } from './desk-io'
-import { touchesDesk } from './touch'
+import { specOkTarget, touchesDesk } from './touch'
 import { sentState } from './turn'
 import { refreshAfterWrite } from './register'
+import { dispatchAfterSpec } from './card-actions'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
@@ -42,6 +44,30 @@ let queuedTimer: Timer
  */
 const TYPED_ORIGINS = new Set(['composer', 'bridge'])
 
+/** 這個回合主對話跑過 card.py spec-ok 的目標（slug、任務名）：回合結束、重讀後照面板按 t 的規則派實作。 */
+let specOks: string[] = []
+
+/** 找 spec-ok 目標的那張卡，規則同 card.py 的 resolve：路徑裡有 /<目標>/、任務名完全相同、任務名包含它，要剛好一件；main 不認。 */
+export function specOkCase(cases: readonly Case[], target: string): Case | null {
+  if (target === 'main') return null
+  const real = cases.filter(c => !c.demo)
+  const hits = [real.filter(c => c.statusPath.includes(`/${target}/`)), real.filter(c => c.name === target), real.filter(c => c.name.includes(target))].find(h => h.length) ?? []
+  return hits.length === 1 ? hits[0]! : null
+}
+
+/** 回合結束、重讀之後：這回合主對話確認了規格的那幾張，照面板按 t 的規則派實作；腳本失敗、關卡還是 spec 的由 dispatchAfterSpec 略過。 */
+async function dispatchSpecOks($: any, deps: PromptSyncDeps, targets: readonly string[]) {
+  const s = await read($, snapshot)
+  if (!s || !deps.isActive()) return
+  const picked = new Set<string>()
+  for (const target of targets) {
+    const c = specOkCase(s.cases, target)
+    if (!c || picked.has(c.statusPath)) continue
+    picked.add(c.statusPath)
+    await dispatchAfterSpec($, deps.options, c.statusPath)
+  }
+}
+
 /** 從面板送出、還在等對話寫回的決策（卡片路徑 → 紀錄）。 */
 export async function readSent($: any): Promise<Record<string, SentRecord>> {
   return read($, sentAtom)
@@ -50,12 +76,14 @@ export async function readSent($: any): Promise<Record<string, SentRecord>> {
 /** 新對話（含 /clear）：下一則重附卡片全文，之前送出的決策不帶著鎖進來。 */
 export async function resetPromptSync($: any) {
   lastAttached = ''
+  specOks = []
   queuedTimer?.cancel(); queuedTimer = undefined
   await update($, sentAtom, () => ({}))
 }
 
 /** /desk off：取消稍後重讀與等著判斷決策的計時器。 */
 export function cancelPromptSync() {
+  specOks = []
   touchTimer?.cancel(); touchTimer = undefined
   queuedTimer?.cancel(); queuedTimer = undefined
 }
@@ -146,13 +174,18 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
     return result
   })
 
-  // 回合結束：重讀（等進行中那輪讀完再讀，才看得到這個回合寫的卡），再看送出的決策寫回了沒。
+  // 回合結束：重讀（等進行中那輪讀完再讀，才看得到這個回合寫的卡），再看送出的決策寫回了沒；這回合確認了規格的派實作。
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId && deps.isActive()) {
       const endedAt = await $.clock.now()
-      void refreshAfterWrite($, deps.options).catch(() => {}).then(() => settleSent($, e.turnId, endedAt)).catch(async (error: unknown) => {
+      const targets = specOks
+      specOks = []
+      const refreshed = refreshAfterWrite($, deps.options).catch(() => {})
+      void refreshed.then(() => settleSent($, e.turnId, endedAt)).catch(async (error: unknown) => {
         await feedPush($, [{ at: endedAt, text: `決策狀態更新失敗：${error instanceof Error ? error.message : String(error)}`, tone: 'error' }])
       })
+      // 派工自己會提示失敗原因；這裡只防意外的例外。
+      if (targets.length) void refreshed.then(() => dispatchSpecOks($, deps, targets)).catch(() => {})
     }
     return next(e)
   })
@@ -170,9 +203,12 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   on('session.end', async ($, e, next) => { lastAttached = ''; return next(e) })
 
   // 對話（或它派的 subagent）改了卡片、登錄表，跑了卡片腳本或會移動分支的 git：馬上重讀，不等回合結束。
+  // 主對話（沒有 agentId）跑的 card.py spec-ok 記下目標，回合結束再派；subagent 跑的不記。
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
     try { if (deps.isActive() && touchesDesk(e as any, deps.knownPaths())) touchSoon($, deps) } catch { /* 只是提早重讀，失敗就等定時更新 */ }
+    const target = deps.isActive() && !e.agentId ? specOkTarget(e as any) : null
+    if (target && !specOks.includes(target)) specOks = [...specOks, target]
     return result
   })
 

@@ -72,8 +72,9 @@ async function fourCases($: any, data: any, clock: any) {
     data.files[CARD_B] = appendTo(withGate, '## History', '- 2030-01-05：規格確認')
     return result(0, '規格已確認\n')
   }
+  // 派出去的 Agent 在派工的那個 worktree（確認規格後會自動派 Beta 的實作）
   data.launch = async (e: any) => {
-    data.agents = [{ id: 'aaaaaaaa', kind: 'background', cwd: '/home/u/wt/alpha', name: e.argv[3], sessionId: 'aaaaaaaa-0000-4000-8000-000000000000', state: 'working', status: 'busy', startedAt: NOW }]
+    data.agents = [{ id: 'aaaaaaaa', kind: 'background', cwd: e.init.cwd, name: e.argv[3], sessionId: 'aaaaaaaa-0000-4000-8000-000000000000', state: 'working', status: 'busy', startedAt: NOW }]
     return result(0, 'aaaaaaaa\n')
   }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -99,6 +100,9 @@ function expectInOrder(context: string, order: RegExp[]) {
 test('test_panel_spec_ok_and_ship_attach_in_order_with_case_and_result', async ($, on) => {
   const { data, clock } = fixture(on)
   const { ui, twice } = await fourCases($, data, clock)
+  // 確認規格後會自動派實作（由 spec-ok-dispatch 測）；這裡只看附上的順序，不核准檢查就不派。
+  // 派出去的話 Agent 在跑，twice 往前推的 60 秒要多跑很多輪，單跑就從 0.3 秒變 3 秒，整套並行時會逾時。
+  data.approve = '取消'
 
   await twice(CARD_B, `case-${CARD_B}-spec-ok`)
   await twice(CARD_C, `case-${CARD_C}-ship`)

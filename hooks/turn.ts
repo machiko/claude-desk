@@ -167,7 +167,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
     case 'spec':
       if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
       // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
-      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
+      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認並派實作（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
       if (c.specGap) return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫驗收情境與實作計畫` }
       // 規格沒問題（或舊卡沒有規格段），停在這段只因為檢查欄空白、還是 `<…>` 範本佔位或說明文字：請人填一條真的指令。
       return { who: 'you', text: MISSING_CHECK, key: 'o' }
