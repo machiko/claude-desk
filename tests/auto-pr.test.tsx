@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, PROJECT_DIR, CARD_A, CARD_B, REGISTRY, result, text, flat } from './fixture'
-import { autoPrPlan, passWords } from '../hooks/auto-pr'
+import { autoPrApplies, autoPrPlan, passWords } from '../hooks/auto-pr'
 import { NO_PUSH_NEEDED, parseSettings, queueRefusal } from '../hooks/dispatch'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
@@ -383,6 +383,29 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — d
   expect(data.toasts).toContain('Beta：審查通過，PR #9 已被拒絕，要重開請按 ⇡ 開 PR')
 })
 
+/** 發版線（release/* 本身）或 detached HEAD 過關 → 設了 autoPr 也不派、不重讀 PR，字跟沒開一樣（審查 MEDIUM，D-03）。 */
+test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — release line or detached HEAD', async ($, on) => {
+  const { data, clock } = fixture(on)
+  betaReviewed(data)
+  const calls = recordExec(data)
+  startsAgents(data, clock)
+  const h = helpers($, data, clock)
+
+  for (const branch of ['release/v1.5', 'HEAD']) {
+    data.git[BETA]!.branch = branch
+    data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: branch } }
+    data.store.jobs = { [BETA]: lastJob('review') }
+    const toasts = data.toasts.length
+    await h.refresh(); await h.step()
+    expect(data.toasts.slice(toasts)).toContain('Beta：審查通過，可以開 PR')
+    expect((data.store.chains as any)[BETA].passed).toBe(true)
+  }
+
+  expect(data.launches).toHaveLength(0)
+  expect(data.toasts.some((t: string) => t.includes('自動派'))).toBe(false)
+  expect(calls.some(e => e.argv[0] === 'gh')).toBe(false)
+})
+
 /** AC-5：沒設 autoPr（或寫成字串 "true"、數字 1）→ 不派，跟現在一樣說可以開 PR；按兩次「⇡ 開 PR」照舊派推送 Agent。 */
 test('test_behaves_as_before_when_auto_pr_is_off_and_never_merges_when_on', async ($, on) => {
   const { data, clock } = fixture(on)
@@ -462,6 +485,15 @@ test('autoPrPlan: high risk, declined, merged, open ahead, open up to date, no P
   expect(autoPrPlan({ pr: pr('OPEN'), gitState: ahead(0) })).toEqual({ kind: 'skip', why: 'PR #12 已是最新，等 CI 與合併' })
   expect(autoPrPlan({ pr: pr('OPEN') })).toEqual({ kind: 'skip', why: 'PR #12 已是最新，等 CI 與合併' })
   expect(autoPrPlan({ pr: undefined })).toEqual({ kind: 'open' })
+})
+
+test('autoPrApplies: not on a release line, a detached HEAD or without git', () => {
+  const at = (branch: string) => ({ git: { branch, head: 'c2', files: [] } }) as unknown as Pick<Case, 'git'>
+  expect(autoPrApplies(at('feature/b'))).toBe(true)
+  expect(autoPrApplies(at('fix/release-notes'))).toBe(true)
+  expect(autoPrApplies(at('release/v1.5'))).toBe(false)
+  expect(autoPrApplies(at('HEAD'))).toBe(false)
+  expect(autoPrApplies({ git: undefined })).toBe(false)
 })
 
 test('passWords: without autoPr the words are unchanged', () => {

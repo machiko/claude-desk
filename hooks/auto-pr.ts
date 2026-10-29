@@ -1,9 +1,16 @@
 // 審查過關後自動開 PR（dispatch.json 的 autoPr）：決定開 PR、只 push 還是不派，以及動態與提示的字。
 // 純函式；派推送 Agent 在 card-actions.ts 的 autoPublish，什麼時候問在 register.tsx 自動流程的過關那段。
 import type { Case } from '../types'
+import { isReleaseLine } from './pipeline'
 
 /** open：還沒有 PR，push 並開 PR；push：PR 已開、分支領先遠端，只 push；skip：不派，why 是原因（空白＝沿用原本那句）。 */
 export type AutoPrPlan = { kind: 'open' } | { kind: 'push'; pr: number } | { kind: 'skip'; why: string }
+
+/**
+ * autoPr 對這件管不管用：發版線（release/* 本身）不開 PR 也不查 PR，detached HEAD 沒有分支可推，跟沒開 autoPr 一樣。
+ * 排隊的推送靠 queueRefusal 的合併段判斷擋掉，直接派的路徑沒有，所以在過關那段先擋。
+ */
+export const autoPrApplies = (c: Pick<Case, 'git'>) => !!c.git && !isReleaseLine(c) && c.git.branch !== 'HEAD'
 
 /**
  * 過關時要不要自動派推送：高風險（needsHuman）照舊停下等你看；PR 被拒絕不自己重開；PR 已合併不再推；

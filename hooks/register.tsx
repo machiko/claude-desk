@@ -33,7 +33,7 @@ import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from 
 import { lastLaunches, noteCardAsks, stopSuperseded } from './stale-agents'
 import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAgentQueue, isAgentQueued, notSent, queuePosition, readAgentQueue, requeue } from './agent-queue'
 import { DEMO_ONLY, archiveCase, autoPublish, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
-import { autoPrPlan, passWords } from './auto-pr'
+import { autoPrApplies, autoPrPlan, passWords } from './auto-pr'
 import type { AutoPrPlan } from './auto-pr'
 
 const PANE = 'desk'
@@ -298,8 +298,8 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       const judged = step.skipped ? fresh?.head ?? c.git?.head : undefined
       // 免審查過關：判定的 HEAD 是檢查時的；跟現在的 HEAD 一樣才記得住它的分支。
       await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(judged ? { judgedHead: judged, judgedBranch: judged === c.git?.head ? c.git?.branch : undefined } : {}) } : r)
-      // 專案設了 autoPr（高風險照舊停下等你看）：重讀一次 PR（不用快取，免得剛開的 PR 沒看到又開一個），決定開 PR、只 push 或不派。
-      const auto = !step.needsHuman && !tutorial && c.git && (settings ?? await loadSettings($, options)).autoPr
+      // 專案設了 autoPr（高風險照舊停下等你看；發版線、detached HEAD 跟沒開一樣）：重讀一次 PR（不用快取，免得剛開的 PR 沒看到又開一個），決定開 PR、只 push 或不派。
+      const auto = !step.needsHuman && !tutorial && autoPrApplies(c) && (settings ?? await loadSettings($, options)).autoPr
       const pr = auto ? await prProbe($, options, c.root, c.git!.branch, s.at, true) : undefined
       const plan: AutoPrPlan | undefined = auto ? autoPrPlan({ ...c, pr }) : undefined
       const words = passWords(c.name, plan, step.skipped)
