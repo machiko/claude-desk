@@ -1,8 +1,9 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
-import { agentBusy, blocking, isReleaseLine, needsPr, needsPush, parseVerdict } from './pipeline'
+import { agentBusy, blocking, isMerged, isReleaseLine, needsPr, needsPush, parseVerdict } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
 import { AGENT_STOPPED } from './chain'
+import type { ChainRun } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -35,7 +36,11 @@ export type DispatchSettings = {
   cardBase: string
   /** updateCheck："off" 不自動檢查 desk 新版本；沒設＝每 24 小時查一次。 */
   updateCheck: '' | 'off'
+  /** 同時在跑的工作桌背景 Agent 上限（整台機器一起算）；超過的派工排隊。0＝不限。 */
+  maxAgents: number
 }
+
+export const DEFAULT_MAX_AGENTS = 3
 
 export const DEFAULT_USER = '使用者'
 export const DEFAULT_REVIEW: ReviewWords = {
@@ -56,7 +61,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '' }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -81,6 +86,8 @@ export function parseSettings(text: string | null): DispatchSettings {
     out.composeDir = str(d?.composeDir)
     out.cardBase = str(d?.card?.base)
     out.updateCheck = d?.updateCheck === false || str(d?.updateCheck).toLowerCase() === 'off' ? 'off' : ''
+    // 非負整數照用（0＝不限）；負數、小數、字串都當沒寫。
+    out.maxAgents = Number.isInteger(d?.maxAgents) && d.maxAgents >= 0 ? d.maxAgents : DEFAULT_MAX_AGENTS
   } catch { /* 壞掉的設定檔當作沒有。 */ }
   return out
 }
@@ -117,6 +124,14 @@ export function launchName(now: number, seq: number): string {
 
 /** 名字是不是 launchName() 取的（desk-<時間>-<序號>）：工作桌派出去的背景 agent。 */
 export const isDeskLaunch = (name: string): boolean => /^desk-[0-9a-z]+-[0-9a-z]+$/.test(name)
+
+/**
+ * 在跑的工作桌 Agent 有幾個：背景、名字是 launchName() 取的、status busy；不看根目錄（別的專案、別的對話派的也算）。
+ * 停在提問或等權限批准（waiting）、idle、blocked、stopped 都不算。
+ */
+export function runningDeskAgents(list: readonly RawAgent[]): number {
+  return list.filter(a => a.kind === 'background' && isDeskLaunch(String(a.name ?? '')) && String(a.status ?? '').toLowerCase() === 'busy').length
+}
 
 export function launchArgs(prompt: string, opts: { model?: string; effort?: string; sessionId?: string; launchName: string }): string[] {
   return ['claude', '--bg', '--name', opts.launchName, ...(opts.sessionId ? ['--resume', opts.sessionId] : []), ...(opts.model ? ['--model', opts.model] : []), ...(opts.effort ? ['--effort', opts.effort] : []), prompt]
@@ -184,6 +199,15 @@ export const NO_PUSH_RULE = '不 push、不開 PR。'
 /** 會改程式的派工再多一條：CHANGELOG 條目寫片段檔，不碰 CHANGELOG.md（發版時由 card.py changelog 合併，分支之間才不會搶「## 未發布」）。 */
 const changelogRule = (c: Case) => `專案有 changelog.d/ 資料夾時，使用者看得到的改動寫成 CHANGELOG 條目放在 changelog.d/${slugOf(c)}.md（一行或多行「- 」開頭、動詞開頭：新增／修復／調整／移除，沒有標題與版本；沒有使用者看得到的改動就不建這個檔），不要改 CHANGELOG.md，發版時才合併。沒有這個資料夾就照專案原本的慣例。`
 
+/**
+ * 會改程式的派工再多一條：改的過程只跑相關測試、收尾跑一次完成檢查。整套測試很慢，好幾個 Agent 同時反覆跑會把機器拖垮、測試逾時重跑。
+ * 審查照舊自己重跑完成檢查，不加這條。
+ */
+const testRule = (c: Case) => {
+  const check = c.verify ? `完成檢查 \`${c.verify}\`` : '卡片「檢查」欄的完成檢查'
+  return `改程式的過程中只跑跟這次改動有關的測試（目標測試或相關的測試檔），不要每改一次就跑整套；收尾 commit 前跑一次${check}。沒過時只修失敗的部分、只重跑失敗的那幾支，修好再跑一次完成檢查；做完後工作桌還會自動再跑一次。`
+}
+
 export const REVIEW_FILE = '.task/REVIEW.md'
 /** 依審查檔修正：自動流程的修正輪與手動按 g 修審查結論共用。 */
 const REVIEW_FIX_STEP = `依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`
@@ -208,7 +232,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
   const writes = !!fix || kind === 'continue' || kind === 'reply'
   const publishing = !fix && kind === 'publish'
   const base = cardRules(settings, c.root, writes || publishing, publishing)
-  const rules = writes ? [SPEC_RULE, changelogRule(c), ...base] : base
+  const rules = writes ? [SPEC_RULE, changelogRule(c), testRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
   return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
 }
@@ -328,10 +352,29 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (c.state === 'running' || (kind === 'publish' && agentBusy(c))) return BUSY
   if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
   if (specBlocks(c)) return specGapReason(c)
+  if (parseGate(c.gate)?.kind === 'spec') return '規格還沒確認'
   if (!c.verify) return '卡片尚缺完成檢查，規格未通過'
   // 審查段（檢查已通過）：「輪到你」已經是按 w，不再叫你先按 v。
   if (kind === 'continue' && reviewNext(c.next) && c.pipeline?.current === 'review') return REVIEW_NEXT_AT_REVIEW
   return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
+}
+
+/** 排隊等派的一筆：手動（g、w、s、y、⇡）或自動流程排的；opts 照原本派工的參數。 */
+export type QueueOpts = { text?: string; fix?: FixReason; auto?: boolean; security?: boolean }
+export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOpts; at: number }
+
+/**
+ * 排隊的這筆現在不能派的原因；空字串代表可以派。手動排的照手動派工重新判斷；自動排的要流程還在（這個對話的、沒停下）、
+ * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑。
+ */
+export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
+  if (!entry.opts.auto) return dispatchRefusal(c, entry.kind)
+  if (agentBusy(c)) return BUSY
+  if (!run || run.owner !== mine) return '流程已不是這個對話的'
+  if (run.stopped) return `流程已暫停（${run.stopped}）`
+  if (specBlocks(c)) return specGapReason(c)
+  if (isMerged(c)) return '已經合併'
+  return ''
 }
 
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {

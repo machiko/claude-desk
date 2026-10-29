@@ -138,6 +138,8 @@ declare module 'claude-code' {
       launching: Record<string, number>
       /** 排隊等著跑完成檢查的任務（卡片路徑），依序。 */
       checkQueue: string[]
+      /** 派工隊伍：同時執行的 Agent 達上限時排的派工（卡片路徑，依序）。 */
+      agentQueue: string[]
       /** 派工與停止要按兩次：第一次按下記在這裡，3 秒內再按同一個才執行。 */
       armed: { key: string; at: number } | null
       /** 展開 Agent 輸出的那件（卡片路徑）與讀到的最近幾行。 */
