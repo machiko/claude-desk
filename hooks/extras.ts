@@ -31,26 +31,51 @@ export function deploySteps(cardText: string | null): string[] {
   return steps
 }
 
-/** 登錄表「## 提醒」段落：`- YYYY-MM-DD 事項`；回傳每條與距今天數（負數是已過期）。 */
-export type Reminder = { date: string; text: string; days: number }
+/**
+ * 登錄表「## 提醒」段落：`- YYYY-MM-DD 事項` 回傳距今天數（負數是已過期）；`- 事項` 沒寫日期，date、days 是 null，
+ * 永遠不算到期也不算過期。有日期的依天數排前面，沒日期的照原本順序排在後面。
+ */
+export type Reminder = { date: string | null; text: string; days: number | null }
 export const REMIND_DAYS = 3
 export function parseReminders(text: string, now: number): Reminder[] {
   const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n')
   const start = lines.findIndex(l => /^##\s*提醒/.test(l))
   if (start < 0) return []
   const today = new Date(now); today.setHours(0, 0, 0, 0)
-  const out: Reminder[] = []
+  const dated: Reminder[] = []
+  const undated: Reminder[] = []
   for (const l of lines.slice(start + 1)) {
     if (/^##\s/.test(l)) break
     const m = l.match(/^\s*[-*]\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(.+?)\s*$/)
-    if (!m) continue
-    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
-    out.push({ date: `${m[1]}-${m[2]!.padStart(2, '0')}-${m[3]!.padStart(2, '0')}`, text: plain(m[4]!), days: Math.round((d.getTime() - today.getTime()) / 86_400_000) })
+    if (m) {
+      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+      dated.push({ date: `${m[1]}-${m[2]!.padStart(2, '0')}-${m[3]!.padStart(2, '0')}`, text: plain(m[4]!), days: Math.round((d.getTime() - today.getTime()) / 86_400_000) })
+      continue
+    }
+    const item = undatedItem(l)
+    if (item) undated.push({ date: null, text: plain(item), days: null })
   }
-  return out.sort((a, b) => a.days - b.days)
+  return [...dated.sort((a, b) => a.days! - b.days!), ...undated]
 }
-export const dueReminders = (list: Reminder[] | undefined) => (list ?? []).filter(r => r.days <= REMIND_DAYS)
-export const reminderWhen = (r: Reminder) => r.days < 0 ? `已過 ${-r.days} 天` : r.days === 0 ? '今天' : `還有 ${r.days} 天`
+/**
+ * 沒寫日期的一行提醒的事項，不算提醒就回 null。只收最外層的 `- `／`* ` 項目；打勾（[x]）、整條劃掉（~~…~~）、
+ * 開頭像日期卻不是 YYYY-MM-DD 事項（斜線日期、只寫日期）、`<…>` 佔位、沒有文字的分隔線都不算，跟以前格式不符就忽略一樣。
+ * 未打勾的 [ ] 拿掉框照算。
+ */
+function undatedItem(line: string): string | null {
+  const m = line.match(/^[-*]\s+(.*\S)\s*$/)
+  if (!m) return null
+  const body = m[1]!.replace(/^\[ \]\s+/, '')
+  if (/^\[[xX]\]/.test(body) || /^~~/.test(body) || /^<.*>$/.test(body)) return null
+  if (/^\d{1,4}[-/.]\d/.test(body)) return null
+  return /\p{L}/u.test(body) ? body : null
+}
+
+/** 有日期且 3 天內到期（含已過期）：提示列只看這些。 */
+export const dueReminders = (list: Reminder[] | undefined) => (list ?? []).filter(r => r.days !== null && r.days <= REMIND_DAYS)
+/** 面板列的提醒：到期的有日期提醒，再接全部沒日期的。 */
+export const paneReminders = (list: Reminder[] | undefined) => [...dueReminders(list), ...(list ?? []).filter(r => r.days === null)]
+export const reminderWhen = (r: Reminder) => r.days === null ? '' : r.days < 0 ? `已過 ${-r.days} 天` : r.days === 0 ? '今天' : `還有 ${r.days} 天`
 
 /** 審查檔裡的 CRITICAL、HIGH 前幾條：「- [HIGH][稽核] 檔案:行 — 說明」→「HIGH 稽核 檔案:行 — 說明」。 */
 export function reviewTop(text: string | null, n = 3): string[] {

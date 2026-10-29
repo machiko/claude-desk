@@ -91,8 +91,8 @@ export type Snapshot = {
   /** desk 版本的狀況：newer 有新版、latest 已是最新、unknown 沒查過（或檢查關閉、上次沒查成功）、updating 正在更新；footer 的版本格依它畫。沒有＝unknown。 */
   versionState?: VersionState
   /** 這個對話的模型與 effort（最近一次請求）；派工與同步用的模型與 effort（dispatch.json）。 */
-  /** 登錄表「## 提醒」：日期、事項、距今天數。 */
-  reminders?: { date: string; text: string; days: number }[]
+  /** 登錄表「## 提醒」：日期、事項、距今天數；沒寫日期的 date、days 是 null。 */
+  reminders?: { date: string | null; text: string; days: number | null }[]
   /** 主工作區的容器（docker compose ps）。 */
   containers?: { total: number; running: number; down: string[]; unhealthy: string[]; error?: string }
   models?: { session?: string; effort?: string; dispatch?: { model: string; effort: string }; sync?: { model: string; effort: string; fresh: boolean }; /** dispatch.json 的 kinds：跟派工不同的種類才列。 */ kinds?: { kind: 'continue' | 'reply' | 'review' | 'publish'; model: string; effort: string }[]; /** 有 projects 覆寫的任務（鍵是根目錄）：每種派工實際會用的模型。 */ byRoot?: Record<string, Partial<Record<'continue' | 'reply' | 'review' | 'publish', { model: string; effort: string }>>> }
