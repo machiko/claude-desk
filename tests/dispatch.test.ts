@@ -119,6 +119,29 @@ test('review prompt: pitfalls first, later rounds diff-only without repeats, sec
   expect(sec).not.toContain('常犯錯誤清單')
 })
 
+test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
+  const c = mk('寫測試')
+  const custom = parseSettings(JSON.stringify({ review: { template: '/p/review-contract.md' } }))
+  const prompts = [
+    buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '', history: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, pitfalls: '', history: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, custom),
+  ]
+  expect(prompts[4]).toContain('契約：/p/review-contract.md')
+  for (const p of prompts) {
+    expect(p).toContain('記錄、不修')
+    expect(p).toContain('不寫進卡片 等你')
+    expect(p).toContain('歷程')
+    expect(p).toContain('審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格')
+    expect(p).toContain('兩種都算進關卡的 MEDIUM 數')
+    expect(p).toContain('review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>')
+  }
+  // 修正提示照舊只修 CRITICAL／HIGH
+  expect(buildPrompt(c, 'continue', '', { from: 'review', round: 1 })).toContain('MEDIUM、LOW 不用修')
+})
+
 test('prompts use the configured name, project rules and review words', () => {
   const c = mk('寫測試')
   const s = parseSettings(JSON.stringify({ user: 'Alex', rules: ['測試只能用 make test'], projects: { '/p/a': { rules: ['只改 api/'] } }, review: { high: '漏寫稽核', security: '金流與退款', categories: '金流、稽核' } }))
