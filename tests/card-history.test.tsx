@@ -300,6 +300,29 @@ test('test_manual_check_failure_sends_one_notification', async ($, on) => {
   expect(aboutGamma()).toEqual(['Gamma：檢查未通過（exit 2）'])
 })
 
+/** 同一件連按兩次 v 都沒過、exit 碼一樣：每按一次送一則，不被同一句去重（審查 MEDIUM，D-05）；重新整理不補送。 */
+test('test_each_failed_manual_check_sends_its_own_notification', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const sent: string[] = []
+  on('ui.notify', (_: any, e: any) => { sent.push(e.text); return { value: { isSent: true as const, channel: 'terminal_bell' as const } } })
+  setup(data, clock)
+  const h = helpers($, clock)
+  data.files[CARD_C] = data.files[CARD_C]!.replace('- 驗證：無', '- 驗證：`npm test`').replace('- 下一步：無', '- 下一步：修測試')
+  data.store.trustedVerify = { ...data.store.trustedVerify, [CARD_C]: 'npm test' }
+  const run = data.run
+  data.run = async (e: any) => e.argv[0] === 'sh' ? result(1, 'FAILED\n') : run(e)
+  const aboutGamma = () => sent.filter(t => t.startsWith('Gamma'))
+  await h.refresh()
+
+  await h.run('verify Gamma')
+  await h.refresh()
+  await h.run('verify Gamma')
+  await h.refresh()
+  await h.refresh()
+
+  expect(aboutGamma()).toEqual(['Gamma：檢查未通過（exit 1）', 'Gamma：檢查未通過（exit 1）'])
+})
+
 test('test_history_reads_only_the_focused_card_and_never_writes_it', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)

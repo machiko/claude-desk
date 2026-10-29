@@ -531,8 +531,8 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   await feedPush($, [{ at: result.at, text: `${c.name} ${outcome}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
   $.ui.toast(`${c.name}：${result.ok ? '檢查通過' : '檢查未通過'}`, { timeoutMs: 6000 })
-  // 你按 v 的檢查沒過送一次通知；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
-  if (!result.ok && !auto) notify($, `${c.name}：${outcome}`)
+  // 你按 v 的檢查沒過送一次通知（每按一次 v 送一則，同一句不去重）；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
+  if (!result.ok && !auto) notify($, `${c.name}：${outcome}`, true)
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
@@ -725,8 +725,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
 }
 
 const notified = new Set<string>()
-export function notify($: any, text: string) {
-  if (!active || tutorial || notified.has(text)) return
+/** 系統通知：同一句只送一次（流程暫停、等你這類每次重新整理都會重算的事）；repeat 是你每做一次就該通知一次的（按 v 檢查沒過）。 */
+export function notify($: any, text: string, repeat = false) {
+  if (!active || tutorial || (!repeat && notified.has(text))) return
   notified.add(text)
   void Promise.resolve().then(() => $.ui.notify(text, { title: 'desk' })).catch(() => {})
 }
