@@ -100,6 +100,22 @@ test('idle next: the now card asks for v instead of g', () => {
   expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open'])
 })
 
+/** AC-1、AC-2 */
+test('a review next step at the build stage asks for v then w, not g', () => {
+  for (const next of ['審查', '派審查：/desk review 更多動作自動收回', '派獨立審查（w）', '按 w 派審查', '重新審查']) {
+    // 沒有流程紀錄：v 只記結果，審查要再按 w
+    const c = mk({ next })
+    const turn = turnOf(c)
+    expect(turn).toEqual({ who: 'you', text: '下一步是審查：按 v 執行完成檢查，通過後按 w 派審查', key: 'v' })
+    expect(turn.text).not.toContain('按 g 派 Agent')
+    expect(ids(c)).toEqual(['open', 'verify'])
+    // 流程會自動接審查（這個對話開的流程、剛做完實作）
+    const chained = mk({ next }, { chain: { round: 0, lastKind: 'continue', autoReview: true } })
+    expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步是審查：按 v 執行完成檢查，通過後自動審查', key: 'v' })
+    expect(ids(chained)).toEqual(['open', 'verify'])
+  }
+})
+
 /** AC-5 */
 test('turn: merge stage asks to dispatch publish', () => {
   const passedGate = { gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }

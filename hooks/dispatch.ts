@@ -221,10 +221,24 @@ const IDLE_WAIT = '(?:(?:自動|完成)?檢查(?:結果|通過)?|(?:程式碼|�
 const IDLE_PRESS_V = '(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:完成)?檢查)?'
 const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|開\\s*PR|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
 
-/** 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」時，沒有要 Agent 做的事；回傳拒絕原因，否則空字串。 */
+/** 派審查的寫法：「（派）（獨立）審查」可接括號或「：/desk review …」；整段是 `/desk review …`；「按 w（派審查）」。整段比對，「修正審查的 HIGH」不算。 */
+const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?審查'
+const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(][^）)]*[）)])?(?:\\s*[:：]\\s*/desk\\s+review\\b.*)?|/desk\\s+review\\b.*|按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
+export const REVIEW_NEXT = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
+
+const nextParts = (next: string) => next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
+
+/** 下一步至少一件是派審查、其他都是等檢查類：g 派的「繼續」不會審查，要先 v 再 w。 */
+export function reviewNext(next: string): boolean {
+  const parts = nextParts(next)
+  return parts.some(p => REVIEW_CLAUSE.test(p)) && parts.every(p => REVIEW_CLAUSE.test(p) || IDLE_CLAUSE.test(p))
+}
+
+/** 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」（或派審查）時，沒有要 Agent 做的事；回傳拒絕原因，否則空字串。 */
 export function idleNext(next: string): string {
   if (saysNone(next)) return ''
-  const parts = next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
+  if (reviewNext(next)) return REVIEW_NEXT
+  const parts = nextParts(next)
   return parts.length > 0 && parts.every(p => IDLE_CLAUSE.test(p))
     ? '下一步只剩等檢查／審查／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事'
     : ''
