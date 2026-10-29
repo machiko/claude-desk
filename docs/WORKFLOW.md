@@ -89,8 +89,8 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
   4. 跑 `claude plugin validate .` 與整套測試（`claude plugin test .`、`python3 -m unittest discover -s skills/card/tests`、`python3 -m unittest discover -s scripts/tests`）
   5. commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
   6. 打 annotated tag：`git tag -a v<版本> -m "v<版本>"`
-  7. push 主分支與 tag：`git push origin HEAD:main v<版本>`
-  8. 等 main 的 CI 通過（`gh run watch`）
+  7. push 主分支與 tag：`git push --atomic origin HEAD:main v<版本>`（`--atomic`：origin/main 已前進、main 被拒時 tag 也不推，不會留下不在 main 上的 tag）
+  8. 等 main 的 CI 通過：先取這次 commit 的 run id（`gh run list --branch main --commit <commit> --limit 1 --json databaseId -q '.[0].databaseId'`，還沒出現就等幾秒再查），再 `gh run watch <id> --exit-status`（非互動環境一定要給 id；`--exit-status` 讓 CI 失敗時回非零）；沒有 gh 就到 GitHub Actions 看
   9. 收尾：主 repo 在 main 且沒有改動就 `git merge --ff-only origin/main`（否則跳過並寫進狀態）、`git worktree remove <暫存路徑>`，每張卡的狀態寫「已發版 <版本>：tag 與 main 已推送，main 的 CI 通過」
 
   之後你做的事：有 `release：` 關卡的卡部署後按 `u` 確認上線；歸檔照舊（面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`）。

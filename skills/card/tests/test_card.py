@@ -756,6 +756,18 @@ class ReleaseDocsTest(unittest.TestCase):
         readme = read(os.path.join(REPO, 'README.md'))
         self.assertRegex(readme, r'(?m)^\| ⚑ 發版 \|')
 
+    def test_release_steps_push_atomically_and_wait_ci_by_exit_status(self):
+        """審查 MEDIUM：push 用 --atomic（main 被拒時 tag 不推）；CI 先取 run id 再 watch --exit-status（非互動要 id、失敗回非零）；changelog 寫在要發版的那份 main，不只寫主 repo。"""
+        section = self.release_section()
+        self.assertIn('git push --atomic origin HEAD:main', section)
+        self.assertIn('gh run list --branch main --commit', section)
+        self.assertIn('--exit-status', section)
+        skill = read(os.path.join(REPO, 'skills', 'card', 'SKILL.md'))
+        readme = read(os.path.join(REPO, 'README.md'))
+        for text in (skill, readme):
+            self.assertIn('從 origin/main 開的暫存 worktree', text)
+        self.assertNotIn('在主 repo、要發的 PR 都合併之後執行', skill)
+
     def test_release_docs_state_one_question_and_version_rule_when_releasing_desk(self):
         """AC-4：發版段寫只問一次與題目範本、desk 的版號規則、照做的 9 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
         section = self.release_section()
