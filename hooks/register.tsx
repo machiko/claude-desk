@@ -31,7 +31,7 @@ import { isBusy, sentState } from './turn'
 import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, noteCardAsks, stopSuperseded } from './stale-agents'
-import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAgentQueue, isAgentQueued, queuePosition, readAgentQueue, requeue } from './agent-queue'
+import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAgentQueue, isAgentQueued, notSent, queuePosition, readAgentQueue, requeue } from './agent-queue'
 import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
@@ -591,17 +591,35 @@ async function nextInQueue($: any) {
 }
 export let optionsRef: PluginOptions | undefined
 
-/** 這個對話正在啟動中的派工有幾件。 */
-export async function launchingCount($: any): Promise<number> {
-  return Object.keys(await read($, launchingAtom)).length
-}
+/**
+ * 這個對話佔了名額、還沒派完的派工（卡片路徑）：通過名額判斷就同步佔位，派完（成功、失敗或拋錯）才放掉。
+ * 「啟動中」佔位要等幾個 await 之後才寫，只看它的話，同時派好幾件會都看到有空位。
+ */
+const slots = new Set<string>()
+const LAUNCHING = '上一次派工仍在啟動'
 
-/** 現在在跑的工作桌 Agent（整台機器）加上這個對話啟動中的：即時問 claude agents，問不到用上一輪的清單，也沒有就當 0（不擋派工）。 */
-async function deskAgentsNow($: any): Promise<number> {
+/** 這個對話正在啟動中的派工有幾件。 */
+export const launchingCount = (): number => slots.size
+
+/** 現在在跑的工作桌 Agent（整台機器）：即時問 claude agents，問不到用上一輪的清單，也沒有就當 0（不擋派工）。 */
+async function runningDeskNow($: any): Promise<number> {
   const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: PRESS_AGENTS_MS }).catch(() => null)
   const list = out && out.exitCode === 0 ? rawAgents(out.stdout) : lastAgents
-  return (list ? runningDeskAgents(list) : 0) + await launchingCount($)
+  return list ? runningDeskAgents(list) : 0
 }
+
+/** 這件有派工還在啟動（已佔名額或已寫「啟動中」佔位）。 */
+async function starting($: any, statusPath: string): Promise<boolean> {
+  return statusPath in (await read($, launchingAtom)) || slots.has(statusPath)
+}
+
+/** 這件有派工還在啟動，這次不派：從隊伍取出的寫動態說原因（隊伍裡已經拿掉，不默默不見），其他的跳提示。 */
+async function refuseStarting($: any, c: Case, kind: DispatchKind, opts: QueueOpts & { fromQueue?: number }) {
+  if (opts.fromQueue !== undefined) await notSent($, c, { statusPath: c.statusPath, kind, opts }, LAUNCHING, await $.clock.now(), await me($))
+  else $.ui.toast(`${c.name}：${LAUNCHING}`)
+}
+
+const alreadyQueued = (c: Case) => `${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`
 
 /**
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
@@ -616,13 +634,13 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
   const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
   if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return false }
-  if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return false }
-  if (!fromQueue && isAgentQueued(c.statusPath)) { if (!opts.auto) $.ui.toast(`${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`); return false }
+  if (await starting($, c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
+  if (!fromQueue && isAgentQueued(c.statusPath)) { if (!opts.auto) $.ui.toast(alreadyQueued(c)); return false }
   // 從隊伍派出的：排隊前已核准過，排隊期間檢查改了的在隊伍那邊就擋下，不再跳對話框。
   if (kind === 'continue' && !opts.auto && !fromQueue) {
     if (!(await approveCheck($, c))) return false
     // 等你回答的這段時間，可能已經從別處派出去了（例如又打了 /desk go）。
-    if (c.statusPath in (await read($, launchingAtom))) { $.ui.toast(`${c.name}：上一次派工仍在啟動`); return false }
+    if (await starting($, c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
   }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
@@ -635,37 +653,44 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const foreign = markRefusal(await worktreeMark($, c.root), own)
     if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return false }
   }
-  // 同時在跑的工作桌 Agent 已達上限（教學與 maxAgents 0 不限）：排進隊伍；隊伍裡已經有人在等時也排，先來先派。
-  const { fromQueue: at, ...queued } = opts
-  if (!tutorial && settings.maxAgents > 0 && ((!fromQueue && hasAgentQueue()) || await deskAgentsNow($) >= settings.maxAgents)) {
-    if (fromQueue) { await requeue($, c, kind, queued, at!); return false }
-    await enqueueDispatch($, c, kind, queued, settings.maxAgents)
-    return true
-  }
-  const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
   const now = await $.clock.now()
-  const name = launchName(now, launchSeq++)
-  let review: ReviewOpts | undefined
-  const probed = kind === 'review' ? (await gitProbe($, c.root)).git : undefined
-  if (kind === 'review') {
-    const run = (await loadChains($))[rootKey]
-    const round = opts.auto ? run?.round ?? 0 : 0
-    // 舊紀錄存的是分支名稱，拿來 diff 會是空的：當作沒有基準，整條分支重審。
-    const recorded = opts.security ? run?.securityHead : run?.reviewHead
-    const base = recorded && recorded !== c.git?.branch ? recorded : undefined
-    const paths = await deskPaths($, options)
-    const pitfalls = paths.pitfalls
-    const template = settings.review.template || `${$.plugin.root}/templates/review.md`
-    const recheck = !!opts.auto && !!run?.recheck && !opts.security
-    const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target
-    review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
+  // 同時在跑的工作桌 Agent 已達上限（教學與 maxAgents 0 不限）：排進隊伍；隊伍裡已經有人在等時也排，先來先派。
+  // 名額＝在跑的（整台機器）＋這個對話已佔的。問完在跑的之後，到佔位或排進隊伍之間不能有 await：同時派好幾件才不會都看到有空位。
+  const { fromQueue: at, ...queued } = opts
+  const full = !tutorial && settings.maxAgents > 0 && ((!fromQueue && hasAgentQueue()) || await runningDeskNow($) + slots.size >= settings.maxAgents)
+  // 同一件同時派了兩次：開頭檢查時先到的還沒佔位，到這裡才擋得下後到的。
+  if (slots.has(c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
+  if (full) {
+    if (fromQueue) { await requeue($, c, kind, queued, at!); return false }
+    if (await enqueueDispatch($, c, kind, queued, settings.maxAgents)) return true
+    if (!opts.auto) $.ui.toast(alreadyQueued(c))
+    return false
   }
-  const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name)
-  const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
-  launchKinds = { ...launchKinds, [c.statusPath]: doing }
-  await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
-  await spin($, true)
+  slots.add(c.statusPath)
+  // 佔位之後的準備（審查要讀 git 與流程紀錄）也在 try 裡：拋錯時一樣放掉名額、說派工失敗。
   try {
+    const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
+    const name = launchName(now, launchSeq++)
+    let review: ReviewOpts | undefined
+    const probed = kind === 'review' ? (await gitProbe($, c.root)).git : undefined
+    if (kind === 'review') {
+      const run = (await loadChains($))[rootKey]
+      const round = opts.auto ? run?.round ?? 0 : 0
+      // 舊紀錄存的是分支名稱，拿來 diff 會是空的：當作沒有基準，整條分支重審。
+      const recorded = opts.security ? run?.securityHead : run?.reviewHead
+      const base = recorded && recorded !== c.git?.branch ? recorded : undefined
+      const paths = await deskPaths($, options)
+      const pitfalls = paths.pitfalls
+      const template = settings.review.template || `${$.plugin.root}/templates/review.md`
+      const recheck = !!opts.auto && !!run?.recheck && !opts.security
+      const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target
+      review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
+    }
+    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name)
+    const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
+    launchKinds = { ...launchKinds, [c.statusPath]: doing }
+    await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
+    await spin($, true)
     const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name })
     const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。
@@ -689,6 +714,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
     return false
   } finally {
+    slots.delete(c.statusPath)
     launchKinds = Object.fromEntries(Object.entries(launchKinds).filter(([k]) => k !== c.statusPath))
     await update($, launchingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
     await spin($, false)
@@ -696,7 +722,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
 }
 
 const notified = new Set<string>()
-function notify($: any, text: string) {
+export function notify($: any, text: string) {
   if (!active || tutorial || notified.has(text)) return
   notified.add(text)
   void Promise.resolve().then(() => $.ui.notify(text, { title: 'desk' })).catch(() => {})

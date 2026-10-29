@@ -253,3 +253,91 @@ test('queued auto dispatches recheck the worktree and keep an existing pause rea
   expect(shown).not.toContain('派工排隊中')
   await ui.unmount()
 })
+
+/** 審查 MEDIUM：排隊的自動派工因 worktree 被改而停下流程時，跟自動流程一樣跳提示並發系統通知；沒停下的那件不出聲。 */
+test('a queued auto dispatch stopped by foreign changes alerts like the chain does', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const notified: string[] = []
+  on('ui.notify', (_: any, e: any) => { notified.push(e.text); return { value: { isSent: true as const, channel: 'terminal_bell' as const } } })
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueTwoAutoReviews(data, clock, h)
+  data.git[GAMMA].changed = 3
+
+  h.finishOne(); h.finishOne()
+  await h.refresh()
+
+  const paused = (t: string) => t.startsWith('Gamma：流程已暫停，worktree 有未提交的改動（3 個檔）')
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(ALPHA)
+  expect(data.toasts.some(paused)).toBe(true)
+  expect(notified.some(paused)).toBe(true)
+  expect([...data.toasts, ...notified].some((t: string) => t.startsWith('Alpha：流程已暫停'))).toBe(false)
+})
+
+/** 審查 MEDIUM：同一個對話幾乎同時派兩件、只剩一個名額：只派出一件，另一件排第 1 位，在跑的不超過上限。 */
+test('concurrent dispatches in one conversation never exceed the limit', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  data.agents = FULL().slice(0, 2)
+  const h = helpers($, data, clock)
+  await h.refresh()
+
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+
+  expect(data.launches).toHaveLength(1)
+  expect(runningDesk(data)).toBe(3)
+  expect(data.toasts.filter((t: string) => t.endsWith('同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）'))).toHaveLength(1)
+})
+
+/** 審查 MEDIUM：同一件連派兩次、第一次佔到最後一個名額還在啟動：第二次說「上一次派工仍在啟動」，不排進隊伍，之後也不會再派。 */
+test('a second dispatch of a card that is still starting is refused, not queued', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  data.agents = FULL().slice(0, 2)
+  const launchNow = data.launch
+  let release = () => {}
+  data.launch = (e: any) => new Promise(done => { release = () => done(launchNow(e)) })
+  const h = helpers($, data, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts).toContain('Gamma：上一次派工仍在啟動')
+  expect(data.toasts.some((t: string) => t.includes('已排隊'))).toBe(false)
+
+  // 空出名額、第一次派工啟動完成：都只有那一個
+  h.finishOne()
+  await h.refresh()
+  release(); await clock.settle()
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  await ui.press({ key: `row-${CARD_C}` })
+  expect(await screen(ui)).not.toContain('派工排隊中')
+  await ui.unmount()
+})
+
+/** 審查 MEDIUM：名額滿時同一件連派兩次：只排一筆，第二次說已在隊伍；空出名額後只派出一個。 */
+test('two dispatches of the same card while full queue it once', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await h.refresh()
+
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(data.toasts.filter((t: string) => t === 'Gamma：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')).toHaveLength(1)
+  expect(data.toasts).toContain('Gamma：已在派工隊伍（第 1 位），k 取消排隊')
+
+  h.finishOne(); h.finishOne()
+  await h.refresh()
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(GAMMA)
+})
