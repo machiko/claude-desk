@@ -25,6 +25,8 @@ export function parseVerdict(gate: string | undefined): ReviewVerdict | null {
 }
 
 export const blocking = (v: ReviewVerdict) => v.critical + v.high
+/** 審查結論還要修的條數：CRITICAL＋HIGH，加上流程這輪要修的 MEDIUM（審查檔裡沒標「不修」「等你決定」的）。 */
+export const toFix = (c: Pick<Case, 'chain'>, v: ReviewVerdict): number => blocking(v) + (c.chain?.mediumFix ?? 0)
 
 /** 還算數的審查結論：審查之後分支有新 commit（chain.stale），卡片上那次的結論就不算。 */
 export const standingVerdict = (c: Pick<Case, 'gate' | 'chain'>): ReviewVerdict | null => c.chain?.stale ? null : parseVerdict(c.gate)
@@ -101,7 +103,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   // 停在權限提示的 Agent 是做到一半被擋住：和寫程式中一樣，之前的檢查結果不能讓六段往前走（等人批准，不是待審查）。
   const busy = coding || c.agent?.waitsFor === 'permission'
 
-  const reviewed = (verdict && blocking(verdict) === 0) || (c.chain?.passed && !stale)
+  // 流程還要修 MEDIUM 時不算審查過了：不跳到合併段、不出現開 PR。
+  const reviewed = (verdict && toFix(c, verdict) === 0) || (c.chain?.passed && !stale)
   // 按 u 確認上線後關卡清成無、PR 資訊過一小時也不顯示，靠確認時寫進卡片的狀態與下一步認得它已上線。
   const confirmed = !!c.tag && (c.status.includes(`${c.tag} ${SHIPPED_WORD}`) || c.next.startsWith(ARCHIVE_WORD))
   // tag 只在走到上線段後才算數：從打了 tag 的 main 剛開的分支，HEAD 也被 tag 包含。發版線沒有審查與合併段，照算。
@@ -157,7 +160,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
         break
       case 'review':
         if (running === 'review') set('active', '審查中')
-        else if (verdict) set(c.chain?.stopped ? 'fail' : 'active', c.chain?.stopped ?? `CRITICAL ${verdict.critical}、HIGH ${verdict.high}，修正中`)
+        else if (verdict) set(c.chain?.stopped ? 'fail' : 'active', c.chain?.stopped ?? `CRITICAL ${verdict.critical}、HIGH ${verdict.high}${c.chain?.mediumFix ? `、MEDIUM ${c.chain.mediumFix}` : ''}，修正中`)
         else if (stale) set(c.chain?.stopped ? 'fail' : 'wait', c.chain?.stopped ?? '審查後有新 commit，待重新審查')
         else if (gate?.kind === 'review') set('wait', '審查結論缺少分級')
         else set('wait', '待審查')

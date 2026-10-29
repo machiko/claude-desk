@@ -1,4 +1,4 @@
-"""templates/review.md（審查契約）與流程文件的測試：不影響行為的 MEDIUM 直接記錄、不問；可能影響行為的照舊在「等你」問一題。
+"""templates/review.md（審查契約）與流程文件的測試：不影響行為的 MEDIUM 直接記錄、不問；可能影響行為的自動修，輪數用完或要你決定的才在「等你」問一題。
 
 執行：python3 -m unittest discover -s scripts/tests
 """
@@ -65,6 +65,25 @@ class ReviewContractTest(unittest.TestCase):
             self.assertIn('記錄、不修', part, path)
             self.assertIn('等你', part, path)
             self.assertIn('不影響行為', part, path)
+
+    def test_review_contract_auto_fixes_behavior_medium_until_rounds_run_out(self):
+        """auto-fix-medium AC-4：可能影響行為的 MEDIUM 還有修正輪數時自動修；要你決定的標「（等你決定）」並問；流程文件寫明會自動修。"""
+        text = read(CONTRACT)
+
+        self.assertIn('（等你決定）', text)
+        self.assertIn('自動派修正', text)
+        self.assertIn('修正輪數', text)
+        self.assertIn(ASK, text)
+        self.assertRegex(text, r'驗收情境無法驗證、要改規格才能修[^\n]*（等你決定）')
+        self.assertRegex(text, r'這次不會自動修[^\n]*（等你決定）')
+        self.assertRegex(text, r'審查檔也沒有不帶註記的 MEDIUM 就過關')
+        # 複審會確認上一輪沒加註記的 MEDIUM，記錄、不修的照舊不再提
+        self.assertIn('沒加註記的 MEDIUM 修好沒', text)
+        self.assertIn('「記錄、不修」的不要再提', text)
+        for path, heading in ((WORKFLOW, '自動流程'), (FLOW, '審查')):
+            part = section(read(path), heading)
+            self.assertRegex(part, r'可能影響行為的 MEDIUM[^\n]*自動派', path)
+            self.assertIn('最多兩輪', part, path)
 
 
 if __name__ == '__main__':

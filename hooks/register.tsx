@@ -7,11 +7,11 @@ import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
 import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
-import { deploySteps, parseReminders, reviewTop } from './extras'
+import { deploySteps, mediumToFix, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
 import { handedOver, judgedAt, nextStep, paused, seenHeads } from './chain'
@@ -131,7 +131,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查。
       const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       const chain = run
-        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
+        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
@@ -224,7 +224,8 @@ async function noteEnded($: any, list: readonly any[], cases: readonly Case[]) {
 
 /**
  * 自動流程（第二到第四段）：只處理這個對話自己派出去、剛結束、還沒處理過的那一次。
- * 做完實作 → 跑完成檢查 → 綠了派審查 → 有 CRITICAL／HIGH 派修正，最多兩輪；停下來就寫進動態並提醒。
+ * 做完實作 → 跑完成檢查 → 綠了派審查 → 有 CRITICAL／HIGH 或影響行為的 MEDIUM（審查檔裡沒標「不修」「等你決定」的）派修正，
+ * 最多兩輪；停下來就寫進動態並提醒。
  */
 async function autoChain($: any, options: PluginOptions, s: Snapshot) {
   const mine = await me($)
@@ -272,7 +273,9 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const settings = finished ? await loadSettings($, options) : undefined
     const risk = settings ? await riskOf($, c, settings.riskHigh, settings.cardBase) : undefined
     const stoppedAgent = last.ended?.how === 'stopped'
-    const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent })
+    // 剛結束的審查：審查檔裡沒標「不修」「等你決定」的 MEDIUM 要跟 CRITICAL／HIGH 一起修（程式碼審查看 REVIEW.md、資安審查看 SECURITY.md）。
+    const mediumFix = finished === 'review' && !stoppedAgent ? mediumToFix(await $.fs.read(`${c.root}/${last.security ? SECURITY_FILE : REVIEW_FILE}`).catch(() => null)) : 0
+    const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent, ...(mediumFix ? { mediumFix } : {}) })
     if (!planned) continue
     acted = true
     // 被停掉的審查沒寫完：不歸檔、不算判過。
@@ -287,8 +290,11 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     // 要派下一步之前先看 worktree：有不是上一個 Agent 留下的未提交改動（別的對話在改），停下來說原因，不派。
     const foreign = next.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
     const step: ChainStep = foreign ? { kind: 'stop', reason: foreign } : next
+    // 這輪修正要修的 MEDIUM（沒派成、停下來的也記著：停下時按 g 才修得到）；沒帶就把上一輪的拿掉。
+    const medium = planned.kind === 'dispatch' ? planned.medium : undefined
+    const withMedium = (r: ChainRun): ChainRun => { const { mediumFix: _, ...rest } = r; return medium ? { ...rest, mediumFix: medium } : rest }
     if (step.kind === 'stop') {
-      await saveChain($, key, r => r ? paused(r, step.reason, step.atCheck) : r)
+      await saveChain($, key, r => r ? paused(withMedium(r), step.reason, step.atCheck) : r)
       await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error', card: c.statusPath }])
       $.ui.toast(`${c.name}：流程已暫停，${step.reason}`, { timeoutMs: 10_000 })
       notify($, `${c.name}：流程已暫停，${step.reason}`)
@@ -302,7 +308,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       $.ui.toast(say, { timeoutMs: 10_000 })
       notify($, say)
     } else {
-      await saveChain($, key, r => r ? { ...r, round: step.round } : r)
+      await saveChain($, key, r => r ? { ...withMedium(r), round: step.round } : r)
       const fix: FixReason | undefined = step.reason ? { from: step.reason as 'check' | 'review', round: step.round, ...(step.reason === 'check' ? { tail: fresh?.tail ?? [] } : {}) } : undefined
       await dispatch($, options, { ...c, state: 'ready' }, step.dispatch, { fix, auto: true, ...(step.security ? { security: true } : {}) })
     }

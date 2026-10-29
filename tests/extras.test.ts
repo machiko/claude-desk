@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, paneReminders, reminderWhen, reviewTop, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
+import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, paneReminders, reminderWhen, reviewTop, mediumToFix, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
 
 test('confirm fires only on a second press of the same action within 3 seconds', () => {
   const a = confirmStep(null, 'x\ncontinue', 1000)
@@ -96,4 +96,24 @@ test('mergedAtHead only trusts a merged PR whose head is the current HEAD', () =
   expect(mergedAtHead(byGit)).toBe(false)
   expect(mergedAtHead({ git, pr: { ...pr, state: 'OPEN' } })).toBe(false)
   expect(mergedAtHead({ pr })).toBe(false)
+})
+
+/** auto-fix-medium：審查檔裡要自動修的 MEDIUM 只算沒標「不修」「等你決定」的 */
+test('test_medium_to_fix_skips_lines_marked_not_fix_or_your_decision', () => {
+  const text = [
+    '| AC-1 | 做到 | t.ts |',
+    '- [MEDIUM][邊界] a.ts:1 — 空字串沒處理',
+    '* [medium][重試] b.ts:2 — 逾時沒重試',
+    '- [MEDIUM][命名] c.ts:3 — 變數名不清（記錄、不修）',
+    '- [MEDIUM][文件] d.md:4 — 少一句（不修）',
+    '- [MEDIUM][規格] — AC-2 無法驗證（等你決定）',
+    '- [MEDIUM][邊界] e.ts:5 — 上限沒擋（上一輪已列，等你決定）',
+    '- [MEDIUM][邏輯] f.ts:6 — 說明裡提到不修會壞，但不是註記',
+    '- [HIGH][稽核] g.ts:7 — 漏寫稽核',
+    '- [LOW][風格] h.ts:8 — 縮排',
+  ].join('\r\n')
+  expect(mediumToFix(text)).toBe(3)
+  expect(mediumToFix(null)).toBe(0)
+  expect(mediumToFix('')).toBe(0)
+  expect(mediumToFix('- [HIGH][x] a — b\n- [LOW][y] c — d')).toBe(0)
 })

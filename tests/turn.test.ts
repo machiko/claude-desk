@@ -139,7 +139,7 @@ test('a review next step after a failed check still lets g fix it', () => {
   // 流程停下（修了兩輪仍有 HIGH）與 Agent 被停掉：一樣派修正或接著做，不引用下一步
   const stopped = mk({ next: '派審查' }, { state: 'failed', chain: { round: 2, lastKind: 'fix', stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' } })
   expect(dispatchable(stopped)).toContain('continue')
-  expect(buildPrompt(stopped, 'continue').split('\n')[0]).toBe('修正：流程已暫停（修了 2 輪仍有 CRITICAL 0、HIGH 1）。看 .task/REVIEW.md（有的話）與完成檢查 `npm test`，修好 CRITICAL、HIGH 並讓完成檢查綠，commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。')
+  expect(buildPrompt(stopped, 'continue').split('\n')[0]).toBe('修正：流程已暫停（修了 2 輪仍有 CRITICAL 0、HIGH 1）。看 .task/REVIEW.md（有的話）與完成檢查 `npm test`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。），commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。')
   const halted = mk({ next: '等審查' }, { state: 'failed', chain: { round: 0, lastKind: 'continue', stopped: AGENT_STOPPED } })
   expect(dispatchable(halted)).toContain('continue')
   expect(buildPrompt(halted, 'continue').split('\n')[0]).toBe('上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。')
@@ -155,7 +155,7 @@ test('a blocking review verdict without a chain sends a review fix, not a check 
     expect(c.state).toBe('failed')
     expect(dispatchable(c)).toContain('continue')
     const head = buildPrompt(c, 'continue').split('\n')[0]!
-    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
+    expect(head).toBe('修正：依 .task/REVIEW.md（資安審查之後的修正依 .task/SECURITY.md）修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
     expect(head).not.toContain('未通過')
   }
 })
@@ -223,8 +223,8 @@ test('each user turn before merging says what happens after it', () => {
   // 審查段：有開著的 PR 過關後合併，沒有就開 PR。
   const openPr = mk({}, { pr: { id: 12, state: 'OPEN', ci: 'pass' } }, passed)
   expect(openPr.pipeline?.current).toBe('review')
-  expect(turnOf(openPr)).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 會自動修正，過關後合併 PR', key: 'w' })
-  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 會自動修正，過關後開 PR', key: 'w' })
+  expect(turnOf(openPr)).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後合併 PR', key: 'w' })
+  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後開 PR', key: 'w' })
 })
 
 /** one-next-step D-04：審查後有新 commit，但流程會自己接手（自動排的重新檢查、修正輪剛做完）：新的一輪還沒過關，也照樣是自動重新審查 */

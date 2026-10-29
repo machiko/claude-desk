@@ -88,6 +88,17 @@ export function reviewTop(text: string | null, n = 3): string[] {
   return out.slice(0, n)
 }
 
+/**
+ * 審查檔裡要自動修的 MEDIUM 條數：「- [MEDIUM]…」開頭的行（不分大小寫，跟 reviewTop 同一種比對），有含「不修」或「等你決定」的括號註記就不算
+ * （「（記錄、不修）」「（不修）」「（等你決定）」「（上一輪已列，等你決定）」）；說明裡提到「不修」但不在括號註記裡的照算。沒有檔案回 0。
+ */
+export function mediumToFix(text: string | null): number {
+  if (!text) return 0
+  return text.replace(/\r\n?/g, '\n').split('\n')
+    .filter(l => /^\s*[-*]\s*\[MEDIUM\]/i.test(l) && !/[（(][^（）()]*(?:不修|等你決定)[^（）()]*[）)]/.test(l))
+    .length
+}
+
 /** `git status --porcelain=v2 --branch`：領先、落後、未提交、未追蹤，以及有沒有遠端分支（upstream）。 */
 export type GitState = { ahead: number; behind: number; changed: number; untracked: number; /** false：origin 上沒有這個分支（從沒 push 過，或合併後遠端分支被刪、fetch --prune 過）。沒填（舊資料）當作有。 */ upstream?: boolean }
 export function parseGitStatus(text: string): GitState {
