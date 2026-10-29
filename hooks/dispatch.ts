@@ -1,7 +1,8 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
-import { agentBusy, isReleaseLine, needsPr, needsPush } from './pipeline'
+import { agentBusy, blocking, isReleaseLine, needsPr, needsPush, parseVerdict } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
+import { AGENT_STOPPED } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -184,6 +185,8 @@ export const NO_PUSH_RULE = '不 push、不開 PR。'
 const changelogRule = (c: Case) => `專案有 changelog.d/ 資料夾時，使用者看得到的改動寫成 CHANGELOG 條目放在 changelog.d/${slugOf(c)}.md（一行或多行「- 」開頭、動詞開頭：新增／修復／調整／移除，沒有標題與版本；沒有使用者看得到的改動就不建這個檔），不要改 CHANGELOG.md，發版時才合併。沒有這個資料夾就照專案原本的慣例。`
 
 export const REVIEW_FILE = '.task/REVIEW.md'
+/** 依審查檔修正：自動流程的修正輪與手動按 g 修審查結論共用。 */
+const REVIEW_FIX_STEP = `依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`
 export const SECURITY_FILE = '.task/SECURITY.md'
 
 /** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單與過去審查紀錄在哪。 */
@@ -195,9 +198,9 @@ export type FixReason = { from: 'check' | 'review'; round: number; tail?: string
 export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = ''): string {
   const head = fix ? (fix.from === 'check'
       ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
-      : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
+      : `修正第 ${fix.round}／2 輪：${REVIEW_FIX_STEP}`)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
-    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
+    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : manualFixHead(c) || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : kind === 'publish' ? publishHead(text)
@@ -208,6 +211,27 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
   const rules = writes ? [SPEC_RULE, changelogRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
   return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
+}
+
+/** PR 開著、CI 失敗、本機沒有待 push 的 commit：「輪到你」叫你按 g 修正。 */
+export const ciFailed = (c: Case): boolean => c.pipeline?.current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)
+/** 「輪到你」叫你按 g 修的時候（檢查失敗、流程停下、Agent 被停掉、PR 的 CI 失敗）：下一步寫什麼，g 都要派得出去。 */
+export const fixByG = (c: Case): boolean => c.state === 'failed' || ciFailed(c)
+
+/**
+ * 按 g 修、而下一步只剩等待或派審查時，派出去的開頭：說明是什麼失敗、要修到哪裡，不把等待句或派審查句原樣交出去。
+ * 下一步是真的工作就回空字串，照舊交下一步。
+ */
+function manualFixHead(c: Case): string {
+  if (!fixByG(c) || !idleNext(c.next)) return ''
+  if (ciFailed(c)) return `修正：PR #${c.pr!.id} 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。`
+  const stopped = c.chain?.stopped
+  if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
+  if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 並讓完成檢查綠，commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
+  // 審查結論擋住（審查不是工作桌派的、沒有流程紀錄）：檢查是過的，要修的是審查的 CRITICAL、HIGH。
+  const verdict = parseVerdict(c.gate)
+  if (verdict && blocking(verdict) > 0) return `修正：${REVIEW_FIX_STEP}`
+  return `修正：完成檢查 \`${c.verify}\` 未通過。先自己跑一次看失敗原因，修到完成檢查綠，commit 後寫回卡片。`
 }
 
 /** 下一步以 .task/review-… 開頭時，那個路徑。 */
@@ -227,10 +251,29 @@ const IDLE_PRESS_V = '(?:沒動靜就\\s*)?(?:到面板\\s*)?按\\s*[vV](?:\\s*(
 const IDLE_OPEN_PR = '(?:到面板\\s*)?(?:照\\s*「輪到你」\\s*)?開\\s*PR(?:\\s*或\\s*合併)?'
 const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|${IDLE_OPEN_PR}|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
 
-/** 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」時，沒有要 Agent 做的事；回傳拒絕原因，否則空字串。 */
+/**
+ * 派審查的寫法：「（派）（獨立）審查」可接按鍵註記「（w）」或「：/desk review …」；整段是 `/desk review …`；「按 w（派審查）」。
+ * 整段比對，「修正審查的 HIGH」不算；`/desk review` 後面的說明有修／補／改／寫／實作，是要改程式，也不算。
+ */
+const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?審查'
+const REVIEW_CMD = '/desk\\s+review(?:\\s+(?!.*(?:修|補|改|寫|實作)).*)?'
+const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(]\\s*(?:按\\s*)?[wW]\\s*[）)])?(?:\\s*[:：]\\s*${REVIEW_CMD})?|${REVIEW_CMD}|按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
+export const REVIEW_NEXT = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
+const REVIEW_NEXT_AT_REVIEW = '下一步是審查：按 w 派審查（g 派的是繼續，不會審查）'
+
+const nextParts = (next: string) => next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
+
+/** 下一步至少一件是派審查、其他都是等檢查類：g 派的「繼續」不會審查，要先 v 再 w。 */
+export function reviewNext(next: string): boolean {
+  const parts = nextParts(next)
+  return parts.some(p => REVIEW_CLAUSE.test(p)) && parts.every(p => REVIEW_CLAUSE.test(p) || IDLE_CLAUSE.test(p))
+}
+
+/** 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」（或派審查）時，沒有要 Agent 做的事；回傳拒絕原因，否則空字串。 */
 export function idleNext(next: string): string {
   if (saysNone(next)) return ''
-  const parts = next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
+  if (reviewNext(next)) return REVIEW_NEXT
+  const parts = nextParts(next)
   return parts.length > 0 && parts.every(p => IDLE_CLAUSE.test(p))
     ? '下一步只剩等檢查／審查／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事'
     : ''
@@ -249,7 +292,8 @@ export function dispatchable(c: Case): DispatchKind[] {
   // 規格段還是範本、六段停在規格段：一樣只能同步（已經審查過、合併、打 tag 的不擋）。
   if (specBlocks(c)) return ['sync']
   const out: DispatchKind[] = []
-  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && !idleNext(c.next)) out.push('continue')
+  // 「輪到你」叫你按 g 修（檢查失敗、CI 失敗）：下一步只剩等待或派審查也照樣能派，不然 g 是死路。
+  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && (fixByG(c) || !idleNext(c.next))) out.push('continue')
   if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
   // 推送只在合併段、還要 push 或開 PR 時；高風險改動也能派，面板上第一次按只提醒先看審查檔。
   if (needsPr(c) || needsPush(c)) out.push('publish')
@@ -285,6 +329,8 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
   if (specBlocks(c)) return specGapReason(c)
   if (!c.verify) return '卡片尚缺完成檢查，規格未通過'
+  // 審查段（檢查已通過）：「輪到你」已經是按 w，不再叫你先按 v。
+  if (kind === 'continue' && reviewNext(c.next) && c.pipeline?.current === 'review') return REVIEW_NEXT_AT_REVIEW
   return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
 }
 

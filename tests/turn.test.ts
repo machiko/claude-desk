@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
+import { AGENT_STOPPED } from '../hooks/chain'
+import { buildPrompt, dispatchable, dispatchRefusal } from '../hooks/dispatch'
 import { shipTurn, stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
 import { fixture, CARD_B, PANE, REGISTRY, flat, text } from './fixture'
@@ -103,6 +105,89 @@ test('idle next: the now card asks for v instead of g', () => {
   // 有實作的下一步照舊
   expect(turnOf(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual({ who: 'you', text: '按 g 派 Agent：等檢查；補 AC-3 的測試', key: 'g' })
   expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open'])
+})
+
+/** AC-1、AC-2 */
+test('a review next step at the build stage asks for v then w, not g', () => {
+  for (const next of ['審查', '派審查：/desk review 更多動作自動收回', '派獨立審查（w）', '按 w 派審查', '重新審查']) {
+    // 沒有流程紀錄：v 只記結果，審查要再按 w
+    const c = mk({ next })
+    const turn = turnOf(c)
+    expect(turn).toEqual({ who: 'you', text: '下一步是審查：按 v 執行完成檢查，通過後按 w 派審查', key: 'v' })
+    expect(turn.text).not.toContain('按 g 派 Agent')
+    expect(ids(c)).toEqual(['open', 'verify'])
+    // 流程會自動接審查（這個對話開的流程、剛做完實作）
+    const chained = mk({ next }, { chain: { round: 0, lastKind: 'continue', autoReview: true } })
+    expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步是審查：按 v 執行完成檢查，通過後自動審查', key: 'v' })
+    expect(ids(chained)).toEqual(['open', 'verify'])
+  }
+})
+
+test('a review next step after a failed check still lets g fix it', () => {
+  // 檢查失敗：「輪到你」叫你按 g 修正，g 就要派得出去，不能被「下一步是審查」擋掉
+  for (const next of ['派審查：/desk review 更多動作自動收回', '按 w 派審查', '等審查']) {
+    const c = mk({ next }, {}, { ...passed, ok: false, exitCode: 1 })
+    expect(turnOf(c)).toEqual({ who: 'you', text: '完成檢查未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' })
+    expect(ids(c)).toContain('continue')
+    expect(dispatchable(c)).toContain('continue')
+    expect(dispatchRefusal(c, 'continue')).toBe('')
+    // 派出去的是修正，不是把等待句或派審查句原樣交出去
+    const head = buildPrompt(c, 'continue').split('\n')[0]!
+    expect(head).toBe('修正：完成檢查 `npm test` 未通過。先自己跑一次看失敗原因，修到完成檢查綠，commit 後寫回卡片。')
+    expect(head).not.toContain('依卡片的下一步繼續')
+  }
+  // 流程停下（修了兩輪仍有 HIGH）與 Agent 被停掉：一樣派修正或接著做，不引用下一步
+  const stopped = mk({ next: '派審查' }, { state: 'failed', chain: { round: 2, lastKind: 'fix', stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' } })
+  expect(dispatchable(stopped)).toContain('continue')
+  expect(buildPrompt(stopped, 'continue').split('\n')[0]).toBe('修正：流程已暫停（修了 2 輪仍有 CRITICAL 0、HIGH 1）。看 .task/REVIEW.md（有的話）與完成檢查 `npm test`，修好 CRITICAL、HIGH 並讓完成檢查綠，commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。')
+  const halted = mk({ next: '等審查' }, { state: 'failed', chain: { round: 0, lastKind: 'continue', stopped: AGENT_STOPPED } })
+  expect(dispatchable(halted)).toContain('continue')
+  expect(buildPrompt(halted, 'continue').split('\n')[0]).toBe('上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。')
+  // 下一步是真的工作：照舊交下一步
+  expect(buildPrompt(mk({ next: '補 AC-3 的測試' }, {}, { ...passed, ok: false, exitCode: 1 }), 'continue').split('\n')[0]).toBe('依卡片的下一步繼續：補 AC-3 的測試')
+})
+
+test('a blocking review verdict without a chain sends a review fix, not a check fix', () => {
+  // 審查不是工作桌派的（沒有流程紀錄）、關卡有 HIGH、檢查是過的：按 g 派的是依審查檔修，不說檢查未通過
+  const gate = 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；不過'
+  for (const next of ['等完成檢查與審查', '等審查', '派審查']) {
+    const c = mk({ next, gate }, {}, passed)
+    expect(c.state).toBe('failed')
+    expect(dispatchable(c)).toContain('continue')
+    const head = buildPrompt(c, 'continue').split('\n')[0]!
+    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
+    expect(head).not.toContain('未通過')
+  }
+})
+
+test('a review next step with a failed PR CI still lets g fix it', () => {
+  // PR 開著、CI 失敗：「輪到你」叫你按 g 修正，g 就要派得出去；推送 Agent 寫的「等 CI 與合併」也一樣
+  const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
+  const pr = { id: 12, state: 'OPEN', ci: 'fail', url: 'https://github.com/acme/shop/pull/12' } as any
+  for (const next of ['派審查', '派獨立審查（w）', '等 CI 與合併']) {
+    const c = mk({ next, gate }, { pr }, passed)
+    expect(turnOf(c)).toEqual({ who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' })
+    expect(ids(c)).toContain('continue')
+    expect(dispatchable(c)).toContain('continue')
+    expect(dispatchRefusal(c, 'continue')).toBe('')
+    expect(buildPrompt(c, 'continue').split('\n')[0]).toBe('修正：PR #12 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。')
+  }
+})
+
+test('at the review stage a review next step refuses g and points to w only', () => {
+  const c = mk({ next: '派審查' }, {}, passed)
+  expect(c.pipeline?.current).toBe('review')
+  expect(dispatchRefusal(c, 'continue')).toBe('下一步是審查：按 w 派審查（g 派的是繼續，不會審查）')
+})
+
+/** AC-4 */
+test('a next step that changes code and only mentions review still says press g', () => {
+  for (const next of ['依 .task/REVIEW.md 的意見修正', '修正審查的 HIGH', '等審查通過後修 bug', '派審查（補完 AC-3 的測試後）', '審查（先修 HIGH）', '派審查: /desk review 後修正 HIGH']) {
+    const c = mk({ next })
+    expect(turnOf(c)).toEqual({ who: 'you', text: `按 g 派 Agent：${next}`, key: 'g' })
+    expect(ids(c)).toContain('continue')
+    expect(dispatchable(c)).toContain('continue')
+  }
 })
 
 /** AC-5 */

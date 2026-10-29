@@ -224,8 +224,20 @@ test('idle next: waiting-only next steps refuse continue and say what to do', ()
   }
 })
 
+/** AC-3 */
+test('a review next step refuses continue and points to v and w', () => {
+  const why = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
+  for (const next of ['審查', '派審查：/desk review 更多動作自動收回', '派獨立審查（w）', '按 w 派審查', '重新審查']) {
+    const c = mk(next)
+    expect(idleNext(next)).toBe(why)
+    expect(dispatchable(c)).toEqual(['review', 'sync'])
+    expect(dispatchRefusal(c, 'continue')).toBe(why)
+    expect(dispatchRefusal(c, 'review')).toBe('')
+  }
+})
+
 test('idle next: a next step with real work is still dispatched', () => {
-  for (const next of ['等檢查；補 AC-3 的測試', '依規格實作', 'push 後開 PR', '依 .task/REVIEW.md 的意見修正', '等審查通過後修 bug', '確認規格', '合併 main 進來', '寫測試']) {
+  for (const next of ['等檢查；補 AC-3 的測試', '依規格實作', 'push 後開 PR', '依 .task/REVIEW.md 的意見修正', '修正審查的 HIGH', '等審查通過後修 bug', '派審查（補完 AC-3 的測試後）', '審查（先修 HIGH）', '派審查: /desk review 後修正 HIGH', '確認規格', '合併 main 進來', '寫測試']) {
     expect(idleNext(next)).toBe('')
     expect(dispatchable(mk(next))).toEqual(['continue', 'review', 'sync'])
     expect(buildPrompt(mk(next), 'continue').startsWith(`依卡片的下一步繼續：${next}`)).toBe(true)

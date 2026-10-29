@@ -6,7 +6,7 @@ import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './ca
 import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
-import { idleNext } from './dispatch'
+import { fixByG, idleNext, reviewNext } from './dispatch'
 
 export type Turn = {
   /** you：輪到你動手；ai：AI 或機器處理中，等著就好；none：沒有要做的事。 */
@@ -170,6 +170,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       // 流程會自動接審查（autoReview）：檢查通過就派審查。不會（主對話開發、done 寫的下一步、別的對話開的流程）：v 只記結果，審查要再按 w。
+      // 下一步是派審查：g 派的是繼續，不會審查；先 v 檢查，通過後 w（或流程自動接）。
+      if (reviewNext(c.next)) return { who: 'you', text: `下一步是審查：按 v 執行完成檢查，通過後${willAutoReview(c) ? '自動審查' : '按 w 派審查'}`, key: 'v' }
       if (idleNext(c.next)) return willAutoReview(c)
         ? { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
         : { who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' }
@@ -239,9 +241,8 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (!merged) {
     if (ctx.now !== undefined && cardBehind(c, ctx.now)) out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)
-    // PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上；本機已有新 commit 沒 push 時該按的是 ⇡ push，不列 g。
-    const ciFailed = current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)
-    if ((current === 'build' && !idleBuild) || c.state === 'failed' || ciFailed) out.add('continue')
+    // 檢查失敗、PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上（跟 dispatchable 同一個判斷）；本機已有新 commit 沒 push 時該按的是 ⇡ push，不列 g。
+    if ((current === 'build' && !idleBuild) || fixByG(c)) out.add('continue')
     if (current === 'check' || idleBuild || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
     if (current === 'review' && !standingVerdict(c)) out.add('review')
     // 自審的結論照算，但留著 w 讓你派獨立審查。
