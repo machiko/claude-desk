@@ -6,6 +6,7 @@ import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, s
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict } from './pipeline'
 import { isDeskLaunch } from './dispatch'
+import type { JobRecord } from './dispatch'
 
 /** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
 export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
@@ -273,6 +274,23 @@ export function asksFor(list: any[], launchName: string | undefined): AgentInfo 
   return String(a.state ?? '').toLowerCase() === 'blocked' ? { ...agentInfo(a), asks: true } : null
 }
 
+/** 工作桌派出去的那一次（按啟動名）停在提問：做完後 blocked、不在跑（同 asksFor），或 status waiting 但不是等權限批准。 */
+export function asksQuestion(list: readonly any[], launchName: string | undefined): boolean {
+  if (!launchName) return false
+  const a = list.find(x => x?.name === launchName && x?.kind === 'background')
+  if (!a) return false
+  const status = String(a.status ?? '').toLowerCase()
+  if (status === 'waiting') return waitsOf(a) === 'question'
+  return status !== 'busy' && String(a.state ?? '').toLowerCase() === 'blocked'
+}
+
+/**
+ * 最後一次派工停在提問時題目寫進了卡片「等你」，之後在對話處理掉：「等你」清成「無」，或已記成處理過（answered）。
+ * 面板、自動流程與「最近」那筆都用這一條判斷：不再等那個 Agent，也不替那次派工接著做。
+ */
+export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'> | undefined, ask: string): boolean =>
+  !!last?.cardAsked && (!!last.answered || saysNone(ask))
+
 /**
  * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑（busy／waiting）、停在提問（blocked）、清單裡找不到都是 null；
  * `claude stop` 停掉的是 stopped（清單裡 state 是 stopped、沒有 status），其他算 finished。找不到不算結束：剛派出去的那次可能還沒出現在這份清單。
@@ -419,7 +437,7 @@ export function feedOnDesk(feed: readonly FeedEvent[], cases: readonly Case[]): 
   return feed.filter(e => !e.card || onDesk.has(e.card))
 }
 
-/** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的任務當「其他任務」的背景（demoCases）。 */
+/** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的任務當「全部任務」的背景（demoCases）。 */
 export function demoSnapshot(now: number): Snapshot {
   const agents: Record<string, AgentInfo> = { '/demo/beta': { name: 'desk-demo', state: 'working', status: 'busy', startedAt: now - 3 * 60_000 } }
   const card = (status: string, verify: string, ask: string, next: string, gate = '無') =>

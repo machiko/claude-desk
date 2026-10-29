@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { nextStep, paused, MAX_FIX_ROUNDS, AGENT_STOPPED, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
+import { nextStep, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED, ASK_HANDED_OVER, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
 
 const run = (round = 0, extra = {}) => ({ owner: 'me', startedAt: 1, round, ...extra })
 const v = (critical: number, high: number, medium = 0) => ({ critical, high, medium, low: 0 })
@@ -62,4 +62,18 @@ test('chain: a finished publish does not restart the chain', () => {
   }
   // 對照組：同樣條件做完的是實作就會往下走。
   expect(nextStep(run(), 'continue', null, null, true)).toEqual({ kind: 'verify' })
+})
+
+test('chain: a job whose question was handled in the conversation records the verdict but dispatches nothing', () => {
+  // 過關、停下照舊：審查結論照記。
+  expect(handedOver(nextStep(run(), 'review', null, v(0, 0, 2), true))).toEqual({ kind: 'pass' })
+  expect(handedOver(nextStep(run(2), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: '修了 2 輪仍有 CRITICAL 0、HIGH 1' })
+  // 本來要派修正（審查或檢查擋下）：停下寫原因。
+  expect(handedOver(nextStep(run(), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: ASK_HANDED_OVER })
+  expect(handedOver(nextStep(run(), 'continue', false, null, true))).toEqual({ kind: 'stop', reason: ASK_HANDED_OVER })
+  // 本來要跑檢查、派審查（含資安審查）：什麼都不做。
+  expect(handedOver(nextStep(run(), 'continue', null, null, true))).toBeNull()
+  expect(handedOver(nextStep(run(), 'continue', true, null, true))).toBeNull()
+  expect(handedOver({ kind: 'dispatch', dispatch: 'review', round: 0, security: true })).toBeNull()
+  expect(handedOver(null)).toBeNull()
 })

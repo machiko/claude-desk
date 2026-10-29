@@ -97,6 +97,11 @@ test('idle next: the now card asks for v instead of g', () => {
   for (const chain of [{ round: 0, foreign: true, lastKind: 'continue' as const }, { round: 0, lastKind: 'sync' as const }, { round: 0, lastKind: 'continue' as const, autoReview: true, stopped: '修了 3 輪' }]) {
     expect(turnOf(mk({ next: '到面板按 v 執行完成檢查' }, { chain }))).toEqual({ who: 'you', text: manual, key: 'v' })
   }
+  // 審查過關後 /desk:card done 寫的句子也認得：叫你按 v，不叫你按 g
+  const recheck = '等自動重新檢查與審查；沒動靜就到面板按 v'
+  expect(turnOf(mk({ next: recheck }))).toEqual({ who: 'you', text: manual, key: 'v' })
+  expect(ids(mk({ next: recheck }))).toEqual(['open', 'verify'])
+  expect(turnOf(mk({ next: recheck }, { chain: { round: 0, lastKind: 'continue', autoReview: true } }))).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
   // 有實作的下一步照舊
   expect(turnOf(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual({ who: 'you', text: '按 g 派 Agent：等檢查；補 AC-3 的測試', key: 'g' })
   expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open'])

@@ -48,7 +48,7 @@ export const DEFAULT_REVIEW: ReviewWords = {
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
 const strList = (v: unknown) => Array.isArray(v) ? v.map(str).filter(Boolean) : []
 /** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
-export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' } }
+export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' } }
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string }
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
@@ -240,10 +240,16 @@ export function reviewTask(c: Case): string {
   return m ? m[1]! : ''
 }
 
-const IDLE_WAIT = '(?:(?:自動|完成)?檢查(?:結果|通過)?|(?:程式碼|資安)?審查(?:結果|通過)?|審閱(?:結果|通過)?|合併|PR(?:\\s*#?\\d+)?(?:合併|通過)?|CI(?:\\s*通過)?|(?:你|使用者|[A-Za-z][\\w-]*)\\s*(?:確認|拍板|審閱|決定)?)'
-/** `/desk:card done` 寫的下一步「到面板按 v 執行完成檢查」（與「按 v」的幾種寫法）：也是等檢查，不派 Agent。 */
-const IDLE_PRESS_V = '(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:完成)?檢查)?'
-const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|開\\s*PR|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
+/** 「等…」可以等的事；檢查與審查前面可以有「重新」（審查過關後 `/desk:card done` 寫的「等自動重新檢查與審查」）。 */
+const IDLE_WAIT = '(?:(?:自動|完成)?(?:重新)?檢查(?:結果|通過)?|(?:程式碼|資安)?(?:重新)?審查(?:結果|通過)?|審閱(?:結果|通過)?|合併|PR(?:\\s*#?\\d+)?(?:合併|通過)?|CI(?:\\s*通過)?|(?:你|使用者|[A-Za-z][\\w-]*)\\s*(?:確認|拍板|審閱|決定)?)'
+/**
+ * `/desk:card done` 寫的下一步「到面板按 v 執行完成檢查」，與審查過關後那句「等自動重新檢查與審查；沒動靜就到面板按 v」的後半
+ * （與「按 v」的幾種寫法）：也是等檢查，不派 Agent。
+ */
+const IDLE_PRESS_V = '(?:沒動靜就\\s*)?(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:完成)?檢查)?'
+/** 「開 PR」，與審查過關、之後沒有新 commit 時 `/desk:card done` 寫的「到面板照「輪到你」開 PR 或合併」：照面板走，不派 Agent。 */
+const IDLE_OPEN_PR = '(?:到面板\\s*)?(?:照\\s*「輪到你」\\s*)?開\\s*PR(?:\\s*或\\s*合併)?'
+const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|${IDLE_OPEN_PR}|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
 
 /**
  * 派審查的寫法：「（派）（獨立）審查」可接按鍵註記「（w）」或「：/desk review …」；整段是 `/desk review …`；「按 w（派審查）」。

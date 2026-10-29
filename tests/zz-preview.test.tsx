@@ -23,7 +23,7 @@ function flat(node: any, indent = 0): string[] {
 }
 const textOf = (n: any): string => typeof n === 'string' ? n : n?.type === 'Button' && n.props?.label && !(n.children?.length) ? n.props.label : (n?.children ?? []).map(textOf).join('')
 
-// 教學模式的畫面：現在卡是教學那件，其他任務是示範（只能看）。
+// 教學模式的畫面：現在卡是教學那件，全部任務列出教學那件與示範任務（示範任務只能看）。
 test('preview', async ($, on) => {
   const { data, clock } = fixture(on)
   const P = tutorialPaths('/home/u')

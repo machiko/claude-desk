@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, plain, errorText } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
@@ -14,7 +14,7 @@ import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
-import { judgedAt, nextStep, paused, seenHeads } from './chain'
+import { handedOver, judgedAt, nextStep, paused, seenHeads } from './chain'
 import { approveCheck, trustedChecks } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -30,7 +30,7 @@ import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } f
 import { isBusy, sentState } from './turn'
 import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
-import { lastLaunches, stopSuperseded } from './stale-agents'
+import { lastLaunches, noteCardAsks, stopSuperseded } from './stale-agents'
 import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
@@ -108,8 +108,11 @@ export async function refresh($: any, options: PluginOptions) {
       ])
       const base = buildCase(row, card, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, agents, verifies[row.statusPath])
       const last = jobs[normalizeRoot(base.root)]?.last
-      let agent: AgentInfo | undefined = base.agent
-      if (!agent && last && !last.answered) agent = asksFor(list, last.launchName) ?? undefined
+      // 最後一次派工停在提問、題目寫進卡片「等你」後已在對話處理（清成「無」）：那個 Agent 不再代表任務，同一輪就照卡片算。
+      const cleared = askClearedOnCard(last, base.ask)
+      const { agent: found, ...rest } = base
+      let agent: AgentInfo | undefined = cleared && found?.name === last?.launchName && found?.waitsFor === 'question' ? undefined : found
+      if (!agent && last && !last.answered && !cleared) agent = asksFor(list, last.launchName) ?? undefined
       if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy', ...(launchKinds[row.statusPath] ? { kind: launchKinds[row.statusPath] } : {}) }
       if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) agent = { ...agent, last: await lastLine($, agent.id) }
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
@@ -131,7 +134,7 @@ export async function refresh($: any, options: PluginOptions) {
       const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
       const steps = deploySteps(card)
       const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []
-      const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -154,7 +157,7 @@ export async function refresh($: any, options: PluginOptions) {
     const check = settings && settings.updateCheck !== 'off' ? await loadUpdateCheck($) : null
     const notice = noticeOf(check, deskVersions.desk)
     const versionState = isUpdating() ? 'updating' as const : versionStateOf(check, deskVersions.desk)
-    // 教學模式：示範任務接在後面當「其他任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
+    // 教學模式：示範任務接在後面當「全部任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
     const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel, cases.map(c => c.root)), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     // 選取的任務已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
@@ -176,7 +179,10 @@ export async function refresh($: any, options: PluginOptions) {
     await spin($, cases.some(c => c.state === 'running'))
     await stopSuperseded($, cases, superseded, now)
     // 清單是真的（不是教學、claude agents 沒失敗）才看得出誰結束了。
-    if (!tutorial && agentsOut && agentsOut.exitCode === 0) await noteEnded($, list, cases)
+    if (!tutorial && agentsOut && agentsOut.exitCode === 0) {
+      await noteEnded($, list, cases)
+      await noteCardAsks($, list, cases, now)
+    }
     await autoChain($, options, cur)
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
@@ -267,11 +273,14 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     if (finished === 'review' && !stoppedAgent && planned.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
     // 這次審查看的是派審查時的 HEAD；之後有新 commit，結論就不算數。
     if (finished === 'review' && !stoppedAgent) await saveChain($, key, r => r ? { ...r, ...judgedAt(r, !!last.security, c.git) } : r)
-    if (planned.kind === 'verify') { void runVerify($, c, true); continue }
+    // 停在提問、題目已在對話處理的那次：結論照記，不替它跑檢查或派 Agent（也就不會因為被取代而停掉它）。
+    const next = askClearedOnCard(last, c.ask) ? handedOver(planned) : planned
+    if (!next) { await markHandled(); continue }
+    if (next.kind === 'verify') { void runVerify($, c, true); continue }
     await markHandled()
     // 要派下一步之前先看 worktree：有不是上一個 Agent 留下的未提交改動（別的對話在改），停下來說原因，不派。
-    const foreign = planned.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
-    const step: ChainStep = foreign ? { kind: 'stop', reason: foreign } : planned
+    const foreign = next.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
+    const step: ChainStep = foreign ? { kind: 'stop', reason: foreign } : next
     if (step.kind === 'stop') {
       await saveChain($, key, r => r ? paused(r, step.reason, step.atCheck) : r)
       await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error', card: c.statusPath }])
@@ -546,7 +555,7 @@ async function resumeAtCheck($: any, c: Case) {
 
 /**
  * 檢查開始、排隊、沒跑成，或剛派出 Agent 時重算那件的六段（`patch` 先套上新的 agent、state）：
- * 不等下一輪重新整理，現在卡與其他任務表格立刻一致。
+ * 不等下一輪重新整理，現在卡與全部任務表格立刻一致。
  */
 async function restage($: any, statusPath: string, patch: (c: Case) => Case = c => c) {
   const verifies = await read($, verifiesAtom)

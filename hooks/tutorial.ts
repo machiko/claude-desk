@@ -275,7 +275,7 @@ export function tutorialTurn(c: Case): { text: string; key?: string } | null {
 /** 教學一開始的說明（/desk tutorial 的回應）。 */
 export const TUTORIAL_INTRO = [
   `教學已開始：沙盒在 ~/.claude/desk-tutorial，現在卡是「${TUTORIAL_NAME}」。`,
-  '「其他任務」是示範任務（只能看），讓你看到多件任務同時進行時面板長什麼樣子：有的在等你、有的正在處理、有的閒置。',
+  '「全部任務」列出教學這件和幾件示範任務；示範任務只能看，讓你看到多件任務同時進行時面板的樣子：有的在等你、有的正在處理、有的閒置。',
   '照現在卡第二列「▶ 輪到你」的指示按鍵，把六段走完：',
   '  1 規格：看過規格後按 t 確認',
   '  2 實作：按兩次 g 派 Agent（教學裡由腳本扮演，不花額度）',
