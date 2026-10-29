@@ -109,10 +109,16 @@ test('test_medium_to_fix_skips_lines_marked_not_fix_or_your_decision', () => {
     '- [MEDIUM][規格] — AC-2 無法驗證（等你決定）',
     '- [MEDIUM][邊界] e.ts:5 — 上限沒擋（上一輪已列，等你決定）',
     '- [MEDIUM][邏輯] f.ts:6 — 說明裡提到不修會壞，但不是註記',
+    // 括號在說明中間、不在結尾：不是註記，照算
+    '- [MEDIUM][邊界] a.ts:3 — 輸入為空時（parse 失敗後不修正預設值）回傳 undefined',
+    '- [MEDIUM][邊界] a.ts:4 — 空值（不修會 crash）沒擋',
+    '- [MEDIUM][提示] a.ts:5 — 修正提示要求標「（等你決定）」但沒說要寫等你',
+    // 結尾註記後面接句號或空白：照樣不算
+    '- [MEDIUM][命名] c.ts:9 — 名稱不清（記錄、不修）。  ',
     '- [HIGH][稽核] g.ts:7 — 漏寫稽核',
     '- [LOW][風格] h.ts:8 — 縮排',
   ].join('\r\n')
-  expect(mediumToFix(text)).toBe(3)
+  expect(mediumToFix(text)).toBe(6)
   expect(mediumToFix(null)).toBe(0)
   expect(mediumToFix('')).toBe(0)
   expect(mediumToFix('- [HIGH][x] a — b\n- [LOW][y] c — d')).toBe(0)
