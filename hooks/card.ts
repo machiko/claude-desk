@@ -57,7 +57,7 @@ export function parseGate(value: string | undefined): Gate | null {
   return m ? { kind: m[1]!.toLowerCase() as Gate['kind'], detail: m[2]!.trim() } : { kind: 'unknown', detail: raw }
 }
 
-export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '審查', release: '上線', unknown: '關卡' }
+export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '驗收', release: '上線', unknown: '關卡' }
 
 /** 整段被 `<` `>` 包住的是範本佔位（例如 `<可以直接派給 Agent 的一件事>`）；規則與 card.py 的 is_placeholder 相同。 */
 export const isPlaceholder = (text: string) => { const t = text.trim(); return t.startsWith('<') && t.endsWith('>') }

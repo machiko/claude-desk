@@ -77,6 +77,8 @@ export function fixture(on: any) {
     approve: '核准並派工',
     /** 每個對話框的選項，跟 asks 一一對應。 */
     askOptions: [] as string[][],
+    /** 每個對話框的標題，跟 asks 一一對應。 */
+    askHeaders: [] as string[],
     /** false 模擬輸入框無法預填。 */
     fillable: true,
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
@@ -180,6 +182,7 @@ export function fixture(on: any) {
     const labels = ((q?.options ?? []) as any[]).map(o => String(o?.label ?? o))
     data.asks.push(String(q?.question ?? ''))
     data.askOptions.push(labels)
+    data.askHeaders.push(String(q?.header ?? ''))
     return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: labels.includes('核准並派工') ? data.approve : data.answer } } }
   })
   // 拒絕＝交給核心：測試裡沒有核心的實作，$.command.run 會被拒（跟 Claude Code 不讓 plugin 執行一樣是 reject）。

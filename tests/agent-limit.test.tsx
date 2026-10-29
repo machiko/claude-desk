@@ -90,7 +90,7 @@ test('test_manual_and_auto_dispatches_share_one_queue_in_order', async ($, on) =
   expect(data.launches).toHaveLength(0)
   await ui.press({ key: `row-${CARD_A}` })
   expect(await screen(ui)).toContain(flat('派工排隊中（第 2 位）'))
-  expect(await screen(ui)).toContain(flat('Alpha 自動派審查排隊中（第 2 位）'))
+  expect(await screen(ui)).toContain(flat('Alpha 自動派驗收排隊中（第 2 位）'))
 
   // 一個結束：只派出排第 1 的 Gamma，Alpha 往前一位
   h.finishOne()
@@ -203,7 +203,7 @@ test('queued auto dispatches never pause a chain another conversation took over'
   await queueTwoAutoReviews(data, clock, h)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_C}` })
-  expect(await screen(ui)).toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
+  expect(await screen(ui)).toContain(flat('Gamma 自動派驗收排隊中（第 2 位）'))
   expect(data.launches).toHaveLength(0)
 
   // 別的對話在兩件都按了繼續：流程換成那邊的
@@ -220,7 +220,7 @@ test('queued auto dispatches never pause a chain another conversation took over'
   await h.refresh()
   expect(data.launches).toHaveLength(0)
   await ui.press({ key: `row-${CARD_C}` })
-  expect(await screen(ui)).toContain(flat('Gamma 排隊的審查沒有派出：流程已不是這個對話的'))
+  expect(await screen(ui)).toContain(flat('Gamma 排隊的驗收沒有派出：流程已不是這個對話的'))
   expect(data.store.chains[GAMMA]).toEqual(theirs)
   await ui.unmount()
 })
@@ -233,7 +233,7 @@ test('queued auto dispatches recheck the worktree and keep an existing pause rea
   await queueTwoAutoReviews(data, clock, h)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_C}` })
-  expect(await screen(ui)).toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
+  expect(await screen(ui)).toContain(flat('Gamma 自動派驗收排隊中（第 2 位）'))
 
   // 排隊期間：Alpha 的流程停在檢查（這個對話自己停的）；主對話在 Gamma 的 worktree 改了 3 個檔
   const held = { ...data.store.chains[ALPHA], stopped: '完成檢查改了，要重新核准', heldAtCheck: true }
@@ -249,7 +249,7 @@ test('queued auto dispatches recheck the worktree and keep an existing pause rea
   expect(data.store.chains[GAMMA].stopped).toContain('3 個檔')
   await ui.press({ key: `row-${CARD_C}` })
   const shown = await screen(ui)
-  expect(shown).toContain(flat('Gamma 排隊的審查沒有派出：worktree 有未提交的改動（3 個檔）'))
+  expect(shown).toContain(flat('Gamma 排隊的驗收沒有派出：worktree 有未提交的改動（3 個檔）'))
   expect(shown).not.toContain('派工排隊中')
   await ui.unmount()
 })

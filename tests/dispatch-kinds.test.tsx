@@ -72,7 +72,7 @@ test('test_kinds_override_model_and_effort_per_dispatch_kind', async ($, on) => 
   expect(flags(publish)).toBe('haiku low')
   expect(promptOf(cont)).toContain('依卡片的下一步繼續：實作匯出')
   expect(flags(cont)).toBe('opus high')
-  expect(data.toasts.some(t => t.includes('Alpha：審查已派出'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('Alpha：驗收已派出'))).toBe(true)
   expect(data.toasts.some(t => t.includes('Beta：推送已派出'))).toBe(true)
 })
 
@@ -183,7 +183,7 @@ test('test_footer_and_confirm_text_show_kind_models', async ($, on) => {
   const ui = await $.ui.mount(PANE(160))
   const footer = (await ui.findAll({ type: 'Text' })).map((n: any) => n.text).join('')
   // 只列跟派工不同的種類：continue 寫了跟派工一樣的 effort，不列
-  expect(footer).toContain('派工 opus high · 審查 opus xhigh · 推送 haiku low · 同步 haiku')
+  expect(footer).toContain('派工 opus high · 驗收 opus xhigh · 推送 haiku low · 同步 haiku')
   expect(footer).not.toContain('繼續 opus high')
 
   // 「更多動作」只對展開當下那件有效：每換一件都重新展開（Alpha 在實作段，審查鍵平常不出現）。
@@ -200,7 +200,7 @@ test('test_footer_and_confirm_text_show_kind_models', async ($, on) => {
   await ui.press({ key: `case-${CARD_C}-continue` })
   const cont = await ui.find({ key: `case-${CARD_C}-continue` })
   await ui.unmount()
-  expect(review?.text || review?.props?.label).toBe('再按 w 確認審查（opus · xhigh）')
+  expect(review?.text || review?.props?.label).toBe('再按 w 確認驗收（opus · xhigh）')
   expect(openPr?.text || openPr?.props?.label).toContain('派 Agent 開 PR（haiku · low）')
   expect(cont?.text || cont?.props?.label).toBe('再按 g 確認繼續（opus · high）')
   expect(data.launches).toHaveLength(0)
@@ -212,7 +212,7 @@ test('test_footer_and_confirm_text_show_kind_models', async ($, on) => {
   const before = (await plain.findAll({ type: 'Text' })).map((n: any) => n.text).join('')
   await plain.unmount()
   expect(before).toContain('派工 opus high · 同步 haiku')
-  expect(before).not.toContain('審查 opus')
+  expect(before).not.toContain('驗收 opus')
   expect(before).not.toContain('推送 haiku')
 })
 
@@ -235,7 +235,7 @@ test('test_confirm_text_uses_project_override_with_kind_effort', async ($, on) =
   const other = await ui.find({ key: `case-${CARD_B}-open-pr` })
   await ui.unmount()
 
-  expect(own?.text || own?.props?.label).toBe('再按 w 確認審查（sonnet · xhigh）')
+  expect(own?.text || own?.props?.label).toBe('再按 w 確認驗收（sonnet · xhigh）')
   expect(flags(data.launches[0])).toBe('sonnet xhigh')
   expect(other?.text || other?.props?.label).toContain('派 Agent 開 PR（haiku · low）')
 })

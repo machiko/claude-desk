@@ -47,7 +47,7 @@ export const WORD = {
   empty: '尚無任務：用 /desk:card new <分支> <任務名> 開第一張卡；第一次用可以輸入 /desk tutorial 看教學。',
   loading: '讀取任務中…',
   off: '此對話未開啟工作桌；輸入 /desk 開啟。',
-  verify: '檢查',
+  verify: '測試',
   open: '開啟',
   fill: '填入決策',
   refresh: '重新整理',
