@@ -2,6 +2,10 @@
 
 ## 未發布
 
+## 0.36.0
+
+- 調整 面板的提醒收成一列（多件寫「提醒 n 件 · 第一條」），按 m 展開全文（最多 4 列，其餘寫「還有 k 件」）；`- 事項` 不寫日期的待辦也會列出；過期提醒改用提醒色，不再用失敗的紅色
+
 ## 0.35.0
 
 - 新增 dispatch.json 的 card.changelog.format：設成 "keepachangelog" 時，`/desk:card changelog <版本>` 依 Keep a Changelog 合併片段，`## [Unreleased]` 的手寫內容一起移進 `## [<版本>] - <日期>` 段，條目依動詞分進 Added／Changed／Removed／Fixed／Security 小節，工程專區這類手寫小節原樣保留
