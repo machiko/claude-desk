@@ -531,6 +531,8 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   await feedPush($, [{ at: result.at, text: `${c.name} ${outcome}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
   $.ui.toast(`${c.name}：${result.ok ? '檢查通過' : '檢查未通過'}`, { timeoutMs: 6000 })
+  // 你按 v 的檢查沒過送一次通知；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
+  if (!result.ok && !auto) notify($, `${c.name}：${outcome}`)
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
