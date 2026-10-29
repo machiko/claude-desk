@@ -19,6 +19,22 @@ export const result = (exitCode = 0, stdout = '', stderr = '') => ({ exitCode, s
 
 export function fixture(on: any) {
   const clock = mock.clock(on, { now: NOW })
+  // state.get 的攔截只在測試設了 seedState 或 refuseAfterNewLoad 時才掛：多一層 async hook，面板每次重畫的狀態讀取都慢一截。
+  // 兩個都要在第一次呼叫 $ 之前設（kit 只在那之前接受註冊）。
+  let seedState: Record<string, unknown> = {}
+  let refuseAfterNewLoad = false
+  let isStateGetHooked = false
+  const hookStateGet = () => {
+    if (isStateGetHooked) return
+    isStateGetHooked = true
+    // 新版已載入：新的模組在 session.start 會把載入計數再加 1，這裡讓舊版之後讀到的計數多 1。
+    on('state.get', async (_: any, e: any, next: any) => {
+      const r = await next(e)
+      // 只在 desk 還沒寫過這個 key（讀不到值）時套用；寫過之後（連 null 也算）就讀真正的值。
+      if (e?.plugin === 'desk' && e?.key in seedState && r.value?.value === undefined) return { value: { ...r.value, value: seedState[e.key] } }
+      return data.newerLoaded && e?.plugin === 'desk' && e?.key === 'loads' ? { value: { ...r.value, value: (r.value?.value ?? 0) + 1 } } : r
+    })
+  }
   mock.env(on, { HOME: '/home/u' })
   const data = {
     files: {
@@ -83,10 +99,12 @@ export function fixture(on: any) {
     /** false 模擬 Claude Code 不讓 plugin 執行 /reload-plugins。 */
     reloadable: true,
     /** 搭配 reloadable: false：拒絕之前新版其實已經載入了（之後讀到的 desk 載入計數多 1），舊版這邊才收到拒絕。 */
-    refuseAfterNewLoad: false,
+    get refuseAfterNewLoad() { return refuseAfterNewLoad },
+    set refuseAfterNewLoad(value: boolean) { refuseAfterNewLoad = value; if (value) hookStateGet() },
     newerLoaded: false,
     /** desk 的 state 還沒寫過之前讀到的值（模擬舊版存下的值）；desk 寫過那個 key 後就不再套用。 */
-    seedState: {} as Record<string, unknown>,
+    get seedState() { return seedState },
+    set seedState(value: Record<string, unknown>) { seedState = value; if (Object.keys(value ?? {}).length) hookStateGet() },
   }
   on('fs.read', (_: any, e: any) => data.unreadable.includes(e.path) ? { deny: 'EACCES' } : data.files[e.path] !== undefined ? { value: data.files[e.path] } : String(e.path).endsWith('/.claude-plugin/plugin.json') ? { value: JSON.stringify({ version: data.deskVersion }) } : { deny: 'ENOENT' })
   on('fs.stat', (_: any, e: any) => data.mtimes[e.path] !== undefined ? { value: { kind: 'file', size: 1, mtimeMs: data.mtimes[e.path], isLink: false } } : { deny: 'ENOENT' })
@@ -171,13 +189,6 @@ export function fixture(on: any) {
     const seen = data.feedAtReload ? await data.feedAtReload() : undefined
     data.reloads.push({ toasts, ...(seen === undefined ? {} : { seen }) })
     return { text: 'Reloaded plugins' }
-  })
-  // 新版已載入：新的模組在 session.start 會把載入計數再加 1，這裡讓舊版之後讀到的計數多 1。
-  on('state.get', async (_: any, e: any, next: any) => {
-    const r = await next(e)
-    // 只在 desk 還沒寫過這個 key（讀不到值）時套用；寫過之後（連 null 也算）就讀真正的值。
-    if (e?.plugin === 'desk' && e?.key in data.seedState && r.value?.value === undefined) return { value: { ...r.value, value: data.seedState[e.key] } }
-    return data.newerLoaded && e?.plugin === 'desk' && e?.key === 'loads' ? { value: { ...r.value, value: (r.value?.value ?? 0) + 1 } } : r
   })
   on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
   on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
