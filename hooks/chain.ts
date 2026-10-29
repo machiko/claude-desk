@@ -15,6 +15,8 @@ export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
 export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
 /** 流程裡的 Agent 被停掉（面板 k 或外面 `claude stop`）：不算做完，不跑檢查、不派審查或修正；它可能留下改到一半的東西，看過再重開。 */
 export const AGENT_STOPPED = 'Agent 被停止，未完成；看過 worktree 後按 g 重開'
+/** 停在提問的那次派工，題目已在對話處理（卡片「等你」清掉）：審查要修的不自動派修正。 */
+export const ASK_HANDED_OVER = '提問已在對話處理，不自動派修正'
 
 export type ChainRun = {
   owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
@@ -102,4 +104,13 @@ export function nextStep(run: ChainRun | undefined, finished: DispatchKind | nul
     return run.round < MAX_FIX_ROUNDS ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'review' } : { kind: 'stop', reason: `修了 ${MAX_FIX_ROUNDS} 輪仍有 CRITICAL ${verdict.critical}、HIGH ${verdict.high}` }
   }
   return null
+}
+
+/**
+ * 那次派工停在提問、題目已在對話處理：之後由對話接手。過關與停下照舊（審查結論照記）；
+ * 本來要派修正的改成停下寫原因（擋住的結論還在，不能當沒事）；跑檢查、派審查回 null，只標成處理過。
+ */
+export function handedOver(step: ChainStep): ChainStep {
+  if (!step || step.kind === 'pass' || step.kind === 'stop') return step
+  return step.kind === 'dispatch' && step.reason ? { kind: 'stop', reason: ASK_HANDED_OVER } : null
 }

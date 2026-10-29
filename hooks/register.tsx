@@ -14,7 +14,7 @@ import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
-import { judgedAt, nextStep, paused, seenHeads } from './chain'
+import { handedOver, judgedAt, nextStep, paused, seenHeads } from './chain'
 import { approveCheck, trustedChecks } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -109,7 +109,7 @@ export async function refresh($: any, options: PluginOptions) {
       const base = buildCase(row, card, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, agents, verifies[row.statusPath])
       const last = jobs[normalizeRoot(base.root)]?.last
       // 最後一次派工停在提問、題目寫進卡片「等你」後已在對話處理（清成「無」）：那個 Agent 不再代表任務，同一輪就照卡片算。
-      const cleared = !!last?.cardAsked && (!!last.answered || askClearedOnCard(last, base.ask))
+      const cleared = askClearedOnCard(last, base.ask)
       const { agent: found, ...rest } = base
       let agent: AgentInfo | undefined = cleared && found?.name === last?.launchName && found?.waitsFor === 'question' ? undefined : found
       if (!agent && last && !last.answered && !cleared) agent = asksFor(list, last.launchName) ?? undefined
@@ -273,11 +273,14 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     if (finished === 'review' && !stoppedAgent && planned.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
     // 這次審查看的是派審查時的 HEAD；之後有新 commit，結論就不算數。
     if (finished === 'review' && !stoppedAgent) await saveChain($, key, r => r ? { ...r, ...judgedAt(r, !!last.security, c.git) } : r)
-    if (planned.kind === 'verify') { void runVerify($, c, true); continue }
+    // 停在提問、題目已在對話處理的那次：結論照記，不替它跑檢查或派 Agent（也就不會因為被取代而停掉它）。
+    const next = askClearedOnCard(last, c.ask) ? handedOver(planned) : planned
+    if (!next) { await markHandled(); continue }
+    if (next.kind === 'verify') { void runVerify($, c, true); continue }
     await markHandled()
     // 要派下一步之前先看 worktree：有不是上一個 Agent 留下的未提交改動（別的對話在改），停下來說原因，不派。
-    const foreign = planned.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
-    const step: ChainStep = foreign ? { kind: 'stop', reason: foreign } : planned
+    const foreign = next.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
+    const step: ChainStep = foreign ? { kind: 'stop', reason: foreign } : next
     if (step.kind === 'stop') {
       await saveChain($, key, r => r ? paused(r, step.reason, step.atCheck) : r)
       await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error', card: c.statusPath }])

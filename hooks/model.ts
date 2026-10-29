@@ -284,9 +284,12 @@ export function asksQuestion(list: readonly any[], launchName: string | undefine
   return status !== 'busy' && String(a.state ?? '').toLowerCase() === 'blocked'
 }
 
-/** 最後一次派工停在提問時題目寫進了卡片「等你」，還沒記成處理過，現在「等你」清成「無」：題目已在對話處理，不再等那個 Agent。 */
+/**
+ * 最後一次派工停在提問時題目寫進了卡片「等你」，之後在對話處理掉：「等你」清成「無」，或已記成處理過（answered）。
+ * 面板、自動流程與「最近」那筆都用這一條判斷：不再等那個 Agent，也不替那次派工接著做。
+ */
 export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'> | undefined, ask: string): boolean =>
-  !!last?.cardAsked && !last.answered && saysNone(ask)
+  !!last?.cardAsked && (!!last.answered || saysNone(ask))
 
 /**
  * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑（busy／waiting）、停在提問（blocked）、清單裡找不到都是 null；
