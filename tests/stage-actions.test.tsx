@@ -121,7 +121,7 @@ test('test_archive_stage_lists_only_archive', async ($, on) => {
   const ui = await mount($, clock)
   // 現在卡：檢查列只剩一行「檢查 ✓ 通過」，不列指令
   const drawn = await screen(ui)
-  expect(drawn).toContain(flat('檢查      ✓ 通過'))
+  expect(drawn).toContain(flat('測試      ✓ 通過'))
   expect(drawn).not.toContain('npmtest')
   expect(drawn).not.toContain('allgreen')
   // footer：這件只有歸檔；全域鍵照舊

@@ -123,7 +123,7 @@ test('a dirty worktree that is not the last agent\'s leftovers refuses manual di
   expect(data.launches.length).toBe(0)
   expect(data.toasts.filter((t: string) => t.includes(FOREIGN) && t.includes('2 個檔')).length).toBe(2)
   expect(data.toasts.some((t: string) => t.includes('目前無法繼續'))).toBe(true)
-  expect(data.toasts.some((t: string) => t.includes('目前無法審查'))).toBe(true)
+  expect(data.toasts.some((t: string) => t.includes('目前無法驗收'))).toBe(true)
 
   // 上一個會改程式的 Agent 結束時留下的指紋跟現在不同：一樣拒絕
   data.store.jobs = { [ROOT]: { sessionId: SID, mark: 'ffffffff', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: SID, kind: 'continue', startedAt: 0, fresh: false, owner: 'fixture-session', handled: true, ended: { how: 'finished' } } } }
