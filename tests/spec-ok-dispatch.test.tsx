@@ -2,8 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
 import { appendTo, setFields, tutorialPaths, TUTORIAL_INTRO } from '../hooks/tutorial'
 import { afterSpecRefusal } from '../hooks/dispatch'
-import { specOkTarget } from '../hooks/touch'
-import { specOkCase } from '../hooks/prompt-sync'
+import { specOkCards, specOkTarget } from '../hooks/touch'
 
 // 確認規格後自動派實作：面板按兩次 t 當下派；對話跑 /desk:card spec … ok 的，回合結束後派。核准、排隊、不能派的原因都跟按 g 一樣。
 const ALPHA = '/home/u/wt/alpha'
@@ -50,6 +49,21 @@ function scriptOk(data: any) {
     return result(0, `規格已確認（AC-1～AC-2），關卡清為「無」：${card}\n`)
   }
 }
+
+/**
+ * 對話的 Bash 照 card.py spec-ok 的行為回答：關卡還是 spec 才改卡，stdout 印成功那一行；
+ * 不是 spec 就不動卡片、只在 stderr 說原因（腳本本身在 skills/card/tests 驗）。
+ */
+function conversationBash(on: any, data: any) {
+  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
+    const card = SLUG[String(specOkTarget(e))]
+    if (!card || !data.files[card]!.includes(SPEC_GATE)) return { result: { stdout: '', stderr: card ? '關卡不是 spec：…（目前是「無」），不動卡片\n' : '', interrupted: false } }
+    confirmCard(data, card)
+    return { result: { stdout: `規格已確認（AC-1～AC-2），關卡清為「無」：${card}\n`, stderr: '', interrupted: false } }
+  })
+  on('turn.complete', () => ({ text: '' }))
+}
+const script = (target: string) => `python3 /home/u/.claude/plugins/desk/skills/card/scripts/card.py spec-ok ${target}`
 
 function helpers($: any, clock: any) {
   const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
@@ -206,47 +220,90 @@ test('test_conversation_spec_ok_dispatches_after_turn_ends_but_not_from_subagent
   const { data, clock } = fixture(on)
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
   atSpec(data, clock, [CARD_B, CARD_C])
-  // 對話的 Bash：beta 的腳本成功（卡片改好），gamma 的失敗（卡片不動）
-  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
-    const target = specOkTarget(e)
-    if (target === 'beta') confirmCard(data, CARD_B)
-    return { result: { stdout: '', stderr: target === 'gamma' ? '關卡不是 spec：…' : '', interrupted: false } }
-  })
-  on('turn.complete', () => ({ text: '' }))
+  // Beta 的完成檢查還沒核准過：要在回合結束時才問
+  data.store.trustedVerify = { [CARD_C]: 'npm test' }
+  conversationBash(on, data)
   const h = helpers($, clock)
   await h.refresh()
   const ui = await $.ui.mount(PANE(160))
-  const script = (target: string) => `python3 /home/u/.claude/plugins/desk/skills/card/scripts/card.py spec-ok ${target}`
 
-  // (a) 主對話跑 spec-ok beta：回合進行中不派
+  // (a) 主對話跑 spec-ok beta，腳本成功：回合進行中不派、也不問核准
   await $.tool.call({ tool: 'Bash', command: script('beta') } as any)
   await clock.advance(1000); await clock.settle()
   expect(data.files[CARD_B]).toContain('- 關卡：無')
   expect(data.launches).toHaveLength(0)
-  // (b) 同一回合跑 spec-ok gamma，腳本失敗
+  expect(data.asks).toHaveLength(0)
+  // (b) 同一回合跑 spec-ok gamma，可是 Gamma 的關卡被改掉了，腳本失敗（只回 stderr）
+  const gammaSpec = data.files[CARD_C]!
+  data.files[CARD_C] = gammaSpec.replace(SPEC_GATE, '- 關卡：spec：規格改寫中')
   await $.tool.call({ tool: 'Bash', command: script('gamma') } as any)
   await clock.advance(1000); await clock.settle()
   expect(data.launches).toHaveLength(0)
-  // 回合結束、重讀後：照 t 的規則派 Beta；Gamma 關卡留著、不派
+  // 回合結束、重讀後：這時才跳核准對話框（跟按 g 同一個），核准後派 Beta；Gamma 關卡留著、不派
   await $.turn.complete(turnDone())
   await clock.settle()
+  expect(data.asks).toHaveLength(1)
+  expect(data.askOptions[0]).toEqual(['核准並派工', '取消'])
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
   expect(data.toasts).toContain('Beta：繼續已派出')
-  expect(data.files[CARD_C]).toContain(SPEC_GATE)
+  expect(data.files[CARD_C]).toContain('- 關卡：spec：規格改寫中')
   expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
 
-  // (c) subagent 跑的 spec-ok、手改卡片清掉關卡：只確認，不派、不問
-  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 關卡: '無' })
+  // (b') 關卡早就清成「無」（手改）之後，主對話跑 spec-ok gamma 失敗：不當成剛確認，不派、不出聲
+  data.files[CARD_C] = setFields(gammaSpec, { 關卡: '無' })
+  await h.refresh()
+  const toasts = data.toasts.length
+  await $.tool.call({ tool: 'Bash', command: script('gamma') } as any)
+  await clock.advance(1000); await clock.settle()
+  await $.turn.complete(turnDone('t1b'))
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.asks).toHaveLength(1)
+  expect(data.toasts.slice(toasts).some(t => t.startsWith('Gamma：'))).toBe(false)
+
+  // (c) subagent 跑的 spec-ok（腳本成功）、手改卡片清掉關卡：只確認，不派、不問
+  data.files[CARD_C] = gammaSpec
   await $.tool.call({ tool: 'Bash', command: script('gamma'), agentId: 'sub-1' } as any)
+  expect(data.files[CARD_C]).toContain('- 關卡：無')
   await clock.advance(1000); await clock.settle()
   await $.turn.complete(turnDone('t2'))
   await clock.settle()
   expect(data.launches).toHaveLength(1)
-  expect(data.asks).toHaveLength(0)
+  expect(data.asks).toHaveLength(1)
   await ui.press({ key: `row-${CARD_C}` })
   await h.refresh()
   expect(await screen(ui)).toContain(flat('按 g 派 Agent：'))
+  await ui.unmount()
+})
+
+/** AC-5 (a)：對話確認的，回合結束時不能派就說原因、Agent 已滿就排隊，跟面板按 t 一樣。 */
+test('conversation spec ok follows the t rules at turn end: refusal reason and queue', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_A, CARD_B])
+  // Alpha 的「等你」還有決策；三個工作桌 Agent 在別的專案跑（已滿）
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '匯出要含稅嗎？A) 含 B) 不含' })
+  data.agents = [busy('desk-m0-0', '/home/u/other/one'), busy('desk-m0-1', '/home/u/other/two'), busy('desk-m0-2', '/home/u/other/three')]
+  conversationBash(on, data)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  // 同一回合確認兩張
+  await $.tool.call({ tool: 'Bash', command: script('alpha') } as any)
+  await $.tool.call({ tool: 'Bash', command: script('beta') } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(data.files[CARD_A]).toContain('- 關卡：無')
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.toasts.some(t => t.startsWith('Alpha：') || t.startsWith('Beta：'))).toBe(false)
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.toasts).toContain('Alpha：規格已確認；沒有自動派實作（卡片「等你」還有要你決定的事）')
+  expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
+  expect(data.launches).toHaveLength(0)
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await screen(ui)).toContain(flat('派工排隊中（第 1 位）'))
   await ui.unmount()
 })
 
@@ -270,14 +327,15 @@ test('specOkTarget reads the target of card.py spec-ok only', () => {
   expect(specOkTarget({ tool: 'Write', file_path: '/x/card.py' })).toBeNull()
 })
 
-test('specOkCase finds the card the way card.py resolves its target', () => {
-  const mk = (name: string, statusPath: string, demo = false) => ({ name, statusPath, demo }) as any
-  const cases = [mk('Beta 匯出', CARD_B), mk('Gamma 匯出', CARD_C), mk('示範', '/home/u/demo/beta/.desk/CARD.md', true)]
-  expect(specOkCase(cases, 'beta')?.statusPath).toBe(CARD_B)
-  expect(specOkCase(cases, 'Gamma 匯出')?.statusPath).toBe(CARD_C)
-  expect(specOkCase(cases, 'Gamma')?.statusPath).toBe(CARD_C)
-  // 符合不只一件、找不到、main 都不認
-  expect(specOkCase(cases, '匯出')).toBeNull()
-  expect(specOkCase(cases, 'delta')).toBeNull()
-  expect(specOkCase(cases, 'main')).toBeNull()
+test('specOkCards takes the card path only from a successful card.py spec-ok', () => {
+  const bash = (command: string) => ({ tool: 'Bash', command })
+  const ok = `規格已確認（AC-1～AC-5），關卡清為「無」：${CARD_B}\n`
+  expect(specOkCards(bash(script('beta')), ok)).toEqual([CARD_B])
+  // 一條指令確認兩張
+  expect(specOkCards(bash(`${script('beta')} && ${script('gamma')}`), `${ok}規格已確認（AC-1），關卡清為「無」：${CARD_C}\n`)).toEqual([CARD_B, CARD_C])
+  // 腳本失敗（只有 stderr）、沒有輸出、指令不是 spec-ok 都不算
+  expect(specOkCards(bash(script('gamma')), '')).toEqual([])
+  expect(specOkCards(bash(script('gamma')), undefined)).toEqual([])
+  expect(specOkCards(bash(`cat ${CARD_B}`), ok)).toEqual([])
+  expect(specOkCards(bash('echo "card.py spec-ok beta"'), 'card.py spec-ok beta\n')).toEqual([])
 })

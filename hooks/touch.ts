@@ -43,3 +43,15 @@ export function specOkTarget(call: ToolTouch): string | null {
   const target = (m?.[1] ?? m?.[2] ?? m?.[3] ?? '').trim()
   return target || null
 }
+
+/** card.py spec-ok 成功時印的那一行：`規格已確認（AC-1～AC-n），關卡清為「無」：<卡片路徑>`；失敗只印到 stderr、不動卡片。 */
+const SPEC_OK_DONE = /^規格已確認（[^）\n]*），關卡清為「無」：(.+)$/gm
+
+/**
+ * 這次 Bash 呼叫確認了哪幾張卡：指令要跑 card.py spec-ok，而且輸出裡有腳本成功那一行；回傳那一行的卡片路徑。
+ * 腳本失敗（例如關卡早就不是 spec）、指令只是提到它（echo、grep）都沒有那一行，回傳空陣列。
+ */
+export function specOkCards(call: ToolTouch, stdout: unknown): string[] {
+  if (!specOkTarget(call) || typeof stdout !== 'string') return []
+  return [...stdout.matchAll(SPEC_OK_DONE)].map(m => m[1]!.trim()).filter(Boolean)
+}

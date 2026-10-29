@@ -3,11 +3,11 @@
 // 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、面板操作紀錄的附加與清除、送出的決策與兩個計時器。
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
-import type { Case, PanelAction, SentRecord } from '../types'
+import type { PanelAction, SentRecord } from '../types'
 import { decisionName } from './card'
 import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext } from './desk-io'
 import type { Timer } from './desk-io'
-import { specOkTarget, touchesDesk } from './touch'
+import { specOkCards, touchesDesk } from './touch'
 import { sentState } from './turn'
 import { refreshAfterWrite } from './register'
 import { dispatchAfterSpec } from './card-actions'
@@ -44,28 +44,17 @@ let queuedTimer: Timer
  */
 const TYPED_ORIGINS = new Set(['composer', 'bridge'])
 
-/** 這個回合主對話跑過 card.py spec-ok 的目標（slug、任務名）：回合結束、重讀後照面板按 t 的規則派實作。 */
+/** 這個回合主對話用 card.py spec-ok 確認成功的卡片路徑（腳本印的那一行）：回合結束、重讀後照面板按 t 的規則派實作。 */
 let specOks: string[] = []
 
-/** 找 spec-ok 目標的那張卡，規則同 card.py 的 resolve：路徑裡有 /<目標>/、任務名完全相同、任務名包含它，要剛好一件；main 不認。 */
-export function specOkCase(cases: readonly Case[], target: string): Case | null {
-  if (target === 'main') return null
-  const real = cases.filter(c => !c.demo)
-  const hits = [real.filter(c => c.statusPath.includes(`/${target}/`)), real.filter(c => c.name === target), real.filter(c => c.name.includes(target))].find(h => h.length) ?? []
-  return hits.length === 1 ? hits[0]! : null
-}
+const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
 
-/** 回合結束、重讀之後：這回合主對話確認了規格的那幾張，照面板按 t 的規則派實作；腳本失敗、關卡還是 spec 的由 dispatchAfterSpec 略過。 */
-async function dispatchSpecOks($: any, deps: PromptSyncDeps, targets: readonly string[]) {
+/** 回合結束、重讀之後：這回合主對話確認了規格的那幾張，照面板按 t 的規則派實作；不在登錄表的路徑略過。 */
+async function dispatchSpecOks($: any, deps: PromptSyncDeps, paths: readonly string[]) {
   const s = await read($, snapshot)
   if (!s || !deps.isActive()) return
-  const picked = new Set<string>()
-  for (const target of targets) {
-    const c = specOkCase(s.cases, target)
-    if (!c || picked.has(c.statusPath)) continue
-    picked.add(c.statusPath)
-    await dispatchAfterSpec($, deps.options, c.statusPath)
-  }
+  const want = new Set(paths.map(normPath))
+  for (const c of s.cases.filter(x => !x.demo && want.has(normPath(x.statusPath)))) await dispatchAfterSpec($, deps.options, c.statusPath)
 }
 
 /** 從面板送出、還在等對話寫回的決策（卡片路徑 → 紀錄）。 */
@@ -203,12 +192,12 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   on('session.end', async ($, e, next) => { lastAttached = ''; return next(e) })
 
   // 對話（或它派的 subagent）改了卡片、登錄表，跑了卡片腳本或會移動分支的 git：馬上重讀，不等回合結束。
-  // 主對話（沒有 agentId）跑的 card.py spec-ok 記下目標，回合結束再派；subagent 跑的不記。
+  // 主對話（沒有 agentId）跑 card.py spec-ok 成功的，記下腳本印的卡片路徑，回合結束再派；subagent 跑的、腳本失敗的不記。
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
     try { if (deps.isActive() && touchesDesk(e as any, deps.knownPaths())) touchSoon($, deps) } catch { /* 只是提早重讀，失敗就等定時更新 */ }
-    const target = deps.isActive() && !e.agentId ? specOkTarget(e as any) : null
-    if (target && !specOks.includes(target)) specOks = [...specOks, target]
+    const cards = deps.isActive() && !e.agentId ? specOkCards(e as any, (result as any)?.result?.stdout) : []
+    if (cards.length) specOks = [...new Set([...specOks, ...cards])]
     return result
   })
 
