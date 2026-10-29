@@ -222,3 +222,76 @@ test('stale ask: the reply dialog shows the waiting agent\'s last line or says t
   expect(prompts[0]).toContain('照卡片的下一步繼續：依審核修正')
   expect(prompts[1]).toContain('的回覆：用方案 B')
 })
+
+/** Beta 審查過關、PR #12 開著；最後一次派工（審查）停在提問，題目也寫進卡片「等你」。 */
+const OPEN_PR = [{ number: 12, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
+const ASKING: Record<string, Record<string, unknown>> = {
+  'blocked／idle': { state: 'blocked', status: 'idle' },
+  'waiting／input needed': { state: 'blocked', status: 'waiting', waitingFor: 'input needed' },
+}
+const CARD_ASK = '要用哪個方案？A) 甲 B) 乙'
+const NOTED = 'Beta Agent 的提問已在對話處理（卡片「等你」已清），不再等它回覆'
+
+function askedOnCard(data: any, agent: Record<string, unknown>) {
+  data.gh = OPEN_PR
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 等你: CARD_ASK, 下一步: '合併 PR #12' }).replace('- 關卡：無', PASSED)
+  data.git[BETA] = { branch: 'feature/b', head: 'c2', remote: 'git@github.com:acme/shop.git' }
+  data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' } }
+  data.store.jobs = { [BETA]: job(LATEST, LAST_AT, 'review') }
+  data.agents = [{ id: 'bbbbbbbb', kind: 'background', cwd: BETA, name: LATEST, sessionId: SID, startedAt: LAST_AT, ...agent }]
+  data.logs = { bbbbbbbb: '要用哪個方案？\n' }
+}
+
+/** 題目在主對話處理掉：卡片「等你」清成「無」。 */
+const clearAsk = (data: any) => { data.files[CARD_B] = setFields(data.files[CARD_B]!, { 等你: '無' }) }
+
+/** 卡片標題列右邊的狀態字（「等回覆」…）。 */
+const labelShown = async (ui: any, word: string) => (await ui.findAll({ type: 'Text' })).some((n: any) => String(n.text ?? '').trim() === word)
+
+const refresh = ($: any) => $.command.run({ command: 'desk', args: 'refresh' } as any)
+
+test('stale ask: a question cleared from the card no longer holds an unmerged task', async ($, on) => {
+  const { data } = fixture(on)
+  for (const [how, agent] of Object.entries(ASKING)) {
+    askedOnCard(data, agent)
+    await refresh($)
+    const before = await $.ui.mount(PANE(100))
+    expect(await labelShown(before, '等你'), how).toBe(true)
+    await before.unmount()
+
+    clearAsk(data)
+    await refresh($)
+    const ui = await $.ui.mount(PANE(100))
+    const shown = await screen(ui)
+    expect(await labelShown(ui, '等回覆'), how).toBe(false)
+    expect(shown, how).not.toContain(flat('Agent 等待你回覆'))
+    expect(await ui.find({ key: `${PREFIX}reply` }), how).toBeUndefined()
+    expect(shown, how).toContain(flat('▶ 輪到你'))
+    expect(shown, how).toContain(flat('合併 PR #12'))
+    expect(shown, how).not.toContain(flat('按 y 回覆'))
+    await ui.unmount()
+
+    await refresh($)
+    const again = await $.ui.mount(PANE(100))
+    expect(await labelShown(again, '等回覆'), how).toBe(false)
+    expect(await again.find({ key: `${PREFIX}reply` }), how).toBeUndefined()
+    expect(await screen(again), how).toContain(flat('▶ 輪到你'))
+    await again.unmount()
+  }
+})
+
+test('stale ask: clearing the card\'s question is noted once and leaves the agent alone', async ($, on) => {
+  const { data } = fixture(on)
+  askedOnCard(data, ASKING['waiting／input needed']!)
+  await refresh($)
+  clearAsk(data)
+  await refreshTwice($)
+  const ui = await $.ui.mount(PANE(100))
+  const shown = await screen(ui)
+
+  expect(shown.split(flat(NOTED)).length - 1).toBe(1)
+  expect(data.stops).toEqual([])
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'claude' && c.argv[1] === 'stop')).toEqual([])
+  await ui.unmount()
+})

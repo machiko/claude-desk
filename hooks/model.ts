@@ -6,6 +6,7 @@ import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, s
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict } from './pipeline'
 import { isDeskLaunch } from './dispatch'
+import type { JobRecord } from './dispatch'
 
 /** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
 export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
@@ -272,6 +273,20 @@ export function asksFor(list: any[], launchName: string | undefined): AgentInfo 
   if (status === 'busy' || status === 'waiting') return null
   return String(a.state ?? '').toLowerCase() === 'blocked' ? { ...agentInfo(a), asks: true } : null
 }
+
+/** 工作桌派出去的那一次（按啟動名）停在提問：做完後 blocked、不在跑（同 asksFor），或 status waiting 但不是等權限批准。 */
+export function asksQuestion(list: readonly any[], launchName: string | undefined): boolean {
+  if (!launchName) return false
+  const a = list.find(x => x?.name === launchName && x?.kind === 'background')
+  if (!a) return false
+  const status = String(a.status ?? '').toLowerCase()
+  if (status === 'waiting') return waitsOf(a) === 'question'
+  return status !== 'busy' && String(a.state ?? '').toLowerCase() === 'blocked'
+}
+
+/** 最後一次派工停在提問時題目寫進了卡片「等你」，還沒記成處理過，現在「等你」清成「無」：題目已在對話處理，不再等那個 Agent。 */
+export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'> | undefined, ask: string): boolean =>
+  !!last?.cardAsked && !last.answered && saysNone(ask)
 
 /**
  * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑（busy／waiting）、停在提問（blocked）、清單裡找不到都是 null；

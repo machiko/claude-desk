@@ -1,11 +1,13 @@
 // 被後來派工取代、還停在提問的工作桌 Agent：重新整理時停掉，每個只試一次，結果寫進「最近」。
+// 最後一次派工停在提問、題目寫進卡片又在對話處理掉的：記下來，不再等它（noteCardAsks）。
 // 挑哪些算被取代是 model.ts 的 supersede（純函式）；這裡只做 I/O。跨檔傳 $ 的函式一律用 function 宣告。
 import type { Case } from '../types'
 import type { LastLaunch, Superseded } from './model'
-import { errorLine, hhmm, plain } from './model'
+import { askClearedOnCard, asksQuestion, errorLine, hhmm, plain } from './model'
 import type { RootJobs } from './dispatch'
 import { normalizeRoot } from './dispatch'
-import { feedPush } from './desk-io'
+import { saysNone } from './card'
+import { JOBS_KEY, feedPush, loadJobs } from './desk-io'
 
 /** 已經試著停過的 Agent（成功或失敗都算），不再重試：有 id 記 id；沒 id 的停不掉、只在「最近」說一次，記「名字@派出時間」。 */
 export const STALE_STOPS_KEY = 'supersededStops'
@@ -53,4 +55,22 @@ async function stopOne($: any, agent: Superseded, card: Case, now: number) {
   const ok = r?.exitCode === 0
   const text = ok ? `${card.name} 已停掉 ${what}` : `${card.name} 停不掉 ${what}：${errorLine(r, 'claude stop 失敗')}`
   await feedPush($, [{ at: now, text, tone: ok ? 'subtle' : 'warning', card: card.statusPath }])
+}
+
+/**
+ * 最後一次派工停在提問、題目也寫進卡片「等你」：記下 cardAsked。之後「等你」清成「無」（題目在對話處理了）就記成 answered，
+ * 「最近」寫一筆；面板從這一輪起照卡片走。那個 Agent 不停、不回覆。只改還是同一次派工的紀錄，新派工不帶舊標記。
+ */
+export async function noteCardAsks($: any, list: readonly any[], cases: readonly Case[], now: number) {
+  for (const c of cases) {
+    if (c.demo) continue
+    const key = normalizeRoot(c.root)
+    const all = await loadJobs($)
+    const last = all[key]?.last
+    if (!last || last.answered || !asksQuestion(list, last.launchName)) continue
+    const cleared = askClearedOnCard(last, c.ask)
+    if (!cleared && (last.cardAsked || saysNone(c.ask))) continue
+    await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...last, ...(cleared ? { answered: true } : { cardAsked: true }) } } })
+    if (cleared) await feedPush($, [{ at: now, text: `${c.name} Agent 的提問已在對話處理（卡片「等你」已清），不再等它回覆`, tone: 'subtle', card: c.statusPath }])
+  }
 }
