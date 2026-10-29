@@ -34,6 +34,17 @@ def output(files, wall='[2.50s]', fail=0, skip=0, todo=0, ran=None, noise=''):
     return '\n'.join(parts) + '\n'
 
 
+def section(stdout, title):
+    """取出某個標題底下縮排的那幾行（去掉前後空白）。"""
+    lines = stdout.split(title + '\n', 1)[1].splitlines()
+    rows = []
+    for line in lines:
+        if not line.startswith('  '):
+            break
+        rows.append(line.strip())
+    return rows
+
+
 GOOD = {
     'tests/a.test.ts': [('pass', 'adds numbers', '1.20ms'), ('pass', 'adds [bracketed] numbers', '120.00ms')],
     'tests/b.test.tsx': [('pass', 'renders the pane', '600.50ms'), ('pass', 'renders the band', '1.20s')],
@@ -92,6 +103,30 @@ class TestTimingTest(unittest.TestCase):
         self.assertIn('1200.0 ms', slowest[0])
         self.assertIn('renders the band', slowest[0])
         self.assertIn('renders the pane', slowest[1])
+
+    # AC-1：各檔加總前 10 名列出檔名與加總，依加總由大到小
+    def test_per_file_totals_are_listed_and_sorted(self):
+        r = self.run_script(output(GOOD))
+
+        self.assertEqual(section(r.stdout, '各檔加總前 10 名：'), [
+            '1.8 秒  tests/b.test.tsx',
+            '0.1 秒  tests/a.test.ts',
+        ])
+
+    # AC-1：超過 10 支、超過 10 檔時，兩份排行都只列最大的 10 個
+    def test_rankings_list_only_the_top_ten(self):
+        files = {f'tests/f{i:02}.test.ts': [('pass', f'test {i}', f'{(i + 1) * 100}.00ms')] for i in range(12)}
+
+        r = self.run_script(output(files))
+
+        slowest = section(r.stdout, '最慢 10 支：')
+        self.assertEqual(len(slowest), 10)
+        self.assertEqual(slowest[0], '1200.0 ms  tests/f11.test.ts  test 11')
+        self.assertEqual(slowest[-1], '300.0 ms  tests/f02.test.ts  test 2')
+        per_file = section(r.stdout, '各檔加總前 10 名：')
+        self.assertEqual(len(per_file), 10)
+        self.assertEqual(per_file[0], '1.2 秒  tests/f11.test.ts')
+        self.assertEqual(per_file[-1], '0.3 秒  tests/f02.test.ts')
 
     # AC-2：很慢但不給時間旗標 → 時間只印不擋
     def test_slow_output_passes_without_time_flags(self):
