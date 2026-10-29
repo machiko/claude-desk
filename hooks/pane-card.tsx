@@ -32,7 +32,8 @@ export const picksKey = (c: Case) => `${c.statusPath}\n${c.ask}`
 
 /** 畫面上才知道、turnOf 需要的事。 */
 export function turnCtx(view: PaneView, c: Case): TurnCtx {
-  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now }
+  const agentQueued = (view.agentQueue ?? []).indexOf(c.statusPath) + 1
+  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, ...(agentQueued ? { agentQueued } : {}), tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now }
 }
 
 const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '處理中', none: '— 沒有待辦' }
@@ -293,13 +294,18 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   // 決策送出了、等對話寫回：連 m 展開全部也不給 f，免得重送。
   if (choiceCount(decisions) && can('fill') && ctx.sent !== 'waiting') out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
   if (c.statusPath in view.launching) out.push(button({ key: prefix + 'launching', label: `${SPINNER[view.tick % SPINNER.length]} 派工中`, color: COLOR.running }))
+  // 派工排隊中：跟派工中一樣不列派工鍵；還沒派出去，取消按一次就好。
+  else if (ctx.agentQueued) {
+    out.push(button({ key: prefix + 'agent-queued', label: `… 派工排隊中（第 ${ctx.agentQueued} 位）`, color: COLOR.faint }))
+    if (can('unqueue')) out.push(button({ key: prefix + 'unqueue', hotkey: 'k', label: '■ 取消排隊', onPress: () => act.unqueue(c) }))
+  }
   else for (const k of dispatchable(c).filter(isKeyed).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
     const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
     // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
     const hint = k === 'sync' && cardBehind(c, view.now)
     out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
   }
-  if (canStop(c) && can('stop')) {
+  if (!ctx.agentQueued && canStop(c) && can('stop')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nstop`, view.now)
     out.push(button({ key: prefix + 'stop', hotkey: 'k', isBoxed: armed, isLead: armed, isDim: !armed, label: armed ? '再按 k 確認停止' : '■ 停止', onPress: () => act.stop(c) }))
   }

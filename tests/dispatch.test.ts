@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, openPrRequest, pushRequest } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, openPrRequest, pushRequest } from '../hooks/dispatch'
 import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
@@ -408,4 +408,44 @@ test('card rules tell agents the status field says what happened, not what is ne
   const c = mk('寫測試')
   for (const kind of ['continue', 'sync', 'review'] as const) expect(buildPrompt(c, kind)).toContain(rule)
   expect(buildPrompt(c, 'reply', '用 B')).toContain(rule)
+})
+
+/** agent-limit AC-5：會改程式的派工改的過程只跑相關測試、收尾跑一次完成檢查；審查照舊自己重跑，同步與推送不加。 */
+test('test_code_prompts_run_related_tests_and_check_once_at_the_end', () => {
+  const related = '改程式的過程中只跑跟這次改動有關的測試（目標測試或相關的測試檔），不要每改一次就跑整套'
+  const once = '收尾 commit 前跑一次完成檢查 `node test.mjs`'
+  const c = { ...mk('寫測試'), verify: 'node test.mjs' }
+  const s = parseSettings(JSON.stringify({ rules: ['測試只能用 make test'] }))
+  const code = [
+    buildPrompt(c, 'continue', '', undefined, undefined, s),
+    buildPrompt(c, 'reply', '用 B', undefined, undefined, s),
+    buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: ['boom'] }, undefined, s),
+    buildPrompt(c, 'continue', '', { from: 'review', round: 2 }, undefined, s),
+  ]
+  for (const p of code) {
+    expect(p).toContain(related)
+    expect(p).toContain(once)
+    expect(p).toContain('做完後工作桌還會自動再跑一次')
+    // 專案規則仍接在最後
+    expect(p.endsWith('測試只能用 make test')).toBe(true)
+  }
+  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, s)
+  expect(review).toContain('自己重跑完成檢查 `node test.mjs`')
+  expect(review.endsWith('測試只能用 make test')).toBe(true)
+  for (const p of [review, buildPrompt(c, 'sync', '', undefined, undefined, s), buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12), undefined, undefined, s)]) {
+    expect(p).not.toContain(related)
+    expect(p).not.toContain('收尾 commit 前跑一次')
+  }
+  // 卡片沒有檢查：指向卡片的「檢查」欄
+  expect(buildPrompt({ ...c, verify: '' }, 'continue')).toContain('收尾 commit 前跑一次卡片「檢查」欄的完成檢查')
+})
+
+/** agent-limit：maxAgents 非負整數照用（0＝不限），其他都用預設 3；在跑的只算 busy 的工作桌背景 Agent。 */
+test('settings: maxAgents falls back to 3 and only busy desk agents count as running', () => {
+  expect(parseSettings(null).maxAgents).toBe(DEFAULT_MAX_AGENTS)
+  expect(parseSettings('{"maxAgents":5}').maxAgents).toBe(5)
+  expect(parseSettings('{"maxAgents":0}').maxAgents).toBe(0)
+  for (const bad of ['-1', '2.5', '"4"', 'null']) expect(parseSettings(`{"maxAgents":${bad}}`).maxAgents).toBe(3)
+  const bg = (name: string, status: string) => ({ kind: 'background', name, status, cwd: '/x' })
+  expect(runningDeskAgents([bg('desk-m1-0', 'busy'), bg('desk-m1-1', 'waiting'), bg('desk-m1-2', 'idle'), bg('helper', 'busy'), { ...bg('desk-m1-3', 'busy'), kind: 'interactive' }, bg('desk-m1-4', 'BUSY')])).toBe(2)
 })

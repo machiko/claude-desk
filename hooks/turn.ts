@@ -16,8 +16,11 @@ export type Turn = {
   key?: string
 }
 
-/** 畫面上才知道的事：完成檢查執行中、排隊中、派工中、決策送出了沒、現在是不是教學模式，以及現在幾點（判斷卡片落後）。 */
-export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; tutorial?: boolean; sent?: SentState; now?: number }
+/**
+ * 畫面上才知道的事：完成檢查執行中、排隊中、派工中、派工排第幾位（1 起，沒排是 undefined）、決策送出了沒、現在是不是教學模式，
+ * 以及現在幾點（判斷卡片落後）。
+ */
+export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; agentQueued?: number; tutorial?: boolean; sent?: SentState; now?: number }
 
 /** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
 export type SentState = 'waiting' | 'unwritten'
@@ -42,7 +45,7 @@ export const cardBehind = (c: Pick<Case, 'demo' | 'manual' | 'commitAt' | 'chang
   !c.demo && !c.manual && !c.agent && c.state !== 'running' && c.state !== 'nocard' && c.state !== 'done' && !isMerged(c)
   && typeof c.commitAt === 'number' && c.updatedAt !== null && (c.changedAt ?? c.commitAt) - c.updatedAt > BEHIND_MS && now - c.commitAt > SETTLE_MS
 
-export type ActionId = 'fill' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'push' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'release' | 'tutorial'
+export type ActionId = 'fill' | 'unqueue' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'push' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'release' | 'tutorial'
 
 const isRunning = (c: Case) => c.state === 'running'
 const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
@@ -133,6 +136,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (c.demo) return { who: 'none', text: '示範任務：只能看，照教學那件的指示操作' }
   if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
   if (ctx.launching) return { who: 'ai', text: '派工中，等 Agent 啟動' }
+  if (ctx.agentQueued) return { who: 'ai', text: `派工排隊中（第 ${ctx.agentQueued} 位）：同時執行的 Agent 已達上限，有空位會自動派出` }
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
   const lesson = ctx.tutorial && !isRunning(c) && !ctx.verifying && !ctx.queued ? tutorialTurn(c) : null
   if (lesson) return { who: 'you', ...lesson }
@@ -225,6 +229,8 @@ export const isBusy = (c: Case) => isRunning(c) || c.state === 'approve' || appr
  */
 export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.demo) return new Set()
+  // 派工排隊中：只能取消排隊或開卡片，有空位會自動派出。
+  if (ctx.agentQueued) return new Set<ActionId>(['unqueue', 'open'])
   const busy = isBusy(c)
   const merged = isMerged(c) && !busy
   const out = new Set<ActionId>(merged && canArchive(c) ? [] : ['open'])
