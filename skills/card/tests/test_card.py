@@ -330,6 +330,41 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn(f'- {today}：/desk:card done（feature/order-export {sha}）：CSV 匯出做完，測試綠\n', history)
         self.assertNotIn('未提交', history)
 
+    def test_done_after_passed_review_says_the_flow_rechecks(self):
+        # done-next-step AC-1：審查已過關後的新進度，流程會自動重新檢查與審查；沒動靜才按 v。
+        card, wt = self.confirmed_card_with_commit()
+        self.run_card('gate', 'order-export', 'review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 1；過關')
+        write(card, read(card).replace('- 等你：無', '- 等你：要不要分頁？'))
+        write(card, re.sub(r'^- 檢查：.*$', '- 檢查：`make test`', read(card), count=1, flags=re.M))
+        before = read(card)
+        block = lambda s: s[s.index('<!-- DESK'):s.index('<!-- /DESK -->')]
+        sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=wt, capture_output=True, text=True).stdout.strip()
+
+        r = self.run_card('done', 'order-export', '修好審查提到的 MEDIUM')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 狀態：修好審查提到的 MEDIUM\n', text)
+        self.assertIn('- 下一步：等自動重新檢查與審查；沒動靜就到面板按 v\n', text)
+        self.assertIn('  下一步：等自動重新檢查與審查；沒動靜就到面板按 v\n', r.stdout)
+        for name in ('等你', '關卡', '檢查'):
+            line = re.search(rf'^- {name}：.*$', block(before), re.M).group(0)
+            self.assertIn(line, block(text), name)
+        today = datetime.date.today().isoformat()
+        self.assertIn(f'- {today}：/desk:card done（feature/order-export {sha}）：修好審查提到的 MEDIUM\n', text[text.index('## History'):])
+
+    def test_done_with_blocking_review_still_says_press_v(self):
+        # done-next-step AC-2：審查有擋的、結論缺分級，下一步照舊叫你按 v。
+        card, _ = self.confirmed_card_with_commit()
+        for gate in ('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修', 'review：CRITICAL 1、HIGH 0、MEDIUM 0、LOW 0；要修', 'review：CRITICAL 0、HIGH 0、MEDIUM 1；過關', 'review：過關'):
+            self.run_card('gate', 'order-export', gate)
+            r = self.run_card('done', 'order-export', '修好一半')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            text = read(card)
+            self.assertIn('- 下一步：到面板按 v 執行完成檢查\n', text, gate)
+            self.assertIn('  下一步：到面板按 v 執行完成檢查\n', r.stdout, gate)
+            self.assertIn(f'- 關卡：{gate}\n', text, gate)
+
     def test_done_refuses_before_spec_confirmed(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         card = self.card_path()
