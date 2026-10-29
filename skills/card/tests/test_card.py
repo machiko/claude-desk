@@ -768,7 +768,6 @@ class ChangelogTest(unittest.TestCase):
 
 
 KAC_BEFORE = '# Changelog\n\n## [Unreleased]\n\n## [v26.2.6] - 2026-10-22\n\n### Fixed\n\n- 修復 舊的事\n'
-TODAY = datetime.date.today().isoformat()
 
 
 class KeepAChangelogTest(unittest.TestCase):
@@ -791,7 +790,13 @@ class KeepAChangelogTest(unittest.TestCase):
 
     def run_changelog(self, version):
         env = {**os.environ, 'DESK_SETTINGS': self.settings, 'DESK_PROJECT_DIR': ''}
-        return subprocess.run([sys.executable, SCRIPT, 'changelog', version], capture_output=True, text=True, env=env, cwd=self.root)
+        before = datetime.date.today().isoformat()
+        r = subprocess.run([sys.executable, SCRIPT, 'changelog', version], capture_output=True, text=True, env=env, cwd=self.root)
+        after = datetime.date.today().isoformat()
+        # 版本段的日期是 card.py 跑的那天：整套跨過午夜時，跟測試開始那天不同。照它寫的比對，但必須是跑的前後這兩天之一。
+        m = re.search(rf'^## \[{re.escape(version)}\] - (\S+)$', read(self.changelog), re.M)
+        self.day = m.group(1) if m and m.group(1) in (before, after) else before
+        return r
 
     def fragments(self):
         return sorted(f for f in os.listdir(self.frag) if f.endswith('.md'))
@@ -806,7 +811,7 @@ class KeepAChangelogTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(read(self.changelog), (
             '# Changelog\n\n## [Unreleased]\n\n'
-            f'## [v26.2.7] - {TODAY}\n\n'
+            f'## [v26.2.7] - {self.day}\n\n'
             '### Added\n\n- 新增 丙\n\n'
             '### Fixed\n\n- 修復 乙\n\n'
             '### Security\n\n- 修補 甲\n\n'
@@ -828,7 +833,7 @@ class KeepAChangelogTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(read(self.changelog), (
             '# Changelog\n\n## [Unreleased]\n\n'
-            f'## [v26.2.7] - {TODAY}\n\n'
+            f'## [v26.2.7] - {self.day}\n\n'
             '### Added\n\n- 新增 丙\n\n'
             '### Fixed\n\n- 修復 手寫的\n- 修復 片段的\n\n'
             '### 工程專區\n\n1. 跑 migration\n2. 清快取\n\n'
