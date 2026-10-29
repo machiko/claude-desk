@@ -383,7 +383,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — d
   expect(data.toasts).toContain('Beta：審查通過，PR #9 已被拒絕，要重開請按 ⇡ 開 PR')
 })
 
-/** 發版線（release/* 本身）或 detached HEAD 過關 → 設了 autoPr 也不派、不重讀 PR，字跟沒開一樣（審查 MEDIUM，D-03）。 */
+/** 發版線（release/* 本身）或 detached HEAD 過關 → 設了 autoPr 也不派、不重讀 PR，字跟沒開一樣（審查 MEDIUM，D-04）。 */
 test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — release line or detached HEAD', async ($, on) => {
   const { data, clock } = fixture(on)
   betaReviewed(data)
