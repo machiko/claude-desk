@@ -1,0 +1,1 @@
+- 新增 發版後自動歸檔：發版請求列出要歸檔並移除 worktree 與分支的卡，CI 通過後用 `/desk:card archive <slug>… --cleanup` 一次做完，沒合併、有改動或 git 拒絕的保留並寫進提醒；按 u 確認上線後也自動歸檔（worktree 與分支保留）

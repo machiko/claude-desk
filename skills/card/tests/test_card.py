@@ -524,6 +524,119 @@ class CardScriptTest(unittest.TestCase):
         self.assertNotIn('部署步驟', r.stdout)
         self.assertNotIn('發版線卡片', r.stdout)
 
+    def open_case(self, branch, name, merged=False):
+        """開卡、在 worktree commit 一次；merged=True 時在主 repo 用 --no-ff 併進 main。回傳 worktree 路徑。"""
+        self.run_card('new', branch, name, 'origin/main')
+        slug = branch.rsplit('/', 1)[-1]
+        wt = os.path.join(self.main + '-worktrees', slug)
+        write(os.path.join(wt, f'{slug}.txt'), 'x\n')
+        git('add', f'{slug}.txt', cwd=wt)
+        git('commit', '-q', '-m', f'{slug}', cwd=wt)
+        if merged:
+            git('merge', '-q', '--no-ff', '-m', f'merge {branch}', branch, cwd=self.main)
+        return wt
+
+    def worktrees(self):
+        out = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=self.main, capture_output=True, text=True, check=True).stdout
+        return [os.path.realpath(l[len('worktree '):]) for l in out.splitlines() if l.startswith('worktree ')]
+
+    def branch_listed(self, branch):
+        return subprocess.run(['git', 'branch', '--list', branch], cwd=self.main, capture_output=True, text=True, check=True).stdout.strip()
+
+    def test_archive_cleanup_removes_worktree_and_branch_when_merged_and_clean(self):
+        """AC-1：已合併、乾淨的 Beta：歸檔副本留著，worktree 與分支移除，登錄表那行寫已移除。"""
+        wt = self.open_case('feature/beta', 'Beta', merged=True)
+        card = self.card_path('beta')
+        write(card, re.sub(r'^- 狀態：.*$', '- 狀態：已發版 v0.38.0，CI 通過', read(card), count=1, flags=re.M))
+        write(os.path.join(wt, '.task', 'REVIEW.md'), '- [LOW] x\n')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertIn('已發版 v0.38.0，CI 通過', read(os.path.join(archive, 'beta-CARD.md')))
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'beta-REVIEW.md')))
+        reg = read(self.reg)
+        self.assertNotIn('| Beta |', reg)
+        self.assertRegex(reg, r'(?m)^- beta：.*worktree 與分支已移除$')
+        self.assertNotIn(os.path.realpath(wt), self.worktrees())
+        self.assertFalse(os.path.exists(wt))
+        self.assertEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 已刪除', r.stdout)
+
+    def test_archive_cleanup_keeps_worktree_and_branch_when_dirty_or_unmerged(self):
+        """AC-2：Beta 已合併但有未提交的改動、Gamma 乾淨但沒併入 main：兩張都歸檔，worktree 與分支都保留，提醒寫原因與自己刪的指令。"""
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        gamma = self.open_case('feature/gamma', 'Gamma')
+        write(os.path.join(beta, 'beta.txt'), 'changed\n')
+
+        r = self.run_card('archive', 'beta', 'gamma', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'beta-CARD.md')))
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'gamma-CARD.md')))
+        reg = read(self.reg)
+        self.assertNotIn('| Beta |', reg)
+        self.assertNotIn('| Gamma |', reg)
+        archived = reg[reg.index('## 已歸檔的卡'):]
+        self.assertRegex(archived, r'(?m)^- beta：.*；worktree 保留：有未提交的改動（1 個檔）$')
+        self.assertRegex(archived, r'(?m)^- gamma：.*；worktree 保留：分支還沒併入 main$')
+        # worktree、那個改動與分支都還在
+        self.assertEqual(read(os.path.join(beta, 'beta.txt')), 'changed\n')
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertIn(os.path.realpath(gamma), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertNotEqual(self.branch_listed('feature/gamma'), '')
+        self.assertRegex(r.stdout, r'(?m)^清理 beta：.*有未提交的改動（1 個檔）')
+        self.assertRegex(r.stdout, r'(?m)^清理 gamma：.*分支還沒併入 main')
+        # 登錄表「## 提醒」兩行，各附自己刪的指令，不含 --force／-D
+        reminders = reg[reg.index('## 提醒'):]
+        lines = [l for l in reminders.splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(len(lines), 2, reminders)
+        for line, wt, branch in ((lines[0], beta, 'feature/beta'), (lines[1], gamma, 'feature/gamma')):
+            self.assertIn(f'git -C {self.main} worktree remove {wt}', line)
+            self.assertIn(f'git -C {self.main} branch -d {branch}', line)
+            self.assertNotIn('--force', line)
+            self.assertNotIn(' -D', line)
+        self.assertTrue(lines[0].startswith('- 清理 beta：有未提交的改動（1 個檔）'))
+        self.assertTrue(lines[1].startswith('- 清理 gamma：分支還沒併入 main'))
+
+    def test_archive_cleanup_leaves_main_worktree_and_unlisted_cards_when_out_of_scope(self):
+        """AC-3：主 repo 的卡照常歸檔但主 worktree 不動；沒列到的 Delta 不動；有拼錯的 slug 時整批不做。"""
+        main_card = os.path.join(self.main, '.desk', 'CARD.md')
+        os.makedirs(os.path.dirname(main_card))
+        write(main_card, read(TEMPLATE).replace('<任務名>', '主線'))
+        write(self.reg, read(self.reg) + f'| 主線 | `{main_card}` |\n')
+        delta = self.open_case('feature/delta', 'Delta', merged=True)
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        delta_row = next(l for l in read(self.reg).splitlines() if l.startswith('| Delta |'))
+
+        r = self.run_card('archive', 'main', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('主 worktree 不移除', r.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'main-CARD.md')))
+        self.assertNotIn('| 主線 |', read(self.reg))
+        self.assertIn(os.path.realpath(self.main), self.worktrees())
+        self.assertTrue(os.path.isfile(main_card))
+        self.assertNotEqual(self.branch_listed('main'), '')
+        # Delta 沒列：worktree、分支與登錄表列一字不變
+        self.assertIn(delta_row, read(self.reg).splitlines())
+        self.assertIn(os.path.realpath(delta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/delta'), '')
+
+        before = read(self.reg)
+        r = self.run_card('archive', 'beta', 'nope', '--cleanup', cwd=self.main)
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('找不到唯一的任務「nope」', r.stderr)
+        self.assertIn('Beta', r.stderr)
+        self.assertEqual(read(self.reg), before)
+        self.assertFalse(os.path.exists(os.path.join(self.t, 'archive', 'beta-CARD.md')))
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+
     def test_unknown_target_lists_cases(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         r = self.run_card('card', 'nope')

@@ -4,7 +4,7 @@ import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, spli
 import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
-import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
+import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
 import { gitLine, isArmed, mergedAtHead } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
@@ -327,7 +327,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (canShip(c) && can('ship') && busy) locked('ship', '✓ 上線確認')
   else if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)
-    out.push(button({ key: prefix + 'ship', hotkey: 'u', isBoxed: armed, isLead: armed || leadKey === 'u', label: armed ? '再按 u 確認已上線（清除 release 關卡）' : '✓ 上線確認', onPress: () => act.ship(c) }))
+    out.push(button({ key: prefix + 'ship', hotkey: 'u', isBoxed: armed, isLead: armed || leadKey === 'u', label: armed ? (archivesOnShip(c, !!view.s.tutorial) ? '再按 u 確認上線並歸檔（清除 release 關卡）' : '再按 u 確認已上線（清除 release 關卡）') : '✓ 上線確認', onPress: () => act.ship(c) }))
   }
   if (!view.s.tutorial && busy && awaitsSpecOk(idle) && can('spec-ok')) locked('spec-ok', '✓ 確認規格')
   else if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {

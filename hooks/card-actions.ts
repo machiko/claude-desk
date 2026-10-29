@@ -10,7 +10,7 @@ import { WORD } from './theme'
 import { errorLine, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings } from './probes'
 import { normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
-import { canRelease, isReleaseLine } from './pipeline'
+import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
@@ -110,6 +110,8 @@ export async function confirmShipped($: any, c: Case) {
   const shipped = `已確認上線${c.tag ? `（${c.tag}）` : ''}`
   await feedPush($, [{ at: now, text: `${c.name} ${shipped}`, tone: 'success', card: c.statusPath }])
   await tellPanel($, now, shipped, { name: c.name, skip: tutorial })
+  // 一般的卡確認上線後接著歸檔（同 ⌫ 歸檔，不刪 worktree 與分支）；發版線與教學那件照舊只清關卡。
+  if (archivesOnShip(c, !!tutorial)) { await archiveCase($, optionsRef!, c); return }
   $.ui.toast(`${c.name}：已確認上線，release 關卡已清除`)
   void refresh($, optionsRef!)
 }

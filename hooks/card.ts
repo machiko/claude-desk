@@ -181,9 +181,24 @@ export const decisionPrompt = (name: string, answer: string) => `「${name}」�
  * 「⚑ 發版」填進輸入框的那句：列出所有已合併待發版的卡（有 PR 的附 PR 編號），請對話先提版號。
  * 確認點（版號、打 tag 並 push）走卡片「等你」：面板上那張卡會出現選項，按字母＋f 送回決策，不用回對話打字。
  */
-export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr'>[]): string {
+export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' | 'git' | 'gate'>[]): string {
   const list = cases.map(c => `「${c.name}」${c.pr ? `PR #${c.pr.id}` : ''}`).join('、')
-  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程，先提版號給我確認。${RELEASE_ASKS}`
+  const cleanup = releaseCleanup(cases)
+  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程，先提版號給我確認。${RELEASE_ASKS}${cleanup ? `。${cleanup}` : ''}`
+}
+
+/**
+ * 發版請求尾端的清理段：沒有 release 關卡的卡在 CI 通過、狀態寫好後一次歸檔並移除 worktree 與分支（/desk:card archive … --cleanup）；
+ * 有 release 關卡的卡不在這次清理，部署後按 u 確認上線時自動歸檔。兩種都沒有就是空字串。
+ */
+export function releaseCleanup(cases: readonly Pick<Case, 'name' | 'root' | 'git' | 'gate'>[]): string {
+  const slug = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
+  const gated = (c: Pick<Case, 'gate'>) => parseGate(c.gate)?.kind === 'release'
+  const clean = cases.filter(c => !gated(c))
+  const parts = clean.length
+    ? [`發版後歸檔這 ${clean.length} 張卡，並移除它們的 worktree 與分支（都已合併）：${clean.map(c => `「${c.name}」（${[slug(c), c.git?.branch].filter(Boolean).join('、')}）`).join('、')}；CI 通過、各卡狀態寫好之後才在主 repo 跑 ${CARD_CMD} archive ${clean.map(slug).join(' ')} --cleanup，把沒移除的項目與原因告訴我`]
+    : []
+  return [...parts, ...cases.filter(gated).map(c => `「${c.name}」有 release 關卡，不在這次清理，部署後按 u 確認上線會自動歸檔`)].join('；')
 }
 
 /** 發版請求裡「確認點寫進卡片」那段要求。 */

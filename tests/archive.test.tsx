@@ -277,3 +277,92 @@ test('an unmerged case still waits for the reply of a blocked agent', async ($, 
   expect(await ui.find({ key: KEY })).toBeUndefined()
   await ui.unmount()
 })
+
+const SHIP = `case-${CARD_B}-ship`
+const SHIP_GATE = '- 關卡：release：v0.19.0 待上線確認'
+const ARMED_ARCHIVE = '再按 u 確認上線並歸檔（清除 release 關卡）'
+const ARMED_ONLY = '再按 u 確認已上線（清除 release 關卡）'
+const GAMMA = '/home/u/wt/gamma'
+
+/**
+ * AC-5：Beta 按兩次 u：清 release 關卡、記 History，接著同 ⌫ 歸檔跑 /desk:card archive beta（不帶 --cleanup），不刪 worktree 與分支；
+ * 歸檔失敗時提示原因、Beta 留著可按 ⌫ 歸檔。發版線卡與教學那件按兩次 u 照舊只清關卡、不歸檔。
+ */
+test('test_ship_confirm_archives_case_and_keeps_worktree_when_pressed_twice', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  only(data, SHIP_GATE)
+  // 發版線卡（release/v1.4）也打了 tag、等 u
+  data.files[REGISTRY] += `\n| Gamma | \`${CARD_C}\` |`
+  data.files[CARD_C] = '<!-- DESK -->\n- 狀態：v1.4 發版線\n- 檢查：`npm test`\n- 等你：無\n- 下一步：部署\n- 關卡：release：v1.4.0 待上線確認\n<!-- /DESK -->\n\n## History\n'
+  data.git[GAMMA] = { branch: 'release/v1.4', head: 'c1', remote: 'git@github.com:acme/shop.git', tag: 'v1.4.0' }
+  data.store.verifies = { [CARD_C]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c1' } }
+  const all = recordAll(data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  const pressTwice = async (key: string) => {
+    await ui.press({ key })
+    const armed = (await ui.find({ key }))?.text
+    await ui.press({ key })
+    await clock.settle()
+    return armed
+  }
+
+  // 發版線卡：照舊只清關卡，不歸檔
+  await ui.press({ key: `row-${CARD_C}` })
+  expect(await pressTwice(`case-${CARD_C}-ship`)).toBe(ARMED_ONLY)
+  expect(data.files[CARD_C]).toContain('- 關卡：無')
+  expect(archiveRuns(data)).toHaveLength(0)
+
+  // Beta 歸檔失敗：關卡照樣清掉，提示原因，Beta 留著、可以按 ⌫ 歸檔
+  data.run = async (e: any) => e.argv.includes('archive') ? result(1, '', '找不到唯一的任務「beta」（符合 0 件）。登錄表裡有：\n  Gamma  (x)\n') : result(0, '')
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await pressTwice(SHIP)).toBe(ARMED_ARCHIVE)
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.files[CARD_B]).toContain('確認 v0.19.0 已上線')
+  expect(archiveRuns(data)).toHaveLength(1)
+  expect(data.toasts.some(t => t.includes('歸檔失敗：找不到唯一的任務「beta」'))).toBe(true)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  if (await ui.find({ key: `row-${CARD_B}` })) await ui.press({ key: `row-${CARD_B}` })
+  expect((await ui.find({ key: KEY }))?.text).toBe('⌫ 歸檔')
+
+  // Beta 歸檔成功：跑的是 ⌫ 歸檔那支腳本（不帶 --cleanup），提示已歸檔與自己刪的指令，Beta 從清單消失
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', SHIP_GATE)
+  scriptOk(data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  if (await ui.find({ key: `row-${CARD_B}` })) await ui.press({ key: `row-${CARD_B}` })
+  expect(await pressTwice(SHIP)).toBe(ARMED_ARCHIVE)
+  expect(data.files[ARCHIVED]).toContain('- 關卡：無')
+  expect(data.files[ARCHIVED]).toContain('確認 v0.19.0 已上線，release 關卡清為無')
+  const runs = archiveRuns(data)
+  expect(runs).toHaveLength(2)
+  expect(runs[1].argv.slice(2)).toEqual(['archive', 'beta'])
+  expect(runs[1].init.cwd).toBe(BETA)
+  expect(data.toasts.some(t => t.includes('已歸檔') && t.includes(`git -C /home/u/shop worktree remove ${BETA}`))).toBe(true)
+  await clock.settle()
+  expect(await ui.find({ key: `row-${CARD_B}` })).toBeUndefined()
+  expect(all.some((e: any) => /worktree remove|branch -[dD]/.test(e.argv.join(' ')))).toBe(false)
+  expect(data.processCalls.some((c: any) => /worktree remove|branch -[dD]/.test(c.argv.join(' ')))).toBe(false)
+  await ui.unmount()
+
+  // 教學那件：按兩次 u 照舊只清關卡，不歸檔
+  const P = tutorialPaths('/home/u')
+  data.git[P.wt] = { branch: 'feature/discount', head: 'h0' }
+  data.git[P.main] = { branch: 'release/v1.0', head: 'm0' }
+  data.run = async () => result(0, '')
+  await $.command.run({ command: 'desk', args: 'tutorial' } as any)
+  await clock.settle()
+  data.files[P.card] = setFields(data.files[P.card]!, { 關卡: `release：${TUTORIAL_TAG} 待上線確認` })
+  data.git[P.wt] = { ...data.git[P.wt]!, tag: TUTORIAL_TAG }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  const tut = await $.ui.mount(PANE(80))
+  await tut.press({ key: `case-${P.card}-ship` })
+  expect((await tut.find({ key: `case-${P.card}-ship` }))?.text).toBe(ARMED_ONLY)
+  await tut.press({ key: `case-${P.card}-ship` })
+  await clock.settle()
+  expect(data.files[P.card]).toContain('- 關卡：無')
+  expect(archiveRuns(data)).toHaveLength(2)
+  await tut.unmount()
+})

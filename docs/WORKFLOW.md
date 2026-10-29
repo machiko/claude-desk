@@ -79,7 +79,7 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 
 - 開卡：`/desk:card new <分支> <卡名> [base]`（建 worktree＋DESK 卡＋登錄表列）。
 - 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時不能派實作，只能同步：同步平常收在「更多動作」m 裡）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡，就能按 `g`。審查會逐條對照驗收情境。
-- 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。卡片「## 部署步驟」有已填的步驟時，腳本與面板的完成提示會列出筆數並提醒：步驟跟著卡片歸檔，隨發版線發版的卡要先把步驟搬到發版線卡片或登錄表「## 提醒」（只提醒，不自動搬）。
+- 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。另有兩種自動歸檔：發版時 CI 通過後用 `/desk:card archive <slug>… --cleanup` 把發版請求列過的卡一次歸檔，已合併又乾淨的 worktree 與分支一起移除（見下面發版第 9 步）；有 `release：` 關卡的卡按兩次 `u` 確認上線後接著歸檔，worktree 與分支保留（發版線與教學那件照舊只清關卡）。卡片「## 部署步驟」有已填的步驟時，腳本與面板的完成提示會列出筆數並提醒：步驟跟著卡片歸檔，隨發版線發版的卡要先把步驟搬到發版線卡片或登錄表「## 提醒」（只提醒，不自動搬）。
 - CHANGELOG：每張卡的條目寫在 `changelog.d/<slug>.md`（`- ` 開頭、動詞開頭的條目，沒有標題），Agent 的派工提示也這樣要求；不改 CHANGELOG.md，分支之間才不會搶「## 未發布」。專案的 CHANGELOG 用 Keep a Changelog 時，在專案 dispatch.json 設 `card.changelog.format = "keepachangelog"`，發版合併就改成 `## [Unreleased]`／`## [<版本>] - <日期>` 與 `### Added／Fixed…` 小節（動詞對照見 `/desk:card` 的 changelog 說明）。
 - 合併到發版線：PR 目標（或 git 看到併進的分支）是 `release/*` 的卡，隨那條發版線發版：上線段寫「隨 <發版線> 發版，待打 tag」，沒有自己的「⚑ 發版」，也不列進別張卡的發版請求；發版線打了 tag、tag 包含這張卡的 HEAD 後才能歸檔。
 - 發版：要發的 PR 都合併之後，在面板按「⚑ 發版」（上線段、還沒打 tag 的卡帶頭顯示）把列出所有待發版卡的發版請求填進輸入框，按 Enter 送給對話；對話先提版號，你確認後在主 repo 依序做（面板與背景 Agent 都不打 tag）。每個要你確認的點（版號、打 tag 並 push）對話都寫進要發版那幾張卡的「等你」（`問題：A) … B) …`），「狀態」寫做到哪一步；你在面板按選項字母＋`f` 送出「「任務名」決策：…」，對話收到決策才做下一步，做完把「等你」清成無。下面是 desk 本身的步驟，其他專案把版號檔換成自己的：
@@ -91,7 +91,7 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
   6. 打 annotated tag：`git tag -a v<版本> -m "v<版本>"`
   7. push main 與 tag：`git push origin main v<版本>`
   8. 等 main 的 CI 通過（`gh run watch` 或到 GitHub Actions 看）
-  9. 把隨版發出的卡歸檔：面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`；有 `release：` 關卡的卡先部署、按 `u` 確認上線再歸檔
+  9. CI 通過、各卡狀態寫好之後，`/desk:card archive <slug>… --cleanup` 把發版請求列過的卡歸檔並移除 worktree 與分支（發版請求列出這些卡，你送出請求並確認發版就是同意；只用 `git worktree remove`、`git branch -d`，不加 `--force`／`-D`、不碰遠端；沒併入、有未提交的改動或 git 拒絕的保留，原因與自己刪的指令寫進登錄表「## 提醒」）；有 `release：` 關卡的卡不在這次清理，部署後按 `u`，確認上線會接著自動歸檔（worktree 與分支保留）
 
 ## 常見狀況
 

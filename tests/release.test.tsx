@@ -17,7 +17,10 @@ const GITHUB = 'git@github.com:acme/shop.git'
 const LEAD = '按 ⚑ 發版填入對話（Enter 送出）'
 const AFTER_ARCHIVE = '打了 tag 之後歸檔'
 const AFTER_DEPLOY = '打了 tag 之後部署並按 u 確認上線'
-const REQUEST = '發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS
+const ASK = (list: string) => `發版：已合併待發版 ${list}；照這個專案的發版流程，先提版號給我確認。` + RELEASE_ASKS
+/** 請求尾端的清理段：沒有 release 關卡的卡在 CI 通過後一次歸檔並移除 worktree 與分支。 */
+const CLEANUP = (n: number, cards: string, slugs: string) => `。發版後歸檔這 ${n} 張卡，並移除它們的 worktree 與分支（都已合併）：${cards}；CI 通過、各卡狀態寫好之後才在主 repo 跑 /desk:card archive ${slugs} --cleanup，把沒移除的項目與原因告訴我`
+const REQUEST = ASK('2 件（「Beta」PR #12、「Gamma」PR #13）') + CLEANUP(2, '「Beta」（beta、feature/b）、「Gamma」（gamma、feature/c）', 'beta gamma')
 const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送出'
 const pr = (n: number, state = 'MERGED', dest = 'main') => ({ number: n, state, baseRefName: dest, headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
@@ -95,6 +98,37 @@ test('pressing release fills the prompt with every case waiting for a tag', asyn
   expect(data.launches.length).toBe(launches)
   // 按下之後沒有執行任何 git、gh、claude 指令
   expect(calls.slice(before).filter(c => ['git', 'gh', 'claude'].includes(c.argv[0]))).toEqual([])
+  await ui.unmount()
+})
+
+/**
+ * AC-4：Beta（已合併、沒有關卡）列進發版後的清理；Gamma 有 release 關卡，不在這次清理、按 u 確認上線會自動歸檔；不提 Alpha。
+ * 按下只填輸入框，不跑 git；只有 release 關卡的卡要發時，請求沒有「發版後歸檔這」那段。
+ */
+test('test_release_request_lists_cleanup_of_released_cards_when_pressed', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const calls = setup(data, { gamma: RELEASE_GATE })
+  let ui = await mountBeta($)
+  await clock.settle()
+  const before = calls.length
+  await ui.press({ key: KEY })
+  await clock.settle()
+  const gammaGated = '「Gamma」有 release 關卡，不在這次清理，部署後按 u 確認上線會自動歸檔'
+  expect(data.fills).toEqual([{ text: ASK('2 件（「Beta」PR #12、「Gamma」PR #13）') + CLEANUP(1, '「Beta」（beta、feature/b）', 'beta') + '；' + gammaGated, mode: 'replace' }])
+  expect(data.fills[0].text).not.toContain('Alpha')
+  expect(calls.slice(before).filter(c => ['git', 'gh', 'claude'].includes(c.argv[0]))).toEqual([])
+  expect(data.submitted.length).toBe(0)
+  await ui.unmount()
+
+  // 兩張都有 release 關卡：沒有清理段，各自寫按 u 會自動歸檔
+  data.files[CARD_B] = data.files[CARD_B]!.replace(PASSED, RELEASE_GATE)
+  ui = await mountBeta($)
+  await ui.press({ key: KEY })
+  await clock.settle()
+  const last = data.fills[data.fills.length - 1].text
+  expect(last).toBe(ASK('2 件（「Beta」PR #12、「Gamma」PR #13）') + '。「Beta」有 release 關卡，不在這次清理，部署後按 u 確認上線會自動歸檔；' + gammaGated)
+  expect(last).not.toContain('發版後歸檔這')
+  expect(last).not.toContain('--cleanup')
   await ui.unmount()
 })
 
@@ -198,14 +232,14 @@ test('a release line gets no release button and is not listed in the request', a
   await ui.press({ key: `row-${CARD_B}` })
   await ui.press({ key: KEY })
   await clock.settle()
-  expect(data.fills).toEqual([{ text: '發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS, mode: 'replace' }])
+  expect(data.fills).toEqual([{ text: ASK('1 件（「Beta」PR #12）') + CLEANUP(1, '「Beta」（beta、feature/b）', 'beta'), mode: 'replace' }])
   await ui.unmount()
 })
 
 const LINE = 'release/v26.2.7'
 const WITH_LINE = `隨 ${LINE} 發版`
 const AFTER_LINE_TAG = '發版線打 tag 後歸檔'
-const ONLY_GAMMA = '發版：已合併待發版 1 件（「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS
+const ONLY_GAMMA = ASK('1 件（「Gamma」PR #13）') + CLEANUP(1, '「Gamma」（gamma、feature/c）', 'gamma')
 
 /**
  * 合併進發版線的 Beta：上線段說隨那條線發版、待打 tag，下一步與輪到你同一句；沒有發版鍵（展開全部也沒有）、沒有歸檔，

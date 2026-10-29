@@ -15,7 +15,11 @@
                                                「等自動重新檢查與審查；沒動靜就到面板按 v」，審查已過關但之後沒有新 commit（或沒有審查檔）寫
                                                「到面板照「輪到你」開 PR 或合併」，其他寫「到面板按 v 執行完成檢查」；
                                                History 記分支與 HEAD（有未提交的檔就註明幾個）；規格還沒確認就拒絕
-  card.py archive <slug>                       卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
+  card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
+                                               可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
+                                               移除已併入主 repo 目前分支、沒有未提交改動的 worktree（git worktree remove）與分支（git branch -d），
+                                               不用 --force／-D、不碰遠端；主 worktree 不移除。沒併入、有改動或 git 拒絕的保留，每張印一行
+                                               「清理 <slug>：…」，原因與自己刪的指令寫進登錄表「## 提醒」；有保留不算失敗
   card.py changelog <版本>                      發版：把所在 repo 的 changelog.d/*.md 合併成 CHANGELOG.md 的「## <版本>」段
                                                （插在「## 未發布」之後、上一版之前；條目依 新增→調整→修復→移除、同類依檔名），刪掉片段檔。
                                                沒有片段、版本段已存在、片段有一行不是「- 」開頭都報錯、不改檔。
@@ -514,8 +518,61 @@ def deploy_steps(text):
     return steps
 
 
-def cmd_archive(slug):
-    _, path, root = resolve(slug)
+def main_worktree(root):
+    """root 所屬 repo 的主 worktree（worktree list 第一筆）；跟設定的主 repo 是同一個資料夾時用設定的寫法，指令才跟 new 印的一致。"""
+    r = git('-C', root, 'worktree', 'list', '--porcelain')
+    first = next((l[len('worktree '):] for l in r.stdout.splitlines() if l.startswith('worktree ')), '') if r.returncode == 0 else ''
+    return MAIN if first and MAIN and os.path.realpath(MAIN) == os.path.realpath(first) else first
+
+
+def git_reason(r):
+    """git 拒絕時的原因：照抄它的第一行。"""
+    return next((l.strip() for l in (r.stderr + '\n' + r.stdout).splitlines() if l.strip()), 'git 失敗')
+
+
+def cleanup(root):
+    """--cleanup：移除已併入主 repo 目前分支、沒有未提交改動的 worktree 與分支（不加 --force／-D）。
+    回傳 (輸出說明, 已歸檔那行的後綴, 保留原因, 要自己刪的指令)；保留原因是空字串代表沒有要提醒的。"""
+    main = main_worktree(root)
+    if not main:
+        why = '找不到這個 worktree 所屬的 git repo'
+        return f'worktree 與分支保留：{why}', f'；worktree 保留：{why}', why, []
+    if os.path.realpath(main) == os.path.realpath(root):
+        return '主 worktree 不移除', '；主 worktree 不移除', '', []
+    branch = git_branch(root)
+    remove_wt = f'git -C {main} worktree remove {root}'
+    remove_branch = f'git -C {main} branch -d {branch}'
+    if not branch:
+        why = '不在分支上（detached HEAD）'
+        return f'worktree 保留：{why}', f'；worktree 保留：{why}', why, [remove_wt]
+    why = ''
+    if git('-C', main, 'merge-base', '--is-ancestor', branch, 'HEAD').returncode != 0:
+        why = f'分支還沒併入 {git_branch(main) or "主 repo 的 HEAD"}'
+    else:
+        dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.splitlines() if l.strip()]
+        if dirty:
+            why = f'有未提交的改動（{len(dirty)} 個檔）'
+        else:
+            r = git('-C', main, 'worktree', 'remove', root)
+            if r.returncode != 0:
+                why = git_reason(r)
+    if why:
+        return f'worktree 與分支保留：{why}', f'；worktree 保留：{why}', why, [remove_wt, remove_branch]
+    r = git('-C', main, 'branch', '-d', branch)
+    if r.returncode != 0:
+        why = f'worktree 已移除，分支 {branch} 保留：{git_reason(r)}'
+        return f'worktree 已移除；分支 {branch} 保留：{git_reason(r)}', f'；{why}', why, [remove_branch]
+    return f'worktree 已移除；分支 {branch} 已刪除', '；worktree 與分支已移除', '', []
+
+
+def cmd_archive(slugs, cleanup_after=False):
+    # 先把每張都找到：有一張找不到就報錯，哪張都不動。
+    targets = [(slug, *resolve(slug)) for slug in dict.fromkeys(slugs)]
+    for slug, _, path, root in targets:
+        archive_one(slug, path, root, cleanup_after)
+
+
+def archive_one(slug, path, root, cleanup_after):
     os.makedirs(ARCHIVE, exist_ok=True)
     dest = os.path.join(ARCHIVE, f'{slug}-CARD.md')
     card = read(path)
@@ -524,10 +581,12 @@ def cmd_archive(slug):
     for f in sorted(os.listdir(task)) if os.path.isdir(task) else []:
         if re.match(r'(REVIEW|SECURITY|PLAN|REPORT|review-.*)\.md$', f):
             write(os.path.join(ARCHIVE, f'{slug}-{f}'), read(os.path.join(task, f)))
+    # 移除 worktree 會連 .desk、.task 一起刪，所以清理排在複製之後。
+    said, suffix, kept, commands = cleanup(root) if cleanup_after else ('', '', '', [])
     lines = read(REG).split('\n')
     removed = [l for l in lines if l.startswith('|') and f'`{path}`' in l]
     lines = [l for l in lines if not (l.startswith('|') and f'`{path}`' in l)]
-    note = f'- {slug}：{datetime.date.today().isoformat()} 歸檔；卡片在 `{dest}`'
+    note = f'- {slug}：{datetime.date.today().isoformat()} 歸檔；卡片在 `{dest}`{suffix}'
     head = next((i for i, l in enumerate(lines) if l.startswith('## 已歸檔的卡')), None)
     if head is None:
         lines += ['', '## 已歸檔的卡（worktree 刪除後，卡片留存供查閱）', '', note]
@@ -538,7 +597,11 @@ def cmd_archive(slug):
         while j > head + 1 and lines[j - 1].strip() == '':
             j -= 1
         lines.insert(j, note)
-    write(REG, '\n'.join(lines))
+    text = '\n'.join(lines)
+    if kept:
+        todo = '、'.join(f'`{c}`' for c in commands)
+        text = append_line(text, '## 提醒', f'- 清理 {slug}：{kept}' + (f'；看過後自己刪：{todo}' if todo else ''))
+    write(REG, text)
     print(f'歸檔完成：{dest}（登錄表移除 {len(removed)} 列）')
     # 部署步驟跟著卡片歸檔：只提醒，不自動搬（隨發版線發版的卡，步驟要在發版線部署時做）。
     steps = deploy_steps(card)
@@ -547,6 +610,9 @@ def cmd_archive(slug):
         for i, step in enumerate(steps, 1):
             print(f'  {i}. {step}')
         print('請確認已搬到發版線卡片或登錄表「## 提醒」，歸檔後這張卡不會再提醒')
+    if cleanup_after:
+        print(f'清理 {slug}：{said}')
+        return
     print('worktree 與分支請自己確認後再刪：')
     print(f'  git -C {MAIN or "<主 repo>"} worktree remove {root}')
 
@@ -759,8 +825,8 @@ def main(argv):
         cmd_spec_ok(args[0])
     elif cmd == 'done' and len(args) >= 2:
         cmd_done(args[0], ' '.join(args[1:]))
-    elif cmd == 'archive' and args:
-        cmd_archive(args[0])
+    elif cmd == 'archive' and [a for a in args if a != '--cleanup']:
+        cmd_archive([a for a in args if a != '--cleanup'], '--cleanup' in args)
     elif cmd == 'changelog' and args:
         cmd_changelog(args[0])
     else:

@@ -42,6 +42,9 @@ export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate
 /** 可以從面板歸檔：六段全過（finalState 已排除 Agent 在跑、等你），不是發版線，也不是示範任務。教學模式由呼叫端另外排除。 */
 export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo && c.state === 'done' && !isReleaseLine(c)
 
+/** 按 u 確認上線後接著歸檔（同 ⌫ 歸檔，不刪 worktree 與分支）：發版線與教學那件照舊只清關卡。 */
+export const archivesOnShip = (c: Pick<Case, 'demo' | 'git'>, tutorial: boolean) => !tutorial && !c.demo && !isReleaseLine(c)
+
 /**
  * 可以從面板按「⚑ 發版」：走到上線段、還沒有 tag 包含它，也不是示範任務。教學模式由呼叫端另外排除（教學照舊按 t 打 tag）。
  * 發版線（release/* 分支本身）不算：它不是「已合併待發版」的卡，打 tag 就是它自己的上線。
