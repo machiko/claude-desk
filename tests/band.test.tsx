@@ -87,7 +87,7 @@ test('band: clicking the now card title keeps it selected', async ($, on) => {
   expect(lead).toContain('輪到你：按 g 派 Agent：依審核修正')
   // 選了的那件是對話的主角，前面標「已選」。
   expect(lead).toContain('已選')
-  // 點現在卡的標題：標題只是文字，沒有按鈕可按；Beta 仍是現在卡、仍標「已選」，不會掉回全部任務。
+  // 點現在卡的標題：標題只是文字，沒有按鈕可按；Beta 仍是現在卡、仍標「已選」，不會被取消選取。
   await expect(pane.press({ key: `case-${CARD_B}-name` })).rejects.toThrow()
   // 清單照舊留著 Beta 那列（以 ▸ 開頭），是 Beta 唯一的按鈕。
   expect((await pane.findAll({ type: 'Button' })).filter((b: any) => String(b.text ?? '').includes('Beta')).map((b: any) => b.key)).toEqual([`row-${CARD_B}`])

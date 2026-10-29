@@ -68,11 +68,11 @@ async function rowGlyphs(ui: any, card: string): Promise<string> {
   const after = row.slice(row.indexOf(NAME[card]!) + NAME[card]!.length)
   return (after.match(GLYPHS) ?? []).join('')
 }
-/** 把這件放到現在卡：它在全部任務表格裡就按那一列；不在表格裡就是已經在現在卡。 */
+/** 把這件放到現在卡：按它在全部任務表格裡的那一列（表格含現在卡那件，已在現在卡的再按也不會換人）。 */
 async function focus(ui: any, card: string) {
   if (await ui.find({ key: `row-${card}` })) await ui.press({ key: `row-${card}` })
 }
-/** 一件任務在現在卡與全部任務表格上的六段：先讓它當現在卡，再換另一件，讓它出現在表格。 */
+/** 一件任務在現在卡與全部任務表格上的六段：先讓它當現在卡讀現在卡上的六段，再換另一件當現在卡，讀它在表格那一列的六段。 */
 async function bothViews(ui: any, card: string): Promise<{ card: string; row: string }> {
   await focus(ui, card)
   const onCard = await cardStages(ui)

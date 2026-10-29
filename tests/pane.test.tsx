@@ -108,7 +108,7 @@ test('pane: cancel selection from more actions', async ($, on) => {
   expect(deselect?.text).toBe('✕ 取消選取')
   expect(deselect?.props?.hotkey).toBeUndefined()
   await ui.press({ key: 'deselect' })
-  // 回到工作桌自己挑的 Alpha，摘要列不再標「已選」，Beta 回到全部任務。
+  // 回到工作桌自己挑的 Alpha，摘要列不再標「已選」；Beta 不再是現在卡，全部任務裡照舊有 Beta 那列。
   expect(await ui.find({ type: 'Text', text: /^Alpha$/ })).toBeDefined()
   expect(await ui.find({ key: `row-${CARD_B}` })).toBeDefined()
   expect(await ui.find({ key: 'deselect' })).toBeUndefined()
