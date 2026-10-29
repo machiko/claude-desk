@@ -535,10 +535,22 @@ SQUASHED = 'squash／rebase 合併，git branch -d 認不出已併入'
 
 def merged_by_content(main, branch):
     """squash／rebase 合併：分支不是 HEAD 的祖先，但把它合進 HEAD 結果跟 HEAD 一樣（內容已經在裡面）。
+    唯一容許的差別是發版合併掉的片段檔（見 released_fragment）。
     有衝突、合出不同的內容，或 git 太舊沒有 merge-tree --write-tree（2.38 以前），都當沒併入。"""
     merged = git('-C', main, 'merge-tree', '--write-tree', 'HEAD', branch)
-    head = git('-C', main, 'rev-parse', 'HEAD^{tree}')
-    return merged.returncode == 0 and head.returncode == 0 and merged.stdout.split('\n', 1)[0].strip() == head.stdout.strip()
+    base = git('-C', main, 'merge-base', 'HEAD', branch)
+    if merged.returncode != 0 or base.returncode != 0:
+        return False
+    diff = git('-C', main, 'diff', '-z', '--no-renames', '--name-status', 'HEAD', merged.stdout.split('\n', 1)[0].strip())
+    if diff.returncode != 0:
+        return False
+    parts = [p for p in diff.stdout.split('\0') if p]
+    return all(status == 'A' and released_fragment(main, base.stdout.strip(), path) for status, path in zip(parts[::2], parts[1::2]))
+
+
+def released_fragment(main, base, path):
+    """發版時 changelog 把片段檔合進 CHANGELOG 並刪掉：合進來的分支會把它加回去，但它在分叉後的 HEAD 歷史裡出現過（加過又刪了）。"""
+    return path.startswith(f'{FRAGMENT_DIR}/') and git('-C', main, 'rev-list', '-1', f'{base}..HEAD', '--', path).stdout.strip() != ''
 
 
 def cleanup(root):

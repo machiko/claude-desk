@@ -662,6 +662,39 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn(f'git -C {self.main} branch -D feature/beta', reminders[0])
         self.assertNotIn('worktree remove', reminders[0])
 
+    def commit_fragment(self, wt, slug):
+        os.makedirs(os.path.join(wt, 'changelog.d'), exist_ok=True)
+        write(os.path.join(wt, 'changelog.d', f'{slug}.md'), f'- 新增 {slug}\n')
+        git('add', 'changelog.d', cwd=wt)
+        git('commit', '-q', '-m', f'{slug} changelog', cwd=wt)
+
+    def test_archive_cleanup_removes_worktree_when_squash_merged_and_fragment_released(self):
+        """squash 合併後發版（審查 HIGH）：changelog 把片段檔合進 CHANGELOG 並刪掉，worktree 照樣移除、分支保留；
+        沒合併、只寫了片段的分支照舊兩樣都保留。"""
+        beta = self.open_case('feature/beta', 'Beta')
+        self.commit_fragment(beta, 'beta')
+        gamma = self.open_case('feature/gamma', 'Gamma')
+        os.remove(os.path.join(gamma, 'gamma.txt'))
+        git('commit', '-q', '-am', 'drop gamma.txt', cwd=gamma)
+        self.commit_fragment(gamma, 'gamma')
+        git('merge', '-q', '--squash', 'feature/beta', cwd=self.main)
+        git('commit', '-q', '-m', 'Beta (#12)', cwd=self.main)
+        # 發版：片段合進 CHANGELOG、刪掉片段檔、改版號，一起 commit（docs/WORKFLOW.md 發版第 2、5 步）。
+        git('rm', '-q', 'changelog.d/beta.md', cwd=self.main)
+        write(os.path.join(self.main, 'CHANGELOG.md'), '## 0.38.0\n\n- 新增 beta\n')
+        git('add', 'CHANGELOG.md', cwd=self.main)
+        git('commit', '-q', '-m', 'chore: 更新 版號為 0.38.0 並整理 CHANGELOG', cwd=self.main)
+
+        r = self.run_card('archive', 'beta', 'gamma', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 保留：squash／rebase 合併，git branch -d 認不出已併入', r.stdout)
+        self.assertIn(os.path.realpath(gamma), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/gamma'), '')
+        self.assertIn('清理 gamma：worktree 與分支保留：分支還沒併入 main', r.stdout)
+
     def test_archive_same_card_named_twice_is_archived_once(self):
         """同一張卡用 slug 和任務名各寫一次（審查 MEDIUM，D-04）：只歸檔、清理一次，不會 Traceback 也不多一份副本。"""
         self.open_case('feature/beta', 'Beta', merged=True)
