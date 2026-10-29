@@ -2,6 +2,7 @@
 import type { Case } from '../types'
 import { agentBusy, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
+import { AGENT_STOPPED } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -197,7 +198,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
       ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
       : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
-    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
+    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : manualFixHead(c) || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : kind === 'publish' ? publishHead(text)
@@ -208,6 +209,24 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
   const rules = writes ? [SPEC_RULE, changelogRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
   return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
+}
+
+/** PR 開著、CI 失敗、本機沒有待 push 的 commit：「輪到你」叫你按 g 修正。 */
+export const ciFailed = (c: Case): boolean => c.pipeline?.current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)
+/** 「輪到你」叫你按 g 修的時候（檢查失敗、流程停下、Agent 被停掉、PR 的 CI 失敗）：下一步寫什麼，g 都要派得出去。 */
+export const fixByG = (c: Case): boolean => c.state === 'failed' || ciFailed(c)
+
+/**
+ * 按 g 修、而下一步只剩等待或派審查時，派出去的開頭：說明是什麼失敗、要修到哪裡，不把等待句或派審查句原樣交出去。
+ * 下一步是真的工作就回空字串，照舊交下一步。
+ */
+function manualFixHead(c: Case): string {
+  if (!fixByG(c) || !idleNext(c.next)) return ''
+  if (ciFailed(c)) return `修正：PR #${c.pr!.id} 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。`
+  const stopped = c.chain?.stopped
+  if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
+  if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 並讓完成檢查綠，commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
+  return `修正：完成檢查 \`${c.verify}\` 未通過。先自己跑一次看失敗原因，修到完成檢查綠，commit 後寫回卡片。`
 }
 
 /** 下一步以 .task/review-… 開頭時，那個路徑。 */
@@ -229,6 +248,7 @@ const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?審查'
 const REVIEW_CMD = '/desk\\s+review(?:\\s+(?!.*(?:修|補|改|寫|實作)).*)?'
 const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(]\\s*(?:按\\s*)?[wW]\\s*[）)])?(?:\\s*[:：]\\s*${REVIEW_CMD})?|${REVIEW_CMD}|按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
 export const REVIEW_NEXT = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
+const REVIEW_NEXT_AT_REVIEW = '下一步是審查：按 w 派審查（g 派的是繼續，不會審查）'
 
 const nextParts = (next: string) => next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
 
@@ -261,8 +281,8 @@ export function dispatchable(c: Case): DispatchKind[] {
   // 規格段還是範本、六段停在規格段：一樣只能同步（已經審查過、合併、打 tag 的不擋）。
   if (specBlocks(c)) return ['sync']
   const out: DispatchKind[] = []
-  // 檢查失敗時「輪到你」叫你按 g 修正：下一步只剩等待或派審查也照樣能派，不然 g 是死路。
-  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && (c.state === 'failed' || !idleNext(c.next))) out.push('continue')
+  // 「輪到你」叫你按 g 修（檢查失敗、CI 失敗）：下一步只剩等待或派審查也照樣能派，不然 g 是死路。
+  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && (fixByG(c) || !idleNext(c.next))) out.push('continue')
   if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
   // 推送只在合併段、還要 push 或開 PR 時；高風險改動也能派，面板上第一次按只提醒先看審查檔。
   if (needsPr(c) || needsPush(c)) out.push('publish')
@@ -298,6 +318,8 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
   if (specBlocks(c)) return specGapReason(c)
   if (!c.verify) return '卡片尚缺完成檢查，規格未通過'
+  // 審查段（檢查已通過）：「輪到你」已經是按 w，不再叫你先按 v。
+  if (kind === 'continue' && reviewNext(c.next) && c.pipeline?.current === 'review') return REVIEW_NEXT_AT_REVIEW
   return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
 }
 

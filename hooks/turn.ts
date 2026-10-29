@@ -6,7 +6,7 @@ import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './ca
 import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
-import { idleNext, reviewNext } from './dispatch'
+import { fixByG, idleNext, reviewNext } from './dispatch'
 
 export type Turn = {
   /** you：輪到你動手；ai：AI 或機器處理中，等著就好；none：沒有要做的事。 */
@@ -241,9 +241,8 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (!merged) {
     if (ctx.now !== undefined && cardBehind(c, ctx.now)) out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)
-    // PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上；本機已有新 commit 沒 push 時該按的是 ⇡ push，不列 g。
-    const ciFailed = current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)
-    if ((current === 'build' && !idleBuild) || c.state === 'failed' || ciFailed) out.add('continue')
+    // 檢查失敗、PR 的 CI 失敗：「輪到你」叫你按 g 修正，g 要在列上（跟 dispatchable 同一個判斷）；本機已有新 commit 沒 push 時該按的是 ⇡ push，不列 g。
+    if ((current === 'build' && !idleBuild) || fixByG(c)) out.add('continue')
     if (current === 'check' || idleBuild || c.state === 'failed' || ctx.verifying || ctx.queued) out.add('verify')
     if (current === 'review' && !standingVerdict(c)) out.add('review')
     // 自審的結論照算，但留著 w 讓你派獨立審查。
