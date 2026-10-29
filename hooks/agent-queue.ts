@@ -4,11 +4,11 @@
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
-import { KIND_LABEL, normalizeRoot, queueRefusal, runningDeskAgents } from './dispatch'
+import { KIND_LABEL, markRefusal, normalizeRoot, queueRefusal, runningDeskAgents } from './dispatch'
 import type { DispatchKind, QueueEntry, QueueOpts, RawAgent } from './dispatch'
 import { paused } from './chain'
-import { feedPush, loadChains, me, saveChain } from './desk-io'
-import { loadSettings } from './probes'
+import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
+import { loadSettings, worktreeMark } from './probes'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, restage, verifyPending } from './register'
 
@@ -55,13 +55,30 @@ export async function requeue($: any, c: Case, kind: DispatchKind, opts: QueueOp
   await setQueue($, [...agentQueue.slice(0, index), entry, ...agentQueue.slice(index)])
 }
 
+/**
+ * 自動排的那筆沒派出：把流程停下寫原因。流程紀錄跨對話共用，只停這個對話的、還沒停的那輪；
+ * 別的對話接手的流程不動，已經停下的不改原因（也不清掉停在檢查的標記）。
+ */
+async function pauseOwnChain($: any, c: Case, mine: string, why: string) {
+  await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, why) : r)
+}
+
 /** 移出隊伍、寫動態說為什麼沒派；自動排的另把流程停下寫同一個原因。 */
-async function drop($: any, entry: QueueEntry, c: Case | undefined, why: string, now: number) {
+async function drop($: any, entry: QueueEntry, c: Case | undefined, why: string, now: number, mine: string) {
   await setQueue($, agentQueue.filter(e => e !== entry))
   const name = c?.name ?? entry.statusPath
   await feedPush($, [{ at: now, text: `${name} 排隊的${labelOf(entry.kind, entry.opts)}沒有派出：${why}`, tone: 'warning', card: entry.statusPath }])
-  if (entry.opts.auto && c) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, why) : r)
+  if (entry.opts.auto && c) await pauseOwnChain($, c, mine, why)
   await restage($, entry.statusPath)
+}
+
+/**
+ * 排隊期間 worktree 有了不是上一個 Agent 留下的未提交改動（別的對話在改）：不派。排進隊伍時看過的那次可能是很久以前，
+ * 派出前再看一次；同步不改程式、推送只推已 commit 的，不看。
+ */
+async function foreignChanges($: any, c: Case, entry: QueueEntry): Promise<string> {
+  if (entry.kind === 'sync' || entry.kind === 'publish') return ''
+  return markRefusal(await worktreeMark($, c.root), (await loadJobs($))[normalizeRoot(c.root)])
 }
 
 /** 手動排的繼續：排隊時核准的完成檢查跟卡片現在的不同，就不替你派。 */
@@ -86,8 +103,10 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     if (max > 0 && running >= max) break
     const c = s.cases.find(x => x.statusPath === entry.statusPath)
     const why = !c ? '任務已不在登錄表' : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
-    if (why) { await drop($, entry, c, why, s.at); continue }
+    if (why) { await drop($, entry, c, why, s.at, mine); continue }
     if (verifyPending(entry.statusPath)) continue
+    const foreign = await foreignChanges($, c!, entry)
+    if (foreign) { await drop($, entry, c, foreign, s.at, mine); continue }
     const index = agentQueue.indexOf(entry)
     await setQueue($, agentQueue.filter(e => e !== entry))
     const sent = await dispatch($, options, entry.opts.auto ? { ...c!, state: 'ready' } : c!, entry.kind, { ...entry.opts, fromQueue: index })
@@ -105,7 +124,7 @@ export async function cancelQueued($: any, c: Case) {
   if (!entry) return
   await setQueue($, agentQueue.filter(e => e !== entry))
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已取消排隊`, tone: 'suggestion', card: c.statusPath }])
-  if (entry.opts.auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, CANCELLED) : r)
+  if (entry.opts.auto) await pauseOwnChain($, c, await me($), CANCELLED)
   $.ui.toast(`${c.name}：已取消排隊`)
   await restage($, c.statusPath)
 }

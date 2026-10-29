@@ -184,3 +184,72 @@ test('test_cancelled_or_no_longer_dispatchable_queue_entries_never_launch', asyn
   expect(await ui.find({ key: `${C}unqueue` })).toBeFalsy()
   await ui.unmount()
 })
+
+/** 這個對話的流程：Alpha、Gamma 的實作剛做完（結束時 worktree 乾淨），檢查通過後各自派審查；名額滿了，兩件都排進隊伍（Alpha 第 1、Gamma 第 2）。 */
+async function queueTwoAutoReviews(data: any, clock: any, h: ReturnType<typeof helpers>) {
+  const last = (root: string, id: string) => ({ sessionId: `${id}-0000-4000-8000-000000000000`, mark: '', last: { launchName: `desk-old-${id.slice(-1)}`, nativeId: id, sessionId: `${id}-0000-4000-8000-000000000000`, kind: 'continue', startedAt: clock.now() - 600_000, fresh: false, owner: 'fixture-session', ended: { how: 'finished' } } })
+  data.store.chains = { [ALPHA]: { owner: 'fixture-session', startedAt: clock.now() - 600_000, round: 0 }, [GAMMA]: { owner: 'fixture-session', startedAt: clock.now() - 600_000, round: 0 } }
+  data.store.jobs = { [ALPHA]: last(ALPHA, 'a0000001'), [GAMMA]: last(GAMMA, 'c0000001') }
+  await h.refresh()
+  for (let i = 0; i < 6; i++) await h.step()
+  await h.refresh()
+}
+
+/** 審查 HIGH：流程紀錄跨對話共用；排隊的自動派工取消或沒派出時，只停這個對話自己的流程。 */
+test('queued auto dispatches never pause a chain another conversation took over', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueTwoAutoReviews(data, clock, h)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_C}` })
+  expect(await screen(ui)).toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
+  expect(data.launches).toHaveLength(0)
+
+  // 別的對話在兩件都按了繼續：流程換成那邊的
+  const theirs = { owner: 'other-session', startedAt: clock.now(), round: 0 }
+  data.store.chains = { [ALPHA]: { ...theirs }, [GAMMA]: { ...theirs } }
+
+  // 這邊取消 Alpha 的排隊：不動別人的流程
+  await ui.press({ key: `row-${CARD_A}` })
+  await ui.press({ key: `${A}unqueue` }); await clock.settle()
+  expect(data.store.chains[ALPHA]).toEqual(theirs)
+
+  // 空出位子：Gamma 不派，動態說原因，別人的流程照舊沒停
+  h.finishOne()
+  await h.refresh()
+  expect(data.launches).toHaveLength(0)
+  await ui.press({ key: `row-${CARD_C}` })
+  expect(await screen(ui)).toContain(flat('Gamma 排隊的審查沒有派出：流程已不是這個對話的'))
+  expect(data.store.chains[GAMMA]).toEqual(theirs)
+  await ui.unmount()
+})
+
+/** 審查 HIGH：排隊期間 worktree 被別的對話改了就不派；已經停下的流程不改原因。 */
+test('queued auto dispatches recheck the worktree and keep an existing pause reason', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueTwoAutoReviews(data, clock, h)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_C}` })
+  expect(await screen(ui)).toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
+
+  // 排隊期間：Alpha 的流程停在檢查（這個對話自己停的）；主對話在 Gamma 的 worktree 改了 3 個檔
+  const held = { ...data.store.chains[ALPHA], stopped: '完成檢查改了，要重新核准', heldAtCheck: true }
+  data.store.chains = { ...data.store.chains, [ALPHA]: held }
+  data.git[GAMMA].changed = 3
+
+  h.finishOne(); h.finishOne()
+  await h.refresh()
+  expect(data.launches).toHaveLength(0)
+  // Alpha：原因照舊、停在檢查的標記還在（按 v 仍會接續）
+  expect(data.store.chains[ALPHA]).toEqual(held)
+  // Gamma：不派，流程停下寫同一個原因
+  expect(data.store.chains[GAMMA].stopped).toContain('3 個檔')
+  await ui.press({ key: `row-${CARD_C}` })
+  const shown = await screen(ui)
+  expect(shown).toContain(flat('Gamma 排隊的審查沒有派出：worktree 有未提交的改動（3 個檔）'))
+  expect(shown).not.toContain('派工排隊中')
+  await ui.unmount()
+})
