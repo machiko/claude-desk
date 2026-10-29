@@ -365,11 +365,12 @@ export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOp
 
 /**
  * 排隊的這筆現在不能派的原因；空字串代表可以派。手動排的照手動派工重新判斷；自動排的要流程還在（這個對話的、沒停下）、
- * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑。
+ * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑：自動排的只看真的 Agent（跟 autoChain 跳過的條件同一條），
+ * 不看 state——審查有 CRITICAL／HIGH、流程還在時 stateOf 回 running，看 state 會把排隊的修正當成執行中丟掉。
  */
 export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
   if (!entry.opts.auto) return dispatchRefusal(c, entry.kind)
-  if (agentBusy(c)) return BUSY
+  if (c.agent && !c.agent.asks) return BUSY
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
   if (run.stopped) return `流程已暫停（${run.stopped}）`
   if (specBlocks(c)) return specGapReason(c)
