@@ -11,8 +11,9 @@
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
   card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
-  card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句；下一步依關卡二選一：審查已過關寫
-                                               「等自動重新檢查與審查；沒動靜就到面板按 v」，其他寫「到面板按 v 執行完成檢查」；
+  card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句；下一步依關卡三選一：審查已過關、審查檔之後有新 commit 寫
+                                               「等自動重新檢查與審查；沒動靜就到面板按 v」，審查已過關但之後沒有新 commit（或沒有審查檔）寫
+                                               「到面板照「輪到你」開 PR 或合併」，其他寫「到面板按 v 執行完成檢查」；
                                                History 記分支與 HEAD（有未提交的檔就註明幾個）；規格還沒確認就拒絕
   card.py archive <slug>                       卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
   card.py changelog <版本>                      發版：把所在 repo 的 changelog.d/*.md 合併成 CHANGELOG.md 的「## <版本>」段
@@ -432,6 +433,9 @@ def cmd_spec_ok(arg):
 DONE_NEXT = '到面板按 v 執行完成檢查'
 # 審查已過關後又有新 commit：開流程的對話開著面板時會自動重新檢查與審查；card.py 看不到是哪個對話開著面板，所以帶「沒動靜就按 v」。
 DONE_NEXT_RECHECK = '等自動重新檢查與審查；沒動靜就到面板按 v'
+# 審查已過關、之後沒有新 commit（或沒有審查檔）：結論仍算數，面板停在合併段，不會重新檢查、也沒有 v。
+DONE_NEXT_MERGE = '到面板照「輪到你」開 PR 或合併'
+REVIEW_FILE = os.path.join('.task', 'REVIEW.md')
 
 
 def review_passed(gate):
@@ -444,12 +448,26 @@ def review_passed(gate):
         return int(hit.group(1)) if hit else None
     counts = [n(name) for name in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')]
     return None not in counts and counts[0] + counts[1] == 0
+
+
+def committed_after_review(root):
+    """審查檔 .task/REVIEW.md 寫好之後分支有新 commit：HEAD 的 commit 時間晚於審查檔的修改時間。
+    工作桌派的審查一定寫審查檔、記下審查的 HEAD，HEAD 動了面板才重新檢查；沒有審查檔（關卡是對話自己寫的）面板不會重新檢查，不算。"""
+    try:
+        reviewed_at = os.path.getmtime(os.path.join(root, REVIEW_FILE))
+    except OSError:
+        return False
+    head_at = git('-C', root, 'log', '-1', '--format=%ct').stdout.strip()
+    return head_at.isdigit() and int(head_at) > reviewed_at
+
+
 # 狀態只寫發生了什麼：commit（7～40 碼、英數混合的 hex）、AC-n、D-n 這類代號寫在 History。
 STATUS_CODES = re.compile(r'(?<![0-9A-Za-z])(?:(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}|(?:AC|D)[-－]\d+)(?![0-9A-Za-z])', re.I)
 
 
 def cmd_done(arg, status):
-    """主對話告一段落時寫回卡片：狀態改成那句；下一步審查已過關時寫等自動重新檢查與審查（沒動靜就按 v），其他寫去面板按 v；
+    """主對話告一段落時寫回卡片：狀態改成那句；下一步審查已過關時，審查後有新 commit 寫等自動重新檢查與審查（沒動靜就按 v），
+    沒有新 commit 寫照面板開 PR 或合併，其他寫去面板按 v；
     History 記分支與 HEAD；等你、關卡、檢查不動。"""
     status = ' '.join(status.split())
     if not status:
@@ -465,7 +483,7 @@ def cmd_done(arg, status):
     branch = git_branch(root) or '（分離 HEAD）'
     sha = git('-C', root, 'rev-parse', '--short', 'HEAD').stdout.strip() or '（沒有 commit）'
     dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.split('\n') if l.strip()]
-    next_step = DONE_NEXT_RECHECK if review_passed(gate) else DONE_NEXT
+    next_step = (DONE_NEXT_RECHECK if committed_after_review(root) else DONE_NEXT_MERGE) if review_passed(gate) else DONE_NEXT
     set_fields(path, {'狀態': status, '下一步': next_step}, required=('狀態', '下一步'))
     note = f'；有 {len(dirty)} 個檔未提交' if dirty else ''
     line = f'- {datetime.date.today().isoformat()}：{CMD} done（{branch} {sha}）：{status}{note}'
