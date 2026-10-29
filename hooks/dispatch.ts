@@ -1,6 +1,6 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
-import { agentBusy, isReleaseLine, needsPr, needsPush } from './pipeline'
+import { agentBusy, blocking, isReleaseLine, needsPr, needsPush, parseVerdict } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
 import { AGENT_STOPPED } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
@@ -185,6 +185,8 @@ export const NO_PUSH_RULE = '不 push、不開 PR。'
 const changelogRule = (c: Case) => `專案有 changelog.d/ 資料夾時，使用者看得到的改動寫成 CHANGELOG 條目放在 changelog.d/${slugOf(c)}.md（一行或多行「- 」開頭、動詞開頭：新增／修復／調整／移除，沒有標題與版本；沒有使用者看得到的改動就不建這個檔），不要改 CHANGELOG.md，發版時才合併。沒有這個資料夾就照專案原本的慣例。`
 
 export const REVIEW_FILE = '.task/REVIEW.md'
+/** 依審查檔修正：自動流程的修正輪與手動按 g 修審查結論共用。 */
+const REVIEW_FIX_STEP = `依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`
 export const SECURITY_FILE = '.task/SECURITY.md'
 
 /** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單與過去審查紀錄在哪。 */
@@ -196,7 +198,7 @@ export type FixReason = { from: 'check' | 'review'; round: number; tail?: string
 export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = ''): string {
   const head = fix ? (fix.from === 'check'
       ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
-      : `修正第 ${fix.round}／2 輪：依 ${REVIEW_FILE} 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`)
+      : `修正第 ${fix.round}／2 輪：${REVIEW_FIX_STEP}`)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
     : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : manualFixHead(c) || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
@@ -226,6 +228,9 @@ function manualFixHead(c: Case): string {
   const stopped = c.chain?.stopped
   if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
   if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 並讓完成檢查綠，commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
+  // 審查結論擋住（審查不是工作桌派的、沒有流程紀錄）：檢查是過的，要修的是審查的 CRITICAL、HIGH。
+  const verdict = parseVerdict(c.gate)
+  if (verdict && blocking(verdict) > 0) return `修正：${REVIEW_FIX_STEP}`
   return `修正：完成檢查 \`${c.verify}\` 未通過。先自己跑一次看失敗原因，修到完成檢查綠，commit 後寫回卡片。`
 }
 

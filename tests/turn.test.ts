@@ -142,6 +142,19 @@ test('a review next step after a failed check still lets g fix it', () => {
   expect(buildPrompt(mk({ next: '補 AC-3 的測試' }, {}, { ...passed, ok: false, exitCode: 1 }), 'continue').split('\n')[0]).toBe('依卡片的下一步繼續：補 AC-3 的測試')
 })
 
+test('a blocking review verdict without a chain sends a review fix, not a check fix', () => {
+  // 審查不是工作桌派的（沒有流程紀錄）、關卡有 HIGH、檢查是過的：按 g 派的是依審查檔修，不說檢查未通過
+  const gate = 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；不過'
+  for (const next of ['等完成檢查與審查', '等審查', '派審查']) {
+    const c = mk({ next, gate }, {}, passed)
+    expect(c.state).toBe('failed')
+    expect(dispatchable(c)).toContain('continue')
+    const head = buildPrompt(c, 'continue').split('\n')[0]!
+    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
+    expect(head).not.toContain('未通過')
+  }
+})
+
 test('a review next step with a failed PR CI still lets g fix it', () => {
   // PR 開著、CI 失敗：「輪到你」叫你按 g 修正，g 就要派得出去；推送 Agent 寫的「等 CI 與合併」也一樣
   const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
