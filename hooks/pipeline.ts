@@ -2,6 +2,7 @@
 // 證據由後往前看：最後一段有證據，它之前的都算過了；接著第一個還沒過的就是「現在」。
 import type { Case, ChainInfo, PrInfo, ReviewVerdict, Stage, StageId, StageStatus, Pipeline, Verify } from '../types'
 import { ARCHIVE_WORD, SHIPPED_WORD, parseGate, saysNone } from './card'
+import { CATCHUP_ACTIVE, conflictNote } from './catchup'
 
 export const STAGES: readonly { id: StageId; label: string }[] = [
   { id: 'spec', label: '規格' },
@@ -84,8 +85,8 @@ export function runningKind(c: Pick<Case, 'agent'>): NonNullable<ChainInfo['last
   return c.agent.kind ?? 'continue'
 }
 
-/** 會改程式的 Agent（實作、修正、回覆後接著做）：它在跑時，之前的檢查結果不能讓六段往前走。審查、同步不改程式。 */
-const WRITES_CODE = new Set(['continue', 'fix', 'reply'])
+/** 會改程式的 Agent（實作、修正、回覆後接著做、解衝突）：它在跑時，之前的檢查結果不能讓六段往前走。審查、同步不改程式。 */
+const WRITES_CODE = new Set(['continue', 'fix', 'reply', 'catchup'])
 
 /** `verifying`：完成檢查正在跑；`queued`：完成檢查在排隊。兩者都讓六段停在檢查段。 */
 export function pipeline(c: Case, v: Verify | undefined, verifying = false, queued = false): Pipeline {
@@ -163,7 +164,10 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
         else set('wait', '待審查')
         break
       case 'merge':
-        if (!c.pr && c.chain?.needsHuman) set('wait', '高風險，請你看過再開 PR')
+        // 跟基準分支有衝突：排在 PR／CI 之前，衝突沒解開合併不了。
+        if (running === 'catchup') set('active', CATCHUP_ACTIVE)
+        else if (c.conflict) set('fail', conflictNote(c.conflict.into))
+        else if (!c.pr && c.chain?.needsHuman) set('wait', '高風險，請你看過再開 PR')
         else if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') set('wait', c.pr ? 'PR 已拒絕，需重新開啟' : c.chain?.skippedReview ? '只動文件、免審查，可開 PR' : '可開 PR')
         else if (c.pr.ci === 'fail') set('fail', 'CI 失敗')
         else if (c.pr.ci === 'pending') set('active', 'CI 執行中')

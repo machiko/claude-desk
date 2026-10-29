@@ -18,8 +18,8 @@ import type { PaneActions, PaneView } from './pane'
 /** 列上的動作鍵；決策選項若撞到這些字母就只能用點的。 */
 export const RESERVED = new Set(['f', 'v', 'o', 'r', 'x', 'h', 'g', 's', 'w', 'y', 'k', 'l', 'n', 'e', 'p', 'i', 'u', 'm', 't'])
 /** 有單鍵的派工；推送（publish）走「⇡ 開 PR」「⇡ push」兩顆按鈕，不在這裡。 */
-type KeyedKind = Exclude<DispatchKind, 'publish'>
-const isKeyed = (k: DispatchKind): k is KeyedKind => k !== 'publish'
+type KeyedKind = Exclude<DispatchKind, 'publish' | 'catchup'>
+const isKeyed = (k: DispatchKind): k is KeyedKind => k !== 'publish' && k !== 'catchup'
 const DISPATCH_HOTKEY: Record<KeyedKind, string> = { continue: 'g', sync: 's', review: 'w', reply: 'y' }
 const DISPATCH_GLYPH: Record<KeyedKind, string> = { continue: '▶', sync: '↻', review: '◆', reply: '↩' }
 

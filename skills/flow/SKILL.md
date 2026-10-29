@@ -41,6 +41,7 @@ desk 只讀卡片與 git，看不到對話內容。在主對話（不按 `g` 派
 
 - 對話要做什麼：使用者要求時 `git push -u origin <分支>` 並對基準分支開 PR（GitHub 用 `gh pr create`）；PR 網址與分支頂端 commit 用 `done` 或手動寫進 History。不 force push、不推別的分支、不合併 PR。
 - 面板怎麼看得到：面板唯讀 PR 與 CI（GitHub 用 `gh`、Bitbucket 用 MCP），第二列依序寫「push 分支並開 PR」「PR 的 CI 在跑」「合併 PR（p 開啟）」。PR 開著又有新 commit 時出現「⇡ push」。合併由使用者按，合併後六段走到「上線」。
+- 跟基準分支有衝突：面板合併段標 ✕「與 main 有衝突」。這個對話開的流程（審查已過關、等你是無、worktree 乾淨）會自動派「解衝突」Agent 把 main 合併進來，同一個 HEAD 只試一次；第二列寫「與 main 有衝突：在對話把 main 合併進來、解衝突並 commit（原因）」時由對話處理：`git fetch origin main`、`git merge origin/main`（不 rebase、不 force push），逐檔解衝突、兩邊的改動都保留，跑完成檢查後 commit；要業務判斷就 `git merge --abort` 問使用者。做完 `done`，下一步寫「等自動重新檢查與審查；沒動靜就到面板按 v」，重新審查只看衝突怎麼解。
 
 ## 6 上線
 

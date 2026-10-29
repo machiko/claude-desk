@@ -9,7 +9,7 @@
 | 角色 | 負責 | 不做 |
 |---|---|---|
 | 主控台對話（開著 `/desk` 的那個 Claude Code 對話） | 規格、完成檢查、關卡判定、兩次失敗後的診斷 | 不在主 repo 切分支、不 push |
-| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時（含合併段派的推送 Agent）push 自己的分支、開 PR | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
+| Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時（含合併段派的推送 Agent）push 自己的分支、開 PR；合併段自動派的解衝突 Agent 把基準分支合併進來（不 push） | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
 | 審查對話（新對話、不接續 Agent） | 只看任務檔、自己重新執行完成檢查、看 diff | 不啟動容器、不改 port、不參考 Agent 的結論 |
 | 你 | 業務決策、合併、打 tag、部署；push、開 PR 在面板按「⇡ 開 PR」「⇡ push」派 Agent 做 | — |
 
@@ -21,7 +21,7 @@
 | 2 實作 | 寫程式 | 你按 `g` | Agent（`claude --bg`） | 交給下一段 | Agent 執行中 |
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
 | 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0 | 卡片 `review：CRITICAL n、HIGH n…` |
-| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態） |
+| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態）；fetch 基準分支後用 `git merge-tree` 試合併，有衝突標 ✕「與 main 有衝突」 |
 | 6 上線 | 打 tag、部署、部署後步驟 | 你按「⚑ 發版」交給對話 | 對話照發版步驟做、你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。
@@ -34,8 +34,9 @@
 3. 審查有 CRITICAL 或 HIGH → 自動派「依 .task/REVIEW.md 修正」，回到 1；只有 MEDIUM／LOW → 過關，提醒你開 PR。只關於規格紀錄、文件、命名、重複這類不影響行為的 MEDIUM，審查直接記在審查檔（記錄、不修）與卡片 History、不問你；可能影響行為的才寫進「等你」讓你選不修／修掉／改規格。
 4. 修正最多兩輪（檢查與審查共用），第三次仍未通過就暫停，摘要列亮「● 等你」，動態寫原因。
 5. 審查通過後分支又有新 commit（例如你決定 MEDIUM 現在改、或在面板外改了程式）：那次審查不算數，六段退回「檢查」，流程自動重新檢查、重新審查（只看上次審查之後的 diff），不算修正輪數。只寫回卡片、沒有 commit 的決定不會退回。
-6. 流程碰不到合併與上線；合併段派的推送 Agent（push、開 PR）做完不跑檢查、不派審查、不算修正輪。
-7. 改程式的 Agent（繼續、回覆、修正）改的過程只跑相關的測試，收尾 commit 前跑一次完成檢查；做完 desk 再自動跑一次。整套測試不會被好幾個 Agent 反覆同時跑。
+6. 審查過關、還沒合併的分支跟基準分支（PR 目標，沒有就是 release 線、`card.base` 或 origin/HEAD）有衝突：desk 在合併段 fetch 那個基準分支（只更新遠端追蹤分支，每個 worktree 最多 5 分鐘一次，按 `r` 例外），再用 `git merge-tree` 試合併，不動工作區。有衝突時自動派「解衝突」Agent：把基準分支 merge 進來（不 rebase、不 force push、不 push）、解衝突、跑完成檢查、commit；要業務判斷就放棄合併、寫進「等你」。之後照第 5 點自動重新檢查與審查，重新審查不審基準分支帶進來的改動、改看衝突怎麼解（`git log -p --remerge-diff`）。同一個 HEAD 只自動試一次；流程是別的對話開的、沒有自動流程、流程已暫停、高風險改動、worktree 有未提交的改動、試過一次沒解開時不派，「輪到你」寫原因，在對話合併、解衝突並 commit。落後但沒衝突不合併。
+7. 流程碰不到合併與上線（把基準分支合併進分支不算合併 PR）；合併段派的推送 Agent（push、開 PR）與解衝突 Agent 做完不跑檢查、不派審查、不算修正輪。
+8. 改程式的 Agent（繼續、回覆、修正、解衝突）改的過程只跑相關的測試，收尾 commit 前跑一次完成檢查；做完 desk 再自動跑一次。整套測試不會被好幾個 Agent 反覆同時跑。
 
 ## 讓審查越來越準
 

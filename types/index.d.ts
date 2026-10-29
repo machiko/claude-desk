@@ -23,7 +23,10 @@ export type ReviewVerdict = { critical: number; high: number; medium: number; lo
 /** 這個分支的 PR（Bitbucket 或 GitHub）：狀態與 CI。 */
 export type PrInfo = { id: number; state: 'OPEN' | 'MERGED' | 'DECLINED' | 'SUPERSEDED'; ci: 'none' | 'pending' | 'pass' | 'fail'; dest?: string; url?: string; /** PR 最後的 head commit（GitHub 40 碼、Bitbucket 12 碼）；合併後比對 HEAD 看分支上有沒有新 commit。 */ head?: string }
 /** 自動流程在這件任務的狀況，畫圖用。 */
-export type ChainInfo = { round: number; stopped?: string; passed?: boolean; needsHuman?: string; skippedReview?: boolean; /** 審查（或免審查過關）之後分支有新 commit：那次的結論不算數。 */ stale?: boolean; /** 卡片上的審查結論不是 desk 派的審查判的（例如實作的 Agent 自己寫的）。 */ selfReview?: boolean; lastKind?: 'continue' | 'sync' | 'review' | 'reply' | 'fix' | 'verify' | 'publish'; /** 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查，不用你按 w。 */ autoReview?: boolean; /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：排除後按 v，流程接著走。 */ heldAtCheck?: boolean; /** 流程是別的對話開的：這個對話不接手，按 v 只跑檢查。 */ foreign?: boolean }
+export type ChainInfo = { round: number; stopped?: string; passed?: boolean; needsHuman?: string; skippedReview?: boolean; /** 審查（或免審查過關）之後分支有新 commit：那次的結論不算數。 */ stale?: boolean; /** 卡片上的審查結論不是 desk 派的審查判的（例如實作的 Agent 自己寫的）。 */ selfReview?: boolean; lastKind?: 'continue' | 'sync' | 'review' | 'reply' | 'fix' | 'verify' | 'publish' | 'catchup'; /** 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查，不用你按 w。 */ autoReview?: boolean; /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：排除後按 v，流程接著走。 */ heldAtCheck?: boolean; /** 流程是別的對話開的：這個對話不接手，按 v 只跑檢查。 */ foreign?: boolean; /** 這個 HEAD 已經自動派過解衝突（同一個 HEAD 只自動試一次）。 */ catchupTried?: boolean }
+
+/** 分支跟基準分支試合併的衝突（見 Case.conflict）。 */
+export type Conflict = { into: string; ref: string; files: string[]; dirty: number }
 
 export type Case = {
   name: string
@@ -49,6 +52,8 @@ export type Case = {
   pr?: PrInfo
   /** git 看到分支 HEAD 已經在這個分支裡（例如 origin/main）；只在合併段才查。 */
   mergedInto?: string
+  /** 合併段試合併基準分支（git merge-tree）有衝突：into 是去掉 origin/ 的名稱、ref 是試合併用的分支、files 是衝突的檔、dirty 是未提交的檔數。 */
+  conflict?: Conflict
   /** 示範任務（教學模式的背景）：只能看，沒有動作、不會寫入。 */
   demo?: boolean
   /** 包含目前 HEAD 的 v* tag（最舊的那個）。 */

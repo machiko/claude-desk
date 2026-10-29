@@ -40,6 +40,8 @@ export type ChainRun = {
   recheck?: boolean
   /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：你排除後按 v 跑完檢查，流程接著走。 */
   heldAtCheck?: boolean
+  /** 最近一次自動派解衝突時的 HEAD：同一個 HEAD 只自動試一次。 */
+  catchupHead?: string
 }
 export type ChainStep =
   | { kind: 'verify' }
@@ -82,10 +84,11 @@ export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: b
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
- * 流程只在 `run` 存在、沒停下、沒過關時動。推送（publish）不在流程裡：做完或被停掉都不跑檢查、不派審查、不算修正輪。
+ * 流程只在 `run` 存在、沒停下、沒過關時動。推送（publish）與解衝突（catchup）不在流程裡：做完或被停掉都不跑檢查、不派審查、不算修正輪。
+ * 解衝突有 commit 時由「審查通過後有新 commit」的重新檢查接手，沒 commit 時面板寫原因。
  */
 export function nextStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext = {}): ChainStep {
-  if (!run || run.stopped || run.passed || !finished || finished === 'publish') return null
+  if (!run || run.stopped || run.passed || !finished || finished === 'publish' || finished === 'catchup') return null
   // 被停掉的 Agent 做的事不完整：不能當成做完往下走（同步不在流程裡，照舊不動）。
   if (ctx.stopped && finished !== 'sync') return { kind: 'stop', reason: AGENT_STOPPED }
   const high = ctx.risk?.level === 'high' ? `高風險改動（${ctx.risk.reasons.join('、')}），審查已過，請你看過再開 PR` : undefined

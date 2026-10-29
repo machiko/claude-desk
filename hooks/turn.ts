@@ -7,6 +7,7 @@ import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr,
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { fixByG, idleNext, reviewNext } from './dispatch'
+import { CATCHUP_RUNNING, catchupAutoTurn, catchupHandTurn, catchupHold } from './catchup'
 
 export type Turn = {
   /** you：輪到你動手；ai：AI 或機器處理中，等著就好；none：沒有要做的事。 */
@@ -53,7 +54,7 @@ const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
 const RUNNING_TEXT: Partial<Record<string, string>> = {
   continue: 'Agent 在寫程式（l 看輸出）', reply: 'Agent 在寫程式（l 看輸出）', fix: 'Agent 在修正（l 看輸出）',
   sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在審查 diff（新對話）', verify: '完成檢查在跑',
-  publish: 'Agent 在 push、開 PR（l 看輸出）',
+  publish: 'Agent 在 push、開 PR（l 看輸出）', catchup: CATCHUP_RUNNING,
 }
 
 const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
@@ -204,6 +205,11 @@ export const PUBLISH_PR_RISKY_TURN = '高風險改動：看過審查檔（e）�
 export const PUBLISH_PUSH_TURN = 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併'
 
 function mergeTurn(c: Case): Turn {
+  // 跟基準分支有衝突：先解衝突。這個對話的流程會自動派 Agent；不自動派的寫原因，在對話處理。
+  if (c.conflict) {
+    const why = catchupHold(c)
+    return why ? { who: 'you', text: catchupHandTurn(c.conflict.into, why) } : { who: 'ai', text: catchupAutoTurn(c.conflict.into) }
+  }
   // 不帶鍵：帶頭的是「⇡ 開 PR」（沒有快捷鍵），e 留在列上但變淡。
   if (needsPrConfirm(c)) return { who: 'you', text: PUBLISH_PR_RISKY_TURN }
   // push、開 PR 由 Agent 做：按鈕沒有快捷鍵，這句說按哪一顆。

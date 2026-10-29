@@ -9,9 +9,12 @@ import { agentWaits, approvalWait, slugOf } from './model'
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHORT_ID = /^[0-9a-f]{8}$/i
 
-/** publish：合併段派 Agent push 分支、開 PR（或 PR 已開時只 push）；不改程式、不在自動流程裡。 */
-export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish'
-/** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude。 */
+/**
+ * publish：合併段派 Agent push 分支、開 PR（或 PR 已開時只 push）；不改程式、不在自動流程裡。
+ * catchup：合併段跟基準分支有衝突時自動派 Agent 把基準分支合併進來、解衝突；不 push、沒有按鍵。
+ */
+export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish' | 'catchup'
+/** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
 export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
 export type ModelKind = typeof MODEL_KINDS[number]
 /** 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。 */
@@ -57,7 +60,7 @@ export type JobRecord = { launchName: string; nativeId: string; sessionId: strin
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string }
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
-export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆', publish: '推送' }
+export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆', publish: '推送', catchup: '解衝突' }
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
@@ -108,12 +111,12 @@ function parseKinds(v: unknown): DispatchSettings['kinds'] {
 
 export const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
 
-/** 這件任務這種派工用的 model／effort：種類（kinds）> 任務覆寫 > 全域；同步另有自己的模型。 */
+/** 這件任務這種派工用的 model／effort：種類（kinds）> 任務覆寫 > 全域；同步另有自己的模型，解衝突照 continue（接任務的 session）。 */
 export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind): { model: string; effort: string; fresh: boolean } {
   const own = settings.projects[normalizeRoot(root)] ?? {}
   const base = { model: own.model ?? settings.model, effort: own.effort ?? settings.effort }
   if (kind === 'sync') return { model: settings.sync.model || base.model, effort: settings.sync.effort || base.effort, fresh: settings.sync.fresh }
-  const byKind = settings.kinds[kind] ?? {}
+  const byKind = settings.kinds[kind === 'catchup' ? 'continue' : kind] ?? {}
   // 推送只要分支與卡片，開新對話就夠了，不接任務那個越來越長的 session。
   return { model: byKind.model ?? base.model, effort: byKind.effort ?? base.effort, fresh: kind === 'review' || kind === 'publish' }
 }
@@ -162,14 +165,14 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
  * 每次派工都附的規則；canPush（會改程式的派工與推送）可以 push 自己的分支、開 PR，其他的不寫遠端。
  * publishing（推送）不做實作，關卡與檢查留原樣。專案規則（dispatch.json 的 rules 與任務的 rules）接在最後。
  */
-function cardRules(settings: DispatchSettings, root: string, canPush = false, publishing = false): string[] {
+function cardRules(settings: DispatchSettings, root: string, canPush = false, doneRule = DONE_RULE): string[] {
   return [
     '卡片要精簡：狀態一句話 60 字內、下一步 40 字內，多件事用「；」分開；狀態只寫發生了什麼，不寫下一步，也不寫 commit 編號、AC／D 編號；commit、測試數字、檔案清單等細節寫在卡片下方的歷程，不要塞進這兩欄。',
     '卡片在 .desk/CARD.md（或 .console/STATUS.md）；結束這一輪前把五欄寫回，每欄一行。保留卡片既有的欄位名，不要改名：舊卡用「驗證」「等使用者」，新卡用「檢查」「等你」，工作桌兩種都讀得懂。',
     '寫入前重讀卡片；內容與你開始時讀到的不同就停止並回報衝突，不要覆寫。',
     '檢查欄只放一條可執行的完成檢查（反引號），exit 0 代表做完；發現寫在 狀態 或 .task/REPORT.md。',
     `要${named(settings.user)}決定的事寫進 等你（有選項寫成 問題：A) … B) …）後結束這一輪，不要提問等待。`,
-    publishing ? PUBLISH_CARD_RULE : '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。',
+    doneRule,
     '只在此任務根目錄作業；不碰正式環境、不啟動或重建容器、不改 port、不在主工作區切分支。',
     canPush ? PUSH_RULE : NO_PUSH_RULE,
     ...settings.rules,
@@ -179,6 +182,28 @@ function cardRules(settings: DispatchSettings, root: string, canPush = false, pu
 
 /** 會改程式的派工（繼續、回覆、修正）多這一條：照規格做，審查會逐條對照驗收情境。 */
 const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。有實作計畫時照「### 實作計畫」做，不用再停下來交計畫（規格確認時已一起確認）；實際改的檔跟計畫不同時在歷程寫明原因，要改範圍或做法寫進 等你。卡片沒有規格段就照下一步做。'
+
+const DONE_RULE = '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。'
+/** 解衝突的那條：關卡與檢查是之前判定的，合併 commit 之後由流程自動重新檢查與審查。 */
+const CATCHUP_CARD_RULE = '這次只合併基準分支、解衝突：關卡與檢查欄保持原樣；合併 commit 之後的完成檢查與審查由工作桌自動接手，你不用自己送審查。'
+
+/**
+ * 解衝突的提示頭；`target` 是基準分支（例如 origin/main），空白當 origin/main。照順序：確認還有衝突 → merge → 解衝突 → 跑檢查、commit；
+ * 要業務判斷就 abort、寫進等你。不 rebase、不 reset、不 push。
+ */
+function catchupHead(target: string): string {
+  const ref = target.trim() || 'origin/main'
+  const name = ref.replace(/^origin\//, '')
+  const fetch = ref === name ? '' : `git fetch origin ${name}，再`
+  return [
+    `合併基準分支、解衝突：這個分支跟 ${name} 有衝突，把 ${ref} merge 進來、解衝突。照順序：`,
+    `1) ${fetch}用 \`git merge-tree --write-tree --name-only ${ref} HEAD\` 確認還有衝突；沒有衝突就不合併，在歷程記一筆後結束。`,
+    `2) \`git merge --no-ff --no-edit ${ref}\`，逐檔解衝突：兩邊的改動都保留，只動衝突的地方。`,
+    '3) 只跑跟衝突有關的測試，解完跑一次完成檢查；git add 解好的檔、git commit --no-edit。只修因合併才壞的地方，修不綠也照樣 commit，狀態寫哪裡沒過（流程會接著自動修正）。',
+    '4) 要業務判斷（兩邊改了同一段邏輯、不確定留哪邊）時 git merge --abort，把問題寫進 等你 後結束。',
+    `5) 不 rebase、不 reset、不 force push、不 push、不開 PR。狀態寫合併了 ${name}、解了幾個檔，下一步寫「等自動重新檢查與審查」，歷程記合併 commit 與檔名。`,
+  ].join('\n')
+}
 
 /** 推送只動遠端與卡片：審查結論（關卡）與完成檢查是之前判定的，改了六段會退回去。 */
 const PUBLISH_CARD_RULE = '這次只推送：關卡與檢查欄保持原樣；狀態寫 PR 與 CI 的現況，下一步寫等 CI 與合併。'
@@ -228,11 +253,14 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : kind === 'publish' ? publishHead(text)
+    : kind === 'catchup' ? catchupHead(text)
     : `${named(settings.user).trimStart()}的回覆：${text}`
   const writes = !!fix || kind === 'continue' || kind === 'reply'
   const publishing = !fix && kind === 'publish'
-  const base = cardRules(settings, c.root, writes || publishing, publishing)
-  const rules = writes ? [SPEC_RULE, changelogRule(c), testRule(c), ...base] : base
+  const catchup = !fix && kind === 'catchup'
+  // 解衝突改程式但不 push：合併 commit 由流程重新檢查、審查後，照合併段的 ⇡ push 推上去。
+  const base = cardRules(settings, c.root, writes || publishing, publishing ? PUBLISH_CARD_RULE : catchup ? CATCHUP_CARD_RULE : DONE_RULE)
+  const rules = writes ? [SPEC_RULE, changelogRule(c), testRule(c), ...base] : catchup ? [testRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
   return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
 }
@@ -380,10 +408,19 @@ export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, 
 // 專案可以用 review.template 換掉契約檔，換了也要拿得到這條，所以放在提示裡。
 const MEDIUM_RULE = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）才在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」。兩種都算進關卡的 MEDIUM 數。'
 
+/**
+ * 重新審查的那段含把基準分支併進來的 merge commit（例如自動解衝突）時：基準分支帶進來的改動不審，
+ * 看 merge commit 怎麼解衝突（--remerge-diff 只顯示解衝突的部分），其他照看分支自己的 commit。
+ */
+function mergedBase(base: string, target?: string): string {
+  const into = target ? target.replace(/^origin\//, '') : '基準分支'
+  return `這段含把 ${into} 併進來的 merge commit 時，${into} 帶進來的改動不審，改看 \`git log -p --remerge-diff --first-parent ${base}..HEAD\`（merge commit 只顯示衝突怎麼解，其他是分支自己的 commit）。`
+}
+
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
   const scope = r?.base && r.recheck
-    ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 MEDIUM／LOW 不要再提。`
+    ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。${mergedBase(r.base, r.target)}先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 MEDIUM／LOW 不要再提。`
     : r?.base && r.round > 0
     ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；上一輪已列過的 MEDIUM／LOW 與標「不修」的項目不要再提。`
     : r?.target ? `看這個分支相對 ${r.target} 的 diff（從 git merge-base 起算）。` : '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。'
@@ -418,7 +455,7 @@ export function markOf(status: string, diff: string): WorktreeMark {
   return lines.length ? { files: lines.length, hash: fnv1a(`${lines.join('\n')}\n${String(diff ?? '')}`) } : { files: 0, hash: '' }
 }
 
-const CODE_KINDS: ReadonlySet<DispatchKind> = new Set(['continue', 'reply'])
+const CODE_KINDS: ReadonlySet<DispatchKind> = new Set(['continue', 'reply', 'catchup'])
 
 /**
  * 派繼續／回覆／審查前的拒絕原因；空字串代表可以派。乾淨一律可以；上一個會改程式的 Agent 還在（例如停在提問）時改動是它的；

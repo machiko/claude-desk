@@ -18,6 +18,7 @@ import type { ContainerSummary } from './containers'
 import { logLines, parseGitStatus } from './extras'
 import type { GitState } from './extras'
 import { HANDOFFS, PROJECT_FILES, mergeSettingsText, projectOf } from './project'
+import { parseMergeTree } from './catchup'
 import type { Project } from './project'
 
 const PR_TTL_MS = 5 * 60_000
@@ -292,6 +293,48 @@ async function mergedCommit($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: 
   if ((await landingParent($, c.root, fork, 'HEAD')) !== fork) return null
   const intoParent = await landingParent($, c.root, fork, ref)
   return intoParent && intoParent !== fork ? fork : null
+}
+
+/** 合併段 fetch 基準分支的間隔（每個根目錄）；按 r 重新整理例外。 */
+const FETCH_TTL_MS = 5 * 60_000
+const GIT_NET_TIMEOUT_MS = 30_000
+/** 根目錄 → 最後一次 fetch 基準分支的時間。 */
+const fetches = new Map<string, number>()
+/** 根目錄＋HEAD＋基準分支的 commit → 衝突的檔（空清單＝沒衝突）。 */
+const conflicts = new Map<string, string[]>()
+
+/**
+ * 合併段：分支跟基準分支（diffBase 的 target，跟風險、審查同一個）試合併有沒有衝突。基準是 origin/… 時先 fetch 那一個分支
+ * （只更新遠端追蹤分支；每個根目錄最多 5 分鐘一次，force 例外；失敗就用本機現有的），再用 `git merge-tree` 試合併，不動工作區與 HEAD。
+ * desk 自己只跑 fetch、rev-parse、merge-tree 與讀取，不 merge、commit、push、checkout。依「根目錄＋HEAD＋基準的 commit」快取；
+ * 有衝突時再數未提交的檔。沒衝突或不知道（git 太舊、失敗）是 undefined。
+ */
+export async function conflictProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase: string, now: number, force = false): Promise<Case['conflict']> {
+  const head = c.git?.head
+  if (!head) return undefined
+  const found = await diffBase($, c, cardBase)
+  if (!found) return undefined
+  const ref = found.target
+  const remote = ref.match(/^origin\/(.+)$/)?.[1]
+  const fetchedAt = fetches.get(c.root)
+  if (remote && (force || fetchedAt === undefined || now - fetchedAt >= FETCH_TTL_MS)) {
+    fetches.set(c.root, now)
+    await $.process.run(['git', '-C', c.root, 'fetch', '--quiet', '--no-tags', 'origin', remote], { timeoutMs: GIT_NET_TIMEOUT_MS }).catch(() => null)
+  }
+  const target = await git($, c.root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  if (!target) return undefined
+  const key = `${c.root}\n${head}\n${target}`
+  let files = conflicts.get(key)
+  if (!files) {
+    // 要分 exit 0／1，不能用回 null 的 git()。
+    const r = await $.process.run(['git', '-C', c.root, 'merge-tree', '--write-tree', '--name-only', '--no-messages', ref, 'HEAD'], { timeoutMs: GIT_NET_TIMEOUT_MS }).catch(() => null)
+    const parsed = r ? parseMergeTree(r.exitCode, String(r.stdout ?? '')) : null
+    if (!parsed) return undefined
+    files = parsed
+    conflicts.set(key, files)
+  }
+  if (!files.length) return undefined
+  return { into: remote ?? ref, ref, files, dirty: (await worktreeMark($, c.root)).files }
 }
 
 /** 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 快取。找不到基準就是空清單（算一般風險，不快取）。 */

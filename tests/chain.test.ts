@@ -64,6 +64,15 @@ test('chain: a finished publish does not restart the chain', () => {
   expect(nextStep(run(), 'continue', null, null, true)).toEqual({ kind: 'verify' })
 })
 
+test('chain: a finished catchup does not run the check or count as a fix round', () => {
+  // 解衝突（合併基準分支）不在流程裡：做完、被停掉都不跑檢查、不派審查或修正；有 commit 時由重新檢查接手。
+  for (const r of [run(), run(1), run(0, { passed: true }), run(0, { stopped: 'x' })]) {
+    expect(nextStep(r, 'catchup', null, null, true)).toBeNull()
+    expect(nextStep(r, 'catchup', false, v(0, 1), true)).toBeNull()
+    expect(nextStep(r, 'catchup', null, null, false, { stopped: true })).toBeNull()
+  }
+})
+
 test('chain: a job whose question was handled in the conversation records the verdict but dispatches nothing', () => {
   // 過關、停下照舊：審查結論照記。
   expect(handedOver(nextStep(run(), 'review', null, v(0, 0, 2), true))).toEqual({ kind: 'pass' })
