@@ -530,8 +530,20 @@ def git_reason(r):
     return next((l.strip() for l in (r.stderr + '\n' + r.stdout).splitlines() if l.strip()), 'git 失敗')
 
 
+SQUASHED = 'squash／rebase 合併，git branch -d 認不出已併入'
+
+
+def merged_by_content(main, branch):
+    """squash／rebase 合併：分支不是 HEAD 的祖先，但把它合進 HEAD 結果跟 HEAD 一樣（內容已經在裡面）。
+    有衝突、合出不同的內容，或 git 太舊沒有 merge-tree --write-tree（2.38 以前），都當沒併入。"""
+    merged = git('-C', main, 'merge-tree', '--write-tree', 'HEAD', branch)
+    head = git('-C', main, 'rev-parse', 'HEAD^{tree}')
+    return merged.returncode == 0 and head.returncode == 0 and merged.stdout.split('\n', 1)[0].strip() == head.stdout.strip()
+
+
 def cleanup(root):
     """--cleanup：移除已併入主 repo 目前分支、沒有未提交改動的 worktree 與分支（不加 --force／-D）。
+    squash／rebase 合併的（內容已在主 repo，但分支不是祖先）只移除 worktree：branch -d 會拒絕，分支留著寫進提醒。
     回傳 (輸出說明, 已歸檔那行的後綴, 保留原因, 要自己刪的指令)；保留原因是空字串代表沒有要提醒的。"""
     main = main_worktree(root)
     if not main:
@@ -541,12 +553,14 @@ def cleanup(root):
         return '主 worktree 不移除', '；主 worktree 不移除', '', []
     branch = git_branch(root)
     remove_wt = f'git -C {main} worktree remove {root}'
-    remove_branch = f'git -C {main} branch -d {branch}'
     if not branch:
         why = '不在分支上（detached HEAD）'
         return f'worktree 保留：{why}', f'；worktree 保留：{why}', why, [remove_wt]
+    ancestor = git('-C', main, 'merge-base', '--is-ancestor', branch, 'HEAD').returncode == 0
+    squashed = not ancestor and merged_by_content(main, branch)
+    remove_branch = f'git -C {main} branch {"-D" if squashed else "-d"} {branch}'
     why = ''
-    if git('-C', main, 'merge-base', '--is-ancestor', branch, 'HEAD').returncode != 0:
+    if not ancestor and not squashed:
         why = f'分支還沒併入 {git_branch(main) or "主 repo 的 HEAD"}'
     else:
         dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.splitlines() if l.strip()]
@@ -558,6 +572,9 @@ def cleanup(root):
                 why = git_reason(r)
     if why:
         return f'worktree 與分支保留：{why}', f'；worktree 保留：{why}', why, [remove_wt, remove_branch]
+    if squashed:
+        why = f'worktree 已移除，分支 {branch} 保留：{SQUASHED}'
+        return f'worktree 已移除；分支 {branch} 保留：{SQUASHED}', f'；{why}', why, [remove_branch]
     r = git('-C', main, 'branch', '-d', branch)
     if r.returncode != 0:
         why = f'worktree 已移除，分支 {branch} 保留：{git_reason(r)}'
@@ -566,8 +583,9 @@ def cleanup(root):
 
 
 def cmd_archive(slugs, cleanup_after=False):
-    # 先把每張都找到：有一張找不到就報錯，哪張都不動。
-    targets = [(slug, *resolve(slug)) for slug in dict.fromkeys(slugs)]
+    # 先把每張都找到：有一張找不到就報錯，哪張都不動。同一張卡（slug 與任務名各寫一次）只做第一次。
+    found = [(slug, *resolve(slug)) for slug in slugs]
+    targets = [t for i, t in enumerate(found) if all(os.path.realpath(t[2]) != os.path.realpath(u[2]) for u in found[:i])]
     for slug, _, path, root in targets:
         archive_one(slug, path, root, cleanup_after)
 

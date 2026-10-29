@@ -637,6 +637,50 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn(os.path.realpath(beta), self.worktrees())
         self.assertNotEqual(self.branch_listed('feature/beta'), '')
 
+    def test_archive_cleanup_removes_worktree_and_keeps_branch_when_squash_merged(self):
+        """squash 合併（審查 MEDIUM，D-04）：分支不是 main 的祖先但內容已在 main，worktree 照樣移除；branch -d 認不出，分支保留並寫明原因。"""
+        beta = self.open_case('feature/beta', 'Beta')
+        git('merge', '-q', '--squash', 'feature/beta', cwd=self.main)
+        git('commit', '-q', '-m', 'Beta (#12)', cwd=self.main)
+        write(os.path.join(self.main, 'later.txt'), 'x\n')
+        git('add', 'later.txt', cwd=self.main)
+        git('commit', '-q', '-m', 'later', cwd=self.main)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'beta-CARD.md')))
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertFalse(os.path.exists(beta))
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 保留：squash／rebase 合併，git branch -d 認不出已併入', r.stdout)
+        reg = read(self.reg)
+        self.assertRegex(reg, r'(?m)^- beta：.*；worktree 已移除，分支 feature/beta 保留：squash／rebase 合併')
+        reminders = [l for l in reg[reg.index('## 提醒'):].splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(len(reminders), 1, reg)
+        self.assertIn('squash／rebase 合併', reminders[0])
+        self.assertIn(f'git -C {self.main} branch -D feature/beta', reminders[0])
+        self.assertNotIn('worktree remove', reminders[0])
+
+    def test_archive_same_card_named_twice_is_archived_once(self):
+        """同一張卡用 slug 和任務名各寫一次（審查 MEDIUM，D-04）：只歸檔、清理一次，不會 Traceback 也不多一份副本。"""
+        self.open_case('feature/beta', 'Beta', merged=True)
+        self.open_case('feature/gamma', 'Gamma')
+
+        r = self.run_card('archive', 'beta', 'Beta', '--cleanup', cwd=self.main)
+        r2 = self.run_card('archive', 'gamma', 'Gamma', cwd=self.main)
+
+        for out in (r, r2):
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertNotIn('Traceback', out.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertEqual(sorted(os.listdir(archive)), ['beta-CARD.md', 'gamma-CARD.md'])
+        self.assertEqual(r.stdout.count('清理 '), 1, r.stdout)
+        reg = read(self.reg)
+        self.assertEqual(len(re.findall(r'(?m)^- beta：', reg)), 1, reg)
+        self.assertEqual(len(re.findall(r'(?m)^- gamma：', reg)), 1, reg)
+        self.assertNotRegex(reg, r'(?m)^- (Beta|Gamma)：')
+
     def test_unknown_target_lists_cases(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         r = self.run_card('card', 'nope')
