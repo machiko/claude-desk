@@ -89,14 +89,15 @@ export function reviewTop(text: string | null, n = 3): string[] {
 }
 
 /**
- * 審查檔裡要自動修的 MEDIUM 條數：「- [MEDIUM]…」開頭的行（不分大小寫，跟 reviewTop 同一種比對），結尾的括號註記含「不修」或「等你決定」就不算
- * （「（記錄、不修）」「（不修）」「（等你決定）」「（上一輪已列，等你決定）」，後面可以接句號）。只看行尾：說明中間的括號（例如「（parse 失敗後不修正預設值）」）
- * 或不在括號裡的「不修」都照算，免得影響行為的 MEDIUM 既不修也不問。沒有檔案回 0。
+ * 審查檔裡要自動修的 MEDIUM 條數：「- [MEDIUM]…」開頭的行（不分大小寫，跟 reviewTop 同一種比對），行尾是註記就不算：
+ * 結尾的括號以「不修」或「等你決定」收尾（「（記錄、不修）」「（不修）」「（等你決定）」「（上一輪已列，等你決定）」，後面可以接句號、空白）。
+ * 說明裡的括號照算，不管在中間或結尾（例如「（parse 失敗後不修正預設值）」「（不修會 crash）」「（若不修正會顯示前一天）」），
+ * 免得影響行為的 MEDIUM 既不修也不問。沒有檔案回 0。
  */
 export function mediumToFix(text: string | null): number {
   if (!text) return 0
   return text.replace(/\r\n?/g, '\n').split('\n')
-    .filter(l => /^\s*[-*]\s*\[MEDIUM\]/i.test(l) && !/[（(][^（）()]*(?:不修|等你決定)[^（）()]*[）)][。.]?\s*$/.test(l))
+    .filter(l => /^\s*[-*]\s*\[MEDIUM\]/i.test(l) && !/[（(][^（）()]*(?:不修|等你決定)[）)][。.]?\s*$/.test(l))
     .length
 }
 
