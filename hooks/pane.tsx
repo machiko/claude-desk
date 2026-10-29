@@ -1,8 +1,8 @@
 // 面板分三區：header（desk 版本、額度、更新時間；到期提醒與容器異常）與 footer（現在這件的操作、全域鍵、容器與模型）常駐，
-// 只有 content（現在卡、全部任務進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
+// 只有 content（現在卡、全部任務進度表、歷程、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
-import { displayWidth, elapsedText, feedOf, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
+import { displayWidth, elapsedText, fit, focusCase, hhmm, issueOf, modelLabel, pad, sorted, summary, ago } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
 import { paneReminders, reminderWhen } from './extras'
@@ -93,7 +93,8 @@ export type PaneActions = {
 const WIDE = 100
 /** 進度表放得下完整段名（數字鍵＋圖示＋至少 10 格任務名＋六段）的最小寬度；更窄改成緊湊圖示、不放標題列。 */
 const NARROW = 3 + 2 + 10 + 2 + 6 * 5
-const FEED_ROWS = 3
+/** 歷程收合時列幾筆；按 x 展開全部。 */
+const HISTORY_ROWS = 3
 const GUTTER = 3
 /** 進度表每段一欄：段名兩個字（4 格）＋1 格間隔；圖示放在段名下方中間（第 2 格）。 */
 const STAGE_COL = 5
@@ -377,21 +378,42 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
   return rows
 }
 
-function feedRows(ui: any, view: PaneView, focus: Case | null, width: number): any[] {
-  const { Text } = ui
-  const list = feedOf(view.feed, focus).slice(0, FEED_ROWS)
-  if (!list.length) return []
+/** 歷程一筆的日期欄「MM-DD」（沒日期留白對齊）＋兩格。 */
+const HISTORY_LEAD = 7
+
+/**
+ * 歷程：問題列（desk 動態最新一筆是錯誤或警告時，「時:分  動態」）＋現在這件卡片 History。
+ * 收合時最新 HISTORY_ROWS 筆、每筆一行截斷，標題右邊「還有 n 筆（x 展開）」；展開（x）時全部、長的換行顯示全文。
+ */
+function historyRows(ui: any, view: PaneView, focus: Case | null, width: number): any[] {
+  const { Box, Text } = ui
+  const issue = issueOf(view.feed, focus)
+  const all = focus?.history ?? []
+  if (!issue && !all.length) return []
+  const list = view.isExpanded ? all : all.slice(0, HISTORY_ROWS)
+  const more = all.length - list.length
+  const room = width - HISTORY_LEAD
+  const entry = (e: (typeof all)[number]) => {
+    const lines = view.isExpanded ? wrapText(e.text, room) : [fit(e.text, room)]
+    return lines.map((l, i) => (
+      <Box flexDirection="row">
+        <Text color={COLOR.faint}>{pad(i === 0 && e.date ? e.date.slice(5) : '', HISTORY_LEAD)}</Text>
+        <Text color={COLOR.text} wrap="truncate-end">{l}</Text>
+      </Box>
+    ))
+  }
   return [
     <Text> </Text>,
-    section(ui, WORD.feed, width),
-    ...list.map(e => <Text wrap="truncate-end"><Text color={COLOR.faint}>{hhmm(e.at)}  </Text><Text color={e.tone === 'subtle' ? COLOR.dim : e.tone}>{fit(e.text, width - 7)}</Text></Text>),
+    section(ui, WORD.history, width, more > 0 ? `還有 ${more} 筆（x 展開）` : ''),
+    ...(issue ? [<Text wrap="truncate-end"><Text color={COLOR.faint}>{hhmm(issue.at)}  </Text><Text color={issue.tone}>{fit(issue.text, width - 7)}</Text></Text>] : []),
+    ...list.flatMap(entry),
   ]
 }
 
 const HELP: [string, string][] = [
   ['1–9', '選任務（數字依清單固定，選了不會換號；取消選取在「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／審查／同步（按兩次確認；同步平常收在 m，卡片落後分支時才出現）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）；派工排隊中是取消排隊（按一次）'], ['l', 'Agent 輸出'],
-  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文'], ['h', '隱藏摘要列（說明開著時）'],
+  ['v', '完成檢查'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文（含完整歷程）'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
   ['● ◉ ◆ ✕ ○ ·', '已過／進行中／等你／卡住／未到／不適用'], ['✓（綠）', '六段全過、已上線，可歸檔'],
 ]
@@ -407,7 +429,7 @@ function helpRows(ui: any, view: PaneView, act: PaneActions, width: number): any
   ]
 }
 
-/** content：現在卡、全部任務進度表、最近、說明。寬時現在卡與進度表左右並排，逐列併起來。 */
+/** content：現在卡、全部任務進度表、歷程、說明。寬時現在卡與進度表左右並排，逐列併起來。 */
 function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): any[] {
   const { Box, Text } = ui
   const s = view.s
@@ -417,7 +439,7 @@ function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): 
   const wide = view.columns >= WIDE
   // 區段標題說出現在卡是誰挑的。
   const nowLabel = view.selected && focus?.statusPath === view.selected ? WORD.nowPicked : WORD.nowAuto
-  const tail = [...feedRows(ui, view, focus, width), ...helpRows(ui, view, act, width)]
+  const tail = [...historyRows(ui, view, focus, width), ...helpRows(ui, view, act, width)]
   if (!wide) {
     return [
       label(ui, nowLabel),

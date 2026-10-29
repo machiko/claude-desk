@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, result, text, flat, feedLog } from './fixture'
 import { appendTo, setFields } from '../hooks/tutorial'
 import { awaitsSpecOk } from '../hooks/pipeline'
 import { stageActions } from '../hooks/turn'
@@ -47,6 +47,7 @@ test('a real case waiting on its spec offers t to confirm it', async ($, on) => 
 
 test('pressing t twice confirms the spec like /desk:card spec ok and launches nothing', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   onlySpec(data)
   scriptOk(data)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -77,9 +78,8 @@ test('pressing t twice confirms the spec like /desk:card spec ok and launches no
 
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
-  expect(await screen(ui)).toContain(flat('Beta 規格已確認，可以派實作'))
-  const ok = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 規格已確認/.test(n.text) && n.props?.color === 'success')
-  expect(ok).toBeDefined()
+  expect(log.list.some(e => e.text === 'Beta 規格已確認，可以派實作' && e.tone === 'success')).toBe(true)
+  expect(await screen(ui)).not.toContain(flat('Beta 規格已確認，可以派實作'))
   expect(await screen(ui)).toContain(flat('按 g 派 Agent：依審核修正'))
   expect(await ui.find({ key: KEY })).toBeUndefined()
   expect(data.launches).toHaveLength(0)

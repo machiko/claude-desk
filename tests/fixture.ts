@@ -200,3 +200,16 @@ export const leaves = (node: any, type: string): any[] => typeof node === 'strin
 export const text = (node: any): string => typeof node === 'string' ? node : (node?.children ?? []).map(text).join('')
 /** 畫面字串去掉空白與現在卡每列的狀態邊條（換行處會插進句子），用來比對整句。 */
 export const flat = (x: string): string => x.replace(/\s+/g, '').split(EDGE).join('')
+
+/**
+ * desk 寫進動態紀錄的內容（新的在前）。面板只在最新一筆是錯誤或警告時顯示一行，一般事件（派工、檢查通過、排隊）要從這裡看。
+ * 要在第一次呼叫 $ 之前掛（跟 fixture 一起）。has 用 flat 比對，跟畫面斷言的寫法一樣。
+ */
+export function feedLog(on: any) {
+  const log = {
+    list: [] as { at: number; text: string; tone: string; card?: string }[],
+    has: (s: string) => log.list.some(e => flat(e.text).includes(flat(s))),
+  }
+  on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed' && Array.isArray(e.value)) log.list = e.value; return next(e) })
+  return log
+}

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat, feedLog } from './fixture'
 import { isDeskLaunch } from '../hooks/dispatch'
 
 // 派工負載：同時在跑的工作桌 Agent 有上限（預設 3），再派的排隊、有空位依序派出；手動與自動流程共用一條隊伍。
@@ -75,6 +75,7 @@ test('test_dispatch_queues_with_position_when_three_desk_agents_are_busy', async
 /** AC-2 */
 test('test_manual_and_auto_dispatches_share_one_queue_in_order', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   setup(data, clock)
   const h = helpers($, data, clock)
   await h.refresh()
@@ -90,7 +91,8 @@ test('test_manual_and_auto_dispatches_share_one_queue_in_order', async ($, on) =
   expect(data.launches).toHaveLength(0)
   await ui.press({ key: `row-${CARD_A}` })
   expect(await screen(ui)).toContain(flat('派工排隊中（第 2 位）'))
-  expect(await screen(ui)).toContain(flat('Alpha 自動派審查排隊中（第 2 位）'))
+  expect(log.has('Alpha 自動派審查排隊中（第 2 位）')).toBe(true)
+  expect(await screen(ui)).not.toContain(flat('Alpha 自動派審查排隊中（第 2 位）'))
 
   // 一個結束：只派出排第 1 的 Gamma，Alpha 往前一位
   h.finishOne()
@@ -156,6 +158,7 @@ test('test_waiting_or_non_desk_agents_and_zero_limit_do_not_queue', async ($, on
 /** AC-4 */
 test('test_cancelled_or_no_longer_dispatchable_queue_entries_never_launch', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   setup(data, clock)
   const h = helpers($, data, clock)
   await h.refresh()
@@ -175,7 +178,8 @@ test('test_cancelled_or_no_longer_dispatchable_queue_entries_never_launch', asyn
   expect(data.launches).toHaveLength(0)
   let shown = await screen(ui)
   expect(shown).not.toContain('派工排隊中')
-  expect(shown).toContain(flat('Alpha 已取消排隊'))
+  expect(log.has('Alpha 已取消排隊')).toBe(true)
+  expect(shown).not.toContain(flat('Alpha 已取消排隊'))
   expect(await ui.find({ key: `${A}unqueue` })).toBeFalsy()
   await ui.press({ key: `row-${CARD_C}` })
   shown = await screen(ui)
@@ -198,12 +202,14 @@ async function queueTwoAutoReviews(data: any, clock: any, h: ReturnType<typeof h
 /** 審查 HIGH：流程紀錄跨對話共用；排隊的自動派工取消或沒派出時，只停這個對話自己的流程。 */
 test('queued auto dispatches never pause a chain another conversation took over', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   setup(data, clock)
   const h = helpers($, data, clock)
   await queueTwoAutoReviews(data, clock, h)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_C}` })
-  expect(await screen(ui)).toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
+  expect(log.has('Gamma 自動派審查排隊中（第 2 位）')).toBe(true)
+  expect(await screen(ui)).not.toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
   expect(data.launches).toHaveLength(0)
 
   // 別的對話在兩件都按了繼續：流程換成那邊的
@@ -228,12 +234,14 @@ test('queued auto dispatches never pause a chain another conversation took over'
 /** 審查 HIGH：排隊期間 worktree 被別的對話改了就不派；已經停下的流程不改原因。 */
 test('queued auto dispatches recheck the worktree and keep an existing pause reason', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   setup(data, clock)
   const h = helpers($, data, clock)
   await queueTwoAutoReviews(data, clock, h)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_C}` })
-  expect(await screen(ui)).toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
+  expect(log.has('Gamma 自動派審查排隊中（第 2 位）')).toBe(true)
+  expect(await screen(ui)).not.toContain(flat('Gamma 自動派審查排隊中（第 2 位）'))
 
   // 排隊期間：Alpha 的流程停在檢查（這個對話自己停的）；主對話在 Gamma 的 worktree 改了 3 個檔
   const held = { ...data.store.chains[ALPHA], stopped: '完成檢查改了，要重新核准', heldAtCheck: true }

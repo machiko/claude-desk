@@ -163,13 +163,16 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   data.compose = svc('app')
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
   let breakNext = false
+  // 動態紀錄（一般事件面板不顯示）：state.set 只能掛一次，跟寫壞 verifies 共用。
+  let feed: { text: string }[] = []
   on('state.set', (_: any, e: any, next: any) => {
+    if (e?.plugin === 'desk' && e?.key === 'feed' && Array.isArray(e.value)) feed = e.value
     if (!breakNext || e?.key !== 'verifies') return next(e)
     breakNext = false
     return { deny: '狀態寫不進去' }
   })
   const h = helpers($, data, clock)
-  const feed = async () => { const ui = await $.ui.mount(PANE(160)); const s = flat(text(await ui.drawn())); await ui.unmount(); return s }
+  const shown = async () => { const ui = await $.ui.mount(PANE(160)); const s = flat(text(await ui.drawn())); await ui.unmount(); return s }
   const chain = () => (data.store.chains as any)[ROOT]
   await h.refresh()
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
@@ -185,7 +188,8 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   expect(chain().stopped).toBeUndefined()
   expect(data.launches.length).toBe(2)
   expect(h.prompt(1)).toContain('程式碼審查')
-  expect(await feed()).toContain(flat('Alpha 流程繼續'))
+  expect(feed.some(e => e.text.startsWith('Alpha 流程繼續'))).toBe(true)
+  expect(await shown()).not.toContain(flat('Alpha 流程繼續'))
 
   // 審查有 HIGH → 自動修正第 1 輪
   h.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')

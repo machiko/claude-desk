@@ -407,7 +407,8 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning')
     else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
     else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent 已完成`, 'subtle')
-    else if (c.state === 'failed' && p.state !== 'failed') push(`${c.name} 檢查未通過`, 'error')
+    // 流程暫停、檢查沒過、檢查中斷、容器沒起都已寫了原因、跳了 toast；只剩審查結論擋下、流程沒停（手動審查）要在這裡說。
+    else if (c.state === 'failed' && p.state !== 'failed' && reviewBlocks(c)) push(`${c.name} 審查有要修的問題`, 'error')
   }
   return out
 }
@@ -426,7 +427,27 @@ export function keepFeed(list: readonly FeedEvent[]): FeedEvent[] {
   })
 }
 
-/** 「最近」只看現在這件：屬於它的，與不屬於任何一件的（版本更新、某件已歸檔等）。 */
+/** 審查結論有要修的問題、流程沒停：stateOf 因為它算成 failed，沒有別處寫原因。 */
+function reviewBlocks(c: Case): boolean {
+  const verdict = parseVerdict(c.gate)
+  return !!verdict && blocking(verdict) > 0 && !c.chain?.stopped
+}
+
+const isIssue = (e: FeedEvent | undefined): e is FeedEvent => !!e && (e.tone === 'error' || e.tone === 'warning')
+
+/**
+ * 「歷程」上方的問題列：這件最新一筆、不屬於任何一件的最新一筆，各自是錯誤或警告才算，取比較新的那筆；沒有就 null。
+ * 之後發生一般事件（檢查通過等），那筆就不再是最新，問題列跟著消失。feed 新的在前。
+ */
+export function issueOf(feed: readonly FeedEvent[], focus: Case | null): FeedEvent | null {
+  const mine = focus ? feed.find(e => e.card === focus.statusPath) : undefined
+  const global = feed.find(e => !e.card)
+  // 時間一樣時看順序：feed 新的在前，排前面的比較新。
+  const candidates = [mine, global].filter(isIssue).sort((a, b) => b.at - a.at || feed.indexOf(a) - feed.indexOf(b))
+  return candidates[0] ?? null
+}
+
+/** 現在這件的動態：屬於它的，與不屬於任何一件的（版本更新、某件已歸檔等）。 */
 export function feedOf(feed: readonly FeedEvent[], focus: Case | null): FeedEvent[] {
   return feed.filter(e => !e.card || e.card === focus?.statusPath)
 }

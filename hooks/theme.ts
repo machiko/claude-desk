@@ -43,7 +43,7 @@ export const WORD = {
   nowAuto: '現在 · 自動挑選',
   all: '任務',
   list: '全部任務',
-  feed: '最近',
+  history: '歷程',
   empty: '尚無任務：用 /desk:card new <分支> <任務名> 開第一張卡；第一次用可以輸入 /desk tutorial 看教學。',
   loading: '讀取任務中…',
   off: '此對話未開啟工作桌；輸入 /desk 開啟。',

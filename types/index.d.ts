@@ -63,6 +63,8 @@ export type Case = {
   specGap?: true
   /** 卡片「## 部署…」段落的步驟。 */
   deploySteps?: string[]
+  /** 卡片「## History」的每一筆，新的在前（見 historyEntries）。 */
+  history?: HistoryEntry[]
   /** 審查檔的 CRITICAL、HIGH 前三條。 */
   reviewTop?: string[]
 }
@@ -97,6 +99,9 @@ export type Snapshot = {
   containers?: { total: number; running: number; down: string[]; unhealthy: string[]; error?: string }
   models?: { session?: string; effort?: string; dispatch?: { model: string; effort: string }; sync?: { model: string; effort: string; fresh: boolean }; /** dispatch.json 的 kinds：跟派工不同的種類才列。 */ kinds?: { kind: 'continue' | 'reply' | 'review' | 'publish'; model: string; effort: string }[]; /** 有 projects 覆寫的任務（鍵是根目錄）：每種派工實際會用的模型。 */ byRoot?: Record<string, Partial<Record<'continue' | 'reply' | 'review' | 'publish', { model: string; effort: string }>>> }
 }
+
+/** 卡片 History 的一筆：date 是 YYYY-MM-DD，沒寫日期就沒有。 */
+export type HistoryEntry = { date?: string; text: string }
 
 /** 一筆動態；card：屬於哪件（卡片路徑），版本更新這類不屬於任何一件的不填。 */
 export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' | 'error' | 'subtle' | 'suggestion'; card?: string }
