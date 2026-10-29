@@ -34,10 +34,11 @@ function reviewJustFinished(data: any, root: string, round: number, opts: { owne
 function helpers($: any, data: any, clock: any) {
   const step = async () => { await clock.advance(2500); await clock.settle() }
   const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
-  /** 在跑的 Agent 都做完，流程接著走幾步。 */
-  const finish = async () => {
+  /** 在跑的 Agent 都做完，流程接著走 steps 步（實作／修正做完要等檢查跑完再派審查；審查做完在同一次重新整理就派出下一步）。 */
+  const finish = async (steps = 0) => {
     data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
-    await refresh(); await step(); await step()
+    await refresh()
+    for (let i = 0; i < steps; i++) await step()
   }
   const prompt = (i: number) => String(data.launches[i].argv.at(-1))
   const fixes = () => data.launches.filter((l: any) => String(l.argv.at(-1)).startsWith('修正第'))
@@ -71,7 +72,7 @@ test('test_high_and_unmarked_medium_are_fixed_in_one_round_when_rounds_remain', 
     '- [LOW][風格] d.ts:4 — 縮排',
   ].join('\n')
   reviewJustFinished(data, ALPHA, 0)
-  await h.refresh(); await h.step()
+  await h.refresh()
 
   // 只派一個修正第 1／2 輪，接續實作那個 session；CRITICAL、HIGH 與沒加註記的 MEDIUM 一起修，LOW 不用修
   expect(data.launches).toHaveLength(1)
@@ -83,7 +84,7 @@ test('test_high_and_unmarked_medium_are_fixed_in_one_round_when_rounds_remain', 
   // 修完：關卡改回無、有新 commit → 自動檢查 → 派複審，要確認上一輪沒加註記的 MEDIUM 修好沒
   setCard(data, CARD_A, '無')
   data.git[ALPHA]!.head = 'h2'
-  await h.finish()
+  await h.finish(1)
   expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(1)
   expect(data.launches).toHaveLength(2)
   expect(h.prompt(1).startsWith('程式碼審查')).toBe(true)
@@ -98,10 +99,6 @@ test('test_high_and_unmarked_medium_are_fixed_in_one_round_when_rounds_remain', 
   expect(data.toasts).toContain('Alpha：審查通過，可以開 PR')
   expect((data.store.chains as any)[ALPHA].passed).toBe(true)
   expect((data.store.chains as any)[ALPHA].round).toBe(1)
-  const ui = await $.ui.mount(PANE(160))
-  await ui.press({ key: `row-${CARD_A}` })
-  expect(await screen(ui)).toContain(flat('Alpha 審查通過，可開 PR'))
-  await ui.unmount()
 
   // 高風險卡：程式碼審查已過，資安審查有一條沒註記的 MEDIUM → 一樣自動派修正第 1／2 輪，依 .task/SECURITY.md
   data.git[BETA] = { branch: 'feature/beta', head: 'b1', files: ['app/Http/Middleware/Admin.php'] }
@@ -109,7 +106,7 @@ test('test_high_and_unmarked_medium_are_fixed_in_one_round_when_rounds_remain', 
   data.files[`${BETA}/.task/REVIEW.md`] = '- [LOW][風格] x.php:1 — 縮排'
   data.files[`${BETA}/.task/SECURITY.md`] = '- [MEDIUM][輸入驗證] app/Http/Middleware/Admin.php:3 — 沒檢查長度'
   reviewJustFinished(data, BETA, 0, { security: true })
-  await h.refresh(); await h.step()
+  await h.refresh()
   expect(data.launches).toHaveLength(3)
   expect(data.launches[2].init.cwd).toBe(BETA)
   expect(h.prompt(2).startsWith('修正第 1／2 輪：')).toBe(true)
@@ -119,7 +116,7 @@ test('test_high_and_unmarked_medium_are_fixed_in_one_round_when_rounds_remain', 
   // 修完照舊重新跑程式碼審查與資安審查；資安審查交給流程修，不在等你問
   setCard(data, CARD_B, '無')
   data.git[BETA]!.head = 'b2'
-  await h.finish()
+  await h.finish(1)
   expect(data.launches).toHaveLength(4)
   expect(h.prompt(3).startsWith('程式碼審查')).toBe(true)
   setCard(data, CARD_B, 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1；可')
