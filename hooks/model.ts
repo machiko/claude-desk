@@ -419,7 +419,7 @@ export function feedOnDesk(feed: readonly FeedEvent[], cases: readonly Case[]): 
   return feed.filter(e => !e.card || onDesk.has(e.card))
 }
 
-/** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的任務當「其他任務」的背景（demoCases）。 */
+/** 示範資料：幾種常見局面（等你、執行中、閒置、關卡）。教學模式拿它的任務當「全部任務」的背景（demoCases）。 */
 export function demoSnapshot(now: number): Snapshot {
   const agents: Record<string, AgentInfo> = { '/demo/beta': { name: 'desk-demo', state: 'working', status: 'busy', startedAt: now - 3 * 60_000 } }
   const card = (status: string, verify: string, ask: string, next: string, gate = '無') =>

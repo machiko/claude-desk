@@ -171,7 +171,7 @@ test('stale ask: the latest, busy, or non-desk agents are left alone', async ($,
   await refreshTwice($)
   const ui = await $.ui.mount(PANE(100))
   const actions = async (card: string) => {
-    // 現在卡那件不在其他任務表格裡，點不到也不用點。
+    // 現在卡那件不在全部任務表格裡，點不到也不用點。
     if (await ui.find({ key: `row-${card}` })) await ui.press({ key: `row-${card}` })
     return { reply: await ui.find({ key: `case-${card}-reply` }), stop: await ui.find({ key: `case-${card}-stop` }) }
   }

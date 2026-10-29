@@ -154,7 +154,7 @@ export async function refresh($: any, options: PluginOptions) {
     const check = settings && settings.updateCheck !== 'off' ? await loadUpdateCheck($) : null
     const notice = noticeOf(check, deskVersions.desk)
     const versionState = isUpdating() ? 'updating' as const : versionStateOf(check, deskVersions.desk)
-    // 教學模式：示範任務接在後面當「其他任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
+    // 教學模式：示範任務接在後面當「全部任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
     const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel, cases.map(c => c.root)), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     // 選取的任務已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
@@ -546,7 +546,7 @@ async function resumeAtCheck($: any, c: Case) {
 
 /**
  * 檢查開始、排隊、沒跑成，或剛派出 Agent 時重算那件的六段（`patch` 先套上新的 agent、state）：
- * 不等下一輪重新整理，現在卡與其他任務表格立刻一致。
+ * 不等下一輪重新整理，現在卡與全部任務表格立刻一致。
  */
 async function restage($: any, statusPath: string, patch: (c: Case) => Case = c => c) {
   const verifies = await read($, verifiesAtom)

@@ -90,12 +90,23 @@ test('the grid gives every row the same name width so the six stages line up, an
   expect(3 + 2 + tight.nameWidth + 2 + 30 + (tight.ageWidth ? tight.ageWidth + 1 : 0) <= 50).toBe(true)
 })
 
-test('the header shows only the read time and the list is titled 其他任務', async ($, on) => {
+test('the header shows only the read time and the list is titled with all tasks', async ($, on) => {
   fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   expect(await ui.find({ type: 'Text', text: /件 ·/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^ *\d{2}:\d{2} 讀取$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^其他任務 *$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^全部任務 *$/ })).toBeDefined()
+  expect(JSON.stringify(await ui.drawn()).includes('其他任務')).toBe(false)
+  await ui.unmount()
+})
+
+test('a narrow pane titles the task list as all tasks', async ($, on) => {
+  fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  // 窄到六段標題放不下：清單標題獨立成一列（標題字＋分隔線）。
+  const ui = await $.ui.mount(PANE(44))
+  expect(await ui.find({ type: 'Text', text: '全部任務' })).toBeDefined()
+  expect(JSON.stringify(await ui.drawn()).includes('其他任務')).toBe(false)
   await ui.unmount()
 })
