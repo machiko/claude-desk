@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, plain, errorText } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
@@ -30,7 +30,7 @@ import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } f
 import { isBusy, sentState } from './turn'
 import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
-import { lastLaunches, stopSuperseded } from './stale-agents'
+import { lastLaunches, noteCardAsks, stopSuperseded } from './stale-agents'
 import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
@@ -108,8 +108,11 @@ export async function refresh($: any, options: PluginOptions) {
       ])
       const base = buildCase(row, card, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, agents, verifies[row.statusPath])
       const last = jobs[normalizeRoot(base.root)]?.last
-      let agent: AgentInfo | undefined = base.agent
-      if (!agent && last && !last.answered) agent = asksFor(list, last.launchName) ?? undefined
+      // 最後一次派工停在提問、題目寫進卡片「等你」後已在對話處理（清成「無」）：那個 Agent 不再代表任務，同一輪就照卡片算。
+      const cleared = !!last?.cardAsked && (!!last.answered || askClearedOnCard(last, base.ask))
+      const { agent: found, ...rest } = base
+      let agent: AgentInfo | undefined = cleared && found?.name === last?.launchName && found?.waitsFor === 'question' ? undefined : found
+      if (!agent && last && !last.answered && !cleared) agent = asksFor(list, last.launchName) ?? undefined
       if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy', ...(launchKinds[row.statusPath] ? { kind: launchKinds[row.statusPath] } : {}) }
       if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) agent = { ...agent, last: await lastLine($, agent.id) }
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
@@ -131,7 +134,7 @@ export async function refresh($: any, options: PluginOptions) {
       const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
       const steps = deploySteps(card)
       const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []
-      const withAgent = { ...base, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -176,7 +179,10 @@ export async function refresh($: any, options: PluginOptions) {
     await spin($, cases.some(c => c.state === 'running'))
     await stopSuperseded($, cases, superseded, now)
     // 清單是真的（不是教學、claude agents 沒失敗）才看得出誰結束了。
-    if (!tutorial && agentsOut && agentsOut.exitCode === 0) await noteEnded($, list, cases)
+    if (!tutorial && agentsOut && agentsOut.exitCode === 0) {
+      await noteEnded($, list, cases)
+      await noteCardAsks($, list, cases, now)
+    }
     await autoChain($, options, cur)
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
