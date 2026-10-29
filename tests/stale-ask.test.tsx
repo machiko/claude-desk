@@ -295,3 +295,36 @@ test('stale ask: clearing the card\'s question is noted once and leaves the agen
   expect(data.processCalls.filter((c: any) => c.argv[0] === 'claude' && c.argv[1] === 'stop')).toEqual([])
   await ui.unmount()
 })
+
+/** AC-5：這個對話開的流程；停在提問的那次派工依序是實作（檢查已過）、審查有 HIGH、審查過關。 */
+const FLOW_CASES = [
+  { how: '實作做完、檢查通過（本來會派審查）', kind: 'continue', gate: '- 關卡：無', fresh: true },
+  { how: '審查有 HIGH（本來會派修正）', kind: 'review', gate: '- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修', fresh: false },
+  { how: '審查過關', kind: 'review', gate: PASSED, fresh: false },
+] as const
+
+test('stale ask: once the question is handled in the conversation the flow records the review but dispatches nothing', async ($, on) => {
+  const { data } = fixture(on)
+  for (const s of FLOW_CASES) {
+    askedOnCard(data, ASKING['waiting／input needed']!)
+    data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*/, s.gate)
+    data.store.jobs = { [BETA]: job(LATEST, LAST_AT, s.kind) }
+    data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: LAST_AT - 60_000, round: 0 } }
+    if (s.fresh) data.store.verifies = { [CARD_B]: { command: 'npm test', at: NOW, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' } }
+    data.launches = []
+    data.processCalls = []
+    await refresh($)
+    clearAsk(data)
+    await refreshTwice($)
+
+    // 不派任何 Agent、不停掉那個 Agent、不自動跑完成檢查
+    expect(data.launches, s.how).toEqual([])
+    expect(data.processCalls.filter((c: any) => (c.argv[0] === 'claude' && c.argv[1] === 'stop') || c.argv[0] === 'sh'), s.how).toEqual([])
+    const run = (data.store.chains as any)[BETA]
+    if (s.gate === PASSED) expect(run.passed, s.how).toBe(true)
+    else if (s.kind === 'review') expect(run.stopped, s.how).toBe('提問已在對話處理，不自動派修正')
+    else expect(run.stopped, s.how).toBeUndefined()
+    // 那次派工算處理過：之後不會再被流程撿起來
+    expect((data.store.jobs as any)[BETA].last.handled, s.how).toBe(true)
+  }
+})
