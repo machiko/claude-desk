@@ -341,3 +341,95 @@ test('two dispatches of the same card while full queue it once', async ($, on) =
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(GAMMA)
 })
+
+/** 這個對話的流程：Alpha 的審查剛結束，關卡是 HIGH 1；名額滿，自動派的修正第 1 輪排進隊伍（第 1 位）。 */
+async function queueReviewFix(data: any, clock: any, h: ReturnType<typeof helpers>) {
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  data.store.chains = { [ALPHA]: { owner: 'fixture-session', startedAt: clock.now() - 600_000, round: 0, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
+  data.store.jobs = { [ALPHA]: { sessionId: 'a0000001-0000-4000-8000-000000000000', mark: '', last: { launchName: 'desk-rev-1', nativeId: 'a0000002', sessionId: 'a0000002-0000-4000-8000-000000000000', kind: 'review', startedAt: clock.now() - 300_000, fresh: true, owner: 'fixture-session', ended: { how: 'finished' } } } }
+  await h.refresh(); await h.step(); await h.step()
+}
+
+/** AC-1（排隊的修正）：審查有 HIGH、名額滿而排隊的修正，空出名額後照常派出，流程不停。 */
+test('test_queued_review_fix_launches_when_slot_frees', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueReviewFix(data, clock, h)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  expect(data.launches).toHaveLength(0)
+  expect(await screen(ui)).toContain(flat('Alpha 自動派修正第 1 輪排隊中（第 1 位）'))
+
+  h.finishOne()
+  await h.refresh(); await h.step(); await h.step()
+
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(ALPHA)
+  expect(String(data.launches[0].argv.at(-1))).toContain('修正第 1／2 輪')
+  expect(data.store.chains[ALPHA].stopped).toBeUndefined()
+  expect(data.toasts).toContain('Alpha：修正第 1 輪已派出')
+  expect(await screen(ui)).not.toContain(flat('排隊的修正第 1 輪沒有派出：Agent 仍在執行'))
+  await ui.unmount()
+})
+
+/** AC-3（排隊的修正，範圍外）：排隊期間 Alpha 真的有 Agent 在跑，空出名額時照舊不派。 */
+test('test_queued_auto_fix_still_refused_while_card_agent_runs', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueReviewFix(data, clock, h)
+  expect(data.launches).toHaveLength(0)
+
+  data.agents = [...data.agents, busy('helper-agent', ALPHA)]
+  h.finishOne()
+  await h.refresh(); await h.step()
+
+  expect(data.launches).toHaveLength(0)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  expect(await screen(ui)).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：Agent 仍在執行'))
+  await ui.unmount()
+})
+
+/** 排隊期間 Alpha 有 Agent 停在權限提示：空出名額時照樣不派（同一個 worktree 不多開一個），原因寫在等權限批准（審查 MEDIUM，D-03）。 */
+test('test_queued_auto_fix_refused_with_approval_reason_while_card_agent_waits_for_permission', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueReviewFix(data, clock, h)
+  expect(data.launches).toHaveLength(0)
+
+  data.agents = [...data.agents, { ...busy('helper-agent', ALPHA), status: 'waiting', state: 'blocked', waitingFor: 'permission prompt' }]
+  h.finishOne()
+  await h.refresh(); await h.step()
+
+  expect(data.launches).toHaveLength(0)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  const shown = await screen(ui)
+  expect(shown).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：Agent 在等權限批准'))
+  expect(shown).not.toContain(flat('沒有派出：Agent 仍在執行'))
+  await ui.unmount()
+})
+
+/** AC-4（排隊的修正，範圍外）：排隊期間流程換成別的對話的，空出名額時不派、說原因、不動別人的流程。 */
+test('test_queued_review_fix_refused_when_chain_moved_to_other_conversation', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueReviewFix(data, clock, h)
+  expect(data.launches).toHaveLength(0)
+
+  const theirs = { owner: 'other-session', startedAt: clock.now(), round: 0 }
+  data.store.chains = { [ALPHA]: { ...theirs } }
+  h.finishOne()
+  await h.refresh(); await h.step()
+
+  expect(data.launches).toHaveLength(0)
+  expect(data.store.chains[ALPHA]).toEqual(theirs)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  expect(await screen(ui)).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：流程已不是這個對話的'))
+  await ui.unmount()
+})
