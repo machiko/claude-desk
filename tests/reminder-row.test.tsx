@@ -121,3 +121,19 @@ test('test_undated_reminders_stay_off_the_band', async ($, on) => {
   expect(JSON.stringify(drawn).includes('改名')).toBe(false)
   await again.unmount()
 })
+
+/** 審查 MEDIUM：展開（m）時提醒最多佔 4 列，其餘收成「還有 k 件」一列，面板下方的動作列照樣畫得出來。 */
+test('test_more_caps_reminder_rows_and_counts_the_rest', async ($, on) => {
+  const { data } = fixture(on)
+  remind(data, Array.from({ length: 8 }, (_, i) => `- 待辦第 ${i + 1} 件`))
+  const ui = await mount($)
+
+  await ui.press({ key: 'more' })
+
+  const rows = await reminderRows(ui)
+  expect(rows.length).toBe(5)
+  expect(rows.slice(0, 4).map(r => r.text)).toEqual([1, 2, 3, 4].map(n => `◷ 待辦第 ${n} 件`))
+  expect(rows[4]!.text).toBe('◷ 還有 4 件：看登錄表「## 提醒」')
+  expect(await ui.find({ key: 'more' })).toBeDefined()
+  await ui.unmount()
+})

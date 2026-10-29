@@ -48,6 +48,19 @@ test('reminders: undated lines are listed after dated ones and never fall due', 
   expect(dueReminders(parseReminders('## 提醒\n- 改名\n', now))).toEqual([])
 })
 
+/** 審查 MEDIUM：打勾、劃掉、縮排子項、日期寫錯或只寫日期、分隔線都不算沒日期的提醒；未打勾的 [ ] 拿掉框照算。 */
+test('reminders: done, struck, nested, malformed-date and separator lines are not undated reminders', () => {
+  const now = new Date(2026, 11, 19, 15, 0).getTime()
+  const reg = ['## 提醒', '- [x] 已做完', '- [X] 也做完', '- ~~2026-10-01 已處理~~', '- ~~改名~~', '- 2026-10-31', '- 2026/10/30 斜線日期', '- 10/30 沒寫年', '  - 縮排的子項目', '* * *', '- ---', '- [ ] 還沒做的事', '- 改名：清單標題改成全部任務'].join('\n')
+
+  const list = parseReminders(reg, now)
+
+  expect(list.map(r => [r.date, r.text, r.days])).toEqual([
+    [null, '還沒做的事', null],
+    [null, '改名：清單標題改成全部任務', null],
+  ])
+})
+
 test('review top lists CRITICAL and HIGH only', () => {
   const md = '# 審查\n- [MEDIUM][命名] a.php:3 — x\n- [HIGH][稽核] b.php:10 — 漏寫稽核紀錄\n- [CRITICAL][資料範圍] c.php:5 — 沒做權限檢查\n- [LOW] d'
   expect(reviewTop(md)).toEqual(['HIGH 稽核 b.php:10 — 漏寫稽核紀錄', 'CRITICAL 資料範圍 c.php:5 — 沒做權限檢查'])

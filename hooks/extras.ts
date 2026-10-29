@@ -52,11 +52,25 @@ export function parseReminders(text: string, now: number): Reminder[] {
       dated.push({ date: `${m[1]}-${m[2]!.padStart(2, '0')}-${m[3]!.padStart(2, '0')}`, text: plain(m[4]!), days: Math.round((d.getTime() - today.getTime()) / 86_400_000) })
       continue
     }
-    const u = l.match(/^\s*[-*]\s+(.*\S)\s*$/)
-    if (u && !/^<.*>$/.test(u[1]!)) undated.push({ date: null, text: plain(u[1]!), days: null })
+    const item = undatedItem(l)
+    if (item) undated.push({ date: null, text: plain(item), days: null })
   }
   return [...dated.sort((a, b) => a.days! - b.days!), ...undated]
 }
+/**
+ * 沒寫日期的一行提醒的事項，不算提醒就回 null。只收最外層的 `- `／`* ` 項目；打勾（[x]）、整條劃掉（~~…~~）、
+ * 開頭像日期卻不是 YYYY-MM-DD 事項（斜線日期、只寫日期）、`<…>` 佔位、沒有文字的分隔線都不算，跟以前格式不符就忽略一樣。
+ * 未打勾的 [ ] 拿掉框照算。
+ */
+function undatedItem(line: string): string | null {
+  const m = line.match(/^[-*]\s+(.*\S)\s*$/)
+  if (!m) return null
+  const body = m[1]!.replace(/^\[ \]\s+/, '')
+  if (/^\[[xX]\]/.test(body) || /^~~/.test(body) || /^<.*>$/.test(body)) return null
+  if (/^\d{1,4}[-/.]\d/.test(body)) return null
+  return /\p{L}/u.test(body) ? body : null
+}
+
 /** 有日期且 3 天內到期（含已過期）：提示列只看這些。 */
 export const dueReminders = (list: Reminder[] | undefined) => (list ?? []).filter(r => r.days !== null && r.days <= REMIND_DAYS)
 /** 面板列的提醒：到期的有日期提醒，再接全部沒日期的。 */
