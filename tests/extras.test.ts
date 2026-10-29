@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, reminderWhen, reviewTop, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
+import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, paneReminders, reminderWhen, reviewTop, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
 
 test('confirm fires only on a second press of the same action within 3 seconds', () => {
   const a = confirmStep(null, 'x\ncontinue', 1000)
@@ -29,6 +29,23 @@ test('reminders: days until, due within 3 days, overdue counts', () => {
   expect(list.map(r => [r.date, r.days])).toEqual([['2026-12-18', -1], ['2026-12-22', 3], ['2027-03-01', 72]])
   expect(dueReminders(list).map(r => r.text)).toEqual(['昨天的事', '決定 /api/rag-proxy 是否退役'])
   expect(list.map(reminderWhen)).toEqual(['已過 1 天', '還有 3 天', '還有 72 天'])
+})
+
+/** AC-5：沒日期的列為無日期、排在有日期後面，永遠不算到期或過期；空行與別段的「- 」行不算。 */
+test('reminders: undated lines are listed after dated ones and never fall due', () => {
+  const now = new Date(2026, 11, 19, 15, 0).getTime()
+  const reg = '## 提醒\n- 改名：清單標題改成全部任務\n\n- 2026-12-22 決定 rag-proxy 是否退役\n- 修正：下一步提示\n- 2026-12-18 昨天的事\n\n## 其他\n- 不是提醒\n- 2026-12-20 也不是'
+  const list = parseReminders(reg, now)
+  expect(list.map(r => [r.date, r.text, r.days])).toEqual([
+    ['2026-12-18', '昨天的事', -1],
+    ['2026-12-22', '決定 rag-proxy 是否退役', 3],
+    [null, '改名：清單標題改成全部任務', null],
+    [null, '修正：下一步提示', null],
+  ])
+  expect(dueReminders(list).map(r => r.text)).toEqual(['昨天的事', '決定 rag-proxy 是否退役'])
+  expect(paneReminders(list).map(r => r.text)).toEqual(['昨天的事', '決定 rag-proxy 是否退役', '改名：清單標題改成全部任務', '修正：下一步提示'])
+  expect(list.map(reminderWhen)).toEqual(['已過 1 天', '還有 3 天', '', ''])
+  expect(dueReminders(parseReminders('## 提醒\n- 改名\n', now))).toEqual([])
 })
 
 test('review top lists CRITICAL and HIGH only', () => {

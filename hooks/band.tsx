@@ -67,7 +67,7 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
     const due = dueReminders(s.reminders)[0]
     if (!w && due && max >= 14) {
       const tail = `（${reminderWhen(due)}）`
-      return { text: `◷ ${fit(due.text, max - 2 - displayWidth(tail))}${tail}`, color: due.days < 0 ? COLOR.bad : COLOR.attention, bold: true }
+      return { text: `◷ ${fit(due.text, max - 2 - displayWidth(tail))}${tail}`, color: COLOR.attention, bold: true }
     }
     if (!w || max < 10) return null
     const tail = ` 等你${waiting.length > 1 ? ` +${waiting.length - 1}` : ''}`

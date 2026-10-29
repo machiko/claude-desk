@@ -5,7 +5,8 @@ import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../ty
 import { displayWidth, elapsedText, feedOf, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
-import { dueReminders, reminderWhen } from './extras'
+import { paneReminders, reminderWhen } from './extras'
+import type { Reminder } from './extras'
 import { STAGE_COLOR } from './band'
 import { contentWindow, flowRows, scrollHint, wrapText } from './layout'
 import type { ContentWindow } from './layout'
@@ -204,7 +205,44 @@ function label(ui: any, text: string) {
   return <Text color={COLOR.dim} bold>{text}</Text>
 }
 
-/** header：desk 版本＋額度＋更新時間；有到期提醒、容器異常時各加一列；最後一條細線。 */
+/**
+ * header 的提醒：平常收成一列（1 件寫事項，多件寫「提醒 n 件 · 第一條」，後面接第一條的距今天數）；
+ * 展開更多動作（m）時改列全部提醒的全文，太長就換行。過期用提醒色，不用失敗的紅色。
+ */
+function reminderRows(ui: any, view: PaneView, width: number): any[] {
+  const { Box, Text } = ui
+  const list = paneReminders(view.s.reminders)
+  if (!list.length) return []
+  if (view.showAll) return list.flatMap(r => reminderFull(ui, r, width))
+  const first = list[0]!
+  const count = list.length > 1 ? `提醒 ${list.length} 件 · ` : ''
+  const when = reminderWhen(first) ? `  ${reminderWhen(first)}` : ''
+  const text = first.text.replace(/（[^）]*）|\([^)]*\)/g, '').trim()
+  return [
+    <Box flexDirection="row">
+      <Text color={COLOR.attention} bold>{`◷ ${count}`}</Text>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden"><Text color={COLOR.text} wrap="truncate-end">{fit(text, Math.max(4, width - 2 - displayWidth(count) - displayWidth(when)))}</Text></Box>
+      {when ? <Text color={isOverdue(first) ? COLOR.attention : COLOR.faint}>{when}</Text> : null}
+    </Box>,
+  ]
+}
+
+const isOverdue = (r: Reminder) => r.days !== null && r.days < 0
+
+/** 展開時的一條提醒：「◷ MM-DD 事項  還有 n 天」，沒日期的不寫日期與天數；換行的接續列縮排對齊。 */
+function reminderFull(ui: any, r: Reminder, width: number): any[] {
+  const { Box, Text } = ui
+  const when = reminderWhen(r)
+  const body = `${r.date ? `${r.date.slice(5)} ` : ''}${r.text}${when ? `  ${when}` : ''}`
+  return wrapText(body, width - 2).map((l, i) => (
+    <Box flexDirection="row">
+      <Text color={COLOR.attention} bold>{i ? '  ' : '◷ '}</Text>
+      <Text color={COLOR.text}>{l}</Text>
+    </Box>
+  ))
+}
+
+/** header：desk 版本＋額度＋更新時間；有提醒時加一列（m 展開時列全部）、容器異常時加一列；最後一條細線。 */
 function headerRows(ui: any, view: PaneView, width: number): any[] {
   const { Box, Text } = ui
   const s = view.s
@@ -224,17 +262,7 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
       <Text color={COLOR.faint}>{`   ${time}`}</Text>
     </Box>,
   ]
-  for (const r of dueReminders(s.reminders)) {
-    const when = `  ${reminderWhen(r)}`
-    const text = r.text.replace(/（[^）]*）|\([^)]*\)/g, '').trim()
-    rows.push(
-      <Box flexDirection="row">
-        <Text color={r.days < 0 ? COLOR.bad : COLOR.attention} bold>{`◷ ${r.date.slice(5)} `}</Text>
-        <Box flexGrow={1} flexShrink={1} overflow="hidden"><Text color={COLOR.text} wrap="truncate-end">{fit(text, Math.max(4, width - 9 - displayWidth(when)))}</Text></Box>
-        <Text color={COLOR.faint}>{when}</Text>
-      </Box>,
-    )
-  }
+  rows.push(...reminderRows(ui, view, width))
   const k = s.containers
   if (k && (k.error || k.down.length || k.unhealthy.length)) {
     rows.push(k.error ? <Text color={COLOR.attention} wrap="truncate-end">{`容器  ${k.error}`}</Text>
