@@ -161,6 +161,10 @@ test('test_v_and_w_buttons_and_help_use_new_names', async ($, on) => {
   await ui.press({ key: `case-${CARD_B}-review` })
   await clock.settle()
   expect(data.toasts).toContain('Beta：驗收已派出')
+  // 動態列：派工種類名稱組出來的「派驗收（<模型>）」
+  const sent = (await ui.findAll({ type: 'Text' })).map((n: any) => String(n.text ?? ''))
+  expect(sent.some(s => /Beta 派驗收（.+）/.test(s))).toBe(true)
+  expect(sent.some(s => /派審查/.test(s))).toBe(false)
 
   // 不能派的時候用派工種類名稱說明（Beta 的驗收正在跑）
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
@@ -253,4 +257,5 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
   expect(intro.find(l => l.startsWith('  3 '))).toMatch(/^ {2}3 測試：/)
   expect(intro.find(l => l.startsWith('  4 '))).toMatch(/^ {2}4 驗收：自動派驗收/)
   expect(TUTORIAL_INTRO).not.toMatch(/ {2}[34] (檢查|審查)：/)
+  expect(TUTORIAL_INTRO).not.toMatch(OLD_HINT)
 })
