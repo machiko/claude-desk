@@ -38,6 +38,8 @@ export type DispatchSettings = {
   updateCheck: '' | 'off'
   /** 同時在跑的工作桌背景 Agent 上限（整台機器一起算）；超過的派工排隊。0＝不限。 */
   maxAgents: number
+  /** 審查過關（含免審查過關）後自動派推送 Agent push 並開 PR（PR 已開只 push）；只認 JSON 的 true，建議寫在專案的 dispatch.json。 */
+  autoPr: boolean
 }
 
 export const DEFAULT_MAX_AGENTS = 3
@@ -61,7 +63,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -88,6 +90,8 @@ export function parseSettings(text: string | null): DispatchSettings {
     out.updateCheck = d?.updateCheck === false || str(d?.updateCheck).toLowerCase() === 'off' ? 'off' : ''
     // 非負整數照用（0＝不限）；負數、小數、字串都當沒寫。
     out.maxAgents = Number.isInteger(d?.maxAgents) && d.maxAgents >= 0 ? d.maxAgents : DEFAULT_MAX_AGENTS
+    // 字串 "true"、數字 1 都算沒開：自動推送會寫遠端，只認明確的 true。
+    out.autoPr = d?.autoPr === true
   } catch { /* 壞掉的設定檔當作沒有。 */ }
   return out
 }
@@ -180,8 +184,11 @@ function cardRules(settings: DispatchSettings, root: string, canPush = false, pu
 /** 會改程式的派工（繼續、回覆、修正）多這一條：照規格做，審查會逐條對照驗收情境。 */
 const SPEC_RULE = '實作或修正前先讀卡片「## 規格」：非目標不要做；每條驗收情境（AC-n）都要做到，並有測試斷言到「則」那欄的結果，測試名稱照「對應測試」欄。規格做不到、互相矛盾或需要改，寫進 等你 後結束這一輪，不要自己改規格。有實作計畫時照「### 實作計畫」做，不用再停下來交計畫（規格確認時已一起確認）；實際改的檔跟計畫不同時在歷程寫明原因，要改範圍或做法寫進 等你。卡片沒有規格段就照下一步做。'
 
-/** 推送只動遠端與卡片：審查結論（關卡）與完成檢查是之前判定的，改了六段會退回去。 */
-const PUBLISH_CARD_RULE = '這次只推送：關卡與檢查欄保持原樣；狀態寫 PR 與 CI 的現況，下一步寫等 CI 與合併。'
+/**
+ * 推送只動遠端與卡片：審查結論（關卡）與完成檢查是之前判定的，改了六段會退回去。
+ * 過關時「等你」可能還有題目（例如 MEDIUM 要不要修），自動開 PR 照樣派：原題目保留，要加的（開不了 PR 時的網址）接在後面。
+ */
+const PUBLISH_CARD_RULE = '這次只推送：關卡與檢查欄保持原樣；狀態寫 PR 與 CI 的現況，下一步寫等 CI 與合併。等你 原有的題目保留，要加的用「；」接在後面，不覆寫。'
 /** 「⇡ 開 PR」要推送 Agent 做的事；`target` 是基準分支（可帶 origin/），找不到就空白。開不了 PR 的平台寫進等你。 */
 export const openPrRequest = (branch: string, target: string) =>
   `push ${branch} 並${target ? `對 ${target.replace(/^origin\//, '')} ` : ''}開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束`
@@ -363,13 +370,16 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
 export type QueueOpts = { text?: string; fix?: FixReason; auto?: boolean; security?: boolean }
 export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOpts; at: number }
 
+export const NO_PUSH_NEEDED = '已不需要推送（PR 已開且分支已是最新，或不在合併段）'
+
 /**
  * 排隊的這筆現在不能派的原因；空字串代表可以派。手動排的照手動派工重新判斷；自動排的要流程還在（這個對話的、沒停下）、
- * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑。
+ * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑。自動排的推送（審查過關後）不看流程：過關後流程不再動，只看還要不要推。
  */
 export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
   if (!entry.opts.auto) return dispatchRefusal(c, entry.kind)
   if (agentBusy(c)) return BUSY
+  if (entry.kind === 'publish') return isMerged(c) ? '已經合併' : !needsPr(c) && !needsPush(c) ? NO_PUSH_NEEDED : ''
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
   if (run.stopped) return `流程已暫停（${run.stopped}）`
   if (specBlocks(c)) return specGapReason(c)
