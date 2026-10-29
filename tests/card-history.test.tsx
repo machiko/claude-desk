@@ -349,3 +349,21 @@ test('issue line: latest error or warning of the focused case or of no case, whi
   expect(issueOf([ev('desk 已更新', 'success', 7), ev('A 派工失敗', 'error', 2, CARD_A)], alpha)?.text).toBe('A 派工失敗')
   expect(issueOf([ev('desk 無法更新', 'warning', 4)], null)?.text).toBe('desk 無法更新')
 })
+
+/** 審查 MEDIUM：已解掉的「等你」或關卡警告不再留在問題列；淡色事件（Agent 已完成）不會收掉停止原因。 */
+test('test_issue_line_drops_resolved_state_warnings_and_ignores_faint_events', () => {
+  const ev = (text: string, tone: FeedEvent['tone'], at: number, card?: string, whileState?: FeedEvent['whileState']): FeedEvent => ({ at, text, tone, ...(card ? { card } : {}), ...(whileState ? { whileState } : {}) })
+  const at = (state: Case['state']) => ({ statusPath: CARD_A, state }) as Case
+
+  const asked = [ev('A 等你：要嗎？', 'warning', 3, CARD_A, 'ask')]
+  const gated = [ev('A 進入關卡：spec', 'warning', 3, CARD_A, 'gate')]
+  const stopped = [ev('A Agent 已完成', 'subtle', 5, CARD_A), ev('A 流程已暫停：Agent 被停掉', 'error', 4, CARD_A)]
+
+  expect(issueOf(asked, at('ask'))?.text).toBe('A 等你：要嗎？')
+  expect(issueOf(asked, at('ready'))).toBeNull()
+  expect(issueOf(gated, at('gate'))?.text).toBe('A 進入關卡：spec')
+  expect(issueOf(gated, at('running'))).toBeNull()
+  expect(issueOf(stopped, at('failed'))?.text).toBe('A 流程已暫停：Agent 被停掉')
+  expect(issueOf([ev('A 檢查通過', 'success', 6, CARD_A), ...stopped], at('ready'))).toBeNull()
+  expect(issueOf([ev('desk 加入', 'subtle', 9), ev('desk 無法更新', 'warning', 8)], at('ready'))?.text).toBe('desk 無法更新')
+})

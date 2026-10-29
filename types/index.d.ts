@@ -104,7 +104,8 @@ export type Snapshot = {
 export type HistoryEntry = { date?: string; text: string }
 
 /** 一筆動態；card：屬於哪件（卡片路徑），版本更新這類不屬於任何一件的不填。 */
-export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' | 'error' | 'subtle' | 'suggestion'; card?: string }
+/** whileState：描述卡片狀態的警告（等你、等回覆、等批准、關卡）；卡片離開這個狀態後，問題列就不再顯示它。 */
+export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' | 'error' | 'subtle' | 'suggestion'; card?: string; whileState?: 'ask' | 'reply' | 'approve' | 'gate' }
 
 /** 決策的選擇：`任務路徑\n等你全文` → 決策序號 → 選項鍵。等你改寫就作廢。 */
 export type Picks = Record<string, Record<string, string>>
