@@ -36,6 +36,8 @@ import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAge
 import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 
 const PANE = 'desk'
+/** 自動派解衝突卻沒派出（不是排進隊伍）時流程停下的原因；失敗原因在動態「解衝突失敗：…」那筆。 */
+const CATCHUP_NOT_SENT = '解衝突沒派出（失敗原因見動態），排除後在對話合併基準分支、解衝突'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const isPaneOpen = atom({ plugin: 'desk', key: 'isPaneOpen' } as const, false)
 const isBandHidden = atom({ plugin: 'desk', key: 'isBandHidden' } as const, false)
@@ -318,18 +320,23 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
 
 /**
  * 合併段跟基準分支有衝突、這個對話的流程已過關：自動派解衝突 Agent（同一個 HEAD 只試一次）。不自動派的原因（catchupHold）由面板寫在「輪到你」。
- * 等你有內容、有 Agent 在跑或排隊或啟動中、檢查在跑都先不派。派之前再看一次 worktree 乾淨，記下這次的 HEAD，滿了照派工規則排隊。
- * 回傳有沒有派（含排進隊伍）。合併 commit 之後由「審查通過後有新 commit」的重新檢查與審查接手。
+ * 等你有內容、有 Agent 在跑或排隊或啟動中、檢查在跑都先不派。派之前再看一次 worktree 乾淨，滿了照派工規則排隊。
+ * 這個 HEAD 試過了（catchupHead）在 dispatch 真的派出 Agent 時才記：排隊中、隊伍被清空、派不出去都不算。
+ * 派不出去（不在隊伍裡）就把流程停下寫原因，不然每次重新整理都會再派一次。
+ * 回傳有沒有動作（派出、排進隊伍或停下流程）。合併 commit 之後由「審查通過後有新 commit」的重新檢查與審查接手。
  */
 async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRun, mine: string, at: number, agentBusy: boolean): Promise<boolean> {
   const conflict = c.conflict
   if (!conflict || run.owner !== mine || !run.passed || c.chain?.stale || catchupHold(c) || !saysNone(c.ask) || !c.git) return false
   if (agentBusy || c.agent?.asks || c.statusPath in (await read($, verifyingAtom)) || verifyPending(c.statusPath) || isAgentQueued(c.statusPath) || await starting($, c.statusPath)) return false
   if (tutorial || (await worktreeMark($, c.root)).files) return false
-  const head = c.git.head
-  await saveChain($, normalizeRoot(c.root), r => r ? { ...r, catchupHead: head } : r)
   await feedPush($, [{ at, text: catchupFeed(c.name, conflict.into, conflict.files.length), tone: 'suggestion', card: c.statusPath }])
-  await dispatch($, options, { ...c, state: 'ready' }, 'catchup', { auto: true, text: conflict.ref })
+  const sent = await dispatch($, options, { ...c, state: 'ready' }, 'catchup', { auto: true, text: conflict.ref })
+  if (!sent && !isAgentQueued(c.statusPath)) {
+    await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, CATCHUP_NOT_SENT) : r)
+    await feedPush($, [{ at, text: `${c.name} 流程已暫停：${CATCHUP_NOT_SENT}`, tone: 'error', card: c.statusPath }])
+    notify($, `${c.name}：流程已暫停，${CATCHUP_NOT_SENT}`)
+  }
   return true
 }
 
@@ -720,6 +727,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
     // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。
     if (kind === 'review' && probed) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: probed.head, securityBranch: probed.branch } : { reviewHead: probed.head, reviewBranch: probed.branch }) } : r)
+    // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。
+    const tried = c.git?.head
+    if (kind === 'catchup' && opts.auto && tried) await saveChain($, rootKey, r => r ? { ...r, catchupHead: tried } : r)
     const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }

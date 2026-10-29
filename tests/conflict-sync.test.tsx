@@ -230,6 +230,73 @@ test('test_conflict_dispatch_is_held_or_queued_when_chain_off_risky_dirty_or_ful
   await ui.unmount()
 })
 
+/** 派不出去（claude --bg 失敗）不算試過：流程停下寫原因，不說「試過一次沒解開」，也不每次重新整理都重派（審查 MEDIUM，D-05）。 */
+test('test_conflict_attempt_is_not_recorded_when_launch_fails', { timeoutMs: SLOW_MS }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const seen = watchFeed(on)
+  conflictingBeta(data, clock)
+  data.launch = async () => result(1, '', 'claude: 無法啟動背景 Agent')
+
+  await refresh($, clock, 2)
+  await refresh($, clock, 3)
+
+  expect(data.launches.length).toBe(1)
+  const chain = (data.store.chains as any)[BETA]
+  expect(chain.catchupHead).toBeUndefined()
+  expect(chain.stopped).toContain('解衝突沒派出')
+  expect(seen.feed.some(e => String(e.text).includes('解衝突失敗：claude: 無法啟動背景 Agent'))).toBe(true)
+  const ui = await $.ui.mount(PANE(100))
+  const shown = await screen(ui)
+  expect(shown).not.toContain(flat('試過一次沒解開'))
+  expect(shown).toContain(flat('與 main 有衝突：在對話把 main 合併進來、解衝突並 commit（流程已暫停）'))
+  await ui.unmount()
+})
+
+/** 排進隊伍後隊伍被清空（/desk off）不算試過：重開工作桌、有空位時照樣自動派一次（審查 MEDIUM，D-05）。 */
+test('test_conflict_attempt_is_not_recorded_when_queue_is_cleared', { timeoutMs: SLOW_MS }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const seen = watchFeed(on)
+  conflictingBeta(data, clock)
+  const others = [1, 2, 3].map(i => ({ id: `f000000${i}`, kind: 'background', cwd: `/home/u/wt/other${i}`, name: `desk-zz-${i}`, sessionId: `f000000${i}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 }))
+  data.agents = others
+
+  await refresh($, clock, 2)
+  expect(seen.feed.filter(e => e.text === 'Beta 自動派解衝突排隊中（第 1 位）').length).toBe(1)
+  expect((data.store.chains as any)[BETA].catchupHead).toBeUndefined()
+
+  await $.command.run({ command: 'desk', args: 'off' } as any)
+  await clock.settle()
+  data.agents = []
+  await refresh($, clock, 3)
+
+  expect(data.launches.length).toBe(1)
+  expect(data.launches[0].init?.cwd).toBe(BETA)
+  expect((data.store.chains as any)[BETA].catchupHead).toBe('h1')
+  await refresh($, clock, 2)
+  expect(data.launches.length).toBe(1)
+})
+
+/** 背景 fetch 不停下來問帳密：關掉 git 的提示，ssh 用 BatchMode 並沿用你設的 ssh 指令（審查 MEDIUM，D-05）。 */
+test('test_background_fetch_never_prompts_for_credentials', { timeoutMs: SLOW_MS }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  conflictingBeta(data, clock)
+  data.git[BETA] = { ...data.git[BETA], conflicts: [] }
+  const fetches: any[] = []
+  data.exec = (e: any) => {
+    if (e.argv[0] === 'git' && e.argv[3] === 'fetch') fetches.push(e)
+    if (e.argv[0] === 'git' && e.argv.slice(3).join(' ') === 'config --get core.sshCommand') return result(0, 'ssh -i ~/.ssh/work_key\n')
+    return null
+  }
+
+  await refresh($, clock, 2)
+
+  expect(fetches.length).toBeGreaterThan(0)
+  for (const e of fetches) {
+    expect(e.init?.env?.GIT_TERMINAL_PROMPT).toBe('0')
+    expect(e.init?.env?.GIT_SSH_COMMAND).toBe('ssh -i ~/.ssh/work_key -o BatchMode=yes')
+  }
+})
+
 /** AC-5 */
 test('test_desk_only_fetches_and_dry_runs_and_skips_cards_outside_the_merge_stage', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)

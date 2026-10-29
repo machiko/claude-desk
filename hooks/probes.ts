@@ -325,6 +325,19 @@ export async function conflictProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>
   return { ...tried, dirty: (await worktreeMark($, c.root)).files }
 }
 
+/**
+ * 背景 fetch 不能停下來問帳密（沒人在看，只會卡到逾時）：關掉 git 的帳密提示；ssh 加 BatchMode，
+ * 沿用你設的 ssh 指令（GIT_SSH_COMMAND 或 core.sshCommand）。設了舊式 GIT_SSH 的不蓋掉它。env 疊在原本的環境上，ssh-agent 照用。
+ */
+async function quietFetchEnv($: any, root: string): Promise<Record<string, string>> {
+  if (envText(await $.env.get('GIT_SSH').catch(() => ''))) return { GIT_TERMINAL_PROMPT: '0' }
+  const ssh = envText(await $.env.get('GIT_SSH_COMMAND').catch(() => '')) || await git($, root, ['config', '--get', 'core.sshCommand']) || 'ssh'
+  return { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: `${ssh} -o BatchMode=yes` }
+}
+
+/** 環境變數的值；沒設是空字串。 */
+const envText = (value: unknown) => String(value ?? '').trim()
+
 /** fetch（需要的話）後試合併；undefined＝找不到基準分支（不記），null＝git 回答不了。 */
 async function tryMerge($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: string, cardBase: string, now: number, force: boolean): Promise<Tried | null | undefined> {
   const found = await diffBase($, c, cardBase)
@@ -334,7 +347,7 @@ async function tryMerge($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: stri
   const fetchedAt = fetches.get(c.root)
   if (remote && (force || fetchedAt === undefined || now - fetchedAt >= FETCH_TTL_MS)) {
     fetches.set(c.root, now)
-    await $.process.run(['git', '-C', c.root, 'fetch', '--quiet', '--no-tags', 'origin', remote], { timeoutMs: GIT_NET_TIMEOUT_MS }).catch(() => null)
+    await $.process.run(['git', '-C', c.root, 'fetch', '--quiet', '--no-tags', 'origin', remote], { timeoutMs: GIT_NET_TIMEOUT_MS, env: await quietFetchEnv($, c.root) }).catch(() => null)
   }
   const target = await git($, c.root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
   if (!target) return null
