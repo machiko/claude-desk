@@ -1,5 +1,5 @@
 // 面板分三區：header（desk 版本、額度、更新時間；到期提醒與容器異常）與 footer（現在這件的操作、全域鍵、容器與模型）常駐，
-// 只有 content（現在卡、其他任務進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
+// 只有 content（現在卡、全部任務進度表、最近、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
 import { displayWidth, elapsedText, feedOf, fit, focusCase, hhmm, modelLabel, pad, sorted, summary, ago } from './model'
@@ -313,12 +313,12 @@ function ageText(c: Case, now: number): string {
 }
 
 /**
- * 進度表（其他任務）：標題列放六段的字，每列「數字 圖示 任務名 六段 時間」對齊。
+ * 進度表（全部任務）：標題列放六段的字，每列「數字 圖示 任務名 六段 時間」對齊。
  * 清單列出全部任務（含現在卡那件），數字鍵依完整清單編號，選取前後不變；你選的那件以「▸」開頭並反白。
  */
 function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: PaneActions, focus: Case | null): any[] {
   const { Box, Text, Button } = ui
-  if (!cases.length) return [section(ui, WORD.others, width)]
+  if (!cases.length) return [section(ui, WORD.list, width)]
   const narrow = width < NARROW
   const ages = cases.map(c => ageText(c, view.now))
   const isPickedRow = (c: Case) => !c.demo && view.selected === c.statusPath
@@ -327,7 +327,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
   const heads = (cases.find(c => c.pipeline)?.pipeline?.stages ?? STAGES).map(st => st.label)
   const rows: any[] = []
   // 教學模式的背景是示範任務：標題寫明只能看。
-  const title = cases.some(c => c.demo) ? `${WORD.others}（示範，只能看）` : WORD.others
+  const title = cases.some(c => c.demo) ? `${WORD.list}（示範任務只能看）` : WORD.list
   if (narrow) rows.push(section(ui, title, width))
   else {
     const letters = heads.map(h => pad(h, STAGE_COL)).join('').trimEnd()
@@ -403,7 +403,7 @@ function helpRows(ui: any, view: PaneView, act: PaneActions, width: number): any
   ]
 }
 
-/** content：現在卡、其他任務進度表、最近、說明。寬時現在卡與進度表左右並排，逐列併起來。 */
+/** content：現在卡、全部任務進度表、最近、說明。寬時現在卡與進度表左右並排，逐列併起來。 */
 function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): any[] {
   const { Box, Text } = ui
   const s = view.s

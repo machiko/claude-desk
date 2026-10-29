@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 declare const console: { log: (...args: unknown[]) => void }
 import { fixture, BAND, PANE, result, text, flat } from './fixture'
-import { setFields, tutorialPaths } from '../hooks/tutorial'
+import { setFields, tutorialPaths, TUTORIAL_INTRO } from '../hooks/tutorial'
 
 const P = tutorialPaths('/home/u')
 const DEMO_BETA = '/demo/beta/.desk/CARD.md'
@@ -26,10 +26,12 @@ test('the tutorial shows the sample cases as a read-only background, with the le
   const screen = flat(text(await ui.drawn()))
   // 現在卡是教學那件，輪到你的那句是教學的
   expect(screen).toContain(flat('看過規格（o 開卡片）後按 t 確認'))
-  // 其他任務是示範的那幾件，標題寫明只能看
+  // 全部任務裡示範的那幾件，標題寫明示範任務只能看
   expect(screen).toContain('部署流程改版')
   expect(screen).toContain('訂單匯出CSV')
-  expect(screen).toContain(flat('示範，只能看'))
+  expect(screen).toContain(flat('全部任務（示範任務只能看）'))
+  expect(screen).not.toContain(flat('示範，只能看'))
+  expect(screen).not.toContain('其他任務')
   // 摘要列與狀態列跟著教學那件，不被示範任務搶走
   const band = await $.ui.mount(BAND(100))
   const bandText = flat(text(await band.drawn()))
@@ -46,7 +48,7 @@ test('the tutorial shows the sample cases as a read-only background, with the le
 test('sample cases are not clickable: no row button, commands cannot find them', async ($, on) => {
   const { data } = await startTutorial($, on)
   const ui = await $.ui.mount(PANE(72))
-  // 其他任務那幾列只是畫面，沒有按鈕、沒有數字鍵
+  // 示範任務那幾列只是畫面，沒有按鈕、沒有數字鍵
   expect(await ui.find({ key: `row-${DEMO_BETA}` })).toBeUndefined()
   expect(flat(text(await ui.drawn()))).toContain('訂單匯出CSV')
   // 現在卡一直是教學那件
@@ -107,4 +109,18 @@ test('starting the tutorial selects the lesson case; ending it clears the select
   await clock.settle()
   await $.prompt.submit({ text: '結束了' } as any)
   expect(data.submitted[2].context ?? []).toEqual([])
+})
+
+test('the tutorial lesson calls the list all tasks and says only demo tasks are read-only', async ($, on) => {
+  await startTutorial($, on)
+  // 教學在跑時再輸入一次 /desk tutorial，回應一樣是教學說明。
+  const r = await $.command.run({ command: 'desk', args: 'tutorial' } as any)
+  // 說明清單的那段：稱這張表為「全部任務」，裡面有教學這件與示範任務，只有示範任務只能看。
+  const lesson = TUTORIAL_INTRO.split('\n').find(l => l.includes('全部任務'))
+  expect(lesson).toBeDefined()
+  expect(lesson).toContain('教學這件')
+  expect(lesson).toContain('示範任務')
+  expect(lesson).toContain('示範任務只能看')
+  expect(TUTORIAL_INTRO).not.toContain('其他任務')
+  expect(String((r as any).text)).toContain(lesson!)
 })
