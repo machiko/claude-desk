@@ -52,7 +52,7 @@ test('stale ask: a superseded waiting agent does not hold the task', async ($, o
   expect((await ui.find({ key: `${PREFIX}review` }))?.props?.hotkey).toBe('w')
   expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
   expect(shown).toContain(flat('▶ 輪到你'))
-  expect(shown).toContain(flat('可按 w 派獨立審查'))
+  expect(shown).toContain(flat('可按 w 派獨立驗收'))
   expect(shown).not.toContain(flat('按 y 回覆'))
   expect(shown).not.toContain(flat('Agent 等待'))
   await ui.unmount()
