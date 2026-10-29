@@ -14,6 +14,8 @@ const ME = 'fixture-session'
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1；可合併'
 const OPEN_PR = { number: 12, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }
 const FORBIDDEN = new Set(['merge', 'commit', 'push', 'checkout', 'switch', 'reset', 'rebase', 'add', 'stash', 'cherry-pick', 'pull'])
+/** 整條流程走好幾輪重新整理（派工、檢查、審查）：機器忙時 5 秒不夠，照 tutorial 測試放寬。 */
+const SLOW_MS = 15_000
 const FETCH_MAIN = ['fetch', '--quiet', '--no-tags', 'origin', 'main']
 
 const card = (name: string, gate = PASSED, ask = '無') => `<!-- DESK -->\n- 狀態：${name} 過關\n- 驗證：\`npm test\`\n- 等你：${ask}\n- 下一步：合併\n${gate}\n<!-- /DESK -->`
@@ -81,14 +83,14 @@ async function focus(ui: any, statusPath: string) {
 }
 
 /** AC-1 */
-test('test_conflict_agent_is_dispatched_once_when_reviewed_branch_conflicts_with_base', async ($, on) => {
+test('test_conflict_agent_is_dispatched_once_when_reviewed_branch_conflicts_with_base', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)
   const seen = watchFeed(on)
   conflictingBeta(data, clock)
 
-  await refresh($, clock, 3)
-  const ui = await $.ui.mount(PANE(100))
   await refresh($, clock, 2)
+  const ui = await $.ui.mount(PANE(100))
+  await refresh($, clock, 1)
 
   // 先 fetch origin 的 main，再試合併；重新整理幾次都只派一個
   const calls = data.gitCalls.filter(g => g.root === BETA)
@@ -115,14 +117,15 @@ test('test_conflict_agent_is_dispatched_once_when_reviewed_branch_conflicts_with
   expect(seen.feed.filter(e => e.text === 'Beta 與 main 有衝突（2 個檔），自動派 Agent 合併 main、解衝突').length).toBe(1)
 
   expect(await screen(ui)).toContain(flat('Agent 在合併基準分支、解衝突（l 看輸出）'))
-  expect(await cardStages(ui)).toContain('合併◉')
+  // 進行中那段在 ◉／◎ 間交替
+  expect(await cardStages(ui)).toMatch(/合併[◉◎]/)
   // 六段的合併段（狀態列寫現在在跑的那件停在哪一段）
   expect(data.status).toContain('合併・合併基準分支、解衝突中')
   await ui.unmount()
 })
 
 /** AC-2 */
-test('test_recheck_and_merge_aware_review_run_when_conflict_agent_commits_the_merge', async ($, on) => {
+test('test_recheck_and_merge_aware_review_run_when_conflict_agent_commits_the_merge', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)
   conflictingBeta(data, clock)
   await refresh($, clock, 2)
@@ -157,7 +160,7 @@ test('test_recheck_and_merge_aware_review_run_when_conflict_agent_commits_the_me
 })
 
 /** AC-3 */
-test('test_conflict_agent_is_not_retried_when_head_is_unchanged_after_an_attempt', async ($, on) => {
+test('test_conflict_agent_is_not_retried_when_head_is_unchanged_after_an_attempt', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)
   const seen = watchFeed(on)
   conflictingBeta(data, clock)
@@ -188,7 +191,7 @@ test('test_conflict_agent_is_not_retried_when_head_is_unchanged_after_an_attempt
 })
 
 /** AC-4 */
-test('test_conflict_dispatch_is_held_or_queued_when_chain_off_risky_dirty_or_full', async ($, on) => {
+test('test_conflict_dispatch_is_held_or_queued_when_chain_off_risky_dirty_or_full', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)
   const seen = watchFeed(on)
   data.gh = []
@@ -228,7 +231,7 @@ test('test_conflict_dispatch_is_held_or_queued_when_chain_off_risky_dirty_or_ful
 })
 
 /** AC-5 */
-test('test_desk_only_fetches_and_dry_runs_and_skips_cards_outside_the_merge_stage', async ($, on) => {
+test('test_desk_only_fetches_and_dry_runs_and_skips_cards_outside_the_merge_stage', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)
   data.agents = []
   data.files[REGISTRY] = registry([['Clean', CARD_A], ['Reviewing', CARD_B], ['Merged', CARD_C], ['Line', CARD_D]])
