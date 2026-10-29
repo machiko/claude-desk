@@ -334,6 +334,9 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
 }
 
+// 專案可以用 review.template 換掉契約檔，換了也要拿得到這條，所以放在提示裡。
+const MEDIUM_RULE = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）才在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」。兩種都算進關卡的 MEDIUM 數。'
+
 function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
   const scope = r?.base && r.recheck
@@ -348,6 +351,7 @@ function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): s
     ...(r?.pitfalls ? [`先讀專案常犯錯誤清單 ${r.pitfalls}，逐條對照這次的改動。`] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
     `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
+    MEDIUM_RULE,
     '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>',
     ...(r?.pitfalls && r.history ? [`審完後看 ${r.history} 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 ${r.pitfalls} 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。`] : []),
     '不改程式、不 commit。',

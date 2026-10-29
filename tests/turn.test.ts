@@ -280,3 +280,22 @@ test('ship turn says archive once the tag exists without a release gate', () => 
   expect(shipTurn(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後部署並按 u 確認上線' })
   expect(shipTurn(mk({ gate: 'release：v0.29.0' }, { ...merged, tag: 'v0.29.0' }))).toEqual({ who: 'you', text: '部署 v0.29.0 後按 u 確認上線；確認後歸檔', key: 'u' })
 })
+
+/** review-medium-record AC-3、AC-4：審查過關、MEDIUM 只剩記錄、不修的 → 直接開 PR 或合併；等你有 MEDIUM 那題時照舊要你選。 */
+test('turn: a passed review with only recorded MEDIUM goes straight to open PR or merge', () => {
+  const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 1；可合併'
+  const noPr = mk({ gate })
+  expect(noPr.pipeline?.current).toBe('merge')
+  expect(noPr.pipeline?.note).toBe('可開 PR')
+  expect(turnOf(noPr)).toEqual({ who: 'you', text: '按 ⇡ 開 PR 派 Agent push 並開 PR' })
+  expect(ids(noPr)).toEqual(['open', 'open-pr'])
+  expect(stageActions(noPr).has('fill')).toBe(false)
+
+  const merging = mk({ gate }, { pr: { id: 12, state: 'OPEN', ci: 'pass' }, gitState: { ahead: 0, behind: 0, changed: 0, untracked: 0, upstream: true } })
+  expect(turnOf(merging)).toEqual({ who: 'you', text: '合併 PR #12（p 在瀏覽器開啟）；合併後打 tag 發版', key: 'p' })
+
+  // 對照組：可能影響行為的 MEDIUM 照舊寫進等你，輪到你是選選項填入
+  const asked = mk({ gate, ask: '審查 MEDIUM 2 條（漏處理空清單）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格' })
+  expect(turnOf(asked)).toMatchObject({ who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' })
+  expect(stageActions(asked).has('fill')).toBe(true)
+})
