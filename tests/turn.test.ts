@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
+import { dispatchable, dispatchRefusal } from '../hooks/dispatch'
 import { shipTurn, stageActions, turnOf } from '../hooks/turn'
 import type { Case, Verify } from '../types'
 import { fixture, CARD_B, PANE, REGISTRY, flat, text } from './fixture'
@@ -113,6 +114,27 @@ test('a review next step at the build stage asks for v then w, not g', () => {
     const chained = mk({ next }, { chain: { round: 0, lastKind: 'continue', autoReview: true } })
     expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步是審查：按 v 執行完成檢查，通過後自動審查', key: 'v' })
     expect(ids(chained)).toEqual(['open', 'verify'])
+  }
+})
+
+test('a review next step after a failed check still lets g fix it', () => {
+  // 檢查失敗：「輪到你」叫你按 g 修正，g 就要派得出去，不能被「下一步是審查」擋掉
+  for (const next of ['派審查：/desk review 更多動作自動收回', '按 w 派審查', '等審查']) {
+    const c = mk({ next }, {}, { ...passed, ok: false, exitCode: 1 })
+    expect(turnOf(c)).toEqual({ who: 'you', text: '完成檢查未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' })
+    expect(ids(c)).toContain('continue')
+    expect(dispatchable(c)).toContain('continue')
+    expect(dispatchRefusal(c, 'continue')).toBe('')
+  }
+})
+
+/** AC-4 */
+test('a next step that changes code and only mentions review still says press g', () => {
+  for (const next of ['依 .task/REVIEW.md 的意見修正', '修正審查的 HIGH', '等審查通過後修 bug', '派審查（補完 AC-3 的測試後）', '審查（先修 HIGH）', '派審查: /desk review 後修正 HIGH']) {
+    const c = mk({ next })
+    expect(turnOf(c)).toEqual({ who: 'you', text: `按 g 派 Agent：${next}`, key: 'g' })
+    expect(ids(c)).toContain('continue')
+    expect(dispatchable(c)).toContain('continue')
   }
 })
 

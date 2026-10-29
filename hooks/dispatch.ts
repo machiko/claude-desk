@@ -221,9 +221,13 @@ const IDLE_WAIT = '(?:(?:自動|完成)?檢查(?:結果|通過)?|(?:程式碼|�
 const IDLE_PRESS_V = '(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:完成)?檢查)?'
 const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|開\\s*PR|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
 
-/** 派審查的寫法：「（派）（獨立）審查」可接括號或「：/desk review …」；整段是 `/desk review …`；「按 w（派審查）」。整段比對，「修正審查的 HIGH」不算。 */
+/**
+ * 派審查的寫法：「（派）（獨立）審查」可接按鍵註記「（w）」或「：/desk review …」；整段是 `/desk review …`；「按 w（派審查）」。
+ * 整段比對，「修正審查的 HIGH」不算；`/desk review` 後面的說明有修／補／改／寫／實作，是要改程式，也不算。
+ */
 const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?審查'
-const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(][^）)]*[）)])?(?:\\s*[:：]\\s*/desk\\s+review\\b.*)?|/desk\\s+review\\b.*|按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
+const REVIEW_CMD = '/desk\\s+review(?:\\s+(?!.*(?:修|補|改|寫|實作)).*)?'
+const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(]\\s*(?:按\\s*)?[wW]\\s*[）)])?(?:\\s*[:：]\\s*${REVIEW_CMD})?|${REVIEW_CMD}|按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
 export const REVIEW_NEXT = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
 
 const nextParts = (next: string) => next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
@@ -257,7 +261,8 @@ export function dispatchable(c: Case): DispatchKind[] {
   // 規格段還是範本、六段停在規格段：一樣只能同步（已經審查過、合併、打 tag 的不擋）。
   if (specBlocks(c)) return ['sync']
   const out: DispatchKind[] = []
-  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && !idleNext(c.next)) out.push('continue')
+  // 檢查失敗時「輪到你」叫你按 g 修正：下一步只剩等待或派審查也照樣能派，不然 g 是死路。
+  if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && (c.state === 'failed' || !idleNext(c.next))) out.push('continue')
   if ((reviewTask(c) || c.verify) && !isReleaseLine(c)) out.push('review')
   // 推送只在合併段、還要 push 或開 PR 時；高風險改動也能派，面板上第一次按只提醒先看審查檔。
   if (needsPr(c) || needsPush(c)) out.push('publish')

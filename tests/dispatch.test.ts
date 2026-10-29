@@ -237,7 +237,7 @@ test('a review next step refuses continue and points to v and w', () => {
 })
 
 test('idle next: a next step with real work is still dispatched', () => {
-  for (const next of ['等檢查；補 AC-3 的測試', '依規格實作', 'push 後開 PR', '依 .task/REVIEW.md 的意見修正', '修正審查的 HIGH', '等審查通過後修 bug', '確認規格', '合併 main 進來', '寫測試']) {
+  for (const next of ['等檢查；補 AC-3 的測試', '依規格實作', 'push 後開 PR', '依 .task/REVIEW.md 的意見修正', '修正審查的 HIGH', '等審查通過後修 bug', '派審查（補完 AC-3 的測試後）', '審查（先修 HIGH）', '派審查: /desk review 後修正 HIGH', '確認規格', '合併 main 進來', '寫測試']) {
     expect(idleNext(next)).toBe('')
     expect(dispatchable(mk(next))).toEqual(['continue', 'review', 'sync'])
     expect(buildPrompt(mk(next), 'continue').startsWith(`依卡片的下一步繼續：${next}`)).toBe(true)
