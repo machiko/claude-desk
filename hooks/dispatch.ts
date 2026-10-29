@@ -333,13 +333,14 @@ export const specGapReason = (c: Case) => `規格沒有驗收情境：先輸入 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 export const PUBLISH_ONLY_AT_MERGE = '只有合併段還要 push 或開 PR 時才能推送'
 const BUSY = 'Agent 仍在執行'
+const APPROVAL_WAIT = 'Agent 在等權限批准'
 
 /** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
 export function replyRefusal(c: Case): string {
   if (c.demo) return '示範任務只能看'
   if (c.manual) return MANUAL
   // 權限提示要到 claude agents 批准；回覆會被當成一則新訊息，不會放行那個工具。
-  if (c.state === 'approve' || approvalWait(c.agent)) return 'Agent 在等權限批准，不是提問'
+  if (c.state === 'approve' || approvalWait(c.agent)) return `${APPROVAL_WAIT}，不是提問`
   if (c.state === 'reply' || agentWaits(c.agent)) return ''
   return c.state === 'running' || c.agent?.status === 'busy' ? BUSY : 'Agent 沒有在等你回覆'
 }
@@ -367,10 +368,11 @@ export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOp
  * 排隊的這筆現在不能派的原因；空字串代表可以派。手動排的照手動派工重新判斷；自動排的要流程還在（這個對話的、沒停下）、
  * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑：自動排的只看真的 Agent（跟 autoChain 跳過的條件同一條），
  * 不看 state——審查有 CRITICAL／HIGH、流程還在時 stateOf 回 running，看 state 會把排隊的修正當成執行中丟掉。
+ * 停在權限提示的 Agent 也算（同一個 worktree 不多開一個），原因寫在等權限批准，你才知道要去批准。
  */
 export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
   if (!entry.opts.auto) return dispatchRefusal(c, entry.kind)
-  if (c.agent && !c.agent.asks) return BUSY
+  if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
   if (run.stopped) return `流程已暫停（${run.stopped}）`
   if (specBlocks(c)) return specGapReason(c)

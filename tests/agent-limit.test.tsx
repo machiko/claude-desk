@@ -392,6 +392,27 @@ test('test_queued_auto_fix_still_refused_while_card_agent_runs', async ($, on) =
   await ui.unmount()
 })
 
+/** 排隊期間 Alpha 有 Agent 停在權限提示：空出名額時照樣不派（同一個 worktree 不多開一個），原因寫在等權限批准（審查 MEDIUM，D-03）。 */
+test('test_queued_auto_fix_refused_with_approval_reason_while_card_agent_waits_for_permission', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueReviewFix(data, clock, h)
+  expect(data.launches).toHaveLength(0)
+
+  data.agents = [...data.agents, { ...busy('helper-agent', ALPHA), status: 'waiting', state: 'blocked', waitingFor: 'permission prompt' }]
+  h.finishOne()
+  await h.refresh(); await h.step()
+
+  expect(data.launches).toHaveLength(0)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  const shown = await screen(ui)
+  expect(shown).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：Agent 在等權限批准'))
+  expect(shown).not.toContain(flat('沒有派出：Agent 仍在執行'))
+  await ui.unmount()
+})
+
 /** AC-4（排隊的修正，範圍外）：排隊期間流程換成別的對話的，空出名額時不派、說原因、不動別人的流程。 */
 test('test_queued_review_fix_refused_when_chain_moved_to_other_conversation', async ($, on) => {
   const { data, clock } = fixture(on)
