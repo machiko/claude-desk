@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
 import { appendTo, setFields, tutorialPaths, TUTORIAL_INTRO } from '../hooks/tutorial'
 import { afterSpecRefusal } from '../hooks/dispatch'
-import { specOkCards, specOkTarget } from '../hooks/touch'
+import { specOkCards, specOkMarks, specOkTarget, specOkVerdict } from '../hooks/touch'
 
 // 確認規格後自動派實作：面板按兩次 t 當下派；對話跑 /desk:card spec … ok 的，回合結束後派。核准、排隊、不能派的原因都跟按 g 一樣。
 const ALPHA = '/home/u/wt/alpha'
@@ -64,6 +64,15 @@ function conversationBash(on: any, data: any) {
   on('turn.complete', () => ({ text: '' }))
 }
 const script = (target: string) => `python3 /home/u/.claude/plugins/desk/skills/card/scripts/card.py spec-ok ${target}`
+/** 實機（v2.1.312）Bash 整條回報錯誤時模型讀到的文字：Exit code、stderr、stdout 依序接起來；超過 10,000＋1,024 字只留頭尾各 5,000 字，中間換成「… [n characters truncated] …」。 */
+function bashErrorText(code: number, stderr: string, stdout: string) {
+  const full = [`Exit code ${code}`, stderr, stdout].filter(Boolean).join('\n')
+  if (full.length <= 11_024) return full
+  return `${full.slice(0, 5_000)}\n\n… [${full.length - 10_000} characters truncated] …\n\n${full.slice(-5_000)}`
+}
+/** 串接在 spec-ok 後面、跑很久又失敗的指令：stderr 與 stdout 都超過 5,000 字。 */
+const LONG_STDERR = 'npm WARN deprecated some-package@1.0.0: this package is no longer supported\n'.repeat(100)
+const LONG_STDOUT = '  ✓ exports orders as CSV with the selected columns\n'.repeat(200)
 
 function helpers($: any, clock: any) {
   const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
@@ -312,12 +321,12 @@ test('test_conversation_spec_ok_dispatches_after_turn_ends_when_chained_bash_com
   const { data, clock } = fixture(on)
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
   atSpec(data, clock, [CARD_B, CARD_C])
-  // 照實機：整條指令 exit 不是 0 時 isError 為 true，result 是錯誤文字，模型讀到的輸出（stdout 在 stderr 前面）在 text
+  // 照實機：整條指令 exit 不是 0 時 isError 為 true，result 是錯誤文字，模型讀到的在 text（Exit code、stderr、stdout 依序）
   on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
     const card = SLUG[String(specOkTarget(e))]
-    if (!card || !data.files[card]!.includes(SPEC_GATE)) { const failed = 'Exit code 1\n關卡不是 spec：…（目前是「無」），不動卡片\n'; return { isError: true, result: failed, text: failed } }
+    if (!card || !data.files[card]!.includes(SPEC_GATE)) { const failed = bashErrorText(1, '關卡不是 spec：…（目前是「無」），不動卡片\n', ''); return { isError: true, result: failed, text: failed } }
     confirmCard(data, card)
-    const chained = `Exit code 1\n規格已確認（AC-1～AC-2），關卡清為「無」：${card}\nnpm ERR! Missing script: "lint"\n`
+    const chained = bashErrorText(1, 'npm ERR! Missing script: "lint"\n', `規格已確認（AC-1～AC-2），關卡清為「無」：${card}\n`)
     return { isError: true, result: chained, text: chained }
   })
   on('turn.complete', () => ({ text: '' }))
@@ -367,6 +376,104 @@ test('test_conversation_spec_ok_shows_failure_reason_when_auto_dispatch_throws',
   expect(failed[0]).toContain('store 寫入失敗')
   expect(failed[0]!.endsWith('）：要派時按 g')).toBe(true)
   await ui.unmount()
+})
+
+/**
+ * 對話用串接指令確認規格，後段失敗、stderr 與 stdout 都很長：實機的錯誤文字截掉中間，card.py 成功那一行不在輸出裡；
+ * 卡片確實確認了（關卡清掉、Decisions 與 History 各多一筆），回合結束照樣派實作。card.py 自己失敗（卡片沒變）的，輸出一樣被截，照舊不派、不出聲（審查 MEDIUM，D-05）
+ */
+test('test_conversation_spec_ok_dispatches_when_success_line_is_truncated_from_error_output', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
+  atSpec(data, clock, [CARD_B, CARD_C])
+  const outputs: string[] = []
+  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
+    const card = SLUG[String(specOkTarget(e))]
+    const confirms = !!card && data.files[card]!.includes(SPEC_GATE)
+    if (confirms) confirmCard(data, card)
+    const stdout = confirms ? `規格已確認（AC-1～AC-2），關卡清為「無」：${card}\n${LONG_STDOUT}` : LONG_STDOUT
+    const stderr = confirms ? LONG_STDERR : `關卡不是 spec：…（目前是「無」），不動卡片\n${LONG_STDERR}`
+    const text = bashErrorText(1, stderr, stdout)
+    outputs.push(text)
+    return { isError: true, result: text, text }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  // Beta：card.py 確認成功，後面串的 npm test 失敗；Gamma：關卡早就清成「無」，card.py 自己失敗、後面照跑
+  await $.tool.call({ tool: 'Bash', command: `${script('beta')} && npm test` } as any)
+  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 關卡: '無' })
+  await h.refresh()
+  await $.tool.call({ tool: 'Bash', command: `${script('gamma')}; npm test` } as any)
+  await clock.advance(1000); await clock.settle()
+  // 兩次的輸出都被截掉中間，成功那一行不在模型讀到的文字裡
+  expect(outputs).toHaveLength(2)
+  for (const out of outputs) {
+    expect(out).toContain('characters truncated')
+    expect(out).not.toContain('關卡清為「無」')
+  }
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.launches).toHaveLength(0)
+
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(BETA)
+  expect(data.toasts).toContain('Beta：繼續已派出')
+  expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
+  await ui.unmount()
+})
+
+/** 對話確認規格的輸出被截掉、指令跑完後又讀不到那張卡，判斷不了有沒有確認：不派，回合結束提示「規格可能已確認」與「要派時按 g」，不默默略過（審查 MEDIUM，D-05） */
+test('test_conversation_spec_ok_tells_user_to_press_g_when_card_cannot_be_read_after_truncated_output', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B])
+  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
+    const card = SLUG[String(specOkTarget(e))]!
+    confirmCard(data, card)
+    // 指令跑完後卡片讀不到（權限被改、檔案被搬走）
+    data.unreadable.push(card)
+    const text = bashErrorText(1, LONG_STDERR, `規格已確認（AC-1～AC-2），關卡清為「無」：${card}\n${LONG_STDOUT}`)
+    return { isError: true, result: text, text }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  await $.tool.call({ tool: 'Bash', command: `${script('beta')} && npm test` } as any)
+  await clock.advance(1000); await clock.settle()
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches).toHaveLength(0)
+  const unsure = data.toasts.filter(t => t.startsWith('Beta：規格可能已確認'))
+  expect(unsure).toHaveLength(1)
+  expect(unsure[0]!.endsWith('要派時按 g')).toBe(true)
+  await ui.unmount()
+})
+
+/** 輸出沒有成功那一行時，比對 spec-ok 前後的卡：關卡從 spec 清掉、History 與 Decisions 各多一筆才算確認；手改關卡、讀不到的分開（審查 MEDIUM，D-05） */
+test('test_spec_ok_verdict_confirms_only_when_gate_clears_with_new_history_and_decision', () => {
+  const card = (gate: string, extra = '') => `# Beta\n\n<!-- DESK -->\n- 狀態：…\n- 關卡：${gate}\n<!-- /DESK -->\n\n## Decisions\n\n- D-01 2030-01-05 Alex：只匯出 CSV\n${extra}`
+  const spec = specOkMarks(card('spec：待確認規格'))!
+  const confirmed = specOkMarks(card('無', '- D-02 2030-01-05 Alex Chen：確認規格（AC-1～AC-2，共 2 條）與實作計畫（3 項）\r\n\r\n## History\r\n\r\n- 2030-01-05：規格確認，關卡清為無，可派實作\r\n'))!
+  expect(spec).toEqual({ isSpec: true, history: 0, decisions: 0 })
+  expect(confirmed).toEqual({ isSpec: false, history: 1, decisions: 1 })
+  expect(specOkMarks('不是卡片')).toBeNull()
+
+  expect(specOkVerdict(spec, confirmed)).toBe('confirmed')
+  // 腳本失敗：關卡還是 spec；前面讀不到也一樣
+  expect(specOkVerdict(spec, spec)).toBe('unchanged')
+  expect(specOkVerdict(null, spec)).toBe('unchanged')
+  // 手改清掉關卡、沒有 spec-ok 寫的那兩筆；本來就不是 spec
+  expect(specOkVerdict(spec, specOkMarks(card('無'))!)).toBe('unchanged')
+  expect(specOkVerdict(confirmed, { ...confirmed, history: 2, decisions: 2 })).toBe('unchanged')
+  // 讀不到，判斷不了
+  expect(specOkVerdict(spec, null)).toBe('unsure')
+  expect(specOkVerdict(null, confirmed)).toBe('unsure')
 })
 
 test('afterSpecRefusal blocks open decisions on top of the g rules', () => {

@@ -1,5 +1,6 @@
 // 對話裡的哪些動作會讓面板過期：改了卡片或登錄表、跑了 /desk:card 的腳本、會移動分支的 git。
 // 純函式；register.tsx 在工具呼叫結束後問它，要不要馬上重讀，不用等回合結束或定時更新。
+import { parseCard, parseGate } from './card'
 
 const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 const CARD_FILE = /(^|\/)(\.desk\/CARD\.md|\.console\/STATUS\.md)$/
@@ -54,4 +55,30 @@ const SPEC_OK_DONE = /^規格已確認（[^）\n]*），關卡清為「無」：
 export function specOkCards(call: ToolTouch, stdout: unknown): string[] {
   if (!specOkTarget(call) || typeof stdout !== 'string') return []
   return [...stdout.matchAll(SPEC_OK_DONE)].map(m => m[1]!.trim()).filter(Boolean)
+}
+
+/** card.py spec-ok 成功時在卡片寫的兩筆：History「<日期>：規格確認，關卡清為無，可派實作」、Decisions「D-n <日期> <人>：確認規格（…」。 */
+const SPEC_OK_HISTORY = /^- \d{4}-\d{2}-\d{2}：規格確認，關卡清為無，可派實作\s*$/gm
+const SPEC_OK_DECISION = /^- D-\d+ \d{4}-\d{2}-\d{2} [^\n]*?：確認規格（/gm
+
+/** 卡片跟 spec-ok 有關的樣子：關卡是不是 spec、spec-ok 寫過的 History 與 Decisions 各幾筆。 */
+export type SpecOkMarks = { isSpec: boolean; history: number; decisions: number }
+
+/** 讀卡片全文算出 SpecOkMarks；沒有 DESK／CARD 區塊（不是卡片）回 null。 */
+export function specOkMarks(text: string): SpecOkMarks | null {
+  const card = parseCard(text)
+  if (!card) return null
+  const body = text.replace(/\r\n?/g, '\n')
+  return { isSpec: parseGate(card['關卡'])?.kind === 'spec', history: body.match(SPEC_OK_HISTORY)?.length ?? 0, decisions: body.match(SPEC_OK_DECISION)?.length ?? 0 }
+}
+
+/**
+ * 跑 card.py spec-ok 前後的同一張卡（輸出裡找不到成功那一行時用，例如錯誤文字被截掉中間）：
+ * confirmed：關卡從 spec 變成不是 spec，History 與 Decisions 也各多了 spec-ok 寫的那一筆；unchanged：關卡還是 spec，或沒有這次寫的那兩筆（腳本失敗、別的方式清掉關卡）；
+ * unsure：前後有一邊讀不到，關卡又不是確定還在 spec，判斷不了。
+ */
+export function specOkVerdict(before: SpecOkMarks | null, after: SpecOkMarks | null): 'confirmed' | 'unchanged' | 'unsure' {
+  if (after?.isSpec) return 'unchanged'
+  if (!before || !after) return 'unsure'
+  return before.isSpec && after.history > before.history && after.decisions > before.decisions ? 'confirmed' : 'unchanged'
 }
