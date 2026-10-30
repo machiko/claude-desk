@@ -4,16 +4,17 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
-import { parseRegistry } from './card'
+import { parseRegistry, saysNone } from './card'
 import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
-import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
+import { archiveReview, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToFix, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts } from './dispatch'
-import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline } from './pipeline'
+import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
+import { catchupFeed, catchupHold } from './catchup'
 import { MAX_FIX_ROUNDS, handedOver, judgedAt, nextStep, paused, seenHeads } from './chain'
 import { approveCheck, trustedChecks } from './approve-check'
 import { missingServices } from './containers'
@@ -37,6 +38,8 @@ import { autoPrApplies, autoPrPlan, passWords } from './auto-pr'
 import type { AutoPrPlan } from './auto-pr'
 
 const PANE = 'desk'
+/** 自動派解衝突卻沒派出（不是排進隊伍）時流程停下的原因；失敗原因在動態「解衝突失敗：…」那筆。 */
+const CATCHUP_NOT_SENT = '解衝突沒派出（失敗原因見動態），排除後在對話合併基準分支、解衝突'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const isPaneOpen = atom({ plugin: 'desk', key: 'isPaneOpen' } as const, false)
 const isBandHidden = atom({ plugin: 'desk', key: 'isBandHidden' } as const, false)
@@ -133,7 +136,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查。
       const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       const chain = run
-        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}) }
+        ? { round: run.round, ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
@@ -152,7 +155,11 @@ export async function refresh($: any, options: PluginOptions) {
       const seen = seenHeads(run, probe.git?.branch)
       const into = atMerge ? await mergedProbe($, withState, cardBase, forcePr, seen) : undefined
       const merged = into ? { ...withState, mergedInto: into } : withState
-      const piped = { ...merged, ...(short ? { statusShort: short } : {}), pipeline: stages(merged) }
+      // 合併段、還沒合併、沒有 Agent 在跑（含啟動中）：fetch 基準分支、試合併，有衝突就放進 case 再算六段。按 r 時 fetch 不等五分鐘。
+      const atMergeNow = !tutorial && !into && merged.pr?.state !== 'MERGED' && stages(merged).current === 'merge' && !runningKind(merged)
+      const conflict = atMergeNow ? await conflictProbe($, merged, cardBase, now, forcePr) : undefined
+      const probed = conflict ? { ...merged, conflict } : merged
+      const piped = { ...probed, ...(short ? { statusShort: short } : {}), pipeline: stages(probed) }
       // 已合併之後，最後一次派工殘留的提問不再讓任務等回覆。
       const settled = settleMergedAsk(piped, verifies[row.statusPath])
       return { ...settled, state: finalState(settled) }
@@ -215,7 +222,7 @@ async function noteEnded($: any, list: readonly any[], cases: readonly Case[]) {
     if (!last || last.ended) continue
     const how = endedHow(list, last.launchName)
     if (!how) continue
-    const codeAgent = last.kind === 'continue' || last.kind === 'reply'
+    const codeAgent = last.kind === 'continue' || last.kind === 'reply' || last.kind === 'catchup'
     const mark = codeAgent ? await worktreeMark($, c.root) : undefined
     // 算指紋的這段時間可能剛派了新工：只改還是同一筆的紀錄。
     const all = await loadJobs($)
@@ -272,6 +279,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     }
     // 已經合併：不再自動檢查、審查或修正（之後的 commit 進不了這次合併）。
     const merged = isMerged(c)
+    if (!merged && run && await autoCatchup($, options, c, run, mine, s.at, agentBusy)) { acted = true; continue }
     if (!merged && run?.passed && c.chain?.stale && run.owner === mine && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !isAgentQueued(c.statusPath) && !(c.statusPath in (await read($, launchingAtom)))) {
       await recheck($, key, run, last, mine, s.at)
       await feedPush($, [{ at: s.at, text: `${c.name} 審查通過後有新 commit，自動重新檢查與審查`, tone: 'suggestion', card: c.statusPath }])
@@ -350,6 +358,28 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     }
   }
   if (acted) refreshSoon($, options)
+}
+
+/**
+ * 合併段跟基準分支有衝突、這個對話的流程已過關：自動派解衝突 Agent（同一個 HEAD 只試一次）。不自動派的原因（catchupHold）由面板寫在「輪到你」。
+ * 等你有內容、有 Agent 在跑或排隊或啟動中、檢查在跑都先不派。派之前再看一次 worktree 乾淨，滿了照派工規則排隊。
+ * 這個 HEAD 試過了（catchupHead）在 dispatch 真的派出 Agent 時才記：排隊中、隊伍被清空、派不出去都不算。
+ * 派不出去（不在隊伍裡）就把流程停下寫原因，不然每次重新整理都會再派一次。
+ * 回傳有沒有動作（派出、排進隊伍或停下流程）。合併 commit 之後由「審查通過後有新 commit」的重新檢查與審查接手。
+ */
+async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRun, mine: string, at: number, agentBusy: boolean): Promise<boolean> {
+  const conflict = c.conflict
+  if (!conflict || run.owner !== mine || !run.passed || c.chain?.stale || catchupHold(c) || !saysNone(c.ask) || !c.git) return false
+  if (agentBusy || c.agent?.asks || c.statusPath in (await read($, verifyingAtom)) || verifyPending(c.statusPath) || isAgentQueued(c.statusPath) || await starting($, c.statusPath)) return false
+  if (tutorial || (await worktreeMark($, c.root)).files) return false
+  await feedPush($, [{ at, text: catchupFeed(c.name, conflict.into, conflict.files.length), tone: 'suggestion', card: c.statusPath }])
+  const sent = await dispatch($, options, { ...c, state: 'ready' }, 'catchup', { auto: true, text: conflict.ref })
+  if (!sent && !isAgentQueued(c.statusPath)) {
+    await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, CATCHUP_NOT_SENT) : r)
+    await feedPush($, [{ at, text: `${c.name} 流程已暫停：${CATCHUP_NOT_SENT}`, tone: 'error', card: c.statusPath }])
+    notify($, `${c.name}：流程已暫停，${CATCHUP_NOT_SENT}`)
+  }
+  return true
 }
 
 /**
@@ -741,6 +771,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
     // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。
     if (kind === 'review' && probed) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: probed.head, securityBranch: probed.branch } : { reviewHead: probed.head, reviewBranch: probed.branch }) } : r)
+    // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。
+    const tried = c.git?.head
+    if (kind === 'catchup' && opts.auto && tried) await saveChain($, rootKey, r => r ? { ...r, catchupHead: tried } : r)
     const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }

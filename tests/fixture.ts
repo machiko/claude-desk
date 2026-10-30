@@ -48,7 +48,9 @@ export function fixture(on: any) {
     toasts: [] as string[],
     logs: { bbbbbbbb: '跑測試中\n' } as Record<string, string>,
     launches: [] as any[],
-    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** HEAD 是從這些 commit 長出來的（merge-base --is-ancestor <commit> HEAD）。 */ descends?: string[]; /** rev-list --first-parent <commit>..HEAD 的輸出（沿 HEAD 的第一個父往回走）。 */ branchLine?: string; /** merge-base HEAD <ref> 的回答（分叉點）；預設 base0。 */ forkPoint?: string; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 沒有 upstream 時，rev-list --left-right --count refs/remotes/origin/<分支>...HEAD 的輸出（「落後\t領先」）；沒填＝origin 上沒有這個分支。 */ remoteAb?: string; /** 領先遠端幾個 commit（branch.ab）；預設 0。 */ ahead?: number; /** 幾檔已追蹤但未提交；預設 0。 */ changed?: number; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number; /** 那次 commit 改到的檔案（相對路徑；修改時間放 mtimes）。 */ commitFiles?: string[] }>,
+    git: {} as Record<string, { branch: string; head: string; tag?: string; files?: string[]; /** origin 的網址；預設 Bitbucket。 */ remote?: string; /** for-each-ref origin/release/ 的輸出；預設 origin/release/v1.4。 */ releases?: string; /** origin/HEAD 指到哪（symbolic-ref）。 */ originHead?: string; /** HEAD 已經在這些分支裡（merge-base --is-ancestor）。 */ merged?: string[]; /** HEAD 是從這些 commit 長出來的（merge-base --is-ancestor <commit> HEAD）。 */ descends?: string[]; /** rev-list --first-parent <commit>..HEAD 的輸出（沿 HEAD 的第一個父往回走）。 */ branchLine?: string; /** merge-base HEAD <ref> 的回答（分叉點）；預設 base0。 */ forkPoint?: string; /** rev-list --first-parent HEAD..<ref> 的輸出。 */ firstParent?: string; /** rev-parse <commit>^ 的回答。 */ parents?: Record<string, string>; /** false：分支沒有 upstream（從沒 push 過）。 */ upstream?: boolean; /** 沒有 upstream 時，rev-list --left-right --count refs/remotes/origin/<分支>...HEAD 的輸出（「落後\t領先」）；沒填＝origin 上沒有這個分支。 */ remoteAb?: string; /** 領先遠端幾個 commit（branch.ab）；預設 0。 */ ahead?: number; /** 幾檔已追蹤但未提交；預設 0。 */ changed?: number; /** 分支最近一次變更（不算只改卡片的）的時間，毫秒。 */ commitAt?: number; /** 那次 commit 改到的檔案（相對路徑；修改時間放 mtimes）。 */ commitFiles?: string[]; /** 試合併基準分支（merge-tree）會衝突的檔；沒填＝沒衝突（exit 0）。 */ conflicts?: string[] }>,
+    /** desk 跑過的每一個 git 指令（git -C <根目錄> 之後的參數，連同根目錄）。 */
+    gitCalls: [] as { root: string; args: string[] }[],
     mcpCalls: [] as any[],
     /** gh pr list 的回應；null 模擬沒裝或沒登入。 */
     gh: [] as any[] | null,
@@ -122,6 +124,7 @@ export function fixture(on: any) {
     if (e.argv[0] === 'claude' && e.argv[1] === 'agents') return { value: result(0, JSON.stringify(data.agents)) }
     if (e.argv[0] === 'docker' && e.argv[1] === 'compose' && e.argv[2] === 'ps') { data.composeCalls.push(e); return { value: data.compose === null ? result(1, '', 'Cannot connect to the Docker daemon') : result(0, data.compose) } }
     if (e.argv[0] === 'git') {
+      if (e.argv[1] === '-C') data.gitCalls.push({ root: String(e.argv[2]), args: e.argv.slice(3).map(String) })
       if (e.argv.slice(3).join(' ') === 'rev-parse --path-format=absolute --git-common-dir') return { value: data.repos[e.argv[2]] ? result(0, `${data.repos[e.argv[2]]}\n`) : result(128, '', 'not a git repository') }
       const g = data.git[e.argv[2]]
       if (!g) return { value: result(128, '', 'not a git repository') }
@@ -147,6 +150,8 @@ export function fixture(on: any) {
       if (args.startsWith('merge-base --is-ancestor')) return { value: (g.merged ?? []).includes(e.argv[e.argv.length - 1]) ? result(0) : result(1) }
       if (args.startsWith('merge-base')) return { value: result(0, `${g.forkPoint ?? 'base0'}\n`) }
       if (args.startsWith('diff --name-only')) return { value: result(0, (g.files ?? []).join('\n')) }
+      // 照真實 git 2.38+：有衝突 exit 1，第一行是 tree、接著每行一個衝突檔；沒衝突 exit 0、只有 tree。
+      if (args.startsWith('merge-tree')) return { value: g.conflicts?.length ? result(1, `tree1\n${g.conflicts.join('\n')}\n`) : result(0, 'tree0\n') }
       return { value: result(0, '') }
     }
     if (e.argv[0] === 'gh') { data.ghCalls.push(e); return { value: data.gh === null ? result(1, '', 'gh: not logged in') : result(0, JSON.stringify(data.gh)) } }
