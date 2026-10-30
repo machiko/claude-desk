@@ -1,5 +1,5 @@
 // 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態。不碰磁碟。
-import type { Case } from '../types'
+import type { Case, HistoryEntry } from '../types'
 import { plain, screenLines } from './model'
 
 /** 二次確認：同一個動作 3 秒內按第二次才執行。 */
@@ -29,6 +29,34 @@ export function deploySteps(cardText: string | null): string[] {
     if (m && !/^<.*>$/.test(m[1]!)) steps.push(plain(m[1]!))
   }
   return steps
+}
+
+/**
+ * 卡片「## History」段落的每一筆，新的在前：`- ` 開頭的行是一筆，縮排的續行併進前一筆。
+ * 開頭的 `YYYY-MM-DD` 是日期（去掉後面的「：」）；模板佔位（`YYYY-MM-DD`、日期後沒有內容）不算。
+ * 日期由新到舊，同一天照卡片裡由後往前（卡片由舊到新寫），沒有日期的放最後。
+ */
+export function historyEntries(cardText: string | null): HistoryEntry[] {
+  if (!cardText) return []
+  const lines = cardText.replace(/\r\n?/g, '\n').split('\n')
+  const start = lines.findIndex(l => /^##\s*History\s*$/i.test(l))
+  if (start < 0) return []
+  const raw: string[] = []
+  for (const l of lines.slice(start + 1)) {
+    if (/^##\s/.test(l)) break
+    const item = l.match(/^[-*]\s+(.*)$/)
+    if (item) raw.push(item[1]!.trim())
+    else if (/^\s+\S/.test(l) && raw.length) raw[raw.length - 1] = `${raw[raw.length - 1]} ${l.trim()}`.trim()
+  }
+  const entries = raw.flatMap((body, order) => {
+    if (/^YYYY-MM-DD/.test(body)) return []
+    const m = body.match(/^(\d{4}-\d{2}-\d{2})\s*[：:]?\s*(.*)$/)
+    const text = plain(m ? m[2]! : body).trim()
+    return text ? [{ order, entry: m ? { date: m[1]!, text } : { text } }] : []
+  })
+  return entries
+    .sort((a, b) => (b.entry.date ?? '').localeCompare(a.entry.date ?? '') || b.order - a.order)
+    .map(e => e.entry)
 }
 
 /**
@@ -86,6 +114,19 @@ export function reviewTop(text: string | null, n = 3): string[] {
     if (m) out.push(plain(`${m[1]!.toUpperCase()}${m[2] ? ` ${m[2]}` : ''} ${m[3]}`))
   }
   return out.slice(0, n)
+}
+
+/**
+ * 審查檔裡要自動修的 MEDIUM 條數：「- [MEDIUM]…」開頭的行（不分大小寫，跟 reviewTop 同一種比對），行尾是註記就不算：
+ * 結尾的括號以「不修」或「等你決定」收尾（「（記錄、不修）」「（不修）」「（等你決定）」「（上一輪已列，等你決定）」，後面可以接句號、空白）。
+ * 說明裡的括號照算，不管在中間或結尾（例如「（parse 失敗後不修正預設值）」「（不修會 crash）」「（若不修正會顯示前一天）」），
+ * 免得影響行為的 MEDIUM 既不修也不問。沒有檔案回 0。
+ */
+export function mediumToFix(text: string | null): number {
+  if (!text) return 0
+  return text.replace(/\r\n?/g, '\n').split('\n')
+    .filter(l => /^\s*[-*]\s*\[MEDIUM\]/i.test(l) && !/[（(][^（）()]*(?:不修|等你決定)[）)][。.]?\s*$/.test(l))
+    .length
 }
 
 /** `git status --porcelain=v2 --branch`：領先、落後、未提交、未追蹤，以及有沒有遠端分支（upstream）。 */

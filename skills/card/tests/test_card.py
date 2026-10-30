@@ -524,6 +524,412 @@ class CardScriptTest(unittest.TestCase):
         self.assertNotIn('部署步驟', r.stdout)
         self.assertNotIn('發版線卡片', r.stdout)
 
+    def open_case(self, branch, name, merged=False):
+        """開卡、在 worktree commit 一次；merged=True 時在主 repo 用 --no-ff 併進 main。回傳 worktree 路徑。"""
+        self.run_card('new', branch, name, 'origin/main')
+        slug = branch.rsplit('/', 1)[-1]
+        wt = os.path.join(self.main + '-worktrees', slug)
+        write(os.path.join(wt, f'{slug}.txt'), 'x\n')
+        git('add', f'{slug}.txt', cwd=wt)
+        git('commit', '-q', '-m', f'{slug}', cwd=wt)
+        if merged:
+            git('merge', '-q', '--no-ff', '-m', f'merge {branch}', branch, cwd=self.main)
+        return wt
+
+    def worktrees(self):
+        out = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=self.main, capture_output=True, text=True, check=True).stdout
+        return [os.path.realpath(l[len('worktree '):]) for l in out.splitlines() if l.startswith('worktree ')]
+
+    def branch_listed(self, branch):
+        return subprocess.run(['git', 'branch', '--list', branch], cwd=self.main, capture_output=True, text=True, check=True).stdout.strip()
+
+    def test_archive_cleanup_removes_worktree_and_branch_when_merged_and_clean(self):
+        """AC-1：已合併、乾淨的 Beta：歸檔副本留著，worktree 與分支移除，登錄表那行寫已移除。"""
+        wt = self.open_case('feature/beta', 'Beta', merged=True)
+        card = self.card_path('beta')
+        write(card, re.sub(r'^- 狀態：.*$', '- 狀態：已發版 v0.38.0，CI 通過', read(card), count=1, flags=re.M))
+        write(os.path.join(wt, '.task', 'REVIEW.md'), '- [LOW] x\n')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertIn('已發版 v0.38.0，CI 通過', read(os.path.join(archive, 'beta-CARD.md')))
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'beta-REVIEW.md')))
+        reg = read(self.reg)
+        self.assertNotIn('| Beta |', reg)
+        self.assertRegex(reg, r'(?m)^- beta：.*worktree 與分支已移除$')
+        self.assertNotIn(os.path.realpath(wt), self.worktrees())
+        self.assertFalse(os.path.exists(wt))
+        self.assertEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 已刪除', r.stdout)
+
+    def test_archive_cleanup_keeps_worktree_and_branch_when_dirty_or_unmerged(self):
+        """AC-2：Beta 已合併但有未提交的改動、Gamma 乾淨但沒併入 main：兩張都歸檔，worktree 與分支都保留，提醒寫原因與自己刪的指令。"""
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        gamma = self.open_case('feature/gamma', 'Gamma')
+        write(os.path.join(beta, 'beta.txt'), 'changed\n')
+
+        r = self.run_card('archive', 'beta', 'gamma', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'beta-CARD.md')))
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'gamma-CARD.md')))
+        reg = read(self.reg)
+        self.assertNotIn('| Beta |', reg)
+        self.assertNotIn('| Gamma |', reg)
+        archived = reg[reg.index('## 已歸檔的卡'):]
+        self.assertRegex(archived, r'(?m)^- beta：.*；worktree 保留：有未提交的改動（1 個檔）$')
+        self.assertRegex(archived, r'(?m)^- gamma：.*；worktree 保留：分支還沒併入 main$')
+        # worktree、那個改動與分支都還在
+        self.assertEqual(read(os.path.join(beta, 'beta.txt')), 'changed\n')
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertIn(os.path.realpath(gamma), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertNotEqual(self.branch_listed('feature/gamma'), '')
+        self.assertRegex(r.stdout, r'(?m)^清理 beta：.*有未提交的改動（1 個檔）')
+        self.assertRegex(r.stdout, r'(?m)^清理 gamma：.*分支還沒併入 main')
+        # 登錄表「## 提醒」兩行，各附自己刪的指令，不含 --force／-D
+        reminders = reg[reg.index('## 提醒'):]
+        lines = [l for l in reminders.splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(len(lines), 2, reminders)
+        for line, wt, branch in ((lines[0], beta, 'feature/beta'), (lines[1], gamma, 'feature/gamma')):
+            self.assertIn(f'git -C {self.main} worktree remove {wt}', line)
+            self.assertIn(f'git -C {self.main} branch -d {branch}', line)
+            self.assertNotIn('--force', line)
+            self.assertNotIn(' -D', line)
+        self.assertTrue(lines[0].startswith('- 清理 beta：有未提交的改動（1 個檔）'))
+        self.assertTrue(lines[1].startswith('- 清理 gamma：分支還沒併入 main'))
+
+    def test_archive_cleanup_leaves_main_worktree_and_unlisted_cards_when_out_of_scope(self):
+        """AC-3：主 repo 的卡照常歸檔但主 worktree 不動；沒列到的 Delta 不動；有拼錯的 slug 時整批不做。"""
+        main_card = os.path.join(self.main, '.desk', 'CARD.md')
+        os.makedirs(os.path.dirname(main_card))
+        write(main_card, read(TEMPLATE).replace('<任務名>', '主線'))
+        write(self.reg, read(self.reg) + f'| 主線 | `{main_card}` |\n')
+        delta = self.open_case('feature/delta', 'Delta', merged=True)
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        delta_row = next(l for l in read(self.reg).splitlines() if l.startswith('| Delta |'))
+
+        r = self.run_card('archive', 'main', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('主 worktree 不移除', r.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'main-CARD.md')))
+        self.assertNotIn('| 主線 |', read(self.reg))
+        self.assertIn(os.path.realpath(self.main), self.worktrees())
+        self.assertTrue(os.path.isfile(main_card))
+        self.assertNotEqual(self.branch_listed('main'), '')
+        # Delta 沒列：worktree、分支與登錄表列一字不變
+        self.assertIn(delta_row, read(self.reg).splitlines())
+        self.assertIn(os.path.realpath(delta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/delta'), '')
+
+        before = read(self.reg)
+        r = self.run_card('archive', 'beta', 'nope', '--cleanup', cwd=self.main)
+
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('找不到唯一的任務「nope」', r.stderr)
+        self.assertIn('Beta', r.stderr)
+        self.assertEqual(read(self.reg), before)
+        self.assertFalse(os.path.exists(os.path.join(self.t, 'archive', 'beta-CARD.md')))
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+
+    def test_archive_cleanup_removes_worktree_and_keeps_branch_when_squash_merged(self):
+        """squash 合併（審查 MEDIUM，D-04）：分支不是 main 的祖先但內容已在 main，worktree 照樣移除；branch -d 認不出，分支保留並寫明原因。"""
+        beta = self.open_case('feature/beta', 'Beta')
+        git('merge', '-q', '--squash', 'feature/beta', cwd=self.main)
+        git('commit', '-q', '-m', 'Beta (#12)', cwd=self.main)
+        write(os.path.join(self.main, 'later.txt'), 'x\n')
+        git('add', 'later.txt', cwd=self.main)
+        git('commit', '-q', '-m', 'later', cwd=self.main)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'beta-CARD.md')))
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertFalse(os.path.exists(beta))
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 保留：squash／rebase 合併，git branch -d 認不出已併入', r.stdout)
+        reg = read(self.reg)
+        self.assertRegex(reg, r'(?m)^- beta：.*；worktree 已移除，分支 feature/beta 保留：squash／rebase 合併')
+        reminders = [l for l in reg[reg.index('## 提醒'):].splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(len(reminders), 1, reg)
+        self.assertIn('squash／rebase 合併', reminders[0])
+        self.assertIn(f'git -C {self.main} branch -D feature/beta', reminders[0])
+        self.assertNotIn('worktree remove', reminders[0])
+
+    def commit_fragment(self, wt, slug):
+        os.makedirs(os.path.join(wt, 'changelog.d'), exist_ok=True)
+        write(os.path.join(wt, 'changelog.d', f'{slug}.md'), f'- 新增 {slug}\n')
+        git('add', 'changelog.d', cwd=wt)
+        git('commit', '-q', '-m', f'{slug} changelog', cwd=wt)
+
+    def test_archive_cleanup_removes_worktree_when_squash_merged_and_fragment_released(self):
+        """squash 合併後發版（審查 HIGH）：changelog 把片段檔合進 CHANGELOG 並刪掉，worktree 照樣移除、分支保留；
+        沒合併、只寫了片段的分支照舊兩樣都保留。"""
+        beta = self.open_case('feature/beta', 'Beta')
+        self.commit_fragment(beta, 'beta')
+        gamma = self.open_case('feature/gamma', 'Gamma')
+        os.remove(os.path.join(gamma, 'gamma.txt'))
+        git('commit', '-q', '-am', 'drop gamma.txt', cwd=gamma)
+        self.commit_fragment(gamma, 'gamma')
+        git('merge', '-q', '--squash', 'feature/beta', cwd=self.main)
+        git('commit', '-q', '-m', 'Beta (#12)', cwd=self.main)
+        # 發版：片段合進 CHANGELOG、刪掉片段檔、改版號，一起 commit（docs/WORKFLOW.md 發版第 2、5 步）。
+        git('rm', '-q', 'changelog.d/beta.md', cwd=self.main)
+        write(os.path.join(self.main, 'CHANGELOG.md'), '## 0.38.0\n\n- 新增 beta\n')
+        git('add', 'CHANGELOG.md', cwd=self.main)
+        git('commit', '-q', '-m', 'chore: 更新 版號為 0.38.0 並整理 CHANGELOG', cwd=self.main)
+
+        r = self.run_card('archive', 'beta', 'gamma', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 保留：squash／rebase 合併，git branch -d 認不出已併入', r.stdout)
+        self.assertIn(os.path.realpath(gamma), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/gamma'), '')
+        self.assertIn('清理 gamma：worktree 與分支保留：分支還沒併入 main', r.stdout)
+
+    def commit_shared_file(self):
+        """主 repo 加一支 20 行的 app.txt 並推到 origin，之後開的卡都從這裡分叉。"""
+        write(os.path.join(self.main, 'app.txt'), ''.join(f'{i}\n' for i in range(1, 21)))
+        git('add', 'app.txt', cwd=self.main)
+        git('commit', '-q', '-m', 'app', cwd=self.main)
+        git('push', '-q', 'origin', 'main', cwd=self.main)
+
+    def change_line(self, wt, line, text):
+        path = os.path.join(wt, 'app.txt')
+        lines = read(path).splitlines(keepends=True)
+        lines[line - 1] = f'{text}\n'
+        write(path, ''.join(lines))
+        git('commit', '-q', '-am', f'app line {line}', cwd=wt)
+
+    def squash(self, branch, title):
+        git('merge', '-q', '--squash', branch, cwd=self.main)
+        git('commit', '-q', '-m', title, cwd=self.main)
+
+    def test_archive_cleanup_removes_worktree_when_squash_merged_and_later_card_changed_adjacent_line(self):
+        """同一版裡後合併的卡改到相鄰行（審查 MEDIUM，D-05）：Beta 改第 10 行先 squash，Delta 改第 11 行、
+        先把 main 併進來解衝突再 squash；兩張都照樣移除 worktree、分支保留，不會被判「分支還沒併入 main」。"""
+        self.commit_shared_file()
+        beta = self.open_case('feature/beta', 'Beta')
+        self.change_line(beta, 10, 'beta')
+        delta = self.open_case('feature/delta', 'Delta')
+        self.change_line(delta, 11, 'delta')
+        self.squash('feature/beta', 'Beta (#12)')
+        subprocess.run(['git', 'merge', '-q', '--no-ff', '--no-commit', 'main'], cwd=delta, capture_output=True)
+        resolved = ''.join(f'{i}\n' for i in range(1, 21)).replace('10\n11\n', 'beta\ndelta\n')
+        write(os.path.join(delta, 'app.txt'), resolved)
+        git('add', 'app.txt', cwd=delta)
+        git('commit', '-q', '--no-edit', cwd=delta)
+        self.squash('feature/delta', 'Delta (#13)')
+        self.assertEqual(read(os.path.join(self.main, 'app.txt')), resolved)
+
+        r = self.run_card('archive', 'beta', 'delta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for slug, wt in (('beta', beta), ('delta', delta)):
+            self.assertNotIn(os.path.realpath(wt), self.worktrees(), r.stdout)
+            self.assertNotEqual(self.branch_listed(f'feature/{slug}'), '')
+            self.assertIn(f'清理 {slug}：worktree 已移除；分支 feature/{slug} 保留：squash／rebase 合併，git branch -d 認不出已併入', r.stdout)
+        self.assertNotIn('還沒併入', r.stdout)
+
+    def test_archive_cleanup_keeps_worktree_and_branch_when_squash_merged_then_reverted(self):
+        """squash 合併後 main 又 revert 了那張（D-05 的反例）：內容已不在 main，照舊判「分支還沒併入 main」、兩樣都保留。"""
+        self.commit_shared_file()
+        beta = self.open_case('feature/beta', 'Beta')
+        self.change_line(beta, 10, 'beta')
+        self.squash('feature/beta', 'Beta (#12)')
+        git('revert', '--no-edit', 'HEAD', cwd=self.main)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 與分支保留：分支還沒併入 main', r.stdout)
+
+    def merge_main_resolving(self, wt, changes):
+        """把 main 併進 worktree；app.txt 衝突時改成 changes（行號 → 文字）解掉，再 commit。"""
+        subprocess.run(['git', 'merge', '-q', '--no-ff', '--no-commit', 'main'], cwd=wt, capture_output=True)
+        write(os.path.join(wt, 'app.txt'), ''.join(f'{changes.get(i, i)}\n' for i in range(1, 21)))
+        git('add', 'app.txt', cwd=wt)
+        git('commit', '-q', '--no-edit', cwd=wt)
+
+    def rebase_merge(self, branch):
+        """模擬 PR 用 rebase 方式合併：分支的 commit 逐一 cherry-pick 到 main。"""
+        git('cherry-pick', f'main..{branch}', cwd=self.main)
+
+    def assert_squash_kept_branch(self, r, slug, wt):
+        self.assertNotIn(os.path.realpath(wt), self.worktrees(), r.stdout)
+        self.assertNotEqual(self.branch_listed(f'feature/{slug}'), '')
+        self.assertIn(f'清理 {slug}：worktree 已移除；分支 feature/{slug} 保留：squash／rebase 合併，git branch -d 認不出已併入', r.stdout)
+
+    def test_archive_cleanup_removes_worktree_when_squash_merged_after_other_card_changed_nearby_line(self):
+        """審查 MEDIUM，D-06：squash 前已有別張卡改到 Beta 改動上下 3 行內。Xray 改第 8 行先 squash，Beta 改第 10 行接著 squash
+        （squash commit 的 diff 上下文含 Xray 的第 8 行，跟分支的整體改動上下文不同），之後 Delta 改第 11 行、併 main 解衝突再 squash；
+        三張都照樣移除 worktree、分支保留，Beta 不會被判「分支還沒併入 main」。"""
+        self.commit_shared_file()
+        xray = self.open_case('feature/xray', 'Xray')
+        self.change_line(xray, 8, 'xray')
+        beta = self.open_case('feature/beta', 'Beta')
+        self.change_line(beta, 10, 'beta')
+        delta = self.open_case('feature/delta', 'Delta')
+        self.change_line(delta, 11, 'delta')
+        self.squash('feature/xray', 'Xray (#11)')
+        self.squash('feature/beta', 'Beta (#12)')
+        self.merge_main_resolving(delta, {8: 'xray', 10: 'beta', 11: 'delta'})
+        self.squash('feature/delta', 'Delta (#13)')
+
+        r = self.run_card('archive', 'xray', 'beta', 'delta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for slug, wt in (('xray', xray), ('beta', beta), ('delta', delta)):
+            self.assert_squash_kept_branch(r, slug, wt)
+        self.assertNotIn('還沒併入', r.stdout)
+
+    def test_archive_cleanup_removes_worktree_when_rebase_merged_with_several_commits(self):
+        """審查 MEDIUM，D-06：分支有多個 commit、用 rebase 方式合併（HEAD 上沒有任何一個 commit 等於整體改動）。
+        Beta 三個 commit（beta.txt、第 10 行、第 3 行）逐一 cherry-pick 進 main，之後 Delta 改第 11 行、併 main 解衝突再 squash；
+        Beta 照樣移除 worktree、分支保留。反例：Gamma 一樣 rebase 合併，之後 main revert 了它改第 17 行的 commit，
+        內容不全在 main，照舊判「分支還沒併入 main」、兩樣都保留。"""
+        self.commit_shared_file()
+        beta = self.open_case('feature/beta', 'Beta')
+        self.change_line(beta, 10, 'beta')
+        self.change_line(beta, 3, 'three')
+        gamma = self.open_case('feature/gamma', 'Gamma')
+        self.change_line(gamma, 17, 'gamma')
+        delta = self.open_case('feature/delta', 'Delta')
+        self.change_line(delta, 11, 'delta')
+        # main 先多一個無關的 commit，cherry-pick 出來的才是新的 commit（分支不是 main 的祖先）。
+        write(os.path.join(self.main, 'other.txt'), 'x\n')
+        git('add', 'other.txt', cwd=self.main)
+        git('commit', '-q', '-m', 'other', cwd=self.main)
+        self.rebase_merge('feature/beta')
+        self.rebase_merge('feature/gamma')
+        git('revert', '--no-edit', 'HEAD', cwd=self.main)
+        self.merge_main_resolving(delta, {3: 'three', 10: 'beta', 11: 'delta'})
+        self.squash('feature/delta', 'Delta (#13)')
+
+        r = self.run_card('archive', 'beta', 'gamma', 'delta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for slug, wt in (('beta', beta), ('delta', delta)):
+            self.assert_squash_kept_branch(r, slug, wt)
+        self.assertIn(os.path.realpath(gamma), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/gamma'), '')
+        self.assertIn('清理 gamma：worktree 與分支保留：分支還沒併入 main', r.stdout)
+
+    def commit_gitignore(self, *patterns):
+        """主 repo 加 .gitignore 並推到 origin，之後開的卡都從這裡分叉。"""
+        write(os.path.join(self.main, '.gitignore'), ''.join(f'{p}\n' for p in patterns))
+        git('add', '.gitignore', cwd=self.main)
+        git('commit', '-q', '-m', 'gitignore', cwd=self.main)
+        git('push', '-q', 'origin', 'main', cwd=self.main)
+
+    def put(self, wt, rel, text='x\n'):
+        path = os.path.join(wt, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        write(path, text)
+
+    def test_archive_cleanup_keeps_worktree_and_branch_when_ignored_local_config_present(self):
+        """審查 MEDIUM，D-07：git worktree remove 不加 --force 也會刪被 git 忽略的檔。Beta 已合併、沒有未提交的改動，
+        但有被忽略的 .env、.claude/settings.local.json，以及整個被忽略的 docker/ 裡的 .env.production：
+        worktree 與分支都保留、檔都還在；輸出、已歸檔那行與「## 提醒」寫明原因並列出這三個檔，提醒附自己刪的指令（不含 --force／-D）。"""
+        self.commit_gitignore('.env', '*.local.json', '__pycache__/', 'docker/')
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        self.put(beta, '.env', 'SECRET=1\n')
+        self.put(beta, '.claude/settings.local.json', '{}\n')
+        self.put(beta, 'docker/.env.production', 'DB=prod\n')
+        self.put(beta, '__pycache__/beta.cpython-312.pyc')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'beta-CARD.md')))
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertEqual(read(os.path.join(beta, '.env')), 'SECRET=1\n')
+        self.assertEqual(read(os.path.join(beta, 'docker', '.env.production')), 'DB=prod\n')
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        why = '有被 git 忽略的本機設定或資料（.claude/settings.local.json、.env、docker/.env.production）'
+        self.assertIn(f'清理 beta：worktree 與分支保留：{why}', r.stdout)
+        self.assertNotIn('__pycache__', r.stdout)
+        reg = read(self.reg)
+        self.assertRegex(reg, rf'(?m)^- beta：.*；worktree 保留：{re.escape(why)}$')
+        reminders = [l for l in reg[reg.index('## 提醒'):].splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(len(reminders), 1, reg)
+        self.assertTrue(reminders[0].startswith(f'- 清理 beta：{why}；看過後自己刪：'), reminders[0])
+        self.assertIn(f'git -C {self.main} worktree remove {beta}', reminders[0])
+        self.assertIn(f'git -C {self.main} branch -d feature/beta', reminders[0])
+        self.assertNotIn('--force', reminders[0])
+        self.assertNotIn(' -D', reminders[0])
+
+    def test_archive_cleanup_removes_worktree_without_note_when_only_rebuildable_files_ignored(self):
+        """審查 MEDIUM，D-07 的另一面：被忽略的只有 __pycache__、node_modules 這類可重建的（加上 desk 自己的 .desk、.task），
+        照常移除 worktree 與分支；輸出、已歸檔那行跟沒有被忽略的檔時一樣，不列這些項目、也不寫提醒。
+        lib/ 裡只有 __pycache__，git 會把整個 lib/ 列成被忽略的一項，也不算。"""
+        self.commit_gitignore('__pycache__/', 'node_modules/')
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        self.put(beta, '__pycache__/beta.cpython-312.pyc')
+        self.put(beta, 'lib/__pycache__/util.cpython-312.pyc')
+        self.put(beta, 'node_modules/left-pad/index.js')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertFalse(os.path.exists(beta))
+        self.assertEqual(self.branch_listed('feature/beta'), '')
+        self.assertRegex(r.stdout, r'(?m)^清理 beta：worktree 已移除；分支 feature/beta 已刪除$')
+        reg = read(self.reg)
+        self.assertRegex(reg, r'(?m)^- beta：.*；worktree 與分支已移除$')
+        self.assertNotIn('- 清理 beta', reg)
+
+    def test_archive_cleanup_lists_deleted_ignored_files_when_worktree_removed(self):
+        """審查 MEDIUM，D-07：被忽略的不是本機設定或資料、也不是可重建的（logs/、notes.txt.bak），照常移除 worktree 與分支，
+        但輸出、已歸檔那行與「## 提醒」列出一起刪掉的項目（可重建的不列），使用者看得到刪了什麼。"""
+        self.commit_gitignore('logs/', '*.bak', '__pycache__/')
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        self.put(beta, 'logs/app.log')
+        self.put(beta, 'notes.txt.bak')
+        self.put(beta, '__pycache__/beta.cpython-312.pyc')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertEqual(self.branch_listed('feature/beta'), '')
+        gone = '一起刪掉被 git 忽略的：logs/、notes.txt.bak'
+        self.assertRegex(r.stdout, rf'(?m)^清理 beta：worktree 已移除；分支 feature/beta 已刪除；{re.escape(gone)}$')
+        reg = read(self.reg)
+        self.assertRegex(reg, rf'(?m)^- beta：.*；worktree 與分支已移除；{re.escape(gone)}$')
+        reminders = [l for l in reg[reg.index('## 提醒'):].splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(reminders, [f'- 清理 beta：worktree 與分支已移除；{gone}'], reg)
+
+    def test_archive_same_card_named_twice_is_archived_once(self):
+        """同一張卡用 slug 和任務名各寫一次（審查 MEDIUM，D-04）：只歸檔、清理一次，不會 Traceback 也不多一份副本。"""
+        self.open_case('feature/beta', 'Beta', merged=True)
+        self.open_case('feature/gamma', 'Gamma')
+
+        r = self.run_card('archive', 'beta', 'Beta', '--cleanup', cwd=self.main)
+        r2 = self.run_card('archive', 'gamma', 'Gamma', cwd=self.main)
+
+        for out in (r, r2):
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertNotIn('Traceback', out.stderr)
+        archive = os.path.join(self.t, 'archive')
+        self.assertEqual(sorted(os.listdir(archive)), ['beta-CARD.md', 'gamma-CARD.md'])
+        self.assertEqual(r.stdout.count('清理 '), 1, r.stdout)
+        reg = read(self.reg)
+        self.assertEqual(len(re.findall(r'(?m)^- beta：', reg)), 1, reg)
+        self.assertEqual(len(re.findall(r'(?m)^- gamma：', reg)), 1, reg)
+        self.assertNotRegex(reg, r'(?m)^- (Beta|Gamma)：')
+
     def test_unknown_target_lists_cases(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         r = self.run_card('card', 'nope')
@@ -611,7 +1017,6 @@ class ChangelogTest(unittest.TestCase):
 
 
 KAC_BEFORE = '# Changelog\n\n## [Unreleased]\n\n## [v26.2.6] - 2026-10-22\n\n### Fixed\n\n- 修復 舊的事\n'
-TODAY = datetime.date.today().isoformat()
 
 
 class KeepAChangelogTest(unittest.TestCase):
@@ -634,7 +1039,13 @@ class KeepAChangelogTest(unittest.TestCase):
 
     def run_changelog(self, version):
         env = {**os.environ, 'DESK_SETTINGS': self.settings, 'DESK_PROJECT_DIR': ''}
-        return subprocess.run([sys.executable, SCRIPT, 'changelog', version], capture_output=True, text=True, env=env, cwd=self.root)
+        before = datetime.date.today().isoformat()
+        r = subprocess.run([sys.executable, SCRIPT, 'changelog', version], capture_output=True, text=True, env=env, cwd=self.root)
+        after = datetime.date.today().isoformat()
+        # 版本段的日期是 card.py 跑的那天：整套跨過午夜時，跟測試開始那天不同。照它寫的比對，但必須是跑的前後這兩天之一。
+        m = re.search(rf'^## \[{re.escape(version)}\] - (\S+)$', read(self.changelog), re.M)
+        self.day = m.group(1) if m and m.group(1) in (before, after) else before
+        return r
 
     def fragments(self):
         return sorted(f for f in os.listdir(self.frag) if f.endswith('.md'))
@@ -649,7 +1060,7 @@ class KeepAChangelogTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(read(self.changelog), (
             '# Changelog\n\n## [Unreleased]\n\n'
-            f'## [v26.2.7] - {TODAY}\n\n'
+            f'## [v26.2.7] - {self.day}\n\n'
             '### Added\n\n- 新增 丙\n\n'
             '### Fixed\n\n- 修復 乙\n\n'
             '### Security\n\n- 修補 甲\n\n'
@@ -671,7 +1082,7 @@ class KeepAChangelogTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(read(self.changelog), (
             '# Changelog\n\n## [Unreleased]\n\n'
-            f'## [v26.2.7] - {TODAY}\n\n'
+            f'## [v26.2.7] - {self.day}\n\n'
             '### Added\n\n- 新增 丙\n\n'
             '### Fixed\n\n- 修復 手寫的\n- 修復 片段的\n\n'
             '### 工程專區\n\n1. 跑 migration\n2. 清快取\n\n'

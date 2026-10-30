@@ -13,7 +13,10 @@ const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送�
 const LINE = 'release/v26.2.7'
 const CHAIN = RELEASE_ACTIONS.join(' → ')
 const pr = (n: number, dest = 'main') => ({ number: n, state: 'MERGED', baseRefName: dest, headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
-const merged = (name: string, id: number) => ({ name, pr: { id, state: 'MERGED', ci: 'none' } as any })
+/** 已合併、審查過關（沒有 release 關卡）的卡；root、分支跟 setup 的 git 一致，發版請求的清理段才對得上畫面。 */
+const merged = (name: string, id: number, root: string, branch: string) => ({ name, root, git: { branch } as any, gate: PASSED.replace('- 關卡：', ''), pr: { id, state: 'MERGED', ci: 'none' } as any })
+const BETA_CASE = merged('Beta', 12, BETA, 'feature/b')
+const GAMMA_CASE = merged('Gamma', 13, GAMMA, 'fix/c')
 
 /**
  * Alpha 還沒合併（feature/a，沒有 PR）；Beta（feature/b，PR #12）與 Gamma（fix/c，PR #13）已合併、都沒打 tag。
@@ -61,7 +64,7 @@ test('test_release_prompt_asks_one_question_with_version_cards_and_actions_when_
   const ui = await mountBeta($, clock)
   const asked = await pressRelease(ui, data, clock)
 
-  expect(asked).toBe(releasePrompt([merged('Beta', 12), merged('Gamma', 13)]))
+  expect(asked).toBe(releasePrompt([BETA_CASE, GAMMA_CASE]))
   expect(asked).toStartWith('發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程準備，只問我一次')
   expect(CHAIN).toBe('合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過')
   for (const part of ['只問我一次', '這幾張卡的「等你」寫同一題', '版號', '理由', '「Beta」PR #12', '「Gamma」PR #13', CHAIN, 'A) 照做', 'B) 改用', 'C) 先不發']) expect(asked).toContain(part)
@@ -109,7 +112,7 @@ test('test_release_question_shows_one_decision_with_three_options_when_it_lists_
 
 /** AC-3：選照做後做到底、失敗就停；動作清單多一項時照順序列在「等 CI 通過」之後，仍只問一題、選項仍是 A／B／C。 */
 test('test_release_prompt_runs_listed_actions_to_end_and_stops_when_a_step_fails', () => {
-  const cases = [merged('Beta', 12), merged('Gamma', 13)]
+  const cases = [BETA_CASE, GAMMA_CASE]
   const asked = releasePrompt(cases, [...RELEASE_ACTIONS, '歸檔這幾張卡'])
   for (const part of [
     '回答任一張就算數',
@@ -142,7 +145,7 @@ test('test_release_prompt_skips_unmerged_cases_and_forbids_unlisted_actions_when
   const launches = data.launches.length
   const asked = await pressRelease(ui, data, clock)
 
-  expect(asked).toBe(releasePrompt([merged('Beta', 12)]))
+  expect(asked).toBe(releasePrompt([BETA_CASE]))
   expect(asked).toContain('已合併待發版 1 件（「Beta」PR #12）')
   for (const gone of ['Alpha', 'Gamma', 'PR #13']) expect(asked).not.toContain(gone)
   expect(asked).toContain('題目沒列的事一律不做（force push、改寫歷史、合併 PR、刪分支、改清單外的卡），要做就另外問')

@@ -126,10 +126,10 @@ function checkTurnText(c: Case): string {
   return `按 v 執行測試；${willAutoReview(c) ? '通過後自動驗收' : '通過後按 w 派驗收'}`
 }
 
-/** 審查段：按 w，以及審查之後會怎樣：擋的自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
+/** 審查段：按 w，以及審查之後會怎樣：擋的（含影響行為的 MEDIUM）自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
 function reviewTurnText(c: Case): string {
   const head = c.chain?.stale ? '驗收後有新 commit：按 w 重新驗收（新對話）' : '按 w 派驗收（新對話）'
-  return `${head}；有 CRITICAL／HIGH 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
+  return `${head}；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
 }
 
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
@@ -167,7 +167,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
     case 'spec':
       if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
       // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
-      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
+      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認並派實作（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
       if (c.specGap) return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫驗收情境與實作計畫` }
       // 規格沒問題（或舊卡沒有規格段），停在這段只因為檢查欄空白、還是 `<…>` 範本佔位或說明文字：請人填一條真的指令。
       return { who: 'you', text: MISSING_CHECK, key: 'o' }

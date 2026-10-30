@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, result, text, flat, feedLog } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { needsPr, needsPush, stageActions } from '../hooks/turn'
@@ -221,6 +221,7 @@ test('push buttons: push and open-PR have no hotkeys; demo cases get no push', a
 /** AC-1 */
 test('push buttons: open-PR dispatches a publish agent', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   onlyBeta(data, { upstream: false }, [])
   judgedAt(data, 'c2')
   startsAgents(data, clock)
@@ -234,7 +235,6 @@ test('push buttons: open-PR dispatches a publish agent', async ($, on) => {
   await ui.press({ key: `${PREFIX}open-pr` })
   await clock.settle()
   const after = await screen(ui)
-  const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 派推送/.test(n.text))
   const p = promptOf(data)
   await ui.unmount()
 
@@ -249,7 +249,8 @@ test('push buttons: open-PR dispatches a publish agent', async ($, on) => {
   expect(p).toContain('不合併 PR')
   expect(p).toContain('不打 tag')
   expect(after).toContain(flat('Agent 在 push、開 PR'))
-  expect(feed).toBeDefined()
+  expect(log.has('Beta 派推送')).toBe(true)
+  expect(after).not.toContain(flat('Beta 派推送'))
   expect(data.toasts.some(t => t.includes('Beta：推送已派出'))).toBe(true)
   // desk 自己不 push、不開 PR，也不預填輸入框
   expect(data.fills).toHaveLength(0)

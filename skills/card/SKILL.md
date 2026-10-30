@@ -1,6 +1,6 @@
 ---
 name: card
-description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；done <slug> <狀態一句> 主對話告一段落時寫回狀態、下一步與 History；archive <slug> 把卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾並更新登錄表；changelog <版本> 發版時把 changelog.d/*.md 片段合併成 CHANGELOG 的版本段落。配合 /desk 工作桌使用。
+description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡；done <slug> <狀態一句> 主對話告一段落時寫回狀態、下一步與 History；archive <slug>… [--cleanup] 把卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾並更新登錄表，--cleanup 再移除已合併又乾淨的 worktree 與分支；changelog <版本> 發版時把 changelog.d/*.md 片段合併成 CHANGELOG 的版本段落。配合 /desk 工作桌使用。
 ---
 
 # /desk:card
@@ -9,10 +9,10 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
 
 - `new`、`archive` 與 `changelog`：直接執行 `card.py <args>`，把輸出原樣給使用者。
   - `new` 之後提醒：接著用 `/desk:card spec <slug>` 產生規格。`new` 不建 `changelog.d/<slug>.md`（空片段會讓發版合併報錯），條目由實作時寫。
-  - `archive` 之後**不要**替使用者刪 worktree 或分支；只印出指令由使用者自己跑。
+  - `archive` 之後**不要**替使用者刪 worktree 或分支；只印出指令由使用者自己跑。例外：發版時，發版請求列過、使用者在「⚑ 發版」的確認題選了照做的那幾張卡（題目最後一項動作是「歸檔並移除 worktree 與分支」），在 CI 通過、各卡狀態寫好之後跑 `card.py archive <slug>… --cleanup`（一次給多張；有一張找不到就整批不做）。它只用 `git worktree remove`、`git branch -d`，主 worktree、沒併入主 repo 目前分支、有未提交改動、有被 git 忽略的本機設定或資料（`.env*`、`*.local.*` 等）或 git 拒絕的都保留，原因與自己刪的指令寫進登錄表「## 提醒」；其他被忽略的檔會隨 worktree 一起刪，可重建的（`node_modules`、`__pycache__` 等）以外列在輸出與提醒；squash／rebase 合併的（內容已在主 repo、分支不是祖先）照樣移除乾淨的 worktree，分支因為 `branch -d` 認不出而保留、寫進提醒；輸出（每張一行「清理 <slug>：…」）原樣給使用者，保留的項目不要自己再加 `--force`／`-D` 去刪。發版請求沒列到的卡、有 `release：` 關卡的卡不帶 `--cleanup`。
   - `changelog <版本>`：要發的 PR 都合併之後，在要發版的那份 main 執行（主 repo；照「⚑ 發版」流程時是從 origin/main 開的暫存 worktree）；它把 `changelog.d/*.md` 合併成 `## <版本>` 段並刪掉片段檔，沒有片段、版本段已存在、片段不是 `- ` 開頭都會報錯不改檔。使用者在「⚑ 發版」的確認題選了照做時，由對話照題目列的動作做完（改版號、commit、打 tag、push 等）；其他情況照舊由使用者自己做，不要替他 commit。
     - 專案的 dispatch.json 設 `"card": { "changelog": { "format": "keepachangelog" } }` 時改依 Keep a Changelog：`## [Unreleased]` 的手寫內容與片段一起移進 `## [<版本>] - <今天>` 段（版本照輸入保留，`v26.2.7` 就是 `[v26.2.7]`），`[Unreleased]` 留空標題；條目依動詞分進 `### Added／Changed／Removed／Fixed／Security`（新增→Added、調整→Changed、移除→Removed、修復→Fixed、修補→Security），同類手寫在前、片段在後，其他手寫小節（如工程專區）原樣排最後。片段動詞不在對照表會指出檔名與條目並報錯；版本段已存在、沒有片段且 `[Unreleased]` 是空的也報錯，都不改檔。
-- `spec <目標> ok`：執行 `card.py spec-ok <目標>`（清關卡、狀態改「規格已確認…，可派實作」、記 Decisions／History），輸出原樣給使用者。只有使用者明確說要確認時才跑，不要自己判斷規格夠好就替使用者確認。
+- `spec <目標> ok`：執行 `card.py spec-ok <目標>`（清關卡、狀態改「規格已確認…，可派實作」、記 Decisions／History），輸出原樣給使用者。確認後，這個回合結束時面板照 t 的規則自動派實作（只有使用者明確說要確認時才跑，subagent 跑的不派）。只有使用者明確說要確認時才跑，不要自己判斷規格夠好就替使用者確認。
 - `done <目標> <狀態一句>`：執行 `card.py done <目標> <狀態一句>`，輸出原樣給使用者。在主對話（不派背景 Agent）改了檔案、commit、跑了測試或做了決策，告一段落時用：狀態改成那句（60 字內，沒驗證的寫「待確認」）；下一步依關卡三選一：審查已過關（關卡 `review：…` 四個分級都有數字、CRITICAL 與 HIGH 都是 0）而且 `.task/REVIEW.md` 寫好之後有新 commit，寫「等自動重新檢查與審查；沒動靜就到面板按 v」；審查已過關但之後沒有新 commit（或沒有審查檔，關卡是對話自己寫的），寫「到面板照「輪到你」開 PR 或合併」；其他寫「到面板按 v 執行完成檢查」；History 記日期、分支、HEAD 短 sha 與那句（有未提交的檔會註明幾個）；「等你」「關卡」「檢查」不動。規格還沒確認（關卡是 `spec：…` 或認不到填好的 AC）會拒絕。狀態只寫發生了什麼：那句含 commit（7～40 碼英數混合的 hex）、`AC-數字` 或 `D-數字` 時也會拒絕、卡片不動，這些代號寫在 History。它不會把檢查或審查標成通過，那由面板 `v` 與自動流程記錄。整段流程見 `/desk:flow`。
 - `spec <目標> [需求描述]`：照下面「產生規格」做。
 - 沒帶參數就印用法，不猜。
@@ -50,5 +50,5 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
    - 用 `card.py gate <目標> 'spec：待確認規格（AC-1～AC-n）'` 設關卡（舊卡的 rev 由腳本處理，不要手改「關卡」與「更新」兩行）。設了之後工作桌不會派實作，只能同步（同步平常收在面板的「更多動作」m 裡）。
    - History 加一行 `- YYYY-MM-DD：/desk:card spec 產生規格草稿（AC-1～AC-n），待確認`。
 6. **回報**：先一句結論（寫了幾條驗收情境、計畫幾項、關卡已設），再貼「## 規格」全文（含實作計畫），最後一行：
-   `確認：在面板按兩次 t，或輸入 /desk:card spec <目標> ok；要改哪一條直接說。`
+   `確認：在面板按兩次 t，或輸入 /desk:card spec <目標> ok；確認後會自動派實作。要改哪一條直接說。`
    使用者要改時照使用者的話改那一列，關卡維持 spec，不要自己清。

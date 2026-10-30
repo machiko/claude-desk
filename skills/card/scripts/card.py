@@ -15,7 +15,13 @@
                                                「等自動重新檢查與審查；沒動靜就到面板按 v」，審查已過關但之後沒有新 commit（或沒有審查檔）寫
                                                「到面板照「輪到你」開 PR 或合併」，其他寫「到面板按 v 執行完成檢查」；
                                                History 記分支與 HEAD（有未提交的檔就註明幾個）；規格還沒確認就拒絕
-  card.py archive <slug>                       卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）
+  card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
+                                               可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
+                                               移除已併入主 repo 目前分支、沒有未提交改動的 worktree（git worktree remove）與分支（git branch -d），
+                                               不用 --force／-D、不碰遠端；主 worktree 不移除。沒併入、有改動、有被 git 忽略的本機設定或資料
+                                               （.env*、*.local.* 等，見 IGNORED_LOCAL）或 git 拒絕的保留，每張印一行「清理 <slug>：…」，
+                                               原因與自己刪的指令寫進登錄表「## 提醒」；有保留不算失敗。其他被忽略的檔隨 worktree 刪掉，
+                                               可重建的（node_modules、__pycache__ 等，見 IGNORED_DISPOSABLE）以外的列在輸出與提醒
   card.py changelog <版本>                      發版：把所在 repo 的 changelog.d/*.md 合併成 CHANGELOG.md 的「## <版本>」段
                                                （插在「## 未發布」之後、上一版之前；條目依 新增→調整→修復→移除、同類依檔名），刪掉片段檔。
                                                沒有片段、版本段已存在、片段有一行不是「- 」開頭都報錯、不改檔。
@@ -43,6 +49,7 @@ CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree �
                   （動詞對照：新增→Added、調整→Changed、移除→Removed、修復→Fixed、修補→Security）
 """
 import datetime
+import fnmatch
 import json
 import os
 import re
@@ -514,8 +521,218 @@ def deploy_steps(text):
     return steps
 
 
-def cmd_archive(slug):
-    _, path, root = resolve(slug)
+def main_worktree(root):
+    """root 所屬 repo 的主 worktree（worktree list 第一筆）；跟設定的主 repo 是同一個資料夾時用設定的寫法，指令才跟 new 印的一致。"""
+    r = git('-C', root, 'worktree', 'list', '--porcelain')
+    first = next((l[len('worktree '):] for l in r.stdout.splitlines() if l.startswith('worktree ')), '') if r.returncode == 0 else ''
+    return MAIN if first and MAIN and os.path.realpath(MAIN) == os.path.realpath(first) else first
+
+
+def git_reason(r):
+    """git 拒絕時的原因：照抄它的第一行。"""
+    return next((l.strip() for l in (r.stderr + '\n' + r.stdout).splitlines() if l.strip()), 'git 失敗')
+
+
+SQUASHED = 'squash／rebase 合併，git branch -d 認不出已併入'
+
+
+def merged_by_content(main, branch):
+    """squash／rebase 合併：分支不是 HEAD 的祖先，但內容已經在 HEAD 裡。merges_into_head、merged_by_patch 任一認得就算，
+    兩個都認不出來（包括 merge-base 找不到）就當沒併入。"""
+    base = git('-C', main, 'merge-base', 'HEAD', branch)
+    if base.returncode != 0:
+        return False
+    base = base.stdout.strip()
+    return merges_into_head(main, branch, base) or merged_by_patch(main, branch, base)
+
+
+def merges_into_head(main, branch, base):
+    """把分支合進 HEAD 結果跟 HEAD 一樣。唯一容許的差別是發版合併掉的片段檔（見 released_fragment）。
+    有衝突、合出不同的內容，或 git 太舊沒有 merge-tree --write-tree（2.38 以前），都不算。"""
+    merged = git('-C', main, 'merge-tree', '--write-tree', 'HEAD', branch)
+    if merged.returncode != 0:
+        return False
+    diff = git('-C', main, 'diff', '-z', '--no-renames', '--name-status', 'HEAD', merged.stdout.split('\n', 1)[0].strip())
+    if diff.returncode != 0:
+        return False
+    parts = [p for p in diff.stdout.split('\0') if p]
+    return all(status == 'A' and released_fragment(main, base, path) for status, path in zip(parts[::2], parts[1::2]))
+
+
+# 算 patch-id 的 diff 每處都用同一套選項，不受使用者的顏色、外部 diff、textconv、改名偵測、路徑前綴設定影響。
+# -U0：不看上下文，合進來之前別張卡改到上下幾行（squash commit 的上下文跟分支不同）也認得是同一份改動；
+# --no-prefix：log -R 反向時 a/、b/ 前綴會對調，patch-id 會把前綴算進去，拿掉才跟 revert commit 對得上。
+PATCH_DIFF = ('--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-prefix', '-U0')
+# 逐 commit 輸出 patch，每個前面一行「commit <sha>」，patch-id 才分得出是哪個 commit 的。
+PATCH_LOG = ('log', '-p', '--no-merges', '--no-show-signature', *PATCH_DIFF, '--format=commit %H')
+
+
+def merged_by_patch(main, branch, base):
+    """分支的改動在 HEAD 這邊分叉後的非 merge commit 裡出現過（patch-id 相同）：整體改動就是其中一個 commit（squash），
+    或分支每個有改動的 commit 都在（rebase 合併，見 rebased_by_patch）。看的是當初合進來的 commit，
+    同一版別張卡後來改到相鄰行、merge-tree 合出衝突也認得。
+    被 revert 的不算：反向的 patch 出現得一樣多就當沒併入；整體改動被 revert 過，就不再逐 commit 看。分支沒有改動、git 失敗也不算。"""
+    head = [p for p, _ in patch_ids(main, *PATCH_LOG, f'{base}..HEAD')]
+    whole = [p for p, _ in patch_ids(main, 'diff', *PATCH_DIFF, base, branch)]
+    undo = [p for p, _ in patch_ids(main, 'diff', *PATCH_DIFF, branch, base)]
+    if not head or not whole or not undo:
+        return False
+    if head.count(whole[0]) > head.count(undo[0]):
+        return True
+    return head.count(undo[0]) == 0 and rebased_by_patch(main, branch, base, head)
+
+
+def rebased_by_patch(main, branch, base, head):
+    """rebase 合併：分支每個有改動的 commit，在 head（HEAD 這邊各 commit 的 patch-id）裡都出現得比它的反向 patch 多。
+    分支裡有 merge commit 就不算：解衝突的內容在 merge commit 裡，逐 commit 比對不到。"""
+    span = f'{base}..{branch}'
+    merges = git('-C', main, 'rev-list', '--merges', span)
+    if merges.returncode != 0 or merges.stdout.strip():
+        return False
+    forward = {c: p for p, c in patch_ids(main, *PATCH_LOG, span)}
+    undo = {c: p for p, c in patch_ids(main, *PATCH_LOG, '-R', span)}
+    return bool(forward) and forward.keys() == undo.keys() and all(head.count(p) > head.count(undo[c]) for c, p in forward.items())
+
+
+def patch_ids(main, *args):
+    """git <args> 輸出的 patch 逐個算 patch-id（--stable，跟檔案順序、行號無關），回傳 [(patch-id, commit)]；
+    沒有「commit <sha>」行的（git diff）commit 是一串 0。git 失敗回空清單。用 bytes 傳，非 UTF-8 的內容也照算。"""
+    out = subprocess.run(['git', '-C', main, *args], capture_output=True, timeout=120)
+    if out.returncode != 0:
+        return []
+    r = subprocess.run(['git', '-C', main, 'patch-id', '--stable'], input=out.stdout, capture_output=True, timeout=120)
+    if r.returncode != 0:
+        return []
+    return [tuple(l.split()[:2]) for l in r.stdout.decode('ascii', 'replace').splitlines() if l.strip()]
+
+
+def released_fragment(main, base, path):
+    """發版時 changelog 把片段檔合進 CHANGELOG 並刪掉：合進來的分支會把它加回去，但它在分叉後的 HEAD 歷史裡出現過（加過又刪了）。"""
+    return path.startswith(f'{FRAGMENT_DIR}/') and git('-C', main, 'rev-list', '-1', f'{base}..HEAD', '--', path).stdout.strip() != ''
+
+
+# --cleanup 看 worktree 裡被 git 忽略的項目（git worktree remove 不加 --force 也會把它們一起刪掉）；fnmatch 比對、區分大小寫。
+# 可丟棄：路徑任一層符合就不列。desk 自己的卡片與 .task（歸檔前已複製），以及裝套件、建置、測試會再產生的目錄與檔。
+IGNORED_DISPOSABLE = (
+    '.desk', '.task', 'node_modules', '__pycache__', '*.pyc', '.venv', 'venv', '.pytest_cache', '.mypy_cache', '.ruff_cache',
+    '.tox', '.next', '.nuxt', '.turbo', '.parcel-cache', '.gradle', 'vendor', 'dist', 'build', 'target', 'coverage', 'htmlcov',
+    '.coverage', '.DS_Store', 'Thumbs.db',
+)
+# 本機設定與資料：檔名符合就不移除 worktree、分支也保留，列出來讓使用者看過後自己刪。
+IGNORED_LOCAL = (
+    '.env', '.env.*', '*.local', '*.local.*', '*.pem', '*.key', '*.sqlite', '*.sqlite3', '*.db', '*.sql', '*.dump', '*.csv', '*.xlsx',
+)
+# 輸出與提醒最多列幾項，其餘寫「等 n 項」。
+IGNORED_SHOWN = 10
+
+
+def matches(name, patterns):
+    return any(fnmatch.fnmatchcase(name, p) for p in patterns)
+
+
+def disposable(path):
+    return any(matches(part, IGNORED_DISPOSABLE) for part in path.strip('/').split('/'))
+
+
+def shown(items):
+    return '、'.join(items[:IGNORED_SHOWN]) + (f' 等 {len(items)} 項' if len(items) > IGNORED_SHOWN else '')
+
+
+def ignored_items(root):
+    """worktree 裡被 git 忽略、會跟著 worktree 一起刪的項目，分成 (本機設定與資料, 其他)；可丟棄的不列。git 失敗回 None。
+    git 把整個被忽略的資料夾列成一項：裡面有本機設定或資料就列那些檔，只有可丟棄的就不列，其他列資料夾本身。"""
+    r = git('-C', root, 'status', '--porcelain', '-z', '--ignored')
+    if r.returncode != 0:
+        return None
+    local, other = [], []
+    for path in (e[3:] for e in r.stdout.split('\0') if e.startswith('!! ')):
+        if disposable(path):
+            continue
+        if matches(path.rstrip('/').rsplit('/', 1)[-1], IGNORED_LOCAL):
+            local.append(path)
+            continue
+        found, rest = scan_ignored_dir(root, path) if path.endswith('/') else ([], True)
+        if found:
+            local.extend(found)
+        elif rest:
+            other.append(path)
+    return local, other
+
+
+def scan_ignored_dir(root, rel):
+    """被忽略的資料夾裡（略過可丟棄的）：(本機設定與資料的路徑, 有沒有其他檔)。"""
+    found, rest = [], False
+    for top, dirs, files in os.walk(os.path.join(root, rel)):
+        dirs[:] = sorted(d for d in dirs if not matches(d, IGNORED_DISPOSABLE))
+        for f in sorted(f for f in files if not matches(f, IGNORED_DISPOSABLE)):
+            if matches(f, IGNORED_LOCAL):
+                found.append(os.path.relpath(os.path.join(top, f), root))
+            else:
+                rest = True
+    return found, rest
+
+
+def remove_worktree(main, root):
+    """乾淨才 git worktree remove（不加 --force）。回傳 (保留原因, 一起刪掉的被忽略項目)；保留原因是空字串代表已移除。
+    被 git 忽略的本機設定或資料也算不乾淨：status --porcelain 看不到它們，worktree remove 卻會一起刪掉。"""
+    dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.splitlines() if l.strip()]
+    if dirty:
+        return f'有未提交的改動（{len(dirty)} 個檔）', []
+    ignored = ignored_items(root)
+    if ignored is None:
+        return '讀不到被 git 忽略的檔（git status 失敗）', []
+    local, other = ignored
+    if local:
+        return f'有被 git 忽略的本機設定或資料（{shown(local)}）', []
+    r = git('-C', main, 'worktree', 'remove', root)
+    return (git_reason(r), []) if r.returncode != 0 else ('', other)
+
+
+def cleanup(root):
+    """--cleanup：移除已併入主 repo 目前分支、沒有未提交改動與被忽略的本機設定的 worktree 與分支（不加 --force／-D）。
+    squash／rebase 合併的（內容已在主 repo，但分支不是祖先）只移除 worktree：branch -d 會拒絕，分支留著寫進提醒。
+    其他被忽略的檔跟著 worktree 刪掉時，輸出與提醒列出刪了哪些。
+    回傳 (輸出說明, 已歸檔那行的後綴, 保留原因, 要自己刪的指令)；保留原因是空字串代表沒有要提醒的。"""
+    main = main_worktree(root)
+    if not main:
+        why = '找不到這個 worktree 所屬的 git repo'
+        return f'worktree 與分支保留：{why}', f'；worktree 保留：{why}', why, []
+    if os.path.realpath(main) == os.path.realpath(root):
+        return '主 worktree 不移除', '；主 worktree 不移除', '', []
+    branch = git_branch(root)
+    remove_wt = f'git -C {main} worktree remove {root}'
+    if not branch:
+        why = '不在分支上（detached HEAD）'
+        return f'worktree 保留：{why}', f'；worktree 保留：{why}', why, [remove_wt]
+    ancestor = git('-C', main, 'merge-base', '--is-ancestor', branch, 'HEAD').returncode == 0
+    squashed = not ancestor and merged_by_content(main, branch)
+    remove_branch = f'git -C {main} branch {"-D" if squashed else "-d"} {branch}'
+    if not ancestor and not squashed:
+        why, gone = f'分支還沒併入 {git_branch(main) or "主 repo 的 HEAD"}', []
+    else:
+        why, gone = remove_worktree(main, root)
+    if why:
+        return f'worktree 與分支保留：{why}', f'；worktree 保留：{why}', why, [remove_wt, remove_branch]
+    note = f'；一起刪掉被 git 忽略的：{shown(gone)}' if gone else ''
+    if squashed:
+        why = f'worktree 已移除，分支 {branch} 保留：{SQUASHED}{note}'
+        return f'worktree 已移除；分支 {branch} 保留：{SQUASHED}{note}', f'；{why}', why, [remove_branch]
+    r = git('-C', main, 'branch', '-d', branch)
+    if r.returncode != 0:
+        why = f'worktree 已移除，分支 {branch} 保留：{git_reason(r)}{note}'
+        return f'worktree 已移除；分支 {branch} 保留：{git_reason(r)}{note}', f'；{why}', why, [remove_branch]
+    return f'worktree 已移除；分支 {branch} 已刪除{note}', f'；worktree 與分支已移除{note}', f'worktree 與分支已移除{note}' if note else '', []
+
+
+def cmd_archive(slugs, cleanup_after=False):
+    # 先把每張都找到：有一張找不到就報錯，哪張都不動。同一張卡（slug 與任務名各寫一次）只做第一次。
+    found = [(slug, *resolve(slug)) for slug in slugs]
+    targets = [t for i, t in enumerate(found) if all(os.path.realpath(t[2]) != os.path.realpath(u[2]) for u in found[:i])]
+    for slug, _, path, root in targets:
+        archive_one(slug, path, root, cleanup_after)
+
+
+def archive_one(slug, path, root, cleanup_after):
     os.makedirs(ARCHIVE, exist_ok=True)
     dest = os.path.join(ARCHIVE, f'{slug}-CARD.md')
     card = read(path)
@@ -524,10 +741,12 @@ def cmd_archive(slug):
     for f in sorted(os.listdir(task)) if os.path.isdir(task) else []:
         if re.match(r'(REVIEW|SECURITY|PLAN|REPORT|review-.*)\.md$', f):
             write(os.path.join(ARCHIVE, f'{slug}-{f}'), read(os.path.join(task, f)))
+    # 移除 worktree 會連 .desk、.task 一起刪，所以清理排在複製之後。
+    said, suffix, kept, commands = cleanup(root) if cleanup_after else ('', '', '', [])
     lines = read(REG).split('\n')
     removed = [l for l in lines if l.startswith('|') and f'`{path}`' in l]
     lines = [l for l in lines if not (l.startswith('|') and f'`{path}`' in l)]
-    note = f'- {slug}：{datetime.date.today().isoformat()} 歸檔；卡片在 `{dest}`'
+    note = f'- {slug}：{datetime.date.today().isoformat()} 歸檔；卡片在 `{dest}`{suffix}'
     head = next((i for i, l in enumerate(lines) if l.startswith('## 已歸檔的卡')), None)
     if head is None:
         lines += ['', '## 已歸檔的卡（worktree 刪除後，卡片留存供查閱）', '', note]
@@ -538,7 +757,11 @@ def cmd_archive(slug):
         while j > head + 1 and lines[j - 1].strip() == '':
             j -= 1
         lines.insert(j, note)
-    write(REG, '\n'.join(lines))
+    text = '\n'.join(lines)
+    if kept:
+        todo = '、'.join(f'`{c}`' for c in commands)
+        text = append_line(text, '## 提醒', f'- 清理 {slug}：{kept}' + (f'；看過後自己刪：{todo}' if todo else ''))
+    write(REG, text)
     print(f'歸檔完成：{dest}（登錄表移除 {len(removed)} 列）')
     # 部署步驟跟著卡片歸檔：只提醒，不自動搬（隨發版線發版的卡，步驟要在發版線部署時做）。
     steps = deploy_steps(card)
@@ -547,6 +770,9 @@ def cmd_archive(slug):
         for i, step in enumerate(steps, 1):
             print(f'  {i}. {step}')
         print('請確認已搬到發版線卡片或登錄表「## 提醒」，歸檔後這張卡不會再提醒')
+    if cleanup_after:
+        print(f'清理 {slug}：{said}')
+        return
     print('worktree 與分支請自己確認後再刪：')
     print(f'  git -C {MAIN or "<主 repo>"} worktree remove {root}')
 
@@ -759,8 +985,8 @@ def main(argv):
         cmd_spec_ok(args[0])
     elif cmd == 'done' and len(args) >= 2:
         cmd_done(args[0], ' '.join(args[1:]))
-    elif cmd == 'archive' and args:
-        cmd_archive(args[0])
+    elif cmd == 'archive' and [a for a in args if a != '--cleanup']:
+        cmd_archive([a for a in args if a != '--cleanup'], '--cleanup' in args)
     elif cmd == 'changelog' and args:
         cmd_changelog(args[0])
     else:

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, PROJECT_DIR, CARD_A, CARD_B, REGISTRY, result, text, flat } from './fixture'
+import { fixture, feedLog, PANE, PROJECT_DIR, CARD_A, CARD_B, REGISTRY, result, text, flat } from './fixture'
 import { autoPrApplies, autoPrPlan, passWords } from '../hooks/auto-pr'
 import { NO_PUSH_NEEDED, parseSettings, queueRefusal } from '../hooks/dispatch'
 import { pipeline } from '../hooks/pipeline'
@@ -77,9 +77,13 @@ function helpers($: any, data: any, clock: any) {
   return { step, refresh, finish, screen, promptOf, checks }
 }
 
-/** AC-1：審查過關、還沒有 PR → 自動派推送 Agent（新對話）push 並開 PR；結束後不跑檢查、不派審查；desk 自己不寫遠端。 */
+/**
+ * AC-1：審查過關、還沒有 PR → 自動派推送 Agent（新對話）push 並開 PR；結束後不跑檢查、不派審查；desk 自己不寫遠端。
+ * 過關與派工是一般事件：寫進動態紀錄、不在畫面上（面板「歷程」只在最新一筆是錯誤或警告時多一行）；畫面看得到的是 Agent 在 push、開 PR。
+ */
 test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   const notified = capture(on)
   betaReviewed(data)
   startsAgents(data, clock)
@@ -99,8 +103,11 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on', async ($, o
   expect(data.launches[0].init.cwd).toBe(BETA)
   expect(data.launches[0].argv).not.toContain('--resume')
   expect(p.split('\n')[0]).toContain('推送：push feature/b 並對 release/v1.4 開 PR')
-  expect(shown).toContain(flat('Beta 審查通過，自動派 Agent 開 PR'))
-  expect(shown).toContain(flat('Beta 自動派推送'))
+  expect(log.has('Beta 審查通過，自動派 Agent 開 PR')).toBe(true)
+  expect(shown).not.toContain(flat('Beta 審查通過，自動派 Agent 開 PR'))
+  expect(log.has('Beta 自動派推送')).toBe(true)
+  expect(shown).not.toContain(flat('Beta 自動派推送'))
+  expect(shown).toContain(flat('Agent 在 push、開 PR'))
   expect(data.toasts).toContain('Beta：審查通過，自動派 Agent 開 PR')
   expect(notified).toContain('Beta：審查通過，自動派 Agent 開 PR')
   expect(data.toasts.some((t: string) => t.includes('可以開 PR'))).toBe(false)
@@ -114,6 +121,7 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on', async ($, o
 /** AC-1：只動文件、檢查通過免審查 → 一樣自動派開 PR，字是「免審查，自動派 Agent 開 PR」。 */
 test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on — docs only skips review', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   const notified = capture(on)
   betaReviewed(data)
   setGate(data, CARD_B, '無')
@@ -133,7 +141,8 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on — docs only
   expect(h.checks()).toBe(1)
   expect(data.launches).toHaveLength(1)
   expect(h.promptOf().split('\n')[0]).toContain('推送：push feature/b 並對 release/v1.4 開 PR')
-  expect(shown).toContain(flat('免審查，自動派 Agent 開 PR'))
+  expect(log.has('免審查，自動派 Agent 開 PR')).toBe(true)
+  expect(shown).not.toContain(flat('免審查，自動派 Agent 開 PR'))
   expect(data.toasts).toContain('Beta：只動文件，免審查，自動派 Agent 開 PR')
   expect(notified).toContain('Beta：只動文件，免審查，自動派 Agent 開 PR')
   expect(data.toasts.some((t: string) => t.includes('可以開 PR'))).toBe(false)
@@ -163,10 +172,11 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on — keeps the
 
 /**
  * 審查通過後又有新 commit 的那輪：流程自動重新檢查、重新審查；這次在 c3 再過關。
- * 回傳派出去的推送提示（沒派就是 undefined）與畫面。
+ * 回傳派出去的推送提示（沒派就是 undefined）、畫面與動態紀錄。
  */
 async function recheckPasses($: any, on: any, ahead: number) {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   betaReviewed(data)
   data.gh = [OPEN_PR]
   data.git[BETA] = { branch: 'feature/b', head: 'c3', remote: 'git@github.com:acme/shop.git', upstream: true, ahead }
@@ -183,12 +193,12 @@ async function recheckPasses($: any, on: any, ahead: number) {
   const ui = await $.ui.mount(PANE(160))
   const shown = await h.screen(ui)
   await ui.unmount()
-  return { data, h, calls, review, shown }
+  return { data, h, calls, review, shown, log }
 }
 
 /** AC-2：PR #12 開著、重新審查過關、分支領先 2 → 只 push；領先 0 → 不派，等 CI 與合併。兩種都不開第二個 PR。 */
 test('test_review_pass_only_pushes_when_pr_is_already_open', async ($, on) => {
-  const { data, h, calls, review, shown } = await recheckPasses($, on, 2)
+  const { data, h, calls, review, shown, log } = await recheckPasses($, on, 2)
 
   expect(review.startsWith('程式碼審查')).toBe(true)
   expect(review).toContain('只看 `git diff c2..HEAD`')
@@ -196,18 +206,20 @@ test('test_review_pass_only_pushes_when_pr_is_already_open', async ($, on) => {
   const p = h.promptOf(1)
   expect(p.split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開，不開新 PR）')
   expect(p).not.toContain('開 PR，PR 網址寫進歷程')
-  expect(shown).toContain(flat('Beta 審查通過，自動派 Agent push 到 PR #12'))
+  expect(log.has('Beta 審查通過，自動派 Agent push 到 PR #12')).toBe(true)
+  expect(shown).not.toContain(flat('Beta 審查通過，自動派 Agent push 到 PR #12'))
   expect(data.toasts).toContain('Beta：審查通過，自動派 Agent push 到 PR #12')
   expect(wroteRemote(calls)).toBe(false)
 })
 
 test('test_review_pass_only_pushes_when_pr_is_already_open — up to date dispatches nothing', async ($, on) => {
-  const { data, calls, review, shown } = await recheckPasses($, on, 0)
+  const { data, calls, review, shown, log } = await recheckPasses($, on, 0)
 
   expect(review.startsWith('程式碼審查')).toBe(true)
   // 只有那次重新審查；沒有推送
   expect(data.launches).toHaveLength(1)
-  expect(shown).toContain(flat('Beta 審查通過，PR #12 已是最新，等 CI 與合併'))
+  expect(log.has('Beta 審查通過，PR #12 已是最新，等 CI 與合併')).toBe(true)
+  expect(shown).not.toContain(flat('Beta 審查通過，PR #12 已是最新，等 CI 與合併'))
   expect(data.toasts).toContain('Beta：審查通過，PR #12 已是最新，等 CI 與合併')
   expect(wroteRemote(calls)).toBe(false)
 })
@@ -215,6 +227,7 @@ test('test_review_pass_only_pushes_when_pr_is_already_open — up to date dispat
 /** AC-3：名額滿（maxAgents 3、已有 3 個工作桌 Agent）→ 推送排隊；有空位時派出。 */
 test('test_auto_pr_waits_in_queue_when_agents_are_full', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   betaReviewed(data, { autoPr: true, maxAgents: 3 })
   data.agents = FULL()
   startsAgents(data, clock)
@@ -231,7 +244,8 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full', async ($, on) => {
   await ui.unmount()
 
   expect(launchedWhileFull).toBe(0)
-  expect(queued).toContain(flat('Beta 自動派推送排隊中（第 1 位）'))
+  expect(log.has('Beta 自動派推送排隊中（第 1 位）')).toBe(true)
+  expect(queued).not.toContain(flat('Beta 自動派推送排隊中（第 1 位）'))
   expect(queued).toContain(flat('… 派工排隊中（第 1 位）'))
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
@@ -243,6 +257,7 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full', async ($, on) => {
 /** AC-3：排隊時按 k 取消 → 流程仍是過關、沒有「流程已暫停」，合併段照舊有「⇡ 開 PR」可以按。 */
 test('test_auto_pr_waits_in_queue_when_agents_are_full — cancel keeps the pass', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   betaReviewed(data, { autoPr: true, maxAgents: 3 })
   data.agents = FULL()
   startsAgents(data, clock)
@@ -263,8 +278,10 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full — cancel keeps the pass
   const chain = (data.store.chains as any)[BETA]
   expect(chain.passed).toBe(true)
   expect(chain.stopped).toBeUndefined()
-  expect(shown).toContain(flat('Beta 已取消排隊'))
+  expect(log.has('Beta 已取消排隊')).toBe(true)
+  expect(shown).not.toContain(flat('Beta 已取消排隊'))
   expect(shown).not.toContain(flat('流程已暫停'))
+  expect(log.has('流程已暫停')).toBe(false)
   expect(shown).not.toContain('派工排隊中')
   expect(openPr?.props?.label ?? openPr?.text).toBe('⇡ 開 PR')
   expect(data.launches).toHaveLength(1)
@@ -365,9 +382,13 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — f
   expect(data.toasts.some((t: string) => t.includes('審查通過'))).toBe(false)
 })
 
-/** AC-4：之前的 PR #9 已被拒絕 → 不自己重開，說要重開請按 ⇡ 開 PR。 */
+/**
+ * AC-4：之前的 PR #9 已被拒絕 → 不自己重開，說要重開請按 ⇡ 開 PR。
+ * 這句是過關事件（一般事件）：寫進動態紀錄、toast，不在畫面上；畫面上 PR 列寫「已拒絕」，「輪到你」叫你按 ⇡ 開 PR。
+ */
 test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — declined PR', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   betaReviewed(data)
   data.gh = [{ ...OPEN_PR, number: 9, state: 'CLOSED', statusCheckRollup: [] }]
   startsAgents(data, clock)
@@ -379,7 +400,10 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — d
   await ui.unmount()
 
   expect(data.launches).toHaveLength(0)
-  expect(shown).toContain(flat('PR #9 已被拒絕，要重開請按 ⇡ 開 PR'))
+  expect(log.has('Beta 審查通過，PR #9 已被拒絕，要重開請按 ⇡ 開 PR')).toBe(true)
+  expect(shown).not.toContain(flat('PR #9 已被拒絕，要重開請按 ⇡ 開 PR'))
+  expect(shown).toContain(flat('PR #9 → release/v1.4 已拒絕'))
+  expect(shown).toContain(flat('輪到你 按 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(data.toasts).toContain('Beta：審查通過，PR #9 已被拒絕，要重開請按 ⇡ 開 PR')
 })
 
@@ -409,6 +433,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — r
 /** AC-5：沒設 autoPr（或寫成字串 "true"、數字 1）→ 不派，跟現在一樣說可以開 PR；按兩次「⇡ 開 PR」照舊派推送 Agent。 */
 test('test_behaves_as_before_when_auto_pr_is_off_and_never_merges_when_on', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   betaReviewed(data, null)
   startsAgents(data, clock)
   const h = helpers($, data, clock)
@@ -424,7 +449,8 @@ test('test_behaves_as_before_when_auto_pr_is_off_and_never_merges_when_on', asyn
     expect(data.toasts.slice(toasts)).toContain('Beta：審查通過，可以開 PR')
     expect((data.store.chains as any)[BETA].passed).toBe(true)
   }
-  expect(await h.screen(ui)).toContain(flat('Beta 審查通過，可開 PR'))
+  expect(log.has('Beta 審查通過，可開 PR')).toBe(true)
+  expect(await h.screen(ui)).not.toContain(flat('Beta 審查通過，可開 PR'))
   await ui.press({ key: `${B}open-pr` })
   await ui.press({ key: `${B}open-pr` })
   await clock.settle()

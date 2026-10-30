@@ -23,7 +23,7 @@ export type ReviewVerdict = { critical: number; high: number; medium: number; lo
 /** 這個分支的 PR（Bitbucket 或 GitHub）：狀態與 CI。 */
 export type PrInfo = { id: number; state: 'OPEN' | 'MERGED' | 'DECLINED' | 'SUPERSEDED'; ci: 'none' | 'pending' | 'pass' | 'fail'; dest?: string; url?: string; /** PR 最後的 head commit（GitHub 40 碼、Bitbucket 12 碼）；合併後比對 HEAD 看分支上有沒有新 commit。 */ head?: string }
 /** 自動流程在這件任務的狀況，畫圖用。 */
-export type ChainInfo = { round: number; stopped?: string; passed?: boolean; needsHuman?: string; skippedReview?: boolean; /** 審查（或免審查過關）之後分支有新 commit：那次的結論不算數。 */ stale?: boolean; /** 卡片上的審查結論不是 desk 派的審查判的（例如實作的 Agent 自己寫的）。 */ selfReview?: boolean; lastKind?: 'continue' | 'sync' | 'review' | 'reply' | 'fix' | 'verify' | 'publish'; /** 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查，不用你按 w。 */ autoReview?: boolean; /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：排除後按 v，流程接著走。 */ heldAtCheck?: boolean; /** 流程是別的對話開的：這個對話不接手，按 v 只跑檢查。 */ foreign?: boolean }
+export type ChainInfo = { round: number; stopped?: string; passed?: boolean; needsHuman?: string; skippedReview?: boolean; /** 審查（或免審查過關）之後分支有新 commit：那次的結論不算數。 */ stale?: boolean; /** 卡片上的審查結論不是 desk 派的審查判的（例如實作的 Agent 自己寫的）。 */ selfReview?: boolean; lastKind?: 'continue' | 'sync' | 'review' | 'reply' | 'fix' | 'verify' | 'publish'; /** 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查，不用你按 w。 */ autoReview?: boolean; /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：排除後按 v，流程接著走。 */ heldAtCheck?: boolean; /** 流程是別的對話開的：按 v 只跑檢查；這個對話只在它的審查剛做完、只剩要修的 MEDIUM 時接手。 */ foreign?: boolean; /** 流程這輪修正要修的 MEDIUM 數；過關後不帶。 */ mediumFix?: number }
 
 export type Case = {
   name: string
@@ -63,6 +63,8 @@ export type Case = {
   specGap?: true
   /** 卡片「## 部署…」段落的步驟。 */
   deploySteps?: string[]
+  /** 卡片「## History」的每一筆，新的在前（見 historyEntries）。 */
+  history?: HistoryEntry[]
   /** 審查檔的 CRITICAL、HIGH 前三條。 */
   reviewTop?: string[]
 }
@@ -98,8 +100,12 @@ export type Snapshot = {
   models?: { session?: string; effort?: string; dispatch?: { model: string; effort: string }; sync?: { model: string; effort: string; fresh: boolean }; /** dispatch.json 的 kinds：跟派工不同的種類才列。 */ kinds?: { kind: 'continue' | 'reply' | 'review' | 'publish'; model: string; effort: string }[]; /** 有 projects 覆寫的任務（鍵是根目錄）：每種派工實際會用的模型。 */ byRoot?: Record<string, Partial<Record<'continue' | 'reply' | 'review' | 'publish', { model: string; effort: string }>>> }
 }
 
+/** 卡片 History 的一筆：date 是 YYYY-MM-DD，沒寫日期就沒有。 */
+export type HistoryEntry = { date?: string; text: string }
+
 /** 一筆動態；card：屬於哪件（卡片路徑），版本更新這類不屬於任何一件的不填。 */
-export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' | 'error' | 'subtle' | 'suggestion'; card?: string }
+/** whileState：描述卡片狀態的警告（等你、等回覆、等批准、關卡）；卡片離開這個狀態後，問題列就不再顯示它。 */
+export type FeedEvent = { at: number; text: string; tone: 'warning' | 'success' | 'error' | 'subtle' | 'suggestion'; card?: string; whileState?: 'ask' | 'reply' | 'approve' | 'gate' }
 
 /** 決策的選擇：`任務路徑\n等你全文` → 決策序號 → 選項鍵。等你改寫就作廢。 */
 export type Picks = Record<string, Record<string, string>>
