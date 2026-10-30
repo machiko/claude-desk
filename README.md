@@ -271,6 +271,10 @@ python3 skills/card/scripts/card.py changelog 0.27.0   # 或 /desk:card changelo
 
 型別檢查：`npx -y -p typescript@5 tsc -p tsconfig.json --noEmit`。它要讀 `.claude-plugin/types/`（Claude Code 產生的 mod 型別，不進版控），所以只在本機跑；GitHub Actions 跑 `plugin validate`、`plugin test` 與 `/desk:card` 的測試（`.github/workflows/ci.yml`）。
 
+### 文件與共用檔
+
+README、WORKFLOW 與 `dispatch.ts` 是每張卡都會碰的熱點檔，多張卡並行時最常互相衝突。所以功能卡不改 README 與 WORKFLOW 的功能說明段：要補的說明寫在卡片「## 規格」的目標或 Decisions，由發版 PR 一次補；CHANGELOG 照舊寫片段檔。改名、搬檔、改六段結構這類橫切重構單獨開卡、先合併，其他卡等它合併後再 sync main；同時在審查與合併段的卡不超過 4 張。細節見 `docs/WORKFLOW.md` 的「開卡順序」。
+
 ## 授權
 
 [MIT](LICENSE)

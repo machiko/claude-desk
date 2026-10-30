@@ -1202,5 +1202,48 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertNotIn('打 tag 並 push', row)
 
 
+class CardOrderingDocsTest(unittest.TestCase):
+    """開卡順序與共用檔規則：WORKFLOW 的「- 開卡順序」、README 的「### 文件與共用檔」、SKILL.md 的 new 提醒。"""
+
+    def ordering_item(self):
+        lines = read(os.path.join(REPO, 'docs', 'WORKFLOW.md')).splitlines()
+        section = next(i for i, l in enumerate(lines) if l == '## 開卡與歸檔')
+        new = next(i for i in range(section, len(lines)) if lines[i].startswith('- 開卡：'))
+        start = next(i for i in range(section, len(lines)) if lines[i].startswith('- 開卡順序'))
+        self.assertGreater(start, new, '「- 開卡順序」要在「- 開卡」之後')
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith(('- ', '#'))), len(lines))
+        return '\n'.join(lines[start:end])
+
+    def readme_shared_docs_section(self):
+        readme = read(os.path.join(REPO, 'README.md'))
+        changelog = readme.index('### CHANGELOG 片段檔')
+        start = readme.index('### 文件與共用檔')
+        self.assertGreater(start, changelog, '「### 文件與共用檔」要在「### CHANGELOG 片段檔」之後')
+        end = re.search(r'(?m)^##', readme[start + 3:])
+        return readme[start:start + 3 + end.start()] if end else readme[start:]
+
+    def test_workflow_docs_state_card_ordering_rules(self):
+        """AC-1：橫切重構單獨開卡、合併前不開其他卡的實作；審查與合併段不超過 4 張、過關就合併；附熱點檔衝突統計當理由。"""
+        item = self.ordering_item()
+        for part in ('改名', '搬檔', '六段', '橫切重構', '單獨開卡', '合併前不開其他卡的實作',
+                     '不超過 4 張', '過關一張就合併', 'README', 'WORKFLOW', 'dispatch.ts'):
+            self.assertIn(part, item)
+        self.assertLess(item.find('橫切重構'), item.find('不超過 4 張'))
+
+    def test_docs_tell_feature_cards_not_to_edit_shared_docs(self):
+        """AC-2：功能卡不改 README 與 WORKFLOW 的功能說明段，要補的說明寫在規格的目標或 Decisions，由發版 PR 一次補。"""
+        for text in (self.ordering_item(), self.readme_shared_docs_section()):
+            for part in ('功能卡不改 README', '功能說明段', '## 規格', 'Decisions', '發版 PR'):
+                self.assertIn(part, text)
+        self.assertIn('橫切重構', self.readme_shared_docs_section())
+
+    def test_card_skill_reminds_ordering_on_new(self):
+        """AC-3：SKILL.md 的 new 提醒指向 WORKFLOW 的「開卡順序」。"""
+        skill = read(os.path.join(REPO, 'skills', 'card', 'SKILL.md'))
+        reminder = next(l for l in skill.splitlines() if l.strip().startswith('- `new` 之後提醒'))
+        for part in ('橫切重構', '等其他卡合併', '等它合併', '開卡順序'):
+            self.assertIn(part, reminder)
+
+
 if __name__ == '__main__':
     unittest.main()
