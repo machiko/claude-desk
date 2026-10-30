@@ -202,10 +202,10 @@ export function decisionContext(c: Case, withCard: boolean): string {
 }
 
 /** 真的派工：`claude --bg` 啟動，再從 agents 清單用唯一名稱對回完整 session id。 */
-export async function launch($: any, c: Case, prompt: string, o: { model: string; effort: string; sessionId?: string; name: string }) {
+export async function launch($: any, c: Case, prompt: string, o: { model: string; effort: string; sessionId?: string; name: string; mcp?: boolean }) {
   const beforeOut = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
   const before = beforeOut && beforeOut.exitCode === 0 ? rawAgents(beforeOut.stdout) : []
-  const r = await $.process.run(launchArgs(prompt, { model: o.model, effort: o.effort, sessionId: o.sessionId, launchName: o.name }), { cwd: c.root, timeoutMs: LAUNCH_TIMEOUT_MS })
+  const r = await $.process.run(launchArgs(prompt, { model: o.model, effort: o.effort, sessionId: o.sessionId, launchName: o.name, mcp: o.mcp }), { cwd: c.root, timeoutMs: LAUNCH_TIMEOUT_MS })
   if (r.exitCode !== 0) throw new Error(String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || `claude --bg 失敗（exit ${r.exitCode}）`)
   const token = parseLaunchToken(r.stdout)
   if (!token) throw new Error('claude --bg 沒有回傳可辨識的 id')

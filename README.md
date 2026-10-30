@@ -155,7 +155,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 - 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History（接著跑 `/desk:card archive` 那支腳本歸檔，同 ⌫ 歸檔）；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步、審查與合併段自動派的解衝突 Agent（把基準分支 merge 進來、不 rebase）不 push、不開 PR。專案設了 `autoPr` 時，審查過關（含只動文件、免審查過關）後自動派同一種推送 Agent，高風險改動照舊等你看；desk 自己不跑 git push 或 gh。
+- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。背景 Agent 預設不載入 MCP server（`--strict-mcp-config`）：每個 MCP 都是一支常駐程序，一件任務就會多出好幾支，派工一多記憶體就被吃光；Agent 要用 MCP 時在 `dispatch.json` 設 `"mcp": true`。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步、審查與合併段自動派的解衝突 Agent（把基準分支 merge 進來、不 rebase）不 push、不開 PR。專案設了 `autoPr` 時，審查過關（含只動文件、免審查過關）後自動派同一種推送 Agent，高風險改動照舊等你看；desk 自己不跑 git push 或 gh。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push；更新成功後自動執行 `/reload-plugins`，不重新啟動 Claude Code。
 - desk 自己不跑 `git push`、不開或合併 PR、不會部署；push、開 PR 交給它派的 Agent，合併由你按。合併段會 `git fetch origin <基準分支>`（只更新遠端追蹤分支）並用 `git merge-tree` 試合併，不動工作區與 HEAD。
 
@@ -196,7 +196,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
 
-不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card`、`autoPr` 放專案。
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`、`mcp`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card`、`autoPr` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
@@ -209,6 +209,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
   "projects": { "~/code/shop-worktrees/order-export": { "effort": "xhigh", "rules": ["只改 api/ 底下"] } },
   "user": "Alex",
   "maxAgents": 3,
+  "mcp": false,
   "autoPr": true,
   "rules": ["測試只能用 make test，不要自己起資料庫"],
   "review": {
