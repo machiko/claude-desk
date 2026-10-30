@@ -1099,7 +1099,7 @@ class OverlapTest(unittest.TestCase):
         ])
 
 
-CHANGELOG_BEFORE ='# Changelog\n\n## 未發布\n\n## 0.26.0\n\n- 修復 舊的事\n'
+CHANGELOG_BEFORE = '# Changelog\n\n## 未發布\n\n## 0.26.0\n\n- 修復 舊的事\n'
 
 
 class ChangelogTest(unittest.TestCase):
