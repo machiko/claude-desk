@@ -190,3 +190,38 @@ test('summarizeCheck caps long reasons without splitting a character', () => {
   expect(Array.from(t.items[0]!)).toHaveLength(200)
   expect(t.items[0]!.endsWith('😀')).toBe(true)
 })
+
+// Python 3.12 真實輸出（2026-10-30 實跑）：subTest 的名稱行在 (模組.類別.方法) 後面再接 (參數)
+const SUBTEST = `.Fu
+======================================================================
+FAIL: test_sub (test_u.T.test_sub) (i=1)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/x/test_u.py", line 6, in test_sub
+    self.assertEqual(i % 2, 0)
+AssertionError: 1 != 0
+
+======================================================================
+UNEXPECTED SUCCESS: test_xpass (test_u.T.test_xpass)
+----------------------------------------------------------------------
+Ran 3 tests in 0.001s
+
+FAILED (failures=1, unexpected successes=1)`
+
+test('summarizeCheck: unittest subTest names keep their parameters', () => {
+  expect(summarizeCheck(lines(SUBTEST))).toEqual({ failed: 1, items: ['test_sub (i=1)：AssertionError: 1 != 0'] })
+  // 收緊後照樣不把一般錯誤行當成 unittest
+  expect(summarizeCheck(['ERROR: config.yml not found (see docs)'])).toEqual({ items: ['ERROR: config.yml not found (see docs)'] })
+})
+
+test('summarizeCheck: zero failures are not a failure count', () => {
+  // plugin test 通過、後面串的指令失敗：照認不出框架列尾巴，不寫 0 支
+  const passedThenTsc = lines(`(pass) a [1ms]\n 1 pass\n 0 fail\nRan 1 test across 1 file. [0.20s]\nsrc/a.ts(3,1): error TS2304: Cannot find name 'x'.`)
+  expect(summarizeCheck(passedThenTsc)).toEqual({ items: [' 1 pass', ' 0 fail', 'Ran 1 test across 1 file. [0.20s]', "src/a.ts(3,1): error TS2304: Cannot find name 'x'."] })
+  // 兩段 plugin test 串接：每段的 n fail 加起來
+  const twoRuns = lines(` 2 pass\n 0 fail\nRan 2 tests across 1 file.\n(fail) a [1ms]\n  Error: 1\n(fail) b [1ms]\n  Error: 2\n(fail) c [1ms]\n  Error: 3\n 3 fail\nRan 3 tests across 1 file.`)
+  expect(summarizeCheck(twoRuns)).toEqual({ failed: 3, items: ['a：Error: 1', 'b：Error: 2', 'c：Error: 3'] })
+  // unittest 只有 unexpected success：沒有失敗的測試，列尾巴
+  const xpass = lines(`u\n======\nUNEXPECTED SUCCESS: test_xpass (test_u.T.test_xpass)\n------\nRan 1 test in 0.001s\nFAILED (unexpected successes=1)`)
+  expect(summarizeCheck(xpass)).toEqual({ items: ['u', 'UNEXPECTED SUCCESS: test_xpass (test_u.T.test_xpass)', 'Ran 1 test in 0.001s', 'FAILED (unexpected successes=1)'] })
+})

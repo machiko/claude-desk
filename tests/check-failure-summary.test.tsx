@@ -161,3 +161,19 @@ test('now card does not count fallback tail lines as hidden failures', async ($,
   expect(shown).not.toContain('還有')
   await ui.unmount()
 })
+
+test('now card never shows zero failures', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data)
+  data.run = async (e: any) => e.argv[0] === 'sh' ? result(2, ' 1 pass\n 0 fail\nRan 1 test across 1 file. [0.20s]', "src/a.ts(3,1): error TS2304: Cannot find name 'x'.") : result(0, '')
+  await $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
+  await clock.settle(); await clock.advance(2500); await clock.settle()
+  const v = (data.store.verifies as Record<string, Verify>)[CARD_A]!
+
+  const ui = await mount($, clock)
+  const shown = await screen(ui)
+  expect(shown).toContain(flat(`✕ 未通過（結束碼 2）· ${hhmm(v.at)}1 pass`))
+  expect(shown).toContain(flat('0 failRan 1 test across 1 file. [0.20s]src/a.ts(3,1): error TS2304'))
+  expect(shown).not.toContain('支失敗')
+  await ui.unmount()
+})
