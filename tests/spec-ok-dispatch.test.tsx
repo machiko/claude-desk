@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
 import { appendTo, setFields, tutorialPaths, TUTORIAL_INTRO } from '../hooks/tutorial'
 import { afterSpecRefusal } from '../hooks/dispatch'
-import { specOkCards, specOkMarks, specOkTarget, specOkVerdict } from '../hooks/touch'
+import { specOkCards, specOkMarks, specOkMatches, specOkTarget, specOkTargets, specOkVerdict } from '../hooks/touch'
 
 // 確認規格後自動派實作：面板按兩次 t 當下派；對話跑 /desk:card spec … ok 的，回合結束後派。核准、排隊、不能派的原因都跟按 g 一樣。
 const ALPHA = '/home/u/wt/alpha'
@@ -455,6 +455,127 @@ test('test_conversation_spec_ok_tells_user_to_press_g_when_card_cannot_be_read_a
   await ui.unmount()
 })
 
+/**
+ * 對話跑 spec-ok 串一條跑很久的指令，這段時間 Gamma 在別處確認了（面板按 t、subagent 或別的對話）：回合結束只派指令裡那張；
+ * Gamma 不派、不提示、不跳核准對話框。成功那一行有印出來、輸出被截掉中間兩種都一樣（審查 MEDIUM，D-06）
+ */
+test('test_conversation_spec_ok_ignores_spec_card_confirmed_elsewhere_while_command_runs', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
+  atSpec(data, clock, [CARD_A, CARD_B, CARD_C])
+  // Gamma 的完成檢查還沒核准過：被算成這次對話確認的，回合結束就會跳核准對話框
+  data.store.trustedVerify = { [CARD_A]: 'npm test', [CARD_B]: 'npm test' }
+  const gammaSpec = data.files[CARD_C]!
+  let isTruncated = false
+  const outputs: string[] = []
+  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
+    const card = SLUG[String(specOkTarget(e))]!
+    confirmCard(data, card)
+    // npm test 跑的這段時間，Gamma 在別處確認了
+    confirmCard(data, CARD_C)
+    const stdout = `規格已確認（AC-1～AC-2），關卡清為「無」：${card}\n${LONG_STDOUT}`
+    if (!isTruncated) return { result: { stdout, stderr: '', interrupted: false } }
+    const text = bashErrorText(1, LONG_STDERR, stdout)
+    outputs.push(text)
+    return { isError: true, result: text, text }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  // 第一回合：spec-ok beta && npm test 正常結束，成功那一行有印出來
+  await $.tool.call({ tool: 'Bash', command: `${script('beta')} && npm test` } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(data.files[CARD_C]).toContain('- 關卡：無')
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches.map((l: any) => l.init.cwd)).toEqual([BETA])
+  expect(data.asks).toHaveLength(0)
+  expect(data.toasts).toContain('Beta：繼續已派出')
+  expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
+
+  // 第二回合：Gamma 回到 spec；spec-ok alpha && npm test 失敗、錯誤文字截掉中間，成功那一行不見了
+  data.files[CARD_C] = gammaSpec
+  await h.refresh()
+  isTruncated = true
+  await $.tool.call({ tool: 'Bash', command: `${script('alpha')} && npm test` } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(outputs).toHaveLength(1)
+  expect(outputs[0]).not.toContain('關卡清為「無」')
+  expect(data.files[CARD_C]).toContain('- 關卡：無')
+  await $.turn.complete(turnDone('t2'))
+  await clock.settle()
+  expect(data.launches.map((l: any) => l.init.cwd)).toEqual([BETA, ALPHA])
+  expect(data.asks).toHaveLength(0)
+  expect(data.toasts).toContain('Alpha：繼續已派出')
+  expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
+  await ui.unmount()
+})
+
+/** 成功那一行有印出來，就不再讀其他卡比對：別張 spec 卡跑完剛好讀不到，也不會對這張沒動過的卡提示「規格可能已確認」（審查 MEDIUM，D-06） */
+test('test_conversation_spec_ok_skips_comparing_other_cards_when_success_line_is_printed', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
+  atSpec(data, clock, [CARD_B, CARD_C])
+  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
+    const card = SLUG[String(specOkTarget(e))]!
+    confirmCard(data, card)
+    // 指令跑完時 Gamma 剛好讀不到（暫時性讀檔失敗）；Gamma 自己沒有動過
+    data.unreadable.push(CARD_C)
+    return { result: { stdout: `規格已確認（AC-1～AC-2），關卡清為「無」：${card}\n`, stderr: '', interrupted: false } }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  await $.tool.call({ tool: 'Bash', command: `${script('beta')} && npm test` } as any)
+  await clock.advance(1000); await clock.settle()
+  data.unreadable.splice(0)
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches.map((l: any) => l.init.cwd)).toEqual([BETA])
+  expect(data.toasts).toContain('Beta：繼續已派出')
+  expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
+  expect(data.files[CARD_C]).toContain(SPEC_GATE)
+  await ui.unmount()
+})
+
+/**
+ * 輸出被截掉、指令裡的目標對到不只一張有變動的卡（slug 對到 Beta，任務名也含 beta 的另一張在別處確認了）：分不出是哪張，
+ * 都不派、不跳核准對話框，各提示「規格可能已確認」與「要派時按 g」（審查 MEDIUM，D-06）
+ */
+test('test_conversation_spec_ok_tells_user_to_press_g_when_target_matches_several_changed_cards', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| beta 匯出 PDF | \`${CARD_C}\` |`
+  atSpec(data, clock, [CARD_B, CARD_C])
+  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
+    // card.py 用 slug 找到 Beta 確認；這段時間「beta 匯出 PDF」在別處確認了
+    confirmCard(data, SLUG[String(specOkTarget(e))]!)
+    confirmCard(data, CARD_C)
+    const text = bashErrorText(1, LONG_STDERR, `規格已確認（AC-1～AC-2），關卡清為「無」：${CARD_B}\n${LONG_STDOUT}`)
+    return { isError: true, result: text, text }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  await $.tool.call({ tool: 'Bash', command: `${script('beta')} && npm test` } as any)
+  await clock.advance(1000); await clock.settle()
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches).toHaveLength(0)
+  expect(data.asks).toHaveLength(0)
+  for (const name of ['Beta', 'beta 匯出 PDF']) {
+    const unsure = data.toasts.filter(t => t.startsWith(`${name}：規格可能已確認`))
+    expect(unsure).toHaveLength(1)
+    expect(unsure[0]!.endsWith('要派時按 g')).toBe(true)
+  }
+  await ui.unmount()
+})
+
 /** 輸出沒有成功那一行時，比對 spec-ok 前後的卡：關卡從 spec 清掉、History 與 Decisions 各多一筆才算確認；手改關卡、讀不到的分開（審查 MEDIUM，D-05） */
 test('test_spec_ok_verdict_confirms_only_when_gate_clears_with_new_history_and_decision', () => {
   const card = (gate: string, extra = '') => `# Beta\n\n<!-- DESK -->\n- 狀態：…\n- 關卡：${gate}\n<!-- /DESK -->\n\n## Decisions\n\n- D-01 2030-01-05 Alex：只匯出 CSV\n${extra}`
@@ -494,6 +615,26 @@ test('specOkTarget reads the target of card.py spec-ok only', () => {
   expect(bash('python3 card.py done beta 好了')).toBeNull()
   expect(bash('python3 card.py spec-ok')).toBeNull()
   expect(specOkTarget({ tool: 'Write', file_path: '/x/card.py' })).toBeNull()
+})
+
+/** 指令裡每一次 spec-ok 的目標都要數到（跟印出來的成功行數比）；目標只對 slug 相同或任務名包含它的卡（審查 MEDIUM，D-06） */
+test('test_spec_ok_targets_lists_every_target_and_matches_by_slug_or_task_name', () => {
+  const bash = (command: string) => specOkTargets({ tool: 'Bash', command })
+  expect(bash(`${script('beta')} && npm test`)).toEqual(['beta'])
+  expect(bash(`${script('beta')} && python3 "/p/card.py" spec-ok "匯出 CSV"; ${script('main')}`)).toEqual(['beta', '匯出 CSV', 'main'])
+  expect(bash('npm test')).toEqual([])
+  expect(bash('python3 card.py spec-ok')).toEqual([])
+  expect(specOkTargets({ tool: 'Write', file_path: '/x/card.py' })).toEqual([])
+
+  const beta = { name: 'Beta', slug: 'beta' }
+  expect(specOkMatches('beta', beta)).toBe(true)
+  expect(specOkMatches('Beta', beta)).toBe(true)
+  expect(specOkMatches('匯出', { name: '匯出 CSV', slug: 'export-csv' })).toBe(true)
+  // slug 只認完全相同；對不上的、main（面板不知道主 repo 設定）都不算
+  expect(specOkMatches('bet', { name: 'Gamma', slug: 'beta' })).toBe(false)
+  expect(specOkMatches('gamma', beta)).toBe(false)
+  expect(specOkMatches('main', beta)).toBe(false)
+  expect(specOkMatches('', beta)).toBe(false)
 })
 
 test('specOkCards takes the card path only from a successful card.py spec-ok', () => {

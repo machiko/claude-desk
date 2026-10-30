@@ -7,8 +7,9 @@ import type { PanelAction, SentRecord } from '../types'
 import { decisionName, parseGate } from './card'
 import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext, tellPanel } from './desk-io'
 import type { Timer } from './desk-io'
-import { specOkCards, specOkMarks, specOkTarget, specOkVerdict, touchesDesk } from './touch'
+import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
 import type { SpecOkMarks } from './touch'
+import { slugOf } from './model'
 import { sentState } from './turn'
 import { refreshAfterWrite } from './register'
 import { dispatchAfterSpec } from './card-actions'
@@ -45,14 +46,20 @@ let queuedTimer: Timer
  */
 const TYPED_ORIGINS = new Set(['composer', 'bridge'])
 
-/** 這個回合主對話用 card.py spec-ok 確認成功的卡片路徑（腳本印的那一行，或跑完比對卡片判定的）：回合結束、重讀後照面板按 t 的規則派實作。 */
+/**
+ * 這個回合主對話用 card.py spec-ok 確認成功的卡片路徑：腳本印的那一行；印出來的比指令裡 spec-ok 的次數少時，
+ * 再加上指令裡目標對得上、跑完比對判定確認的那張。回合結束、重讀後照面板按 t 的規則派實作。
+ */
 let specOks: string[] = []
-/** 要提示的對象：任務名；知道是哪張卡時帶卡片路徑。 */
-type SpecOkWho = { name: string; statusPath?: string }
-/** 這個回合主對話跑了 card.py spec-ok、卻判斷不了有沒有確認的（輸出沒有成功那一行、卡片又讀不到）：回合結束提示「規格可能已確認；要派時按 g」。 */
+/** 要提示的對象：任務名；知道是哪張卡時帶卡片路徑；why 是判斷不了的原因（沒寫就是讀不到卡片）。 */
+type SpecOkWho = { name: string; statusPath?: string; why?: string }
+/**
+ * 這個回合主對話跑了 card.py spec-ok、卻判斷不了有沒有確認的（成功那一行沒印出來，目標對得上的卡又讀不到，或對到不只一張有變動的）：
+ * 回合結束提示「規格可能已確認；要派時按 g」。
+ */
 let specOkUnsure: SpecOkWho[] = []
-/** 跑 card.py spec-ok 之前停在 spec 關卡的卡，與那時讀到的樣子（讀不到是 null）。 */
-type SpecOkProbe = { name: string; statusPath: string; before: SpecOkMarks | null }
+/** 跑 card.py spec-ok 之前停在 spec 關卡、指令裡的目標對得上的卡，與那時讀到的樣子（讀不到是 null）。 */
+type SpecOkProbe = { name: string; slug: string; statusPath: string; before: SpecOkMarks | null }
 
 const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
 
@@ -67,34 +74,49 @@ const bashOutput = (r: any): unknown => (r?.isError ? r.text : r?.result?.stdout
 /** 記一筆判斷不了的（同一張只記一次）。 */
 const noteUnsure = (who: SpecOkWho) => { specOkUnsure = [...specOkUnsure.filter(u => u.name !== who.name || u.statusPath !== who.statusPath), who] }
 
-/** 主對話要跑 card.py spec-ok：先讀一次工作桌上停在 spec 關卡的卡（不含示範任務）；讀不到的照面板上一輪的關卡算。 */
-async function specOkProbes($: any): Promise<SpecOkProbe[]> {
+/** 指令裡的目標合成一個提示對象（不知道是哪張卡時用）。 */
+const targetsWho = (targets: readonly string[]): SpecOkWho => ({ name: [...new Set(targets)].join('、') })
+
+/**
+ * 主對話要跑 card.py spec-ok：先讀一次指令裡的目標對得上（specOkMatches）、停在 spec 關卡的卡（不含示範任務）；讀不到的照面板上一輪的關卡算。
+ * 其他卡不讀：Bash 跑的期間在別處確認的卡不會被算成這次確認的。
+ */
+async function specOkProbes($: any, targets: readonly string[]): Promise<SpecOkProbe[]> {
   const s = await read($, snapshot).catch(() => null)
   if (!s) return []
-  const all = await Promise.all(s.cases.filter(c => !c.demo).map(async c => {
+  const hits = s.cases.filter(c => !c.demo && targets.some(t => specOkMatches(t, { name: c.name, slug: slugOf(c) })))
+  const all = await Promise.all(hits.map(async c => {
     const text = await $.fs.read(c.statusPath).catch(() => null)
     const before = typeof text === 'string' ? specOkMarks(text) : null
-    return { probe: { name: c.name, statusPath: c.statusPath, before }, isSpec: before ? before.isSpec : parseGate(c.gate)?.kind === 'spec' }
+    return { probe: { name: c.name, slug: slugOf(c), statusPath: c.statusPath, before }, isSpec: before ? before.isSpec : parseGate(c.gate)?.kind === 'spec' }
   }))
   return all.filter(x => x.isSpec).map(x => x.probe)
 }
 
 /**
- * 主對話跑完 card.py spec-ok：確認了哪幾張先看輸出裡腳本成功那一行；沒印出來的（錯誤文字截掉中間、輸出被導走）再讀卡，
- * 跟跑之前比（specOkVerdict）：確認了就記下回合結束派；腳本失敗、卡片沒變的不記也不提示；讀不到判斷不了的記下來提示。
+ * 主對話跑完 card.py spec-ok：確認了哪幾張先看輸出裡腳本成功那一行。印出來的行數跟指令裡 spec-ok 的次數一樣（都印出來了）就只認它們，不讀其他卡；
+ * 比較少（錯誤文字截掉中間、輸出被導走）才讀卡，只比對指令裡的目標對得上、跑之前停在 spec 的卡（specOkProbes）、跟跑之前比（specOkVerdict）：
+ * 一個目標只對到一張確認了的就記下回合結束派；對到不只一張有變動的（分不出是哪張）或跑完讀不到的，記下來提示要派時按 g；腳本失敗、卡片沒變的不記也不提示。
  */
-async function noteSpecOks($: any, call: any, result: unknown, probes: readonly SpecOkProbe[] | null, target: string) {
+async function noteSpecOks($: any, call: any, result: unknown, probes: readonly SpecOkProbe[] | null, targets: readonly string[]) {
   const printed = specOkCards(call, bashOutput(result))
+  if (printed.length) specOks = [...new Set([...specOks, ...printed])]
+  if (printed.length >= targets.length) return
+  if (!probes) return noteUnsure(targetsWho(targets))
   const seen = new Set(printed.map(normPath))
-  const confirmed = [...printed]
-  if (!probes && !printed.length) noteUnsure({ name: target })
-  for (const p of (probes ?? []).filter(x => !seen.has(normPath(x.statusPath)))) {
+  const left = probes.filter(p => !seen.has(normPath(p.statusPath)))
+  const verdicts = new Map(await Promise.all(left.map(async p => {
     const text = await $.fs.read(p.statusPath).catch(() => null)
-    const verdict = specOkVerdict(p.before, typeof text === 'string' ? specOkMarks(text) : null)
-    if (verdict === 'confirmed') confirmed.push(p.statusPath)
-    else if (verdict === 'unsure') noteUnsure({ name: p.name, statusPath: p.statusPath })
+    return [p.statusPath, specOkVerdict(p.before, typeof text === 'string' ? specOkMarks(text) : null)] as const
+  })))
+  for (const target of new Set(targets)) {
+    const hits = left.filter(p => specOkMatches(target, p))
+    const confirmed = hits.filter(p => verdicts.get(p.statusPath) === 'confirmed')
+    const unreadable = hits.filter(p => verdicts.get(p.statusPath) === 'unsure')
+    if (confirmed.length === 1 && !unreadable.length) { specOks = [...new Set([...specOks, confirmed[0]!.statusPath])]; continue }
+    for (const p of confirmed) noteUnsure({ name: p.name, statusPath: p.statusPath, why: `指令裡的「${target}」對到不只一張卡` })
+    for (const p of unreadable) noteUnsure({ name: p.name, statusPath: p.statusPath })
   }
-  if (confirmed.length) specOks = [...new Set([...specOks, ...confirmed])]
 }
 
 /**
@@ -108,7 +130,7 @@ async function dispatchSpecOks($: any, deps: PromptSyncDeps, paths: readonly str
   for (const c of (s?.cases ?? []).filter(x => !x.demo && want.has(normPath(x.statusPath)))) {
     try { await dispatchAfterSpec($, deps.options, c.statusPath) } catch (error) { await specOkDispatchFailed($, deps, error, c) }
   }
-  for (const who of unsure) await specOkTell($, deps, '規格可能已確認，但讀不到卡片、判斷不了，沒有自動派實作：要派時按 g', 'warning', who)
+  for (const who of unsure) await specOkTell($, deps, `規格可能已確認，但${who.why ?? '讀不到卡片'}、判斷不了，沒有自動派實作：要派時按 g`, 'warning', who)
 }
 
 /** 對話確認了規格、回合結束自動派實作時意外出錯：提示、動態（錯誤）、下一則提示告訴對話都說同一句，不默默吞掉。 */
@@ -265,15 +287,15 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   on('session.end', async ($, e, next) => { lastAttached = ''; return next(e) })
 
   // 對話（或它派的 subagent）改了卡片、登錄表，跑了卡片腳本或會移動分支的 git：馬上重讀，不等回合結束。
-  // 主對話（沒有 agentId）跑 card.py spec-ok 確認成功的，記下卡片路徑，回合結束再派：先看腳本印的那一行，輸出裡沒有就比對跑之前先讀的卡；
-  // subagent 跑的、腳本失敗（卡片沒變）的不記。
+  // 主對話（沒有 agentId）跑 card.py spec-ok 確認成功的，記下卡片路徑，回合結束再派：先看腳本印的那一行；印出來的比指令裡 spec-ok 的次數少，
+  // 才比對跑之前先讀的、指令裡目標對得上的卡。subagent 跑的、腳本失敗（卡片沒變）的、Bash 跑的期間別處確認的其他卡都不記。
   on('tool.call', async ($, e, next) => {
-    const target = deps.isActive() && !e.agentId ? specOkTarget(e as any) : null
-    const probes = target ? await specOkProbes($).catch(() => null) : null
+    const targets = deps.isActive() && !e.agentId ? specOkTargets(e as any) : []
+    const probes = targets.length ? await specOkProbes($, targets).catch(() => null) : null
     const result = await next(e)
     try { if (deps.isActive() && touchesDesk(e as any, deps.knownPaths())) touchSoon($, deps) } catch { /* 只是提早重讀，失敗就等定時更新 */ }
     // 判斷本身意外出錯：不知道有沒有確認，回合結束照「可能已確認」提示，不默默略過。
-    if (target) await noteSpecOks($, e, result, probes, target).catch(() => noteUnsure({ name: target }))
+    if (targets.length) await noteSpecOks($, e, result, probes, targets).catch(() => noteUnsure(targetsWho(targets)))
     return result
   })
 

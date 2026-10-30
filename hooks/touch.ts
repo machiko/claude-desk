@@ -35,14 +35,25 @@ export function touchesDesk(call: ToolTouch, known: readonly string[]): boolean 
 }
 
 /** Bash 指令裡的 `card.py spec-ok <目標>`（目標可加引號）。 */
-const SPEC_OK = /card\.py["']?\s+spec-ok\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|"']+))/
+const SPEC_OK = /card\.py["']?\s+spec-ok\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|"']+))/g
 
-/** 這次工具呼叫是不是跑 /desk:card spec <目標> ok 的腳本：是就回目標（slug、任務名或 main），其他回 null。 */
+/** 這次工具呼叫裡每一次 `card.py spec-ok <目標>` 的目標（slug、任務名或 main），照指令裡的順序；不是 Bash 或沒有就回空陣列。 */
+export function specOkTargets(call: ToolTouch): string[] {
+  if (call.tool !== 'Bash' || typeof call.command !== 'string') return []
+  return [...call.command.matchAll(SPEC_OK)].map(m => (m[1] ?? m[2] ?? m[3] ?? '').trim()).filter(Boolean)
+}
+
+/** 這次工具呼叫是不是跑 /desk:card spec <目標> ok 的腳本：是就回（第一個）目標，其他回 null。 */
 export function specOkTarget(call: ToolTouch): string | null {
-  if (call.tool !== 'Bash' || typeof call.command !== 'string') return null
-  const m = call.command.match(SPEC_OK)
-  const target = (m?.[1] ?? m?.[2] ?? m?.[3] ?? '').trim()
-  return target || null
+  return specOkTargets(call)[0] ?? null
+}
+
+/**
+ * 指令裡的 spec-ok 目標對不對得上這張卡：slug（worktree 資料夾名）完全相同，或任務名包含目標。
+ * 刻意比 card.py 的 resolve 簡單（不認 main、不檢查唯一）：只用來縮小跑完要比對的卡，一個目標對到不只一張有變動的就當判斷不了。
+ */
+export function specOkMatches(target: string, c: { name: string; slug: string }): boolean {
+  return !!target && (c.slug === target || c.name.includes(target))
 }
 
 /** card.py spec-ok 成功時印的那一行：`規格已確認（AC-1～AC-n），關卡清為「無」：<卡片路徑>`；失敗只印到 stderr、不動卡片。 */
@@ -73,7 +84,7 @@ export function specOkMarks(text: string): SpecOkMarks | null {
 }
 
 /**
- * 跑 card.py spec-ok 前後的同一張卡（輸出裡找不到成功那一行時用，例如錯誤文字被截掉中間）：
+ * 跑 card.py spec-ok 前後的同一張卡（成功那一行比指令裡 spec-ok 的次數少時，例如錯誤文字被截掉中間，只拿指令裡目標對得上的卡來比）：
  * confirmed：關卡從 spec 變成不是 spec，History 與 Decisions 也各多了 spec-ok 寫的那一筆；unchanged：關卡還是 spec，或沒有這次寫的那兩筆（腳本失敗、別的方式清掉關卡）；
  * unsure：前後有一邊讀不到，關卡又不是確定還在 spec，判斷不了。
  */
