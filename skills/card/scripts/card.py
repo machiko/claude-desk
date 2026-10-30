@@ -10,7 +10,10 @@
   card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
-  card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆
+  card.py spec-ok <slug|任務名|main>             關卡是 spec：…、AC 與實作計畫都填了才清成「無」、狀態改「規格已確認…，可派實作」，並在 Decisions／History 記一筆；
+                                               實作計畫跟其他進行中的卡同檔時，輸出結尾印 overlap 的預警行、History 也記一筆（不擋確認）
+  card.py overlap <slug|任務名|main>            實作計畫跟登錄表上其他進行中的卡（已歸檔段、卡片檔不存在、沒填計畫的不算）同檔時，
+                                               每個同檔印一行「同檔預警：<檔> 也在「<卡名>」的實作計畫（<slug>）」；沒有就印「同檔預警：無」
   card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句；下一步依關卡三選一：審查已過關、審查檔之後有新 commit 寫
                                                「等自動重新檢查與審查；沒動靜就到面板按 v」，審查已過關但之後沒有新 commit（或沒有審查檔）寫
                                                「到面板照「輪到你」開 PR 或合併」，其他寫「到面板按 v 執行完成檢查」；
@@ -165,11 +168,15 @@ def resolve(arg):
     name, path = hits[0]
     if not os.path.isfile(path):
         fail(f'卡片不存在：{path}')
-    root = path
+    return name, path, card_root(path)
+
+
+def card_root(path):
+    """卡片檔路徑去掉 .desk/CARD.md（或 .console/STATUS.md）＝任務根目錄。"""
     for f in CARD_FILES:
         if path.endswith('/' + f):
-            root = path[: -len(f) - 1]
-    return name, path, root
+            return path[: -len(f) - 1]
+    return path
 
 
 def read(path):
@@ -225,17 +232,43 @@ def filled_ac(text):
     return out
 
 
-def filled_plan(text):
-    """「### 實作計畫」表裡有內容的列（檔案、改什麼都不是空白或 <…> 佔位），回傳檔案欄。表格第一列一律是表頭，不看它寫什麼。"""
+def plan_cells(text):
+    """「### 實作計畫」表裡有內容的列（檔案、改什麼都不是空白或 <…> 佔位），回傳原樣的檔案欄。表格第一列一律是表頭，不看它寫什麼。"""
     m = re.search(r'^### 實作計畫\s*\n(.*?)(?=^##|\Z)', spec_section(text), re.M | re.S)
     rows = [line for line in (m.group(1) if m else '').split('\n') if line.strip().startswith('|')]
     out = []
     for line in rows[1:]:
-        cells = [c.strip().strip('`').strip() for c in line.strip().strip('|').split('|')]
+        raw = [c.strip() for c in line.strip().strip('|').split('|')]
+        cells = [c.strip('`').strip() for c in raw]
         if len(cells) < 2 or not cells[0] or re.fullmatch(r':?-+:?', cells[0]):
             continue
         if not cells[0].startswith('<') and cells[1] and not cells[1].startswith('<'):
-            out.append(cells[0])
+            out.append(raw[0])
+    return out
+
+
+def filled_plan(text):
+    """有內容的實作計畫列，回傳檔案欄（去掉頭尾反引號）。"""
+    return [c.strip('`').strip() for c in plan_cells(text)]
+
+
+def plan_files(text):
+    """實作計畫列到的檔案路徑：去掉反引號、前導 ./、反引號外全形或半形括號之後的說明；一格有多個反引號路徑就都算。"""
+    out = []
+    for cell in plan_cells(text):
+        kept = []
+        for part in re.split(r'(`[^`]*`)', cell):
+            if part.startswith('`') or not re.search(r'[（(]', part):
+                kept.append(part)
+                continue
+            kept.append(re.split(r'[（(]', part, 1)[0])
+            break
+        head = ''.join(kept)
+        names = re.findall(r'`([^`]+)`', head) or [head]
+        for name in names:
+            name = re.sub(r'^(\./)+', '', name.strip())
+            if name and name not in out:
+                out.append(name)
     return out
 
 
@@ -433,8 +466,59 @@ def cmd_spec_ok(arg):
     n = len(re.findall(r'^- D-\d+', text, re.M)) + 1
     text = append_line(text, '## Decisions', f'- D-{n:02d} {today} {USER}：確認規格（{span}，共 {len(ids)} 條）與實作計畫（{len(plan)} 項）')
     text = append_line(text, '## History', f'- {today}：規格確認，關卡清為無，可派實作')
+    # 跟其他進行中的卡同檔：只預警，不擋確認。
+    found = overlaps(path)
+    warnings = overlap_lines(found)
+    if found:
+        said = '；'.join(f'{f} 也在「{name}」的實作計畫' for f, name, _ in found)
+        text = append_line(text, '## History', f'- {today}：同檔預警：{said}')
     write(path, text)
     print(f'規格已確認（{span}），關卡清為「無」：{path}')
+    for line in warnings:
+        print(line)
+
+
+ARCHIVED_HEADING = '## 已歸檔'
+
+
+def active_rows():
+    """登錄表裡進行中的列：「## 已歸檔…」段裡的不算。"""
+    need_registry()
+    rows, archived = [], False
+    for line in read(REG).split('\n'):
+        if line.startswith('## '):
+            archived = line.startswith(ARCHIVED_HEADING)
+        m = None if archived else re.match(r'^\|\s*([^|]+?)\s*\|\s*`([^`]+)`', line)
+        if m:
+            rows.append((m.group(1), expand(m.group(2))))
+    return rows
+
+
+def overlaps(path):
+    """這張卡的實作計畫跟登錄表上其他進行中的卡同檔的 (檔案, 卡名, slug)，依這張卡的計畫順序；
+    卡片檔不存在、讀不到或沒填計畫的卡略過，不報錯。"""
+    mine = plan_files(read(path))
+    others = []
+    for name, other in active_rows():
+        if os.path.abspath(other) == os.path.abspath(path) or not os.path.isfile(other):
+            continue
+        try:
+            files = set(plan_files(read(other)))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if files:
+            others.append((name, os.path.basename(card_root(other)), files))
+    return [(f, name, slug) for f in mine for name, slug, files in others if f in files]
+
+
+def overlap_lines(found):
+    return [f'同檔預警：{f} 也在「{name}」的實作計畫（{slug}）' for f, name, slug in found]
+
+
+def cmd_overlap(arg):
+    _, path, _ = resolve(arg)
+    for line in overlap_lines(overlaps(path)) or ['同檔預警：無']:
+        print(line)
 
 
 DONE_NEXT = '到面板按 v 執行完成檢查'
@@ -983,6 +1067,8 @@ def main(argv):
         cmd_gate(args[0], ' '.join(args[1:]))
     elif cmd == 'spec-ok' and args:
         cmd_spec_ok(args[0])
+    elif cmd == 'overlap' and args:
+        cmd_overlap(args[0])
     elif cmd == 'done' and len(args) >= 2:
         cmd_done(args[0], ' '.join(args[1:]))
     elif cmd == 'archive' and [a for a in args if a != '--cleanup']:

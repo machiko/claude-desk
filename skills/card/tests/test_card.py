@@ -942,6 +942,163 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('## 驗收情境', read(self.card_path()).replace('### 驗收情境', '## 驗收情境'))
 
 
+OVERLAP_CARD = '''# {name} DESK
+
+<!-- DESK -->
+- 狀態：規格草稿
+- 檢查：`true`
+- 等你：無
+- 下一步：<下一步>
+- 關卡：spec：待確認規格
+<!-- /DESK -->
+
+## 規格
+
+### 驗收情境
+
+| # | 給定 | 當 | 則 | 對應測試 |
+| --- | --- | --- | --- | --- |
+| AC-1 | 前提 | 操作 | 結果 | `t`（新） |
+
+### 實作計畫
+
+| 檔案 | 改什麼 |
+| --- | --- |
+{plan}
+
+## Decisions
+
+## History
+
+- 2026-01-01：開卡
+'''
+
+
+class OverlapTest(unittest.TestCase):
+    """`card.py overlap <目標>` 與 spec-ok：實作計畫跟登錄表上其他進行中的卡同檔時預警。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.t = self.tmp.name
+        self.reg = os.path.join(self.t, 'registry.md')
+        self.settings = os.path.join(self.t, 'dispatch.json')
+        write(self.settings, json.dumps({'card': {'registry': self.reg}}))
+        self.rows = []
+        self.archived = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def add_card(self, slug, name, files, plan_rows=None):
+        """在 <tmp>/wt/<slug>/.desk/CARD.md 造一張卡；files 是實作計畫的檔案欄（原樣寫進表格）。"""
+        path = os.path.join(self.t, 'wt', slug, '.desk', 'CARD.md')
+        os.makedirs(os.path.dirname(path))
+        plan = plan_rows if plan_rows is not None else '\n'.join(f'| {f} | 改這個檔 |' for f in files)
+        write(path, OVERLAP_CARD.format(name=name, plan=plan))
+        self.rows.append((name, path))
+        return path
+
+    def write_registry(self):
+        table = '\n'.join(f'| {n} | `{p}` | 進行中 |' for n, p in self.rows)
+        text = f'# 登錄\n\n| 任務名 | 卡片 | 狀態 |\n| --- | --- | --- |\n{table}\n'
+        if self.archived:
+            old = '\n'.join(f'| {n} | `{p}` | 已歸檔 |' for n, p in self.archived)
+            text += f'\n## 已歸檔的卡（worktree 刪除後，卡片留存供查閱）\n\n| 任務名 | 卡片 | 狀態 |\n| --- | --- | --- |\n{old}\n'
+        write(self.reg, text)
+
+    def run_card(self, *args):
+        env = {**os.environ, 'DESK_SETTINGS': self.settings, 'DESK_PROJECT_DIR': ''}
+        for k in ('DESK_CARD_MAIN', 'DESK_CARD_REGISTRY', 'DESK_CARD_TEMPLATE', 'DESK_CARD_ARCHIVE'):
+            env.pop(k, None)
+        return subprocess.run([sys.executable, SCRIPT, *args], capture_output=True, text=True, env=env)
+
+    def test_overlap_lists_files_shared_with_other_cards_plans(self):
+        self.add_card('card-a', 'A', ['`hooks/dispatch.ts`', '`tests/a.test.ts`'])
+        self.add_card('card-b', 'B', ['`hooks/dispatch.ts`', '`README.md`'])
+        self.write_registry()
+
+        r = self.run_card('overlap', 'card-a')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip().split('\n'), ['同檔預警：hooks/dispatch.ts 也在「B」的實作計畫（card-b）'])
+        self.assertNotIn('tests/a.test.ts', r.stdout)
+
+    def test_overlap_prints_none_when_no_shared_files(self):
+        self.add_card('card-a', 'A', ['`hooks/dispatch.ts`'])
+        self.add_card('card-b', 'B', ['`README.md`'])
+        self.add_card('card-c', 'C', [], plan_rows='| `<路徑>` | <改什麼、為什麼> |')
+        self.write_registry()
+
+        r = self.run_card('overlap', 'card-a')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), '同檔預警：無')
+        self.assertEqual(r.stderr, '')
+
+    def test_overlap_ignores_archived_and_missing_cards(self):
+        self.add_card('card-a', 'A', ['`hooks/dispatch.ts`'])
+        old = self.add_card('card-old', '舊卡', ['`hooks/dispatch.ts`'])
+        self.rows.remove(('舊卡', old))
+        self.archived.append(('舊卡', old))
+        self.rows.append(('不見了', os.path.join(self.t, 'wt', 'gone', '.desk', 'CARD.md')))
+        self.write_registry()
+
+        r = self.run_card('overlap', 'card-a')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), '同檔預警：無')
+        self.assertEqual(r.stderr, '')
+
+    def test_spec_ok_appends_overlap_warning_to_output_and_history(self):
+        a = self.add_card('card-a', 'A', ['`hooks/dispatch.ts`', '`tests/a.test.ts`'])
+        self.add_card('card-b', 'B', ['`hooks/dispatch.ts`', '`README.md`'])
+        c = self.add_card('card-c', 'C', ['`docs/c.md`'])
+        self.write_registry()
+        today = datetime.date.today().isoformat()
+
+        r = self.run_card('spec-ok', 'card-a')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('- 關卡：無', read(a))
+        self.assertEqual(r.stdout.strip().split('\n')[-1], '同檔預警：hooks/dispatch.ts 也在「B」的實作計畫（card-b）')
+        self.assertIn(f'- {today}：同檔預警：hooks/dispatch.ts 也在「B」的實作計畫\n', read(a))
+        # 沒同檔：照常確認、不印預警、不加 History
+        r = self.run_card('spec-ok', 'card-c')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('- 關卡：無', read(c))
+        self.assertNotIn('同檔預警', r.stdout)
+        self.assertNotIn('同檔預警', read(c))
+
+    def test_overlap_normalizes_plan_file_cells(self):
+        self.add_card('card-a', 'A', [
+            '`hooks/dispatch.ts`',
+            './hooks/card.ts',
+            '`README.md`（只改指令表）',
+            '`.task/PLAN.md`（不 commit）',
+            'docs/x.md',
+        ])
+        self.add_card('card-b', 'B', [
+            'hooks/dispatch.ts（只動 import）',
+            '`./hooks/card.ts`',
+            'README.md',
+            '.task/PLAN.md',
+        ])
+        b = self.rows[-1][1]
+        # docs/x.md 在 B 是「改什麼」空白的列：照 filled_plan 不算
+        write(b, read(b).replace('| .task/PLAN.md | 改這個檔 |', '| .task/PLAN.md | 改這個檔 |\n| docs/x.md | |'))
+        self.write_registry()
+
+        r = self.run_card('overlap', 'card-a')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip().split('\n'), [
+            '同檔預警：hooks/dispatch.ts 也在「B」的實作計畫（card-b）',
+            '同檔預警：hooks/card.ts 也在「B」的實作計畫（card-b）',
+            '同檔預警：README.md 也在「B」的實作計畫（card-b）',
+            '同檔預警：.task/PLAN.md 也在「B」的實作計畫（card-b）',
+        ])
+
+
 CHANGELOG_BEFORE = '# Changelog\n\n## 未發布\n\n## 0.26.0\n\n- 修復 舊的事\n'
 
 
