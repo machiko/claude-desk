@@ -4,6 +4,7 @@ import type { PluginOptions } from 'claude-code'
 import type { Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
 import { lastMeaningful, plain } from './model'
+import { summarizeCheck } from './verify-summary'
 import { MODEL_KINDS, REVIEW_FILE, SECURITY_FILE, markOf, modelFor, normalizeRoot, parseSettings } from './dispatch'
 import type { ModelKind } from './dispatch'
 import type { DispatchSettings, WorktreeMark } from './dispatch'
@@ -486,14 +487,16 @@ export async function logTail($: any, id: string | undefined, n = 10): Promise<s
 /** 完成檢查最長跑多久。 */
 export const VERIFY_TIMEOUT_MS = 600_000
 
-/** 在任務根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。 */
+/** 在任務根目錄跑卡片的完成檢查指令；跑不起來也記成一次未通過。沒過時從整份輸出整理失敗摘要給面板看，tail 留給修正提示。 */
 export async function verifyResult($: any, c: Case): Promise<Verify> {
   const head = (await gitProbe($, c.root)).git?.head
   try {
     const r = await $.process.run(['sh', '-c', c.verify], { cwd: c.root, timeoutMs: VERIFY_TIMEOUT_MS })
     const lines = `${r.stdout}\n${r.stderr}`.split(/[\r\n]+/).map((l: string) => plain(l).trimEnd()).filter(Boolean)
-    return { command: c.verify, at: await $.clock.now(), ok: r.exitCode === 0, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}) }
+    const ok = r.exitCode === 0
+    return { command: c.verify, at: await $.clock.now(), ok, exitCode: r.exitCode, tail: lines.slice(-4), truncated: !!r.isStdoutTruncated, ...(head ? { head } : {}), ...(ok ? {} : { summary: summarizeCheck(lines) }) }
   } catch (error) {
-    return { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail: [plain(error instanceof Error ? error.message : String(error))], truncated: false, ...(head ? { head } : {}) }
+    const tail = [plain(error instanceof Error ? error.message : String(error))]
+    return { command: c.verify, at: await $.clock.now(), ok: false, exitCode: -1, tail, truncated: false, ...(head ? { head } : {}), summary: summarizeCheck(tail) }
   }
 }
