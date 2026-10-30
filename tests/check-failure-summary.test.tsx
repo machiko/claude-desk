@@ -177,3 +177,25 @@ test('now card never shows zero failures', async ($, on) => {
   expect(shown).not.toContain('支失敗')
   await ui.unmount()
 })
+
+test('now card keeps the reason visible when the test name is long', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data)
+  const long = 'test_archive_cleanup_removes_worktree_and_branch_when_merged_and_clean'
+  data.run = async (e: any) => e.argv[0] === 'sh' ? result(1, UNITTEST.replace(/test_x/g, long)) : result(0, '')
+  await $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
+  await clock.settle(); await clock.advance(2500); await clock.settle()
+
+  for (const width of [72, 110]) {
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    await clock.settle()
+    const ui = await $.ui.mount(PANE(width))
+    await ui.press({ key: `row-${CARD_A}` })
+    // 同一列：名稱開頭（縮短加…）＋原因
+    const row = (await ui.findAll({ type: 'Text' })).map((n: any) => String(n.text ?? '')).find((t: string) => t.includes('AssertionError: 12 != 9'))
+    expect(row).toBeDefined()
+    expect(row!.startsWith('test_archive_')).toBe(true)
+    expect(row!).toContain('…：AssertionError: 12 != 9')
+    await ui.unmount()
+  }
+})

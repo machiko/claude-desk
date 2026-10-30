@@ -126,14 +126,24 @@ const FAILURE_LINES = 3
  * 沒過時結果列下面列的字：認得出框架就是「測試名：原因」（收合只列前 3 支，其餘寫「還有 n 支」），認不出、抓不到名稱或舊紀錄是去掉分隔線的尾巴（全列）；
  * 展開時列全部，再接摘要裡沒有的原始尾巴（分隔線不列）。
  */
-function failureLines(v: Verify, expanded: boolean): { items: string[]; more?: string; raw: string[] } {
+function failureLines(v: Verify, expanded: boolean): { items: string[]; more?: string; raw: string[]; isNamed?: boolean } {
   const items = v.summary?.items ?? v.tail.filter(l => !isSeparator(l))
   const raw = expanded ? v.tail.filter(l => !items.includes(l) && !isSeparator(l)) : []
   const failed = v.summary?.failed
   if (failed === undefined || v.summary?.isTail) return { items, raw }
   const shown = expanded ? items : items.slice(0, FAILURE_LINES)
   const hidden = Math.max(failed, items.length) - shown.length
-  return { items: shown, ...(hidden > 0 ? { more: expanded ? `還有 ${hidden} 支沒列出` : `還有 ${hidden} 支（x 展開）` } : {}), raw }
+  return { items: shown, ...(hidden > 0 ? { more: expanded ? `還有 ${hidden} 支沒列出` : `還有 ${hidden} 支（x 展開）` } : {}), raw, isNamed: true }
+}
+
+/** 「測試名：原因」放不下時先縮短名稱（至少留 NAME_MIN 欄），讓原因留在畫面上。 */
+const NAME_MIN = 16
+
+function fitFailure(text: string, columns: number): string {
+  const at = text.indexOf('：')
+  if (at < 0 || displayWidth(text) <= columns) return fit(text, columns)
+  const reason = text.slice(at)
+  return fit(fit(text.slice(0, at), Math.max(NAME_MIN, columns - displayWidth(reason))) + reason, columns)
 }
 
 /** 完成檢查：結果一列；沒過時下面列失敗摘要；再一列指令；展開時附原始輸出尾巴。可歸檔時已經沒有要檢查的事，只留結果一列（x 展開照舊）。 */
@@ -153,13 +163,14 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
     : <Text color={COLOR.faint}>{v && v.command === c.verify ? '有新 commit，需重新執行' : '尚未執行'}</Text>
   const head = <Box flexDirection="row" paddingLeft={INDENT}><Text color={COLOR.faint}>{pad(WORD.verify, KV_LABEL)}</Text>{result}</Box>
   if (brief) return [head]
-  const line = (text: string, color: string) => <Box flexDirection="row" paddingLeft={INDENT + KV_LABEL}><Text color={color} wrap="truncate-end">{fit(text, room)}</Text></Box>
+  const line = (text: string, color: string) => <Box flexDirection="row" paddingLeft={INDENT + KV_LABEL}><Text color={color} wrap="truncate-end">{text}</Text></Box>
+  const plainLine = (text: string, color: string) => line(fit(text, room), color)
   return [
     head,
-    ...(failure?.items ?? []).map(l => line(l, COLOR.bad)),
-    ...(failure?.more ? [line(failure.more, COLOR.faint)] : []),
-    line(shortCommand(c.verify), COLOR.faint),
-    ...[...(failure?.raw ?? []), ...passTail].map(l => line(l, COLOR.dim)),
+    ...(failure?.items ?? []).map(l => line(failure!.isNamed ? fitFailure(l, room) : fit(l, room), COLOR.bad)),
+    ...(failure?.more ? [plainLine(failure.more, COLOR.faint)] : []),
+    plainLine(shortCommand(c.verify), COLOR.faint),
+    ...[...(failure?.raw ?? []), ...passTail].map(l => plainLine(l, COLOR.dim)),
   ]
 }
 

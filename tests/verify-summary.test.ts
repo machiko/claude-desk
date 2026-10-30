@@ -267,3 +267,84 @@ test('summarizeCheck: unittest subTest names keep their [message]', () => {
   })
   expect(summarizeCheck(['ERROR: config.yml not found [see docs]'])).toEqual({ items: ['ERROR: config.yml not found [see docs]'] })
 })
+
+// pytest 9.2 真實輸出（2026-10-30 實跑）：參數化 id 可以有空白；ERROR 是 fixture 壞掉
+const PYTEST_IDS = `=========================== short test summary info ============================
+FAILED tests/test_a.py::test_param[a b] - AssertionError: assert 'a b' == 'x'
+FAILED tests/test_a.py::test_param[c] - AssertionError: assert 'c' == 'x'
+FAILED tests/test_a.py::test_sum - assert 12 == 9
+FAILED tests/test_a.py::TestIo::test_load - FileNotFoundError: [Errno 2] No s...
+ERROR tests/test_a.py::test_fix - RuntimeError: fixture broke
+========================== 4 failed, 1 error in 0.03s ==========================`
+
+test('summarizeCheck: pytest parametrized ids with spaces', () => {
+  expect(summarizeCheck(lines(PYTEST_IDS))).toEqual({
+    failed: 5,
+    items: ["test_param[a b]：AssertionError: assert 'a b' == 'x'", "test_param[c]：AssertionError: assert 'c' == 'x'", 'test_sum：assert 12 == 9', 'test_load：FileNotFoundError: [Errno 2] No s...', 'test_fix：RuntimeError: fixture broke'],
+  })
+  expect(summarizeCheck(['FAILED t.py::test_x[a - b] - assert 1', '=== 1 failed in 0.1s ===']).items).toEqual(['test_x[a - b]：assert 1'])
+  // 收集錯誤（沒有 ::）照樣不算名稱
+  expect(summarizeCheck(['ERROR tests/test_a.py - ImportError: x', '=== 1 error in 0.1s ===']).isTail).toBe(true)
+})
+
+// jest 27.5 真實輸出（2026-10-30 實跑，--ci）：跑兩個以上的檔時不印 ✕ 行，名稱只在 ● 標題
+const JEST_MULTI = `FAIL tests/b.test.js
+  ● loads config
+
+    config missing
+
+    > 1 | test('loads config', () => { throw new Error('config missing') })
+        |                                    ^
+      2 |
+
+      at Object.<anonymous> (tests/b.test.js:1:36)
+
+FAIL tests/a.test.js
+  ● math › adds numbers
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 9
+    Received: 12
+
+      1 | describe('math', () => {
+    > 2 |   test('adds numbers', () => { expect(12).toBe(9) })
+        |                                           ^
+
+      at Object.<anonymous> (tests/a.test.js:2:43)
+
+  ● Console
+
+    console.log
+      hi
+
+Test Suites: 2 failed, 2 total
+Tests:       2 failed, 1 passed, 3 total
+Snapshots:   0 total
+Time:        0.51 s
+Ran all test suites.`
+
+test('summarizeCheck: jest with several files names failures from ● headers', () => {
+  expect(summarizeCheck(lines(JEST_MULTI))).toEqual({
+    failed: 2,
+    items: ['loads config：config missing', 'math › adds numbers：expect(received).toBe(expected) // Object.is equality（Expected: 9，Received: 12）'],
+  })
+})
+
+test('summarizeCheck: names without a test name say which file or class', () => {
+  // plugin test 3.x 真實輸出：測試檔載入失敗時名稱固定，檔名在上面那行
+  const load = lines(`tests/zz-load.test.ts:\n(fail) the file did not load\n  module blew up\n\ntests/b.test.ts:\n(fail) the file did not load\n  other\n 0 pass\n 2 fail`)
+  expect(summarizeCheck(load).items).toEqual(['tests/zz-load.test.ts did not load：module blew up', 'tests/b.test.ts did not load：other'])
+  // Python 3.12 真實輸出：setUpClass 壞掉
+  const setup = lines(`E\n======\nERROR: setUpClass (test_s.Setup)\n------\nTraceback (most recent call last):\n  File "/x/test_s.py", line 5, in setUpClass\n    raise RuntimeError('db down')\nRuntimeError: db down\n------\nRan 0 tests in 0.000s\nFAILED (errors=1)`)
+  expect(summarizeCheck(setup)).toEqual({ failed: 1, items: ['setUpClass (test_s.Setup)：RuntimeError: db down'] })
+})
+
+test('summarizeCheck stops after fifty vitest failures on large output', () => {
+  const many = Array.from({ length: 1000 }, (_, i) => `   × s > case ${i} 1ms`).join('\n') + '\n'
+    + Array.from({ length: 1000 }, (_, i) => ` FAIL  a.test.ts > s > case ${i}\nError: r${i}`).join('\n') + '\n      Tests  1000 failed (1000)'
+  const s = summarizeCheck(lines(many))
+  expect(s.failed).toBe(1000)
+  expect(s.items).toHaveLength(50)
+  expect(s.items[49]).toBe('s > case 49：Error: r49')
+})
