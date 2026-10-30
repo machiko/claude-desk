@@ -1137,6 +1137,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 RELEASE_STEPS = [
     'origin/main',
     '/desk:card changelog',
+    '補文件',
     '.claude-plugin/plugin.json',
     'claude plugin validate .',
     'commit',
@@ -1180,7 +1181,7 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertNotIn('在主 repo、要發的 PR 都合併之後執行', skill)
 
     def test_release_docs_state_one_question_and_version_rule_when_releasing_desk(self):
-        """AC-4：發版段寫只問一次與題目範本、desk 的版號規則、照做的 9 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
+        """AC-4：發版段寫只問一次與題目範本、desk 的版號規則、照做的 10 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
         section = self.release_section()
         for part in ('只問一次', 'A) 照做', 'B) 改用', 'C) 先不發', '選 A／B 後一路做完不再問', '失敗就停'):
             self.assertIn(part, section)
@@ -1188,18 +1189,63 @@ class ReleaseDocsTest(unittest.TestCase):
         for part in ('feature/', '「新增」', '次版號', '0.38.0', '修訂號', '0.37.1', '0.27.0 起 12 次發版都符合'):
             self.assertIn(part, section)
         self.assertLess(section.find('次版號'), section.find('修訂號'))
-        # 9 步從暫存 worktree 開始、收尾移除它；歸檔寫在第 9 步之後，不在題目裡
+        # 10 步從暫存 worktree 開始、收尾移除它；歸檔寫在第 10 步之後，不在題目裡
         steps = re.findall(r'(?m)^\s+(\d+)\. (.*)$', section)
-        self.assertEqual([n for n, _ in steps], [str(i) for i in range(1, 10)])
+        self.assertEqual([n for n, _ in steps], [str(i) for i in range(1, 11)])
         self.assertIn('git worktree add', steps[0][1])
-        self.assertIn('git worktree remove', steps[8][1])
-        last_step = section.find(steps[8][1])
-        self.assertGreater(section.find('歸檔', last_step + len(steps[8][1])), 0)
-        self.assertNotIn('歸檔', section[:last_step + len(steps[8][1])])
+        self.assertIn('git worktree remove', steps[9][1])
+        last_step = section.find(steps[9][1])
+        self.assertGreater(section.find('歸檔', last_step + len(steps[9][1])), 0)
+        self.assertNotIn('歸檔', section[:last_step + len(steps[9][1])])
         readme = read(os.path.join(REPO, 'README.md'))
         row = next(l for l in readme.splitlines() if l.startswith('| ⚑ 發版 |'))
         self.assertIn('只問一次', row)
         self.assertNotIn('打 tag 並 push', row)
+
+
+class CardOrderingDocsTest(unittest.TestCase):
+    """開卡順序與共用檔規則：WORKFLOW 的「- 開卡順序」、README 的「### 文件與共用檔」、SKILL.md 的 new 提醒。"""
+
+    def ordering_item(self):
+        lines = read(os.path.join(REPO, 'docs', 'WORKFLOW.md')).splitlines()
+        section = next(i for i, l in enumerate(lines) if l == '## 開卡與歸檔')
+        new = next(i for i in range(section, len(lines)) if lines[i].startswith('- 開卡：'))
+        start = next(i for i in range(section, len(lines)) if lines[i].startswith('- 開卡順序'))
+        self.assertGreater(start, new, '「- 開卡順序」要在「- 開卡」之後')
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith(('- ', '#'))), len(lines))
+        return '\n'.join(lines[start:end])
+
+    def readme_shared_docs_section(self):
+        readme = read(os.path.join(REPO, 'README.md'))
+        changelog = readme.index('### CHANGELOG 片段檔')
+        start = readme.index('### 文件與共用檔')
+        self.assertGreater(start, changelog, '「### 文件與共用檔」要在「### CHANGELOG 片段檔」之後')
+        end = re.search(r'(?m)^##', readme[start + 3:])
+        return readme[start:start + 3 + end.start()] if end else readme[start:]
+
+    def test_workflow_docs_state_card_ordering_rules(self):
+        """AC-1：橫切重構單獨開卡、合併前不開其他卡的實作；審查與合併段不超過 4 張、過關就合併；附熱點檔衝突統計當理由。"""
+        item = self.ordering_item()
+        for part in ('改名', '搬檔', '六段', '橫切重構', '單獨開卡', '合併前不開其他卡的實作',
+                     '不超過 4 張', '過關一張就合併', 'README', 'WORKFLOW', 'dispatch.ts'):
+            self.assertIn(part, item)
+        self.assertLess(item.find('橫切重構'), item.find('不超過 4 張'))
+
+    def test_docs_tell_feature_cards_not_to_edit_shared_docs(self):
+        """AC-2：功能卡不改 README 與 WORKFLOW 的功能說明段，要補的說明寫在規格的目標或 Decisions 並標「待補文件」，發版的補文件步驟一次補。"""
+        for text in (self.ordering_item(), self.readme_shared_docs_section()):
+            for part in ('功能卡不改 README', '功能說明段', '「## 規格」的目標或 Decisions', '待補文件'):
+                self.assertIn(part, text)
+            # 審查 HIGH：鎖住「由發版一次補」，拿掉那句測試要紅
+            self.assertRegex(text, r'發版[^。；]*一次補進去')
+        self.assertIn('橫切重構', self.readme_shared_docs_section())
+
+    def test_card_skill_reminds_ordering_on_new(self):
+        """AC-3：SKILL.md 的 new 提醒指向 WORKFLOW 的「開卡順序」。"""
+        skill = read(os.path.join(REPO, 'skills', 'card', 'SKILL.md'))
+        reminder = next(l for l in skill.splitlines() if l.strip().startswith('- `new` 之後提醒'))
+        for part in ('橫切重構', '等其他卡合併', '等它合併', '開卡順序'):
+            self.assertIn(part, reminder)
 
 
 if __name__ == '__main__':
