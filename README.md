@@ -256,6 +256,8 @@ claude plugin test .                  # hooks 的測試
 python3 -m unittest discover -s skills/card/tests   # /desk:card 的測試
 ```
 
+各種派工的提示詞在 `hooks/prompts/<種類>.ts`（`rules`、`catchup`、`publish`、`review`、`fix`），改某種派工的提示只改那一檔；`hooks/dispatch.ts` 只留派工設定、啟動參數、組裝與拒絕判斷，呼叫端照舊從它匯入。
+
 測試時間與機器負載：`claude plugin test` 對每一支測試都重新載入整個 hooks 模組圖（約 5,500 行），單支的載入成本約 110–200 ms，測試本身的工作多半只有 20–200 ms；最重的一支（`tests/chain-flow.test.tsx` 第一支）單獨跑約 420 ms。runner 固定開「CPU 核心數」個子行程同時跑，所以每支測試的牆鐘時間會隨機器當時的負載放大：同一台機器有別的 worktree 也在跑整套時，單獨 420 ms 的那支可能被放大到 2–5 秒，超過 5000 ms 就逾時，而且每次逾時的那支都不同。跑整套前先看 `uptime`，避免幾個 worktree 同時跑；這種逾時不是測試或 hooks 壞了，不要用調逾時、重試或 skip 蓋掉，等負載降下來再跑一次就好。
 
 ### CHANGELOG 片段檔
