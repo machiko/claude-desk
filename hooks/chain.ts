@@ -1,4 +1,4 @@
-// 自動流程：實作做完 → 自動檢查 → 綠了自動審查 → 有 CRITICAL／HIGH 自動修正，修正最多兩輪，碰不到合併與上線。
+// 自動流程：實作做完 → 自動檢查 → 綠了自動審查 → 有 CRITICAL／HIGH 或影響行為的 MEDIUM 自動修正，修正最多兩輪，碰不到合併與上線。
 // 純函式：給它上一次派工、檢查結果、審查結論，它說下一步做什麼。
 import type { ReviewVerdict } from '../types'
 import type { DispatchKind } from './dispatch'
@@ -40,12 +40,14 @@ export type ChainRun = {
   recheck?: boolean
   /** 停在檢查段（指令未核准、容器沒啟動、檢查中斷）：你排除後按 v 跑完檢查，流程接著走。 */
   heldAtCheck?: boolean
+  /** 這輪修正要修的 MEDIUM 數（審查檔裡沒標「不修」「等你決定」的）；派的修正沒帶就沒有。 */
+  mediumFix?: number
   /** 最近一次自動派解衝突時的 HEAD：同一個 HEAD 只自動試一次。 */
   catchupHead?: string
 }
 export type ChainStep =
   | { kind: 'verify' }
-  | { kind: 'dispatch'; dispatch: DispatchKind; round: number; reason?: string; security?: boolean }
+  | { kind: 'dispatch'; dispatch: DispatchKind; round: number; reason?: string; security?: boolean; /** 這輪修正要修的 MEDIUM 數；沒有要修的不帶。 */ medium?: number }
   | { kind: 'stop'; reason: string; atCheck?: boolean }
   | { kind: 'pass'; skipped?: boolean; needsHuman?: string }
   | null
@@ -79,8 +81,11 @@ export function seenHeads(run: ChainRun | undefined, branch: string | undefined)
   return [run.reviewBranch === branch ? run.reviewHead : undefined, run.judgedBranch === branch ? run.judgedHead : undefined].filter((h): h is string => !!h)
 }
 
-/** `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。 */
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean }
+/**
+ * `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。
+ * `mediumFix`：剛結束的審查，審查檔裡要修的 MEDIUM 數（沒標「不修」「等你決定」的）。
+ */
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; mediumFix?: number }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -100,11 +105,13 @@ export function nextStep(run: ChainRun | undefined, finished: DispatchKind | nul
   }
   if (finished === 'review') {
     if (!verdict) return { kind: 'stop', reason: '審查結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' }
-    if (blocking(verdict) === 0) {
+    // 影響行為的 MEDIUM 只在還有修正輪數時跟 CRITICAL／HIGH 一起修；輪數用完只剩 MEDIUM 就過關，交給「等你」。
+    const medium = run.round < MAX_FIX_ROUNDS ? ctx.mediumFix ?? 0 : 0
+    if (blocking(verdict) + medium === 0) {
       if (high && !ctx.lastWasSecurity) return { kind: 'dispatch', dispatch: 'review', round: run.round, security: true }
       return high ? { kind: 'pass', needsHuman: high } : { kind: 'pass' }
     }
-    return run.round < MAX_FIX_ROUNDS ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'review' } : { kind: 'stop', reason: `修了 ${MAX_FIX_ROUNDS} 輪仍有 CRITICAL ${verdict.critical}、HIGH ${verdict.high}` }
+    return run.round < MAX_FIX_ROUNDS ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'review', ...(medium ? { medium } : {}) } : { kind: 'stop', reason: `修了 ${MAX_FIX_ROUNDS} 輪仍有 CRITICAL ${verdict.critical}、HIGH ${verdict.high}` }
   }
   return null
 }

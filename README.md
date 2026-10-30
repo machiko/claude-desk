@@ -2,7 +2,7 @@
 
 Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張面板只放「現在該看的那一件」，並告訴你輪到誰、該按什麼。從規格、實作、檢查、審查、合併到上線，中間的實作、檢查、審查、修正由背景 Agent 自動走完流程。
 
-> **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH findings for up to two rounds. The UI and prompts are in Traditional Chinese.
+> **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH and behaviour-affecting MEDIUM findings for up to two rounds. The UI and prompts are in Traditional Chinese.
 
 ```
  desk 0.18.0  5 小時 剩 78%  本週 剩 31%            教學模式 · 20:00 讀取
@@ -56,7 +56,7 @@ Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張�
 輸入 `/desk tutorial`。它會在 `~/.claude/desk-tutorial` 建一個小 repo 和一件任務「教學：會員折扣」放在現在卡；「全部任務」列出教學這件和幾件示範任務；示範任務只能看，讓你看到多件任務同時進行時面板的樣子。照現在卡第二列「▶ 輪到你」的指示把六段走完：
 
 1. 規格：看過預先寫好的規格，按 `t` 確認（實際使用時按兩次 `t`，或輸入 `/desk:card spec <slug> ok`）。
-2. 實作：按兩次 `g`。教學裡的 Agent 和審查由腳本扮演，不花額度，也不需要信任資料夾。
+2. 實作：確認規格後自動派 Agent（實際使用時一樣，不用再按 `g`）。教學裡的 Agent 和審查由腳本扮演，不花額度，也不需要信任資料夾。
 3. 檢查：自動執行，會真的跑 `python3 -m unittest`。
 4. 審查：第一輪會挑出一條 HIGH，自動修正、重新檢查、複審；過關後留一條 MEDIUM 讓你決定。
 5. 合併：回答審查建議，再按 `f` 寫回卡片；然後按 `t` 在本機合併。選 c（現在改）會改程式並 commit，接著自動退回重新檢查、重新審查，過關後才輪到合併。
@@ -75,7 +75,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
    ```
 
 2. 在 repo 裡開一件任務：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。想先開工作桌、還不開卡，就在面板按 `n`（「＋ 建立空的登錄表」）。
-3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後在面板按兩次 `t` 確認（或輸入 `/desk:card spec order-export ok`）。
+3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後在面板按兩次 `t` 確認（或輸入 `/desk:card spec order-export ok`）。按 `t` 確認後會自動派實作；在對話用指令確認的，回合結束後一樣自動派。
 4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派 Agent）。
 
 背景 Agent 只會在「信任過的 repo」裡啟動：第一次用某個 repo 前，先在那個 repo 根目錄開一次 `claude`，信任提示選 Yes。
@@ -101,8 +101,8 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk:card spec <目標> [需求]` | 產生規格草稿並設 `spec：` 關卡；`… ok` 確認 |
 | `/desk:card done <slug> <狀態一句>` | 主對話告一段落時寫回卡片：狀態、下一步（平常是到面板按 v；審查過關後有新 commit 是等自動重新檢查與審查，沒動靜就按 v；審查過關後沒有新 commit 是照面板開 PR 或合併）與 History（分支、HEAD）；規格沒確認會拒絕 |
 | `/desk:flow` | 在主對話（不派 Agent）走六段的說明：每段對話做什麼、面板怎麼看得到，末尾附一行 CLAUDE.md 規則 |
-| `/desk:card archive <slug>` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree） |
-| `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在主 repo 執行；沒有片段、版本段已存在、片段格式錯都不改檔） |
+| `/desk:card archive <slug>… [--cleanup]` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree）；發版時帶 `--cleanup` 再移除已合併又乾淨的 worktree 與分支（`git worktree remove`、`git branch -d`），保留的寫進登錄表「## 提醒」 |
+| `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在要發版的那份 main 執行：主 repo，照「⚑ 發版」流程時是從 origin/main 開的暫存 worktree；沒有片段、版本段已存在、片段格式錯都不改檔） |
 
 焦點：`/desk` 或 ctrl+x tab 移到面板，ctrl+x tab 回輸入框。面板裡按 `i` 看完整快捷鍵。
 
@@ -115,12 +115,12 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | k | 停止 desk 派出去的 Agent（按兩次確認；對話保留） |
 | l | 展開 Agent 最近 10 行輸出 |
 | v | 完成檢查；流程停在檢查段（指令改過、容器沒啟動、檢查中斷）時，跑完流程接著走 |
-| u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡並記 History |
+| u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡、記 History 並歸檔（worktree 與分支保留；發版線與教學那件只清關卡） |
 | o／e／p | 開卡片／審查檔／PR；合併之後 footer 只列該段的主動作（沒打 tag：⚑ 發版與開啟；有 `release：` 關卡：上線確認與開啟；可歸檔：只剩 ⌫ 歸檔），輸出、審查檔、PR 收進 `m` |
-| ⇡ 開 PR／⇡ push | 合併段才出現、沒有快捷鍵，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag） |
-| ⚑ 發版 | 上線段、還沒打 tag 時出現、沒有快捷鍵，按一下把發版請求（列出所有待發版的卡）填入輸入框；Enter 送出後由對話照 [docs/WORKFLOW.md](docs/WORKFLOW.md) 的發版步驟做；每個要你確認的點（版號、打 tag 並 push）寫進那幾張卡的「等你」，你在面板按選項字母＋`f` 回答，不用回對話打字。面板不打 tag、不 push |
-| t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
-| x／m／i | 展開全文／更多動作／說明 |
+| ⇡ 開 PR／⇡ push | 合併段才出現、沒有快捷鍵，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag）。專案設了 `autoPr` 時審查過關會自動派，按鈕照樣可用 |
+| ⚑ 發版 | 上線段、還沒打 tag 時出現、沒有快捷鍵，按一下把發版請求（列出所有待發版的卡）填入輸入框，請求也列出發版後要歸檔並移除 worktree 與分支的卡（CI 通過、各卡狀態寫好之後才做；有 `release：` 關卡的卡改由按 `u` 歸檔）；Enter 送出後由對話照 [docs/WORKFLOW.md](docs/WORKFLOW.md) 的發版步驟做；對話只問一次：建議版號與理由、包含的卡、選照做後要做的動作（有要清理的卡時最後一項是歸檔並移除 worktree 與分支）寫成一題放進那幾張卡的「等你」，你在面板按 a（照做）、b（改用另一個版號）或 c（先不發）再按 `f`；選照做後一路做完不再問，失敗就停下寫進卡片。面板不打 tag、不 push |
+| t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`），確認後自動派實作（同 `g`：第一次先問核准檢查；「等你」有事、manual、worktree 有別人的改動時只確認不派；Agent 已滿就排隊）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
+| x／m／i | 展開全文（含完整歷程）／更多動作／說明 |
 | r | 重新整理（在 `m` 更多動作裡；平常定時、每回合結束、對話改了卡片或跑了 git 之後都會自動重讀） |
 
 ## DESK 卡
@@ -147,14 +147,14 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - **六段圖示**：● 已過、◉ 進行中、◆ 等你、✕ 卡住、○ 未到、· 不適用；上線確認後六個 ● 轉綠、狀態是 ✓「已上線」。
 - **卡片可能過期**：分支最近一次 commit 改到的程式（只改卡片的 commit 不算）比卡片新、又沒有 Agent 在跑時，現在卡提示「按 s 同步」，footer 也才列出「↻ 同步」（這一段沒有別的該按的鍵時它帶頭）。先寫卡、測試跑完才 commit 的不算過期。
 - **提醒**：登錄表「## 提醒」段 `- YYYY-MM-DD 事項` 到期前三天出現；`- 事項` 不寫日期時一直列在面板。面板上收成一列（多件寫「提醒 n 件 · 第一條」），按 `m` 展開全文（最多 4 列，其餘寫「還有 k 件」）。打勾 `[x]`、劃掉 `~~…~~`、縮排子項目與日期格式不對的行不算提醒。
-- **通知**：等你、流程暫停、可開 PR、檢查未通過會送一次通知（走 Claude Code 的通知管道）。
-- **新版本**：每 24 小時查一次 GitHub 上有沒有新的 desk（時間記在本機，重開也算），有就在面板與摘要列顯示「有新版本 x.y.z」，同一版只在「最近」記一筆；只提示、不安裝，查不到就不出聲。專案 `dispatch.json` 設 `"updateCheck": "off"` 關掉。
+- **通知**：等你、流程暫停、可開 PR、自動開 PR、按 `v` 的檢查未通過會送一次通知（走 Claude Code 的通知管道；自動流程的檢查沒過直接派修正，修到上限停下時送「流程已暫停」）。
+- **新版本**：每 24 小時查一次 GitHub 上有沒有新的 desk（時間記在本機，重開也算），有就在面板與摘要列顯示「有新版本 x.y.z」；只提示、不安裝，查不到就不出聲。專案 `dispatch.json` 設 `"updateCheck": "off"` 關掉。
 
 ## desk 會寫什麼
 
-- 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
+- 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History（接著跑 `/desk:card archive` 那支腳本歸檔，同 ⌫ 歸檔）；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步、審查與合併段自動派的解衝突 Agent（把基準分支 merge 進來、不 rebase）不 push、不開 PR。
+- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步、審查與合併段自動派的解衝突 Agent（把基準分支 merge 進來、不 rebase）不 push、不開 PR。專案設了 `autoPr` 時，審查過關（含只動文件、免審查過關）後自動派同一種推送 Agent，高風險改動照舊等你看；desk 自己不跑 git push 或 gh。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push；更新成功後自動執行 `/reload-plugins`，不重新啟動 Claude Code。
 - desk 自己不跑 `git push`、不開或合併 PR、不會部署；push、開 PR 交給它派的 Agent，合併由你按。合併段會 `git fetch origin <基準分支>`（只更新遠端追蹤分支）並用 `git merge-tree` 試合併，不動工作區與 HEAD。
 
@@ -195,7 +195,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
 
-不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card`、`autoPr` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
@@ -208,6 +208,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
   "projects": { "~/code/shop-worktrees/order-export": { "effort": "xhigh", "rules": ["只改 api/ 底下"] } },
   "user": "Alex",
   "maxAgents": 3,
+  "autoPr": true,
   "rules": ["測試只能用 make test，不要自己起資料庫"],
   "review": {
     "high": "實際的 bug、漏做權限檢查、漏寫稽核紀錄、測試沒測到需求",
@@ -235,6 +236,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `kinds.<種類>` | 依派工種類各設 `model`／`effort`，可設 `continue`（繼續、修正輪與自動解衝突）、`reply`（回覆）、`review`（審查與資安審查）、`publish`（推送）；只寫其中一個的，另一個沿用任務覆寫或全域。優先順序：種類 > 任務覆寫 > 全域；同步仍用 `sync`。面板狀態列在「派工」後列出跟派工不同的種類 |
 | `user` | 寫進提示詞與卡片的人名（預設「使用者」） |
 | `maxAgents` | 同時在跑的工作桌背景 Agent 上限（預設 3，`0`＝不限）；整台機器一起算（別的專案、別的對話派的也算），停在提問或等批准的不算。超過的派工（含自動流程）排隊，面板寫第幾位、有空位依序派出，`k` 取消排隊；隊伍只在這個對話，重新載入就清空 |
+| `autoPr` | `true` 時審查過關（含只動文件、免審查過關）後自動派推送 Agent：還沒有 PR 就 push 並開 PR，PR 已開就只 push（已是最新就不派）。高風險改動、被拒絕過的 PR、流程暫停或別的對話開的流程都不自動開；不合併 PR、不打 tag。預設關，只認 `true`；建議寫在專案的 `dispatch.json`（例如每次過關都開 PR 的專案開、常先不 push 的專案不開） |
 | `rules`、`projects.<根目錄>.rules` | 每次派工都附上的專案規則 |
 | `review.high`／`security`／`categories` | 審查分級說明、資安審查範圍、類別範例 |
 | `review.template` | 審查契約檔（預設內附的 [templates/review.md](templates/review.md)） |
@@ -259,7 +261,7 @@ python3 -m unittest discover -s skills/card/tests   # /desk:card 的測試
 
 每張卡（分支）的 CHANGELOG 條目寫在 `changelog.d/<slug>.md`（slug＝worktree 資料夾名＝分支最後一段，例如 `changelog.d/check-public.md`），不改 `CHANGELOG.md`，所以各分支之間不會再搶「## 未發布」。片段檔只放條目：一行或多行 `- ` 開頭、動詞開頭（新增／修復／調整／移除），一條一個使用者看得到的主題，沒有標題、沒有版本；沒有使用者看得到的改動就不建這個檔（空檔會讓發版報錯）。目錄裡的 `.gitkeep` 讓它在沒有片段時也存在。
 
-發版（在主 repo、要發的 PR 都合併之後）：
+發版（要發的 PR 都合併之後，在要發版的那份 main：主 repo，或照「⚑ 發版」流程從 origin/main 開的暫存 worktree）：
 
 ```
 python3 skills/card/scripts/card.py changelog 0.27.0   # 或 /desk:card changelog 0.27.0

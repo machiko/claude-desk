@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, result, text, flat, feedLog } from './fixture'
 import { setFields } from '../hooks/tutorial'
 import { hhmm } from '../hooks/model'
 import { launchName } from '../hooks/dispatch'
@@ -52,7 +52,7 @@ test('stale ask: a superseded waiting agent does not hold the task', async ($, o
   expect((await ui.find({ key: `${PREFIX}review` }))?.props?.hotkey).toBe('w')
   expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
   expect(shown).toContain(flat('▶ 輪到你'))
-  expect(shown).toContain(flat('可按 w 派獨立審查'))
+  expect(shown).toContain(flat('可按 w 派獨立驗收'))
   expect(shown).not.toContain(flat('按 y 回覆'))
   expect(shown).not.toContain(flat('Agent 等待'))
   await ui.unmount()
@@ -60,13 +60,15 @@ test('stale ask: a superseded waiting agent does not hold the task', async ($, o
 
 test('stale ask: the superseded agent is stopped once and noted in the feed', async ($, on) => {
   const { data } = fixture(on)
+  const log = feedLog(on)
   superseded(data)
 
   await refreshTwice($)
   const ui = await $.ui.mount(PANE(100))
 
   expect(data.stops).toEqual(['aaaaaaaa'])
-  expect(await screen(ui)).toContain(flat(`Beta ${STOPPED}`))
+  expect(log.has(`Beta ${STOPPED}`)).toBe(true)
+  expect(await screen(ui)).not.toContain(flat(`Beta ${STOPPED}`))
   await ui.unmount()
 })
 
@@ -91,6 +93,7 @@ test('stale ask: a failed stop still lets the card lead and is not retried', asy
 /** `claude stop` 卡住時（最多等 30 秒）：重新整理照樣跑完、不等它；同一輪其他被取代的照樣停，卡住的那個結束後才記進「最近」。 */
 test('stale ask: a hung claude stop holds up neither the refresh nor the other stops', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   superseded(data)
   const otherAt = STALE_AT + 30 * 60_000
   data.agents = [...data.agents, { id: 'eeeeeeee', kind: 'background', cwd: BETA, name: launchName(otherAt, 3), sessionId: 'eeeeeeee-0000-4000-8000-000000000000', state: 'blocked', status: 'waiting', waitingFor: 'input needed', startedAt: otherAt }]
@@ -103,15 +106,16 @@ test('stale ask: a hung claude stop holds up neither the refresh nor the other s
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   const ui = await $.ui.mount(PANE(100))
-  const whileHung = await screen(ui)
+  const whileHung = log.list.map(e => e.text)
   release()
   await clock.settle()
-  const afterwards = await screen(ui)
+  const afterwards = log.list.map(e => e.text)
 
   expect(data.stops).toEqual(['aaaaaaaa', 'eeeeeeee'])
-  expect(whileHung).toContain(flat(other))
-  expect(whileHung).not.toContain(flat(`Beta ${STOPPED}`))
-  expect(afterwards).toContain(flat(`Beta ${STOPPED}`))
+  expect(whileHung).toContain(other)
+  expect(whileHung).not.toContain(`Beta ${STOPPED}`)
+  expect(afterwards).toContain(`Beta ${STOPPED}`)
+  expect(await screen(ui)).not.toContain(flat(`Beta ${STOPPED}`))
   await ui.unmount()
 })
 
@@ -283,6 +287,7 @@ test('stale ask: a question cleared from the card no longer holds an unmerged ta
 
 test('stale ask: clearing the card\'s question is noted once and leaves the agent alone', async ($, on) => {
   const { data } = fixture(on)
+  const log = feedLog(on)
   askedOnCard(data, ASKING['waiting／input needed']!)
   await refresh($)
   clearAsk(data)
@@ -290,7 +295,8 @@ test('stale ask: clearing the card\'s question is noted once and leaves the agen
   const ui = await $.ui.mount(PANE(100))
   const shown = await screen(ui)
 
-  expect(shown.split(flat(NOTED)).length - 1).toBe(1)
+  expect(log.list.filter(e => e.text === NOTED)).toHaveLength(1)
+  expect(shown).not.toContain(flat(NOTED))
   expect(data.stops).toEqual([])
   expect(data.processCalls.filter((c: any) => c.argv[0] === 'claude' && c.argv[1] === 'stop')).toEqual([])
   await ui.unmount()

@@ -4,7 +4,7 @@ import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, spli
 import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
-import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
+import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
 import { gitLine, isArmed, mergedAtHead } from './extras'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
@@ -131,7 +131,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
     : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}`}</Text>
     : <Text color={COLOR.faint}>{v && v.command === c.verify ? '有新 commit，需重新執行' : '尚未執行'}</Text>
-  const head = <Box flexDirection="row" paddingLeft={INDENT}><Text color={COLOR.faint}>{pad('檢查', KV_LABEL)}</Text>{result}</Box>
+  const head = <Box flexDirection="row" paddingLeft={INDENT}><Text color={COLOR.faint}>{pad(WORD.verify, KV_LABEL)}</Text>{result}</Box>
   if (brief) return [head]
   return [
     head,
@@ -208,7 +208,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState, mergedAtHead(c))}`, width, false, COLOR.dim, 1))
   // 面板外有新的變更、卡片沒跟著寫：提示同步（新對話只讀卡片與 git，把五欄寫回）。
   if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
-  if (c.reviewTop?.length) rows.push(...kvRows(ui, '審查', c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
+  if (c.reviewTop?.length) rows.push(...kvRows(ui, GATE_LABEL.review, c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；等你時也不換成別的話）。
   // Agent 在跑時 u 與歸檔都鎖著：已打 tag（要你按 u 或歸檔）或六段全過時不叫你做，只說它完成後再做；
   // 還沒打 tag 的發版那句照舊（發版只填輸入框，不鎖）。部署步驟照常列出，可以先看。
@@ -254,7 +254,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
     // 審查列只陳述分級：結論句（例如「可合併」）是指示，交給「▶ 輪到你」；讀不出四個分級時照舊顯示原文。
     const verdict = gate.kind === 'review' ? parseVerdict(c.gate) : null
     const detail = verdict ? `CRITICAL ${verdict.critical}、HIGH ${verdict.high}、MEDIUM ${verdict.medium}、LOW ${verdict.low}` : gate.detail
-    const [first, ...rest] = wrapText(`${head}  ${detail}${gate.kind === 'review' && c.chain?.selfReview ? '（自審）' : ''}${gate.kind === 'review' && c.chain?.stale ? '（審查後有新 commit，這是舊結論）' : ''}`, width - INDENT)
+    const [first, ...rest] = wrapText(`${head}  ${detail}${gate.kind === 'review' && c.chain?.selfReview ? '（自審）' : ''}${gate.kind === 'review' && c.chain?.stale ? '（驗收後有新 commit，這是舊結論）' : ''}`, width - INDENT)
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.attention} bold>{head}</Text><Text color={COLOR.text}>{(first ?? '').slice(head.length)}</Text></Text></Box>)
     rows.push(...rest.map(line => <Box paddingLeft={INDENT}><Text color={COLOR.text} wrap="truncate-end">{line}</Text></Box>))
   }
@@ -323,11 +323,11 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
   if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
   if (c.verify && can('verify') && busy) locked('verify', `▶ ${WORD.verify}`)
-  else if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} 檢查中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
+  else if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} ${WORD.verify}中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
   if (canShip(c) && can('ship') && busy) locked('ship', '✓ 上線確認')
   else if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)
-    out.push(button({ key: prefix + 'ship', hotkey: 'u', isBoxed: armed, isLead: armed || leadKey === 'u', label: armed ? '再按 u 確認已上線（清除 release 關卡）' : '✓ 上線確認', onPress: () => act.ship(c) }))
+    out.push(button({ key: prefix + 'ship', hotkey: 'u', isBoxed: armed, isLead: armed || leadKey === 'u', label: armed ? (archivesOnShip(c, !!view.s.tutorial) ? '再按 u 確認上線並歸檔（清除 release 關卡）' : '再按 u 確認已上線（清除 release 關卡）') : '✓ 上線確認', onPress: () => act.ship(c) }))
   }
   if (!view.s.tutorial && busy && awaitsSpecOk(idle) && can('spec-ok')) locked('spec-ok', '✓ 確認規格')
   else if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, BAND, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
+import { fixture, feedLog, PANE, BAND, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
 import { buildPrompt, NO_PUSH_RULE, PUSH_RULE } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { catchupHold, parseMergeTree } from '../hooks/catchup'
@@ -185,7 +185,7 @@ test('test_conflict_agent_is_not_retried_when_head_is_unchanged_after_an_attempt
   expect(shown).toContain(flat('與 main 有衝突：在對話把 main 合併進來、解衝突並 commit（自動合併試過一次沒解開）'))
   expect(seen.feed.some(e => String(e.text).includes('流程已暫停'))).toBe(false)
   const stages = await cardStages(ui)
-  expect(stages).toContain('審查●')
+  expect(stages).toContain('驗收●')
   expect(stages).toContain('合併✕')
   await ui.unmount()
 })
@@ -295,6 +295,53 @@ test('test_background_fetch_never_prompts_for_credentials', { timeoutMs: SLOW_MS
     expect(e.init?.env?.GIT_TERMINAL_PROMPT).toBe('0')
     expect(e.init?.env?.GIT_SSH_COMMAND).toBe('ssh -i ~/.ssh/work_key -o BatchMode=yes')
   }
+})
+
+/**
+ * 專案設了 autoPr、審查剛過關時就跟 main 有衝突：過關當下照 autoPr 先派推送（開 PR），推送 Agent 做完才派解衝突，
+ * 同一個 worktree 一次只派一個；合併 commit 重新審查過關後再照 autoPr 自動 push 到已開的 PR。
+ */
+test('test_auto_pr_goes_first_and_conflict_agent_follows_when_review_passes_with_conflict', { timeoutMs: SLOW_MS }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  conflictingBeta(data, clock)
+  // 還沒有 PR：基準分支照 origin/HEAD（main），過關當下就試合併得出衝突
+  data.gh = []
+  data.git[BETA] = { ...data.git[BETA]!, originHead: 'origin/main' }
+  data.files[`${PROJECT_DIR}/dispatch.json`] = JSON.stringify({ autoPr: true })
+  // 審查剛結束、流程還沒處理（還沒過關）
+  const chain = (data.store.chains as any)[BETA]
+  delete chain.passed
+  ;(data.store.jobs as any)[BETA].last.handled = false
+
+  await refresh($, clock, 2)
+  expect(data.gitCalls.some(g => g.root === BETA && g.args[0] === 'merge-tree')).toBe(true)
+  expect(data.launches.length).toBe(1)
+  expect(promptOf(data, 0).split('\n')[0]).toContain('推送：push feature/b')
+  expect(log.has('Beta 審查通過，自動派 Agent 開 PR')).toBe(true)
+  // 推送 Agent 在跑：不同時派解衝突
+  await refresh($, clock, 2)
+  expect(data.launches.length).toBe(1)
+  expect(log.has('Beta 與 main 有衝突（2 個檔），自動派 Agent 合併 main、解衝突')).toBe(false)
+
+  // 推送做完、PR 開了：衝突還在 → 派一個解衝突
+  data.gh = [OPEN_PR]
+  finish(data, BETA)
+  await refresh($, clock, 3)
+  expect(data.launches.length).toBe(2)
+  expect(promptOf(data, 1)).toContain('合併基準分支、解衝突')
+  expect(log.list.filter(e => e.text === 'Beta 與 main 有衝突（2 個檔），自動派 Agent 合併 main、解衝突').length).toBe(1)
+
+  // 解衝突做完（h1 → h2、不再衝突、領先遠端）→ 重新檢查與審查 → 過關後照 autoPr 只 push 到 PR #12
+  data.git[BETA] = { ...data.git[BETA]!, head: 'h2', conflicts: undefined, ahead: 1 }
+  finish(data, BETA)
+  await refresh($, clock, 3)
+  expect(data.launches.length).toBe(3)
+  expect(promptOf(data, 2)).toContain('審查通過後又有新 commit 的重新審查')
+  finish(data, BETA)
+  await refresh($, clock, 3)
+  expect(data.launches.length).toBe(4)
+  expect(promptOf(data, 3).split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開')
 })
 
 /** AC-5 */

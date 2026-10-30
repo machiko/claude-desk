@@ -11,7 +11,7 @@
 | 主控台對話（開著 `/desk` 的那個 Claude Code 對話） | 規格、完成檢查、關卡判定、兩次失敗後的診斷 | 不在主 repo 切分支、不 push |
 | Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時（含合併段派的推送 Agent）push 自己的分支、開 PR；合併段自動派的解衝突 Agent 把基準分支合併進來（不 push） | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
 | 審查對話（新對話、不接續 Agent） | 只看任務檔、自己重新執行完成檢查、看 diff | 不啟動容器、不改 port、不參考 Agent 的結論 |
-| 你 | 業務決策、合併、打 tag、部署；push、開 PR 在面板按「⇡ 開 PR」「⇡ push」派 Agent 做 | — |
+| 你 | 業務決策、合併、打 tag、部署；push、開 PR 在面板按「⇡ 開 PR」「⇡ push」派 Agent 做（專案設了 `autoPr` 時審查過關自動派，高風險改動照舊等你看） | — |
 
 ## 六段
 
@@ -20,8 +20,8 @@
 | 1 規格 | 決定做什麼、怎樣算完成 | 你提需求 | `/desk:card spec` 寫目標、非目標、驗收情境與完成檢查 | 你 | 卡片有 `檢查`、沒有「等你」與 `spec：` 關卡 |
 | 2 實作 | 寫程式 | 你按 `g` | Agent（`claude --bg`） | 交給下一段 | Agent 執行中 |
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
-| 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0 | 卡片 `review：CRITICAL n、HIGH n…` |
-| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態）；fetch 基準分支後用 `git merge-tree` 試合併，有衝突標 ✕「與 main 有衝突」 |
+| 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0，影響行為的 MEDIUM 也修完 | 卡片 `review：CRITICAL n、HIGH n…` |
+| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次）；專案設了 `autoPr` 時審查過關後自動派（高風險照舊等你） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態）；fetch 基準分支後用 `git merge-tree` 試合併，有衝突標 ✕「與 main 有衝突」 |
 | 6 上線 | 打 tag、部署、部署後步驟 | 你按「⚑ 發版」交給對話 | 對話照發版步驟做、你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。
@@ -31,18 +31,18 @@
 1. 你按 `g` 開始一輪。這張卡的完成檢查還沒核准過，按 `g` 時就先問（列出根目錄與指令全文），選「核准並派工」才派；之後同一張卡、同一條指令不再問。Agent 做完 → desk 自動執行完成檢查。
    - 流程停在檢查段時（Agent 把檢查指令改了、容器沒啟動、檢查中斷），「▶ 輪到你」寫原因；排除後按 `v`（指令改過的會先問一次），檢查跑完流程接著走。沒有暫停中的流程時，`v` 只跑檢查、記結果。
 2. 檢查紅 → 自動派「修正」；檢查綠 → 自動派審查（新對話）。
-3. 審查有 CRITICAL 或 HIGH → 自動派「依 .task/REVIEW.md 修正」，回到 1；只有 MEDIUM／LOW → 過關，提醒你開 PR。只關於規格紀錄、文件、命名、重複這類不影響行為的 MEDIUM，審查直接記在審查檔（記錄、不修）與卡片 History、不問你；可能影響行為的才寫進「等你」讓你選不修／修掉／改規格。
-4. 修正最多兩輪（檢查與審查共用），第三次仍未通過就暫停，摘要列亮「● 等你」，動態寫原因。
+3. 審查有 CRITICAL、HIGH 或可能影響行為的 MEDIUM → 同一輪自動派「依 .task/REVIEW.md 修正」（資安審查依 .task/SECURITY.md），回到 1；沒有要修的 → 過關，提醒你開 PR；專案設了 `autoPr` 時改成自動派推送 Agent 開 PR（PR 已開只 push，已是最新就不派），合併仍由你按。只關於規格紀錄、文件、命名、重複這類不影響行為的 MEDIUM，審查直接記在審查檔（記錄、不修）與卡片 History、不修也不問你；要你決定的 MEDIUM（要改規格才能修、驗收情境無法驗證）才在審查檔標「（等你決定）」、寫進「等你」讓你選不修／修掉／改規格。流程是別的對話開的、審查完只剩要修的 MEDIUM（沒有 CRITICAL／HIGH、修正輪數還有）時，開著面板的這個對話會接手這輪流程並自動派修正，動態會寫明是接手的；還有 CRITICAL／HIGH 的照舊由開流程的對話處理。
+4. 修正最多兩輪（檢查與審查共用），第三次仍未通過就暫停，摘要列亮「● 等你」，動態寫原因。兩輪後只剩 MEDIUM 不暫停：過關，MEDIUM 交給「等你」。
 5. 審查通過後分支又有新 commit（例如你決定 MEDIUM 現在改、或在面板外改了程式）：那次審查不算數，六段退回「檢查」，流程自動重新檢查、重新審查（只看上次審查之後的 diff），不算修正輪數。只寫回卡片、沒有 commit 的決定不會退回。
-6. 審查過關、還沒合併的分支跟基準分支（PR 目標，沒有就是 release 線、`card.base` 或 origin/HEAD）有衝突：desk 在合併段 fetch 那個基準分支（只更新遠端追蹤分支，每個 worktree 最多 5 分鐘一次，按 `r` 例外），再用 `git merge-tree` 試合併，不動工作區。有衝突時自動派「解衝突」Agent：把基準分支 merge 進來（不 rebase、不 force push、不 push）、解衝突、跑完成檢查、commit；要業務判斷就放棄合併、寫進「等你」。之後照第 5 點自動重新檢查與審查，重新審查不審基準分支帶進來的改動、改看衝突怎麼解（`git log -p --remerge-diff`）。同一個 HEAD 只自動試一次；流程是別的對話開的、沒有自動流程、流程已暫停、高風險改動、worktree 有未提交的改動、試過一次沒解開時不派，「輪到你」寫原因，在對話合併、解衝突並 commit。落後但沒衝突不合併。
-7. 流程碰不到合併與上線（把基準分支合併進分支不算合併 PR）；合併段派的推送 Agent（push、開 PR）與解衝突 Agent 做完不跑檢查、不派審查、不算修正輪。
+6. 審查過關、還沒合併的分支跟基準分支（PR 目標，沒有就是 release 線、`card.base` 或 origin/HEAD）有衝突：desk 在合併段 fetch 那個基準分支（只更新遠端追蹤分支，每個 worktree 最多 5 分鐘一次，按 `r` 例外），再用 `git merge-tree` 試合併，不動工作區。有衝突時自動派「解衝突」Agent：把基準分支 merge 進來（不 rebase、不 force push、不 push）、解衝突、跑完成檢查、commit；要業務判斷就放棄合併、寫進「等你」。之後照第 5 點自動重新檢查與審查，重新審查不審基準分支帶進來的改動、改看衝突怎麼解（`git log -p --remerge-diff`）。同一個 HEAD 只自動試一次；流程是別的對話開的、沒有自動流程、流程已暫停、高風險改動、worktree 有未提交的改動、試過一次沒解開時不派，「輪到你」寫原因，在對話合併、解衝突並 commit。落後但沒衝突不合併。專案設了 `autoPr` 時，過關當下先照第 3 點自動派推送，推送 Agent 做完才試合併、派解衝突（同一個 worktree 一次只派一個 Agent）；合併 commit 重新審查過關後再照 `autoPr` 自動 push。
+7. 流程碰不到合併與上線（把基準分支合併進分支不算合併 PR）；合併段派的推送 Agent（push、開 PR；含設了 `autoPr` 時過關自動派的）與解衝突 Agent 做完不跑檢查、不派審查、不算修正輪。自動派的推送名額滿了照樣排隊，取消排隊或沒派出不會讓流程暫停。
 8. 改程式的 Agent（繼續、回覆、修正、解衝突）改的過程只跑相關的測試，收尾 commit 前跑一次完成檢查；做完 desk 再自動跑一次。整套測試不會被好幾個 Agent 反覆同時跑。
 
 ## 讓審查越來越準
 
 - **常犯錯誤清單**（`pitfallsPath`）：每次審查先讀。同類問題在過去的審查紀錄出現過，審查對話會在檔尾追加；要刪改由你手動處理。
 - **審查存底**（`reviewsDir`）：每次審查結束，desk 把 `.task/REVIEW.md`（或 `SECURITY.md`）存一份。
-- **複審只看新 diff**：修正後的審查只看上次審查之後的 commit，已列過的 MEDIUM／LOW 不重提。
+- **複審只看新 diff**：修正後的審查只看上次審查之後的 commit，會確認上一輪要修的 MEDIUM 修好沒；已列過的 LOW 與標「不修」「等你決定」的不重提。
 
 ## 依改動的檔案分風險
 
@@ -50,7 +50,7 @@
 |---|---|---|
 | 低 | 只動 `*.md`、`docs/`、`*.txt` | 檢查通過就過關，免審查 |
 | 一般 | 其他 | 檢查 → 程式碼審查 |
-| 高 | Auth／Middleware、migration、CI 設定、Dockerfile／compose、相依套件鎖檔、`.env`，加上設定檔 `risk.high` 的專案路徑 | 檢查 → 程式碼審查 → 資安審查 → 停下來等你看過；開了 PR 就算看過 |
+| 高 | Auth／Middleware、migration、CI 設定、Dockerfile／compose、相依套件鎖檔、`.env`，加上設定檔 `risk.high` 的專案路徑 | 檢查 → 程式碼審查 → 資安審查 → 停下來等你看過；開了 PR 就算看過。設了 `autoPr` 也不自動開 PR |
 
 改了哪些檔＝分支相對「要併進去的分支」的 diff，基準依序找：PR 目標 → 最新的 `origin/release/*` → 專案 `dispatch.json` 的 `card.base` → `origin/HEAD`。都找不到就算一般風險。
 
@@ -79,20 +79,24 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 ## 開卡與歸檔
 
 - 開卡：`/desk:card new <分支> <卡名> [base]`（建 worktree＋DESK 卡＋登錄表列）。
-- 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時不能派實作，只能同步：同步平常收在「更多動作」m 裡）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡，就能按 `g`。審查會逐條對照驗收情境。
-- 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。卡片「## 部署步驟」有已填的步驟時，腳本與面板的完成提示會列出筆數並提醒：步驟跟著卡片歸檔，隨發版線發版的卡要先把步驟搬到發版線卡片或登錄表「## 提醒」（只提醒，不自動搬）。
+- 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時不能派實作，只能同步：同步平常收在「更多動作」m 裡）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡：面板按 `t` 確認後自動派實作；在對話用指令確認的，回合結束後自動派。審查會逐條對照驗收情境。
+- 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。另有兩種自動歸檔：發版時 CI 通過、各卡狀態寫好之後用 `/desk:card archive <slug>… --cleanup` 把發版請求列過的卡一次歸檔，已合併又乾淨的 worktree 與分支一起移除（是發版確認題的最後一項動作，見下面發版段第 9 步之後）；有 `release：` 關卡的卡按兩次 `u` 確認上線後接著歸檔，worktree 與分支保留（發版線與教學那件照舊只清關卡）。卡片「## 部署步驟」有已填的步驟時，腳本與面板的完成提示會列出筆數並提醒：步驟跟著卡片歸檔，隨發版線發版的卡要先把步驟搬到發版線卡片或登錄表「## 提醒」（只提醒，不自動搬）。
 - CHANGELOG：每張卡的條目寫在 `changelog.d/<slug>.md`（`- ` 開頭、動詞開頭的條目，沒有標題），Agent 的派工提示也這樣要求；不改 CHANGELOG.md，分支之間才不會搶「## 未發布」。專案的 CHANGELOG 用 Keep a Changelog 時，在專案 dispatch.json 設 `card.changelog.format = "keepachangelog"`，發版合併就改成 `## [Unreleased]`／`## [<版本>] - <日期>` 與 `### Added／Fixed…` 小節（動詞對照見 `/desk:card` 的 changelog 說明）。
 - 合併到發版線：PR 目標（或 git 看到併進的分支）是 `release/*` 的卡，隨那條發版線發版：上線段寫「隨 <發版線> 發版，待打 tag」，沒有自己的「⚑ 發版」，也不列進別張卡的發版請求；發版線打了 tag、tag 包含這張卡的 HEAD 後才能歸檔。
-- 發版：要發的 PR 都合併之後，在面板按「⚑ 發版」（上線段、還沒打 tag 的卡帶頭顯示）把列出所有待發版卡的發版請求填進輸入框，按 Enter 送給對話；對話先提版號，你確認後在主 repo 依序做（面板與背景 Agent 都不打 tag）。每個要你確認的點（版號、打 tag 並 push）對話都寫進要發版那幾張卡的「等你」（`問題：A) … B) …`），「狀態」寫做到哪一步；你在面板按選項字母＋`f` 送出「「任務名」決策：…」，對話收到決策才做下一步，做完把「等你」清成無。下面是 desk 本身的步驟，其他專案把版號檔換成自己的：
-  1. 快轉 main 到 origin/main：`git checkout main && git fetch origin && git merge --ff-only origin/main`
+- 發版：要發的 PR 都合併之後，在面板按「⚑ 發版」（上線段、還沒打 tag 的卡帶頭顯示）把列出所有待發版卡的發版請求填進輸入框，按 Enter 送給對話；對話只問一次：在要發版的每張卡「等你」寫同一題，題目有建議版號與理由、包含的卡與 PR、選照做後依序做的動作，範本是 `發版 v<版號>（<卡名與 PR>，<版號理由>），照做會依序：<動作，用 → 串>：A) 照做 v<版號>（推薦） B) 改用 v<另一個版號> 照做 C) 先不發`（整題不用「；」）。你在面板按 a、b 或 c 再按 `f` 送出「「任務名」決策：…」，回答任一張就算數，對話收到決策先把每張的「等你」清成無。選 A／B 後一路做完不再問，「狀態」寫做到哪一步；任何一步失敗就停、後面的不做（還沒 push 就不 push，已 push 的不回退、不 force push），失敗的步驟與原因寫進「狀態」；選 C 就什麼都不做。題目沒列的事（force push、改寫歷史、合併 PR、刪分支、改清單外的卡）一律不做。面板與背景 Agent 都不打 tag。desk 的版號規則：以最新 `v*` tag 為基準，這次的卡有 `feat/`／`feature/` 分支或片段有「新增」條目就升次版號（例如 0.37.0 → 0.38.0），否則升修訂號（0.37.0 → 0.37.1）；0.27.0 起 12 次發版都符合（只看「新增」會跟 0.29.0、0.31.0、0.32.0、0.34.0、0.36.0 不合）。下面是 desk 選照做後依序做的步驟，其他專案把版號檔換成自己的：
+  1. 從 origin/main 開暫存 worktree，以下都在那裡做：`git fetch origin && git worktree add --detach <暫存路徑> origin/main`
   2. `/desk:card changelog <版本>`：把片段合併成 `## <版本>` 段並刪掉片段檔；沒有片段、版本段已存在、片段格式錯都會報錯不改檔
   3. 改 `.claude-plugin/plugin.json` 的 `version` 成 `<版本>`
-  4. 跑 `claude plugin validate .` 與整套測試（`claude plugin test .`、`python3 -m unittest discover -s skills/card/tests`）
-  5. 在 main 上 commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
+  4. 跑 `claude plugin validate .` 與整套測試（`claude plugin test .`、`python3 -m unittest discover -s skills/card/tests`、`python3 -m unittest discover -s scripts/tests`）
+  5. commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
   6. 打 annotated tag：`git tag -a v<版本> -m "v<版本>"`
-  7. push main 與 tag：`git push origin main v<版本>`
-  8. 等 main 的 CI 通過（`gh run watch` 或到 GitHub Actions 看）
-  9. 把隨版發出的卡歸檔：面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`；有 `release：` 關卡的卡先部署、按 `u` 確認上線再歸檔
+  7. push 主分支與 tag：`git push --atomic origin HEAD:main v<版本>`（`--atomic`：origin/main 已前進、main 被拒時 tag 也不推，不會留下不在 main 上的 tag）
+  8. 等 main 的 CI 通過：先取這次 commit 的 run id（`gh run list --branch main --commit <commit> --limit 1 --json databaseId -q '.[0].databaseId'`，還沒出現就等幾秒再查），再 `gh run watch <id> --exit-status`（非互動環境一定要給 id；`--exit-status` 讓 CI 失敗時回非零）；沒有 gh 就到 GitHub Actions 看
+  9. 收尾：主 repo 在 main 且沒有改動就 `git merge --ff-only origin/main`（否則跳過並寫進狀態）、`git worktree remove <暫存路徑>`，每張卡的狀態寫「已發版 <版本>：tag 與 main 已推送，main 的 CI 通過」
+
+  發版請求列了要清理的卡（沒有 `release：` 關卡的卡）時，題目的動作最後多一項「歸檔並移除 worktree 與分支」：第 9 步寫好各卡狀態之後，在主 repo 跑 `/desk:card archive <slug>… --cleanup`，把這些卡歸檔並移除 worktree 與分支（你在題目選照做就是同意；只用 `git worktree remove`、`git branch -d`，不加 `--force`／`-D`、不碰遠端；沒併入、有未提交的改動、有被 git 忽略的本機設定或資料（`.env*`、`*.local.*` 等）或 git 拒絕的保留，原因與自己刪的指令寫進登錄表「## 提醒」；其他被忽略的檔隨 worktree 一起刪，可重建的（`node_modules`、`__pycache__` 等）以外列在輸出與提醒），沒移除的項目與原因寫進「狀態」告訴你。
+
+  之後你做的事：有 `release：` 關卡的卡不在這次清理，部署後按 `u` 確認上線，會接著自動歸檔（worktree 與分支保留）；其他還沒歸檔的卡照舊歸檔（面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`）。
 
 ## 常見狀況
 

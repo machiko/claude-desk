@@ -79,6 +79,8 @@ export function fixture(on: any) {
     approve: '核准並派工',
     /** 每個對話框的選項，跟 asks 一一對應。 */
     askOptions: [] as string[][],
+    /** 每個對話框的標題，跟 asks 一一對應。 */
+    askHeaders: [] as string[],
     /** false 模擬輸入框無法預填。 */
     fillable: true,
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
@@ -86,6 +88,8 @@ export function fixture(on: any) {
     stops: [] as string[],
     /** 不是 null 就讓 `claude stop` 失敗，stderr 是這句；null 交給 run。 */
     stopError: null as string | null,
+    /** store.set 寫這些 key 時拒絕（模擬寫入失敗）：key → 拒絕原因；沒列的照常寫進 store。 */
+    storeDeny: {} as Record<string, string>,
     store: {} as Record<string, unknown>,
     /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
     root: SESSION_ROOT,
@@ -169,7 +173,7 @@ export function fixture(on: any) {
   on('session.id', () => ({ value: 'fixture-session' }))
   on('session.root', () => ({ value: data.root }))
   on('store.get', (_: any, e: any) => ({ value: data.store[e.key] ?? null }))
-  on('store.set', (_: any, e: any) => { data.store[e.key] = e.value; return { value: undefined } })
+  on('store.set', (_: any, e: any) => { if (data.storeDeny[e.key]) return { deny: data.storeDeny[e.key] }; data.store[e.key] = e.value; return { value: undefined } })
   on('ui.toast', (_: any, e: any) => { data.toasts.push(e.text); return { value: undefined } })
   on('ui.status', (_: any, e: any) => { data.status = e.text; return { value: undefined } })
   on('ui.open', (_: any, e: any) => {
@@ -185,6 +189,7 @@ export function fixture(on: any) {
     const labels = ((q?.options ?? []) as any[]).map(o => String(o?.label ?? o))
     data.asks.push(String(q?.question ?? ''))
     data.askOptions.push(labels)
+    data.askHeaders.push(String(q?.header ?? ''))
     return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: labels.includes('核准並派工') ? data.approve : data.answer } } }
   })
   // 拒絕＝交給核心：測試裡沒有核心的實作，$.command.run 會被拒（跟 Claude Code 不讓 plugin 執行一樣是 reject）。
@@ -205,3 +210,16 @@ export const leaves = (node: any, type: string): any[] => typeof node === 'strin
 export const text = (node: any): string => typeof node === 'string' ? node : (node?.children ?? []).map(text).join('')
 /** 畫面字串去掉空白與現在卡每列的狀態邊條（換行處會插進句子），用來比對整句。 */
 export const flat = (x: string): string => x.replace(/\s+/g, '').split(EDGE).join('')
+
+/**
+ * desk 寫進動態紀錄的內容（新的在前）。面板只在最新一筆是錯誤或警告時顯示一行，一般事件（派工、檢查通過、排隊）要從這裡看。
+ * 要在第一次呼叫 $ 之前掛（跟 fixture 一起）。has 用 flat 比對，跟畫面斷言的寫法一樣。
+ */
+export function feedLog(on: any) {
+  const log = {
+    list: [] as { at: number; text: string; tone: string; card?: string }[],
+    has: (s: string) => log.list.some(e => flat(e.text).includes(flat(s))),
+  }
+  on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed' && Array.isArray(e.value)) log.list = e.value; return next(e) })
+  return log
+}

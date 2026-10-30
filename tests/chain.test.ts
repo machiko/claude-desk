@@ -86,3 +86,23 @@ test('chain: a job whose question was handled in the conversation records the ve
   expect(handedOver({ kind: 'dispatch', dispatch: 'review', round: 0, security: true })).toBeNull()
   expect(handedOver(null)).toBeNull()
 })
+
+/** auto-fix-medium：要修的 MEDIUM 跟 HIGH 同一輪修；資安審查一樣；輪數用完只剩 MEDIUM 過關，還有 HIGH 照原句停下 */
+test('test_next_step_fixes_medium_with_high_and_passes_at_round_cap', () => {
+  const high = { level: 'high' as const, reasons: ['認證／中介層'] }
+  // 只有 MEDIUM：派修正並帶 medium
+  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
+  // 跟 HIGH 同一輪，不另外多一輪
+  expect(nextStep(run(), 'review', null, v(0, 1, 3), true, { mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
+  expect(nextStep(run(1), 'review', null, v(0, 0, 2), true, { mediumFix: 2 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 2, reason: 'review', medium: 2 })
+  // 資安審查的 MEDIUM 也派修正；沒有要修的照舊過關（高風險要你看）
+  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { risk: high, lastWasSecurity: true, mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
+  expect(nextStep(run(1), 'review', null, v(0, 0, 1), true, { risk: high, lastWasSecurity: true })?.kind).toBe('pass')
+  // 程式碼審查只剩要修的 MEDIUM：先修，不先派資安審查
+  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { risk: high, mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
+  // 第 2 輪只剩 MEDIUM：過關，不停下；還有 HIGH 照原句停下
+  expect(nextStep(run(2), 'review', null, v(0, 0, 1), true, { mediumFix: 1 })).toEqual({ kind: 'pass' })
+  expect(nextStep(run(2), 'review', null, v(0, 1, 1), true, { mediumFix: 1 })).toEqual({ kind: 'stop', reason: '修了 2 輪仍有 CRITICAL 0、HIGH 1' })
+  // 沒有要修的 MEDIUM：回傳值跟以前一模一樣
+  expect(nextStep(run(), 'review', null, v(0, 1, 2), true, { mediumFix: 0 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
+})

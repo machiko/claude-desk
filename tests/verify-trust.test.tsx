@@ -163,13 +163,16 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   data.compose = svc('app')
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
   let breakNext = false
+  // 動態紀錄（一般事件面板不顯示）：state.set 只能掛一次，跟寫壞 verifies 共用。
+  let feed: { text: string }[] = []
   on('state.set', (_: any, e: any, next: any) => {
+    if (e?.plugin === 'desk' && e?.key === 'feed' && Array.isArray(e.value)) feed = e.value
     if (!breakNext || e?.key !== 'verifies') return next(e)
     breakNext = false
     return { deny: '狀態寫不進去' }
   })
   const h = helpers($, data, clock)
-  const feed = async () => { const ui = await $.ui.mount(PANE(160)); const s = flat(text(await ui.drawn())); await ui.unmount(); return s }
+  const shown = async () => { const ui = await $.ui.mount(PANE(160)); const s = flat(text(await ui.drawn())); await ui.unmount(); return s }
   const chain = () => (data.store.chains as any)[ROOT]
   await h.refresh()
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
@@ -185,7 +188,8 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   expect(chain().stopped).toBeUndefined()
   expect(data.launches.length).toBe(2)
   expect(h.prompt(1)).toContain('程式碼審查')
-  expect(await feed()).toContain(flat('Alpha 流程繼續'))
+  expect(feed.some(e => e.text.startsWith('Alpha 流程繼續'))).toBe(true)
+  expect(await shown()).not.toContain(flat('Alpha 流程繼續'))
 
   // 審查有 HIGH → 自動修正第 1 輪
   h.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
@@ -222,6 +226,55 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   expect(h.prompt(4)).toContain('程式碼審查')
   expect(chain().round).toBe(2)
   expect(data.asks.length).toBe(1)
+})
+
+test('chain paused at the check because containers are down or the check broke sends one notification each', COMPOSE, async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  // 檢查要在容器 app 裡跑，容器沒起來才擋得住
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 驗證：.*$/m, `- 驗證：\`${IN_APP}\``)
+  data.store.trustedVerify = { [CARD_A]: IN_APP }
+  let breakNext = false
+  on('state.set', (_: any, e: any, next: any) => {
+    if (!breakNext || e?.key !== 'verifies') return next(e)
+    breakNext = false
+    return { deny: '狀態寫不進去' }
+  })
+  const notified: string[] = []
+  on('ui.notify', (_: any, e: any) => { notified.push(e.text); return { value: { isSent: true as const, channel: 'terminal_bell' as const } } })
+  const h = helpers($, data, clock)
+  const chain = () => (data.store.chains as any)[ROOT]
+  const aboutAlpha = () => notified.filter(t => t.startsWith('Alpha'))
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+
+  // 一、容器沒啟動：Agent 做完、自動檢查跑不了 → 暫停，下一次重新整理之後也只有一則通知、寫明原因
+  data.compose = svc('app', 'exited')
+  await h.finish()
+  expect(chain().stopped).toContain('容器 app 未啟動')
+  await h.refresh()
+  await h.refresh()
+  expect(aboutAlpha()).toHaveLength(1)
+  expect(aboutAlpha()[0]).toContain('Alpha：流程已暫停，容器 app 未啟動')
+
+  // 二、檢查中斷：按 v 通過、派審查；審查有 HIGH 派修正；修完自動檢查記不下結果 → 暫停，同樣只有一則通知
+  data.compose = svc('app')
+  await h.verify()
+  expect(h.prompt(1)).toContain('程式碼審查')
+  h.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  await h.finish()
+  expect(h.prompt(2)).toContain('修正第 1／2 輪')
+  h.setGate('無')
+  data.git[ROOT]!.head = 'h2'
+  breakNext = true
+  await h.finish()
+  expect(chain().stopped).toContain('檢查中斷')
+  await h.refresh()
+  await h.refresh()
+  expect(aboutAlpha()).toHaveLength(2)
+  expect(aboutAlpha()[1]).toContain('Alpha：流程已暫停，檢查中斷')
+  for (const said of notified) expect(said).not.toContain('檢查未通過')
 })
 
 /** AC-5 */

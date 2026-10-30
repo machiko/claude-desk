@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, openPrRequest, pushRequest } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, pushRequest } from '../hooks/dispatch'
+import { parseGate } from '../hooks/card'
 import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
@@ -135,11 +136,89 @@ test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
     expect(p).toContain('不寫進卡片 等你')
     expect(p).toContain('歷程')
     expect(p).toContain('審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格')
-    expect(p).toContain('兩種都算進關卡的 MEDIUM 數')
+    expect(p).toContain('都算進關卡的 MEDIUM 數')
     expect(p).toContain('review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>')
   }
-  // 修正提示照舊只修 CRITICAL／HIGH
-  expect(buildPrompt(c, 'continue', '', { from: 'review', round: 1 })).toContain('MEDIUM、LOW 不用修')
+  // 修正提示：CRITICAL／HIGH 與沒加註記的 MEDIUM 一起修，LOW 不用修
+  const fix = buildPrompt(c, 'continue', '', { from: 'review', round: 1 })
+  expect(fix).toContain('沒標「不修」「等你決定」的 MEDIUM')
+  expect(fix).toContain('LOW 不用修')
+})
+
+/** auto-fix-medium AC-3：還有修正輪數時，影響行為的 MEDIUM 交給流程自動修；最後一輪才在「等你」問 */
+test('test_review_prompt_hands_medium_to_chain_until_last_round', () => {
+  const c = mk('寫測試')
+  const AUTO = '工作桌會跟 CRITICAL／HIGH 一起自動派修正'
+  const LAST = '這次不會自動修'
+  const ASK = '審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格'
+  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', history: '', ...more })
+  // 第 0、1 輪：程式碼審查、通過後重新審查、資安審查都交給流程，不寫進等你
+  const early = [review(0), review(1), review(0, { base: 'abc123', recheck: true }), review(0, { security: true }), review(1, { security: true })]
+  for (const p of early) {
+    expect(p).toContain(AUTO)
+    expect(p).toContain('不加註記、不寫進 等你')
+    expect(p).not.toContain(LAST)
+    // 要你決定才能處理的照樣問
+    expect(p).toContain('驗收情境無法驗證、要改規格才能修')
+    expect(p).toContain('（等你決定）')
+    expect(p).toContain(ASK)
+  }
+  // 第 2 輪（輪數用完）：這次不會自動修，可能影響行為的標「（等你決定）」並在等你問
+  for (const p of [review(2), review(2, { security: true })]) {
+    expect(p).toContain(LAST)
+    expect(p).not.toContain(AUTO)
+    expect(p).toContain('（等你決定）')
+    expect(p).toContain(ASK)
+    expect(p).toContain('記錄、不修')
+    expect(p).toContain('都算進關卡的 MEDIUM 數')
+  }
+  // 第 1 輪複審：要確認上一輪沒加註記的 MEDIUM 修好沒；等你在問的標「（等你決定）」，不再提
+  const recheck = review(1)
+  expect(recheck).toContain('這是修正後的複審（第 1 輪）')
+  expect(recheck).toContain('CRITICAL／HIGH 與沒加註記的 MEDIUM 有沒有修好')
+  expect(recheck).toContain('標「不修」「等你決定」的項目不要再提')
+})
+
+/** 審查 MEDIUM 第 2 條：第 2 輪複審（修正輪數用完）不再叫審查「MEDIUM 不加註記」，跟同一份提示要標「（等你決定）」的那句不矛盾；第 1 輪照舊 */
+test('test_recheck_prompt_drops_medium_no_mark_rule_when_fix_rounds_are_used_up', () => {
+  const c = mk('寫測試')
+  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, base: 'abc123', pitfalls: '', history: '', ...more })
+
+  const early = [review(1), review(1, { security: true })]
+  const last = [review(2), review(2, { security: true })]
+
+  for (const p of early) expect(p).toContain('沒修好的照原樣再列（MEDIUM 不加註記）')
+  for (const p of last) {
+    expect(p).toContain('這是修正後的複審（第 2 輪）')
+    expect(p).toContain('沒修好的照原樣再列')
+    expect(p).not.toContain('MEDIUM 不加註記')
+    expect(p).toContain('這次不會自動修')
+  }
+})
+
+/** 審查 MEDIUM 第 3 條：修正提示只寫這輪要依的那一份審查檔：資安審查之後依 SECURITY.md，其他依 REVIEW.md */
+test('test_fix_prompt_names_only_the_finished_review_file_when_fixing_review_findings', () => {
+  const c = mk('寫測試')
+
+  const code = buildPrompt(c, 'continue', '', { from: 'review', round: 1 })
+  const security = buildPrompt(c, 'continue', '', { from: 'review', round: 2, security: true } as any)
+
+  expect(code).toContain('修正第 1／2 輪：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH')
+  expect(code).not.toContain('.task/SECURITY.md')
+  expect(security).toContain('修正第 2／2 輪：依 .task/SECURITY.md 修正所有 CRITICAL、HIGH')
+  expect(security).not.toContain('.task/REVIEW.md')
+})
+
+/** 審查 MEDIUM 第 4 條：MEDIUM 分成三點之後，審查提示寫「都算進關卡的 MEDIUM 數」，不再寫「兩種」 */
+test('test_review_prompt_counts_every_medium_when_medium_rule_has_three_points', () => {
+  const c = mk('寫測試')
+
+  const prompts = [0, 1, 2].map(round => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', history: '' }))
+
+  for (const p of prompts) {
+    expect(p).toContain('都算進關卡的 MEDIUM 數')
+    expect(p).not.toContain('兩種都算進')
+  }
 })
 
 test('prompts use the configured name, project rules and review words', () => {
@@ -249,13 +328,77 @@ test('idle next: waiting-only next steps refuse continue and say what to do', ()
 
 /** AC-3 */
 test('a review next step refuses continue and points to v and w', () => {
-  const why = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
+  const why = '下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）'
   for (const next of ['審查', '派審查：/desk review 更多動作自動收回', '派獨立審查（w）', '按 w 派審查', '重新審查']) {
     const c = mk(next)
     expect(idleNext(next)).toBe(why)
     expect(dispatchable(c)).toEqual(['review', 'sync'])
     expect(dispatchRefusal(c, 'continue')).toBe(why)
     expect(dispatchRefusal(c, 'review')).toBe('')
+  }
+})
+
+/** AC-4：下一步寫舊詞或新詞，判斷結果一樣；卡片欄位「檢查」、關卡「review：」、審查檔照舊讀得到。 */
+test('test_next_step_old_and_new_words_are_recognized_alike', () => {
+  const waits: [string, string][] = [
+    ['到面板按 v 執行完成檢查', '到面板按 v 執行測試'],
+    ['等檢查與審查', '等測試與驗收'],
+    ['等自動檢查與審查；過了開 PR', '等自動測試與驗收；過了開 PR'],
+    ['等自動重新檢查與審查；沒動靜就到面板按 v', '等自動重新測試與驗收；沒動靜就到面板按 v'],
+    ['按 v 跑檢查；等審查', '按 v 跑測試；等驗收'],
+  ]
+  const reviews: [string, string][] = [
+    ['派審查（按 w）', '派驗收（按 w）'],
+    ['按 w 派審查', '按 w 派驗收'],
+    ['派獨立審查（w）', '派獨立驗收（w）'],
+    ['等檢查；派審查（按 w）', '等測試；派驗收（按 w）'],
+  ]
+  for (const [old, now] of [...waits, ...reviews]) {
+    expect(reviewNext(now)).toBe(reviewNext(old))
+    expect(idleNext(now)).toBe(idleNext(old))
+    expect(dispatchable(mk(now))).toEqual(dispatchable(mk(old)))
+    expect(dispatchRefusal(mk(now), 'continue')).toBe(dispatchRefusal(mk(old), 'continue'))
+  }
+  // 等待類：按 g 不會被當成工作派出
+  for (const [, now] of waits) {
+    expect(reviewNext(now)).toBe(false)
+    expect(dispatchRefusal(mk(now), 'continue')).toContain('沒有要 Agent 做的事')
+    expect(dispatchable(mk(now))).not.toContain('continue')
+  }
+  // 派審查／派驗收類：按 g 一樣提示先 v 再 w
+  for (const [, now] of reviews) {
+    expect(reviewNext(now)).toBe(true)
+    expect(dispatchRefusal(mk(now), 'continue')).toBe('下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）')
+  }
+  // 要做事的下一步照舊派得出去
+  for (const next of ['補測試', '修正驗收的 HIGH', '派驗收（補完 AC-3 的測試後）']) expect(idleNext(next)).toBe('')
+  // 解析契約不變：「檢查」欄、舊卡「驗證」欄、review： 關卡、.task/REVIEW.md
+  const fresh = buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, '<!-- DESK -->\n- 狀態：ok\n- 檢查：`npm test`\n- 等你：無\n- 下一步：等測試與驗收\n- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修\n<!-- /DESK -->', 1, {}, undefined)
+  expect(fresh.verify).toBe('npm test')
+  expect(mk('等審查').verify).toBe('true')
+  expect(parseGate(fresh.gate)).toMatchObject({ kind: 'review' })
+  expect(REVIEW_FILE).toBe('.task/REVIEW.md')
+})
+
+/** AC-5：派給 Agent 的提示不跟著改名。 */
+test('test_agent_prompts_keep_their_wording', () => {
+  const c = mk('依規格實作')
+  const prompts = {
+    continue: buildPrompt(c, 'continue'),
+    fixCheck: buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: ['boom'] }),
+    fixReview: buildPrompt(c, 'continue', '', { from: 'review', round: 1 }),
+    review: buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }),
+    security: buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }),
+  }
+  expect(prompts.continue).toContain('完成檢查')
+  expect(prompts.fixCheck).toContain('完成檢查')
+  expect(prompts.fixReview).toContain('完成檢查')
+  expect(prompts.review.startsWith('程式碼審查')).toBe(true)
+  expect(prompts.review).toContain('契約：templates/review.md')
+  expect(prompts.security.startsWith('資安審查')).toBe(true)
+  for (const p of Object.values(prompts)) {
+    expect(p).not.toContain('執行測試')
+    expect(p).not.toContain('派驗收')
   }
 })
 

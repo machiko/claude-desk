@@ -53,13 +53,13 @@ const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
 /** Agent 在跑時，依最後一次派的是什麼說它在做什麼。 */
 const RUNNING_TEXT: Partial<Record<string, string>> = {
   continue: 'Agent 在寫程式（l 看輸出）', reply: 'Agent 在寫程式（l 看輸出）', fix: 'Agent 在修正（l 看輸出）',
-  sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在審查 diff（新對話）', verify: '完成檢查在跑',
+  sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在驗收（新對話）', verify: '測試在跑',
   publish: 'Agent 在 push、開 PR（l 看輸出）', catchup: CATCHUP_RUNNING,
 }
 
 const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
 
-const SELF_REVIEW = '（審查是自審，可按 w 派獨立審查）'
+const SELF_REVIEW = '（驗收是自審，可按 w 派獨立驗收）'
 /** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
 const MISSING_CHECK = '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 
@@ -85,7 +85,7 @@ function checkHold(c: Case): Turn | null {
     const short = why === CHECK_CHANGED ? CHECK_CHANGED_WHY : why === CHECK_UNAPPROVED ? CHECK_UNAPPROVED_WHY : why
     return { who: 'you', text: `流程已暫停（${short}）：這個流程是別的對話開的，到那個對話按 v 才會接著走；或在這裡按 g 重開一輪`, key: 'g' }
   }
-  const text = why === CHECK_CHANGED || why === CHECK_UNAPPROVED ? why : `流程已暫停（${why}）：排除後按 v 重跑檢查，流程接著走`
+  const text = why === CHECK_CHANGED || why === CHECK_UNAPPROVED ? why : `流程已暫停（${why}）：排除後按 v 重跑測試，流程接著走`
   return { who: 'you', text, key: 'v' }
 }
 
@@ -123,14 +123,14 @@ export const RELEASE_TURN = '按 ⚑ 發版填入對話（Enter 送出）'
  * 或流程已經會自己接手（recheck 排好的新一輪、修正輪剛做完：willAutoReview），都是自動重新審查。
  */
 function checkTurnText(c: Case): string {
-  if (c.chain?.stale) return `審查後有新 commit：按 v 重新執行完成檢查；${(c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? '通過後自動重新審查' : '通過後按 w 重新審查'}`
-  return `按 v 執行完成檢查；${willAutoReview(c) ? '通過後自動審查' : '通過後按 w 派審查'}`
+  if (c.chain?.stale) return `驗收後有新 commit：按 v 重新執行測試；${(c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? '通過後自動重新驗收' : '通過後按 w 重新驗收'}`
+  return `按 v 執行測試；${willAutoReview(c) ? '通過後自動驗收' : '通過後按 w 派驗收'}`
 }
 
-/** 審查段：按 w，以及審查之後會怎樣：擋的自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
+/** 審查段：按 w，以及審查之後會怎樣：擋的（含影響行為的 MEDIUM）自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
 function reviewTurnText(c: Case): string {
-  const head = c.chain?.stale ? '審查後有新 commit：按 w 重新審查（新對話）' : '按 w 派審查（新對話）'
-  return `${head}；有 CRITICAL／HIGH 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
+  const head = c.chain?.stale ? '驗收後有新 commit：按 w 重新驗收（新對話）' : '按 w 派驗收（新對話）'
+  return `${head}；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
 }
 
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
@@ -149,8 +149,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (c.state === 'reply') return { who: 'you', text: '按 y 回覆 Agent 的提問', key: 'y' }
   if (c.state === 'approve') return { who: 'you', text: approveText(c), key: 'l' }
   // 處理中：標籤已經說了「不用動手」，這句只講誰在做什麼。
-  if (ctx.verifying) return { who: 'ai', text: '完成檢查在跑' }
-  if (ctx.queued) return { who: 'ai', text: '完成檢查排隊中' }
+  if (ctx.verifying) return { who: 'ai', text: '測試在跑' }
+  if (ctx.queued) return { who: 'ai', text: '測試排隊中' }
   // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
   if (isBusy(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
@@ -161,14 +161,14 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (c.state === 'failed' && c.chain?.stopped === AGENT_STOPPED) return { who: 'you', text: AGENT_STOPPED, key: 'g' }
   if (c.state === 'failed') return c.chain?.stopped
     ? { who: 'you', text: `流程已暫停（${c.chain.stopped}）：看審查檔（e）後按 g 再修一輪`, key: 'g' }
-    : { who: 'you', text: '完成檢查未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' }
+    : { who: 'you', text: '測試未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' }
   const gate = parseGate(c.gate)
   if (gate?.kind === 'unknown') return { who: 'you', text: `關卡「${gate.detail}」：開卡片（o）處理`, key: 'o' }
   switch (c.pipeline?.current) {
     case 'spec':
       if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
       // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
-      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
+      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認並派實作（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, key: 't' }
       if (c.specGap) return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫驗收情境與實作計畫` }
       // 規格沒問題（或舊卡沒有規格段），停在這段只因為檢查欄空白、還是 `<…>` 範本佔位或說明文字：請人填一條真的指令。
       return { who: 'you', text: MISSING_CHECK, key: 'o' }
@@ -176,18 +176,18 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       // 流程會自動接審查（autoReview）：檢查通過就派審查。不會（主對話開發、done 寫的下一步、別的對話開的流程）：v 只記結果，審查要再按 w。
       // 下一步是派審查：g 派的是繼續，不會審查；先 v 檢查，通過後 w（或流程自動接）。
-      if (reviewNext(c.next)) return { who: 'you', text: `下一步是審查：按 v 執行完成檢查，通過後${willAutoReview(c) ? '自動審查' : '按 w 派審查'}`, key: 'v' }
+      if (reviewNext(c.next)) return { who: 'you', text: `下一步是驗收：按 v 執行測試，通過後${willAutoReview(c) ? '自動驗收' : '按 w 派驗收'}`, key: 'v' }
       if (idleNext(c.next)) return willAutoReview(c)
-        ? { who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' }
-        : { who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' }
+        ? { who: 'you', text: '下一步只剩等測試／驗收：按 v 執行測試，流程接著驗收；要改程式先把下一步寫成要做的事', key: 'v' }
+        : { who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', key: 'v' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, key: 'g' }
     case 'check':
       if (checkStageFailed(c)) return { who: 'you', text: `流程已暫停（${c.chain!.stopped}）`, key: 'v' }
       return { who: 'you', text: checkTurnText(c), key: 'v' }
     case 'review':
-      if (standingVerdict(c)) return { who: 'ai', text: '審查有結論，接著自動修正或過關' }
+      if (standingVerdict(c)) return { who: 'ai', text: '驗收有結論，接著自動修正或過關' }
       // 檢查剛通過、流程還沒派出審查（約兩秒）：不用你按 w。
-      if (willAutoReview(c)) return { who: 'ai', text: '接著自動審查' }
+      if (willAutoReview(c)) return { who: 'ai', text: '接著自動驗收' }
       return { who: 'you', text: reviewTurnText(c), key: 'w' }
     case 'merge': {
       const t = mergeTurn(c)

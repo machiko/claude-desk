@@ -22,7 +22,7 @@ const ids = (c: Case, ctx = {}) => [...stageActions(c, ctx)].sort()
 test('each stage says whose turn it is and what to press, in plain words', () => {
   expect(turnOf(mk({ check: '無' }))).toEqual({ who: 'you', text: '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令', key: 'o' })
   expect(turnOf(mk({ check: '`<完成檢查：修之前會紅、修好會綠的一條指令>`' }))).toEqual({ who: 'you', text: '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令', key: 'o' })
-  expect(turnOf(mk({ gate: 'spec：待確認規格' }))).toEqual({ who: 'you', text: '看過規格（o 開卡片）後按 t 確認（或輸入 /desk:card spec age-group ok）', key: 't' })
+  expect(turnOf(mk({ gate: 'spec：待確認規格' }))).toEqual({ who: 'you', text: '看過規格（o 開卡片）後按 t 確認並派實作（或輸入 /desk:card spec age-group ok）', key: 't' })
   expect(turnOf(mk({}))).toEqual({ who: 'you', text: '按 g 派 Agent：依規格實作', key: 'g' })
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
   expect(turnOf(mk({}), { verifying: true }).who).toBe('ai')
@@ -53,12 +53,12 @@ test('processing lines say who is doing what, without repeating that it is in pr
   expect(turnOf(running()).text).toBe('Agent 在寫程式（l 看輸出）')
   expect(turnOf(running('fix')).text).toBe('Agent 在修正（l 看輸出）')
   expect(turnOf(running('sync')).text).toBe('Agent 在同步卡片（l 看輸出）')
-  expect(turnOf(running('review')).text).toBe('Agent 在審查 diff（新對話）')
-  expect(turnOf(mk({}), { verifying: true }).text).toBe('完成檢查在跑')
-  expect(turnOf(mk({}), { queued: true }).text).toBe('完成檢查排隊中')
+  expect(turnOf(running('review')).text).toBe('Agent 在驗收（新對話）')
+  expect(turnOf(mk({}), { verifying: true }).text).toBe('測試在跑')
+  expect(turnOf(mk({}), { queued: true }).text).toBe('測試排隊中')
   expect(turnOf(mk({}), { launching: true }).text).toBe('派工中，等 Agent 啟動')
   expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }, { pr: { id: 1, state: 'OPEN', ci: 'pending' } })).text).toBe('PR 的 CI 在跑')
-  expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修' }, { chain: { round: 1 }, state: 'ready' }, passed)).text).toBe('審查有結論，接著自動修正或過關')
+  expect(turnOf(mk({ gate: 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修' }, { chain: { round: 1 }, state: 'ready' }, passed)).text).toBe('驗收有結論，接著自動修正或過關')
   // 沒有任何一句還留著舊的「執行者」或「不用做事」
   for (const c of [running(), running('review')]) expect(turnOf(c).text).not.toMatch(/執行者|不用做事/)
 })
@@ -83,17 +83,17 @@ test('agent push: an open PR with new commits asks to push, not to merge', () =>
 test('idle next: the now card asks for v instead of g', () => {
   // 沒有流程紀錄（主對話開發、/desk:card done 寫的下一步）：v 單跑只記結果，審查要自己按 w
   const c = mk({ next: '等自動檢查與審查；過了開 PR' })
-  expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', key: 'v' })
   expect(ids(c)).toEqual(['open', 'verify'])
   // /desk:card done 寫的句子也認得
-  expect(turnOf(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual({ who: 'you', text: '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(turnOf(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual({ who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', key: 'v' })
   expect(ids(mk({ next: '到面板按 v 執行完成檢查' }))).toEqual(['open', 'verify'])
   // 有流程紀錄（Agent 派工後）：檢查通過會自動接審查，照舊說
   const chained = mk({ next: '到面板按 v 執行完成檢查' }, { chain: { round: 0, lastKind: 'continue', autoReview: true } })
-  expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步只剩等測試／驗收：按 v 執行測試，流程接著驗收；要改程式先把下一步寫成要做的事', key: 'v' })
   expect(ids(chained)).toEqual(['open', 'verify'])
   // 有流程紀錄但不會自動接審查（別的對話開的、最後一次派的是同步、已停下）：照「通過後按 w」說
-  const manual = '下一步只剩等檢查：按 v 執行完成檢查，通過後按 w 派審查；要改程式先把下一步寫成要做的事'
+  const manual = '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事'
   for (const chain of [{ round: 0, foreign: true, lastKind: 'continue' as const }, { round: 0, lastKind: 'sync' as const }, { round: 0, lastKind: 'continue' as const, autoReview: true, stopped: '修了 3 輪' }]) {
     expect(turnOf(mk({ next: '到面板按 v 執行完成檢查' }, { chain }))).toEqual({ who: 'you', text: manual, key: 'v' })
   }
@@ -101,7 +101,7 @@ test('idle next: the now card asks for v instead of g', () => {
   const recheck = '等自動重新檢查與審查；沒動靜就到面板按 v'
   expect(turnOf(mk({ next: recheck }))).toEqual({ who: 'you', text: manual, key: 'v' })
   expect(ids(mk({ next: recheck }))).toEqual(['open', 'verify'])
-  expect(turnOf(mk({ next: recheck }, { chain: { round: 0, lastKind: 'continue', autoReview: true } }))).toEqual({ who: 'you', text: '下一步只剩等檢查／審查：按 v 執行完成檢查，流程接著審查；要改程式先把下一步寫成要做的事', key: 'v' })
+  expect(turnOf(mk({ next: recheck }, { chain: { round: 0, lastKind: 'continue', autoReview: true } }))).toEqual({ who: 'you', text: '下一步只剩等測試／驗收：按 v 執行測試，流程接著驗收；要改程式先把下一步寫成要做的事', key: 'v' })
   // 有實作的下一步照舊
   expect(turnOf(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual({ who: 'you', text: '按 g 派 Agent：等檢查；補 AC-3 的測試', key: 'g' })
   expect(ids(mk({ next: '等檢查；補 AC-3 的測試' }))).toEqual(['continue', 'open'])
@@ -113,12 +113,12 @@ test('a review next step at the build stage asks for v then w, not g', () => {
     // 沒有流程紀錄：v 只記結果，審查要再按 w
     const c = mk({ next })
     const turn = turnOf(c)
-    expect(turn).toEqual({ who: 'you', text: '下一步是審查：按 v 執行完成檢查，通過後按 w 派審查', key: 'v' })
+    expect(turn).toEqual({ who: 'you', text: '下一步是驗收：按 v 執行測試，通過後按 w 派驗收', key: 'v' })
     expect(turn.text).not.toContain('按 g 派 Agent')
     expect(ids(c)).toEqual(['open', 'verify'])
     // 流程會自動接審查（這個對話開的流程、剛做完實作）
     const chained = mk({ next }, { chain: { round: 0, lastKind: 'continue', autoReview: true } })
-    expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步是審查：按 v 執行完成檢查，通過後自動審查', key: 'v' })
+    expect(turnOf(chained)).toEqual({ who: 'you', text: '下一步是驗收：按 v 執行測試，通過後自動驗收', key: 'v' })
     expect(ids(chained)).toEqual(['open', 'verify'])
   }
 })
@@ -127,7 +127,7 @@ test('a review next step after a failed check still lets g fix it', () => {
   // 檢查失敗：「輪到你」叫你按 g 修正，g 就要派得出去，不能被「下一步是審查」擋掉
   for (const next of ['派審查：/desk review 更多動作自動收回', '按 w 派審查', '等審查']) {
     const c = mk({ next }, {}, { ...passed, ok: false, exitCode: 1 })
-    expect(turnOf(c)).toEqual({ who: 'you', text: '完成檢查未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' })
+    expect(turnOf(c)).toEqual({ who: 'you', text: '測試未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' })
     expect(ids(c)).toContain('continue')
     expect(dispatchable(c)).toContain('continue')
     expect(dispatchRefusal(c, 'continue')).toBe('')
@@ -139,7 +139,7 @@ test('a review next step after a failed check still lets g fix it', () => {
   // 流程停下（修了兩輪仍有 HIGH）與 Agent 被停掉：一樣派修正或接著做，不引用下一步
   const stopped = mk({ next: '派審查' }, { state: 'failed', chain: { round: 2, lastKind: 'fix', stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' } })
   expect(dispatchable(stopped)).toContain('continue')
-  expect(buildPrompt(stopped, 'continue').split('\n')[0]).toBe('修正：流程已暫停（修了 2 輪仍有 CRITICAL 0、HIGH 1）。看 .task/REVIEW.md（有的話）與完成檢查 `npm test`，修好 CRITICAL、HIGH 並讓完成檢查綠，commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。')
+  expect(buildPrompt(stopped, 'continue').split('\n')[0]).toBe('修正：流程已暫停（修了 2 輪仍有 CRITICAL 0、HIGH 1）。看 .task/REVIEW.md（有的話）與完成檢查 `npm test`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。），commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。')
   const halted = mk({ next: '等審查' }, { state: 'failed', chain: { round: 0, lastKind: 'continue', stopped: AGENT_STOPPED } })
   expect(dispatchable(halted)).toContain('continue')
   expect(buildPrompt(halted, 'continue').split('\n')[0]).toBe('上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。')
@@ -155,7 +155,7 @@ test('a blocking review verdict without a chain sends a review fix, not a check 
     expect(c.state).toBe('failed')
     expect(dispatchable(c)).toContain('continue')
     const head = buildPrompt(c, 'continue').split('\n')[0]!
-    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL 與 HIGH（MEDIUM、LOW 不用修）。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
+    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
     expect(head).not.toContain('未通過')
   }
 })
@@ -177,7 +177,7 @@ test('a review next step with a failed PR CI still lets g fix it', () => {
 test('at the review stage a review next step refuses g and points to w only', () => {
   const c = mk({ next: '派審查' }, {}, passed)
   expect(c.pipeline?.current).toBe('review')
-  expect(dispatchRefusal(c, 'continue')).toBe('下一步是審查：按 w 派審查（g 派的是繼續，不會審查）')
+  expect(dispatchRefusal(c, 'continue')).toBe('下一步是驗收：按 w 派驗收（g 派的是繼續，不會驗收）')
 })
 
 /** AC-4 */
@@ -212,19 +212,19 @@ test('turn: merge stage asks to dispatch publish', () => {
 test('each user turn before merging says what happens after it', () => {
   // 檢查段：沒有過期、也沒停下的檢查段（例如流程記錄清掉後）；流程會不會自動接審查決定後半句。
   const atCheck = (chain?: Case['chain']) => { const c = mk({}, chain ? { chain } : {}); return { ...c, state: 'ready', pipeline: { ...c.pipeline!, current: 'check' } } as Case }
-  expect(turnOf(atCheck({ round: 0, lastKind: 'continue', autoReview: true }))).toEqual({ who: 'you', text: '按 v 執行完成檢查；通過後自動審查', key: 'v' })
-  expect(turnOf(atCheck())).toEqual({ who: 'you', text: '按 v 執行完成檢查；通過後按 w 派審查', key: 'v' })
+  expect(turnOf(atCheck({ round: 0, lastKind: 'continue', autoReview: true }))).toEqual({ who: 'you', text: '按 v 執行測試；通過後自動驗收', key: 'v' })
+  expect(turnOf(atCheck())).toEqual({ who: 'you', text: '按 v 執行測試；通過後按 w 派驗收', key: 'v' })
   // 審查後有新 commit：流程是這個對話的且已過關才會自動重新審查；別的對話開的、還沒過關的要自己按 w。
   expect(mk({}, { chain: { round: 0, stale: true, passed: true } }).pipeline?.current).toBe('check')
-  expect(turnOf(mk({}, { chain: { round: 0, stale: true, passed: true } }))).toEqual({ who: 'you', text: '審查後有新 commit：按 v 重新執行完成檢查；通過後自動重新審查', key: 'v' })
+  expect(turnOf(mk({}, { chain: { round: 0, stale: true, passed: true } }))).toEqual({ who: 'you', text: '驗收後有新 commit：按 v 重新執行測試；通過後自動重新驗收', key: 'v' })
   for (const chain of [{ round: 0, stale: true, passed: true, foreign: true }, { round: 0, stale: true }]) {
-    expect(turnOf(mk({}, { chain }))).toEqual({ who: 'you', text: '審查後有新 commit：按 v 重新執行完成檢查；通過後按 w 重新審查', key: 'v' })
+    expect(turnOf(mk({}, { chain }))).toEqual({ who: 'you', text: '驗收後有新 commit：按 v 重新執行測試；通過後按 w 重新驗收', key: 'v' })
   }
   // 審查段：有開著的 PR 過關後合併，沒有就開 PR。
   const openPr = mk({}, { pr: { id: 12, state: 'OPEN', ci: 'pass' } }, passed)
   expect(openPr.pipeline?.current).toBe('review')
-  expect(turnOf(openPr)).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 會自動修正，過關後合併 PR', key: 'w' })
-  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派審查（新對話）；有 CRITICAL／HIGH 會自動修正，過關後開 PR', key: 'w' })
+  expect(turnOf(openPr)).toEqual({ who: 'you', text: '按 w 派驗收（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後合併 PR', key: 'w' })
+  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派驗收（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後開 PR', key: 'w' })
 })
 
 /** one-next-step D-04：審查後有新 commit，但流程會自己接手（自動排的重新檢查、修正輪剛做完）：新的一輪還沒過關，也照樣是自動重新審查 */
@@ -235,8 +235,8 @@ test('a stale check the chain will pick up by itself says the re-review is autom
 
   const auto = [rechecked, fixed].map(chain => turnOf(mk({}, { chain })))
 
-  for (const t of auto) expect(t).toEqual({ who: 'you', text: '審查後有新 commit：按 v 重新執行完成檢查；通過後自動重新審查', key: 'v' })
-  expect(turnOf(mk({}, { chain: stopped })).text).not.toContain('自動重新審查')
+  for (const t of auto) expect(t).toEqual({ who: 'you', text: '驗收後有新 commit：按 v 重新執行測試；通過後自動重新驗收', key: 'v' })
+  expect(turnOf(mk({}, { chain: stopped })).text).not.toContain('自動重新驗收')
 })
 
 /** one-next-step AC-2：合併段與上線段也寫出下一步之後是什麼；部署步驟列「全部做完後：」接同一句。 */

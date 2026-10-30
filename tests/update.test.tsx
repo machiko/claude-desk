@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, result, BAND, PANE, NOW, PROJECT_DIR } from './fixture'
+import { fixture, feedLog, result, BAND, PANE, NOW, PROJECT_DIR, flat, text } from './fixture'
 import { compareVersions, manifestPath, pickInstall } from '../hooks/update'
 
 const MARKET_DIR = '/home/u/.claude/plugins/marketplaces/claude-desk'
@@ -62,18 +62,16 @@ function world(data: any, w: World) {
   return { calls, changes, w, folder }
 }
 
-const feedTexts = async ($: any, ui: any) => (await ui.findAll({ type: 'Text' })).map((n: any) => n.text).join('\n')
 /** 關掉工作桌（停掉定時更新）再讓時間過去，像隔天重開 Claude Code；之後 /desk refresh 重新開。 */
 async function later($: any, clock: any, ms: number) {
   await $.command.run({ command: 'desk', args: 'off' } as any)
   await clock.advance(ms)
   await clock.settle()
 }
-/** 「最近」裡這句話有幾筆（面板的動態列）。 */
-async function feedCount(ui: any, text: string) {
-  return (await ui.findAll({ type: 'Text' })).filter((n: any) => n.text === text && n.props?.color === 'suggestion').length
-}
-/** 開工作桌（面板要有快照才畫得出「最近」）。 */
+/** 動態紀錄裡這句話有幾筆（一般事件，面板不顯示）。 */
+const feedCount = (log: ReturnType<typeof feedLog>, text: string) => log.list.filter(e => e.text === text && e.tone === 'suggestion').length
+const feedTexts = (log: ReturnType<typeof feedLog>) => log.list.map(e => e.text).join('\n')
+/** 開工作桌（面板要有快照才畫得出來）。 */
 async function openDesk($: any, clock: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
@@ -87,6 +85,7 @@ async function loadDesk($: any, on: any) {
 
 test('update upgrades a GitHub install and reports the old and new version numbers', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   const { changes, w } = world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
   await openDesk($, clock)
   const out = await $.command.run({ command: 'desk', args: 'update' } as any) as any
@@ -98,7 +97,8 @@ test('update upgrades a GitHub install and reports the old and new version numbe
   await clock.settle()
   expect(data.reloads.length).toBe(1)
   const ui = await $.ui.mount(PANE(100))
-  expect(await feedTexts($, ui)).toContain('desk 已更新版本：0.18.0 → 0.19.0')
+  expect(feedTexts(log)).toContain('desk 已更新版本：0.18.0 → 0.19.0')
+  expect(flat(text(await ui.drawn()))).not.toContain(flat('desk 已更新版本'))
   expect(await ui.find({ type: 'Text', text: /^ {2}有新版本/ })).toBeUndefined()
   await ui.unmount()
 })
@@ -177,6 +177,7 @@ test('update leaves everything unchanged and shows the error when GitHub cannot 
 
 test('auto check shows a new version notice at most once per version and never installs', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   const { changes, w } = world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
@@ -184,20 +185,21 @@ test('auto check shows a new version notice at most once per version and never i
   expect(w.installed).toBe('0.18.0')
   const pane = await $.ui.mount(PANE(100))
   expect(await pane.find({ type: 'Text', text: '  有新版本 0.19.0' })).toBeDefined()
-  expect(await feedCount(pane, 'desk 有新版本 0.19.0')).toBe(1)
+  expect(feedCount(log, 'desk 有新版本 0.19.0')).toBe(1)
+  expect(await pane.find({ type: 'Text', text: 'desk 有新版本 0.19.0' })).toBeUndefined()
   await pane.unmount()
   const band = await $.ui.mount(BAND(100))
   expect(await band.find({ type: 'Text', text: '有新版本 0.19.0' })).toBeDefined()
   await band.unmount()
   expect(data.toasts.filter(t => t.includes('有新版本 0.19.0')).length).toBe(1)
-  // 一天後再查到同一版：提示還在，但不再記「最近」、不再跳 toast。
+  // 一天後再查到同一版：提示還在，但不再記動態、不再跳 toast。
   await later($, clock, DAY + 1000)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   expect(data.toasts.filter(t => t.includes('有新版本')).length).toBe(1)
   const next = await $.ui.mount(PANE(100))
   expect(await next.find({ type: 'Text', text: '  有新版本 0.19.0' })).toBeDefined()
-  expect(await feedCount(next, 'desk 有新版本 0.19.0')).toBe(1)
+  expect(feedCount(log, 'desk 有新版本 0.19.0')).toBe(1)
   await next.unmount()
   // 又出了新版：再提示一次。
   w.latest = '0.20.0'
@@ -326,15 +328,17 @@ test('the pane update button runs the same update as /desk update and has no hot
 
 test('a successful update reloads plugins once after reporting the new version', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
   await openDesk($, clock)
   const ui = await $.ui.mount(PANE(100))
-  data.feedAtReload = () => feedTexts($, ui)
+  data.feedAtReload = () => feedTexts(log)
   await ui.press({ key: 'update' })
   await clock.settle()
   expect(data.toasts).toContain(UPDATED)
-  expect(await feedTexts($, ui)).toContain(UPDATED)
-  // 正好重新載入一次，而且執行的時候 toast 與「最近」都已經寫好新版本。
+  expect(feedTexts(log)).toContain(UPDATED)
+  expect(flat(text(await ui.drawn()))).not.toContain(flat(UPDATED))
+  // 正好重新載入一次，而且執行的時候 toast 與動態紀錄都已經寫好新版本。
   expect(data.reloads.length).toBe(1)
   expect(data.reloads[0]!.toasts).toContain(UPDATED)
   expect(data.reloads[0]!.seen).toContain(UPDATED)
@@ -401,6 +405,7 @@ test('a refused reload prefills /reload-plugins, or asks to type it when the pro
 /** 重新載入其實已讓新版載入（desk 的載入計數又加了一次），舊版這邊才收到拒絕：新版已生效，不預填也不警告 */
 test('a reload rejected after the new version already loaded neither prefills nor warns', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   data.reloadable = false
   data.refuseAfterNewLoad = true
   world(data, { kind: 'github', installed: '0.18.0', latest: '0.19.0' })
@@ -414,7 +419,8 @@ test('a reload rejected after the new version already loaded neither prefills no
   expect(data.toasts).toContain(UPDATED)
   expect(data.fills).toEqual([])
   expect(data.toasts.filter(t => /沒能自動重新載入/.test(t))).toEqual([])
-  expect(await feedTexts($, ui)).not.toMatch(/沒能自動重新載入/)
+  expect(feedTexts(log)).not.toMatch(/沒能自動重新載入/)
+  expect(flat(text(await ui.drawn()))).not.toMatch(/沒能自動重新載入/)
   await ui.unmount()
 })
 
