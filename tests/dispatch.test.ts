@@ -36,9 +36,18 @@ test('settings: user name, project rules, review words, risk paths and check ser
   expect(s.checkServices).toEqual({ 'run-tests': ['mysql'] })
 })
 
-test('launch args omit empty flags and resume only with a session', () => {
-  expect(launchArgs('p', { launchName: 'desk-1' })).toEqual(['claude', '--bg', '--name', 'desk-1', 'p'])
-  expect(launchArgs('p', { launchName: 'n', sessionId: 's', model: 'opus', effort: 'high' })).toEqual(['claude', '--bg', '--name', 'n', '--resume', 's', '--model', 'opus', '--effort', 'high', 'p'])
+test('launch args omit empty flags, resume only with a session, and keep the prompt last', () => {
+  expect(launchArgs('p', { launchName: 'desk-1' })).toEqual(['claude', '--bg', '--name', 'desk-1', '--strict-mcp-config', 'p'])
+  expect(launchArgs('p', { launchName: 'n', sessionId: 's', model: 'opus', effort: 'high' })).toEqual(['claude', '--bg', '--name', 'n', '--resume', 's', '--model', 'opus', '--effort', 'high', '--strict-mcp-config', 'p'])
+})
+
+test('launch args skip MCP servers unless mcp is on; settings only accept an explicit true', () => {
+  expect(launchArgs('p', { launchName: 'n', mcp: true })).toEqual(['claude', '--bg', '--name', 'n', 'p'])
+  expect(launchArgs('p', { launchName: 'n', mcp: false })).toContain('--strict-mcp-config')
+  expect(parseSettings(null).mcp).toBe(false)
+  expect(parseSettings(JSON.stringify({ mcp: true })).mcp).toBe(true)
+  expect(parseSettings(JSON.stringify({ mcp: 'true' })).mcp).toBe(false)
+  expect(parseSettings(JSON.stringify({ mcp: 1 })).mcp).toBe(false)
 })
 
 test('launch token: short id, uuid, json, or one id inside a sentence; two ids is ambiguous', () => {
