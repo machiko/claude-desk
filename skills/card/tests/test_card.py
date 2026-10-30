@@ -1234,8 +1234,10 @@ class CardOrderingDocsTest(unittest.TestCase):
     def test_docs_tell_feature_cards_not_to_edit_shared_docs(self):
         """AC-2：功能卡不改 README 與 WORKFLOW 的功能說明段，要補的說明寫在規格的目標或 Decisions 並標「待補文件」，發版的補文件步驟一次補。"""
         for text in (self.ordering_item(), self.readme_shared_docs_section()):
-            for part in ('功能卡不改 README', '功能說明段', '## 規格', 'Decisions', '待補文件'):
+            for part in ('功能卡不改 README', '功能說明段', '「## 規格」的目標或 Decisions', '待補文件'):
                 self.assertIn(part, text)
+            # 審查 HIGH：鎖住「由發版一次補」，拿掉那句測試要紅
+            self.assertRegex(text, r'發版[^。；]*一次補進去')
         self.assertIn('橫切重構', self.readme_shared_docs_section())
 
     def test_card_skill_reminds_ordering_on_new(self):
