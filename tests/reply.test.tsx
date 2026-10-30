@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, NOW, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, NOW, result, text, flat, feedLog } from './fixture'
 import { setFields, tutorialPaths } from '../hooks/tutorial'
 
 const BETA = '/home/u/wt/beta'
@@ -36,6 +36,7 @@ async function pressReply($: any, data: any, clock: any) {
 
 test('replying from the footer resumes the waiting agent instead of saying the card state does not match', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   waiting(data)
   data.answer = '照卡片的下一步繼續'
   const ui = await pressReply($, data, clock)
@@ -48,9 +49,9 @@ test('replying from the footer resumes the waiting agent instead of saying the c
   expect(prompt(data)).toContain('照卡片的下一步繼續：依審核修正')
   expect(data.toasts.some(t => t.includes('目前無法回覆') || t.includes(MISMATCH))).toBe(false)
   expect(data.toasts.some(t => t.includes('Beta：回覆已派出'))).toBe(true)
-  // 「最近」記一筆派工
-  const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 派回覆/.test(n.text))
-  expect(feed).toBeDefined()
+  // 動態紀錄記一筆派工（一般事件，面板不顯示）
+  expect(log.has('Beta 派回覆')).toBe(true)
+  expect(flat(text(await ui.drawn()))).not.toContain(flat('Beta 派回覆'))
   await ui.unmount()
 })
 

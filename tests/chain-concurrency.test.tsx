@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, REGISTRY, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_A, REGISTRY, result, text, flat, feedLog } from './fixture'
 import { AGENT_STOPPED } from '../hooks/chain'
 import { endedHow } from '../hooks/model'
 
@@ -85,6 +85,7 @@ test('an agent stopped outside the desk pauses the chain instead of being treate
 /** AC-1：面板的 k 與外面的 claude stop 走到同一個結果 */
 test('pressing k and an outside stop leave the same pause', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   alphaOnly(data, clock)
   const h = helpers($, data, clock)
   await h.refresh()
@@ -105,7 +106,8 @@ test('pressing k and an outside stop leave the same pause', async ($, on) => {
   ui = await $.ui.mount(PANE(160))
   const shown = await screen(ui)
   expect(shown).toContain(flat(`▶ 輪到你  ${AGENT_STOPPED}`))
-  expect(shown).toContain(flat(`Alpha ${AGENT_STOPPED}`))
+  // 停止的原因照樣記進動態（警告）；之後 Agent 離開清單記的「Agent 已完成」是一般事件，問題列跟著收掉，原因看「輪到你」那列。
+  expect(log.list.some(e => e.tone === 'warning' && e.text.startsWith(`Alpha ${AGENT_STOPPED}`))).toBe(true)
   await ui.unmount()
 })
 

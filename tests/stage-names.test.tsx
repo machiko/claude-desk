@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, BAND, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
+import { fixture, feedLog, PANE, BAND, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
 import { buildCase, displayWidth } from '../hooks/model'
 import { STAGES, pipeline, stageLabel } from '../hooks/pipeline'
 import { turnOf } from '../hooks/turn'
@@ -133,6 +133,7 @@ test('test_stage_labels_read_test_and_acceptance', async ($, on) => {
 /** AC-2 */
 test('test_v_and_w_buttons_and_help_use_new_names', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   threeStages(data, clock)
   // 完成檢查由測試放行：按 v 之後掛著，看「測試中」
   let release: (() => void) | null = null
@@ -161,10 +162,10 @@ test('test_v_and_w_buttons_and_help_use_new_names', async ($, on) => {
   await ui.press({ key: `case-${CARD_B}-review` })
   await clock.settle()
   expect(data.toasts).toContain('Beta：驗收已派出')
-  // 動態列：派工種類名稱組出來的「派驗收（<模型>）」
-  const sent = (await ui.findAll({ type: 'Text' })).map((n: any) => String(n.text ?? ''))
-  expect(sent.some(s => /Beta 派驗收（.+）/.test(s))).toBe(true)
-  expect(sent.some(s => /派審查/.test(s))).toBe(false)
+  // 動態紀錄：派工種類名稱組出來的「派驗收（<模型>）」；一般事件不上畫面
+  expect(log.list.some(e => /Beta 派驗收（.+）/.test(e.text))).toBe(true)
+  expect(log.list.some(e => /派審查/.test(e.text))).toBe(false)
+  expect(await screen(ui)).not.toMatch(/Beta 派驗收/)
 
   // 不能派的時候用派工種類名稱說明（Beta 的驗收正在跑）
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
