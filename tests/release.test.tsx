@@ -17,7 +17,7 @@ const GITHUB = 'git@github.com:acme/shop.git'
 const LEAD = '按 ⚑ 發版填入對話（Enter 送出）'
 const AFTER_ARCHIVE = '打了 tag 之後歸檔'
 const AFTER_DEPLOY = '打了 tag 之後部署並按 u 確認上線'
-const REQUEST = '發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS
+const REQUEST = '發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程準備，只問我一次。' + RELEASE_ASKS
 const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送出'
 const pr = (n: number, state = 'MERGED', dest = 'main') => ({ number: n, state, baseRefName: dest, headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
@@ -198,14 +198,14 @@ test('a release line gets no release button and is not listed in the request', a
   await ui.press({ key: `row-${CARD_B}` })
   await ui.press({ key: KEY })
   await clock.settle()
-  expect(data.fills).toEqual([{ text: '發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS, mode: 'replace' }])
+  expect(data.fills).toEqual([{ text: '發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程準備，只問我一次。' + RELEASE_ASKS, mode: 'replace' }])
   await ui.unmount()
 })
 
 const LINE = 'release/v26.2.7'
 const WITH_LINE = `隨 ${LINE} 發版`
 const AFTER_LINE_TAG = '發版線打 tag 後歸檔'
-const ONLY_GAMMA = '發版：已合併待發版 1 件（「Gamma」PR #13）；照這個專案的發版流程，先提版號給我確認。' + RELEASE_ASKS
+const ONLY_GAMMA = '發版：已合併待發版 1 件（「Gamma」PR #13）；照這個專案的發版流程準備，只問我一次。' + RELEASE_ASKS
 
 /**
  * 合併進發版線的 Beta：上線段說隨那條線發版、待打 tag，下一步與輪到你同一句；沒有發版鍵（展開全部也沒有）、沒有歸檔，

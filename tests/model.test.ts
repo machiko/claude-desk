@@ -63,7 +63,7 @@ test('events name the change; the first snapshot is quiet', () => {
   const after = { at: now, cases: [buildCase(row('a'), card({ 等你: '要嗎？A) 要 B) 不要' }), 2, {}, undefined), buildCase(row('b'), card({}), 2, {}, undefined)], error: null, contextPercent: null }
   expect(events(null, after)).toEqual([])
   expect(events(before, after)).toEqual([
-    { at: now, text: 'a 等你：要嗎？', tone: 'warning', card: row('a').statusPath },
+    { at: now, text: 'a 等你：要嗎？', tone: 'warning', card: row('a').statusPath, whileState: 'ask' },
     { at: now, text: 'b 加入工作桌', tone: 'subtle', card: row('b').statusPath },
   ])
   // 換了專案：另一份登錄表的任務不是「加入」，不發動態

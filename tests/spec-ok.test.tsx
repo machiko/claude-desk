@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, result, text, flat, feedLog } from './fixture'
 import { appendTo, setFields } from '../hooks/tutorial'
 import { awaitsSpecOk } from '../hooks/pipeline'
 import { stageActions } from '../hooks/turn'
@@ -47,6 +47,7 @@ test('a real case waiting on its spec offers t to confirm it', async ($, on) => 
 
 test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   onlySpec(data)
   scriptOk(data)
   // 確認後自動派實作：派出去的 Agent 出現在 Beta 的 worktree
@@ -82,9 +83,8 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
 
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
-  expect(await screen(ui)).toContain(flat('Beta 規格已確認，可以派實作'))
-  const ok = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 規格已確認/.test(n.text) && n.props?.color === 'success')
-  expect(ok).toBeDefined()
+  expect(log.list.some(e => e.text === 'Beta 規格已確認，可以派實作' && e.tone === 'success')).toBe(true)
+  expect(await screen(ui)).not.toContain(flat('Beta 規格已確認，可以派實作'))
   // 確認後同一次就派出實作（完成檢查先核准一次），不用再按 g
   expect(data.asks).toHaveLength(1)
   expect(data.launches).toHaveLength(1)

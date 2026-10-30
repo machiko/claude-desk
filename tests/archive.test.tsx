@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, CARD_C, PROJECT_DIR, REGISTRY, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_B, CARD_C, PROJECT_DIR, REGISTRY, result, text, flat, feedLog } from './fixture'
 import { setFields, tutorialPaths, TUTORIAL_TAG } from '../hooks/tutorial'
 import { canArchive } from '../hooks/pipeline'
 import { stageActions } from '../hooks/turn'
@@ -63,6 +63,7 @@ test('a done case offers an archive button with no hotkey', async ($, on) => {
 
 test('pressing archive twice archives the case like /desk:card archive and keeps the worktree', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   only(data)
   // 登錄表還有別的任務（Gamma 閒置）：歸檔後面板照常顯示「最近」
   data.files[REGISTRY] += `\n| Gamma | \`${CARD_C}\` |`
@@ -87,11 +88,11 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
   expect(run[0].init.cwd).toBe(BETA)
   expect(data.files[ARCHIVED]).toContain('- 關卡：review：CRITICAL 0')
   expect(data.files[REGISTRY]).not.toContain(`\`${CARD_B}\``)
-  // 提示列出刪 worktree 的指令，「最近」記一筆成功；卡片沒有已填的部署步驟，不提醒搬步驟
+  // 提示列出刪 worktree 的指令，動態紀錄記一筆成功（一般事件，面板不顯示）；卡片沒有已填的部署步驟，不提醒搬步驟
   expect(data.toasts.some(t => t.includes('已歸檔') && t.includes(`git -C /home/u/shop worktree remove ${BETA}`))).toBe(true)
   expect(data.toasts.some(t => t.includes('部署步驟'))).toBe(false)
-  const feed = (await ui.findAll({ type: 'Text' })).find((n: any) => /Beta 已歸檔/.test(n.text) && n.props?.color === 'success')
-  expect(feed).toBeDefined()
+  expect(log.list.some(e => /Beta 已歸檔/.test(e.text) && e.tone === 'success')).toBe(true)
+  expect(await screen(ui)).not.toContain(flat('Beta 已歸檔'))
 
   // 不手動重新整理：歸檔自己的那輪重新整理就要讓這件消失
   await clock.settle()

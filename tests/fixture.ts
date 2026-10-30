@@ -77,6 +77,8 @@ export function fixture(on: any) {
     approve: '核准並派工',
     /** 每個對話框的選項，跟 asks 一一對應。 */
     askOptions: [] as string[][],
+    /** 每個對話框的標題，跟 asks 一一對應。 */
+    askHeaders: [] as string[],
     /** false 模擬輸入框無法預填。 */
     fillable: true,
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
@@ -182,6 +184,7 @@ export function fixture(on: any) {
     const labels = ((q?.options ?? []) as any[]).map(o => String(o?.label ?? o))
     data.asks.push(String(q?.question ?? ''))
     data.askOptions.push(labels)
+    data.askHeaders.push(String(q?.header ?? ''))
     return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: labels.includes('核准並派工') ? data.approve : data.answer } } }
   })
   // 拒絕＝交給核心：測試裡沒有核心的實作，$.command.run 會被拒（跟 Claude Code 不讓 plugin 執行一樣是 reject）。
@@ -202,3 +205,16 @@ export const leaves = (node: any, type: string): any[] => typeof node === 'strin
 export const text = (node: any): string => typeof node === 'string' ? node : (node?.children ?? []).map(text).join('')
 /** 畫面字串去掉空白與現在卡每列的狀態邊條（換行處會插進句子），用來比對整句。 */
 export const flat = (x: string): string => x.replace(/\s+/g, '').split(EDGE).join('')
+
+/**
+ * desk 寫進動態紀錄的內容（新的在前）。面板只在最新一筆是錯誤或警告時顯示一行，一般事件（派工、檢查通過、排隊）要從這裡看。
+ * 要在第一次呼叫 $ 之前掛（跟 fixture 一起）。has 用 flat 比對，跟畫面斷言的寫法一樣。
+ */
+export function feedLog(on: any) {
+  const log = {
+    list: [] as { at: number; text: string; tone: string; card?: string }[],
+    has: (s: string) => log.list.some(e => flat(e.text).includes(flat(s))),
+  }
+  on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed' && Array.isArray(e.value)) log.list = e.value; return next(e) })
+  return log
+}

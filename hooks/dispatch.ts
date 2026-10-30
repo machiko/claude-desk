@@ -57,7 +57,7 @@ export type JobRecord = { launchName: string; nativeId: string; sessionId: strin
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string }
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
-export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '審查', reply: '回覆', publish: '推送' }
+export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '驗收', reply: '回覆', publish: '推送' }
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
@@ -264,26 +264,26 @@ export function reviewTask(c: Case): string {
   return m ? m[1]! : ''
 }
 
-/** 「等…」可以等的事；檢查與審查前面可以有「重新」（審查過關後 `/desk:card done` 寫的「等自動重新檢查與審查」）。 */
-const IDLE_WAIT = '(?:(?:自動|完成)?(?:重新)?檢查(?:結果|通過)?|(?:程式碼|資安)?(?:重新)?審查(?:結果|通過)?|審閱(?:結果|通過)?|合併|PR(?:\\s*#?\\d+)?(?:合併|通過)?|CI(?:\\s*通過)?|(?:你|使用者|[A-Za-z][\\w-]*)\\s*(?:確認|拍板|審閱|決定)?)'
+/** 「等…」可以等的事；檢查與審查前面可以有「重新」（審查過關後 `/desk:card done` 寫的「等自動重新檢查與審查」）。新詞「測試」「驗收」同樣認。 */
+const IDLE_WAIT = '(?:(?:自動|完成)?(?:重新)?(?:檢查|測試)(?:結果|通過)?|(?:程式碼|資安)?(?:重新)?(?:審查|驗收)(?:結果|通過)?|審閱(?:結果|通過)?|合併|PR(?:\\s*#?\\d+)?(?:合併|通過)?|CI(?:\\s*通過)?|(?:你|使用者|[A-Za-z][\\w-]*)\\s*(?:確認|拍板|審閱|決定)?)'
 /**
  * `/desk:card done` 寫的下一步「到面板按 v 執行完成檢查」，與審查過關後那句「等自動重新檢查與審查；沒動靜就到面板按 v」的後半
- * （與「按 v」的幾種寫法）：也是等檢查，不派 Agent。
+ * （與「按 v」的幾種寫法，含新詞「到面板按 v 執行測試」）：也是等檢查，不派 Agent。
  */
-const IDLE_PRESS_V = '(?:沒動靜就\\s*)?(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:完成)?檢查)?'
+const IDLE_PRESS_V = '(?:沒動靜就\\s*)?(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:(?:完成)?檢查|測試))?'
 /** 「開 PR」，與審查過關、之後沒有新 commit 時 `/desk:card done` 寫的「到面板照「輪到你」開 PR 或合併」：照面板走，不派 Agent。 */
 const IDLE_OPEN_PR = '(?:到面板\\s*)?(?:照\\s*「輪到你」\\s*)?開\\s*PR(?:\\s*或\\s*合併)?'
 const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|${IDLE_OPEN_PR}|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
 
 /**
- * 派審查的寫法：「（派）（獨立）審查」可接按鍵註記「（w）」或「：/desk review …」；整段是 `/desk review …`；「按 w（派審查）」。
+ * 派審查的寫法（「審查」換成新詞「驗收」一樣）：「（派）（獨立）審查」可接按鍵註記「（w）」或「：/desk review …」；整段是 `/desk review …`；「按 w（派審查）」。
  * 整段比對，「修正審查的 HIGH」不算；`/desk review` 後面的說明有修／補／改／寫／實作，是要改程式，也不算。
  */
-const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?審查'
+const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?(?:審查|驗收)'
 const REVIEW_CMD = '/desk\\s+review(?:\\s+(?!.*(?:修|補|改|寫|實作)).*)?'
 const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(]\\s*(?:按\\s*)?[wW]\\s*[）)])?(?:\\s*[:：]\\s*${REVIEW_CMD})?|${REVIEW_CMD}|按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
-export const REVIEW_NEXT = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
-const REVIEW_NEXT_AT_REVIEW = '下一步是審查：按 w 派審查（g 派的是繼續，不會審查）'
+export const REVIEW_NEXT = '下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）'
+const REVIEW_NEXT_AT_REVIEW = '下一步是驗收：按 w 派驗收（g 派的是繼續，不會驗收）'
 
 const nextParts = (next: string) => next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
 
@@ -299,7 +299,7 @@ export function idleNext(next: string): string {
   if (reviewNext(next)) return REVIEW_NEXT
   const parts = nextParts(next)
   return parts.length > 0 && parts.every(p => IDLE_CLAUSE.test(p))
-    ? '下一步只剩等檢查／審查／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事'
+    ? '下一步只剩等測試／驗收／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事'
     : ''
 }
 
@@ -333,13 +333,14 @@ export const specGapReason = (c: Case) => `規格沒有驗收情境：先輸入 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 export const PUBLISH_ONLY_AT_MERGE = '只有合併段還要 push 或開 PR 時才能推送'
 const BUSY = 'Agent 仍在執行'
+const APPROVAL_WAIT = 'Agent 在等權限批准'
 
 /** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
 export function replyRefusal(c: Case): string {
   if (c.demo) return '示範任務只能看'
   if (c.manual) return MANUAL
   // 權限提示要到 claude agents 批准；回覆會被當成一則新訊息，不會放行那個工具。
-  if (c.state === 'approve' || approvalWait(c.agent)) return 'Agent 在等權限批准，不是提問'
+  if (c.state === 'approve' || approvalWait(c.agent)) return `${APPROVAL_WAIT}，不是提問`
   if (c.state === 'reply' || agentWaits(c.agent)) return ''
   return c.state === 'running' || c.agent?.status === 'busy' ? BUSY : 'Agent 沒有在等你回覆'
 }
@@ -374,11 +375,13 @@ export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOp
 
 /**
  * 排隊的這筆現在不能派的原因；空字串代表可以派。手動排的照手動派工重新判斷；自動排的要流程還在（這個對話的、沒停下）、
- * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑。
+ * 規格沒擋、還沒合併。兩種都要那件沒有 Agent 在跑：自動排的只看真的 Agent（跟 autoChain 跳過的條件同一條），
+ * 不看 state——審查有 CRITICAL／HIGH、流程還在時 stateOf 回 running，看 state 會把排隊的修正當成執行中丟掉。
+ * 停在權限提示的 Agent 也算（同一個 worktree 不多開一個），原因寫在等權限批准，你才知道要去批准。
  */
 export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
   if (!entry.opts.auto) return dispatchRefusal(c, entry.kind)
-  if (agentBusy(c)) return BUSY
+  if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
   if (run.stopped) return `流程已暫停（${run.stopped}）`
   if (specBlocks(c)) return specGapReason(c)
