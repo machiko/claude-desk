@@ -135,7 +135,7 @@ test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
     expect(p).toContain('不寫進卡片 等你')
     expect(p).toContain('歷程')
     expect(p).toContain('審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格')
-    expect(p).toContain('兩種都算進關卡的 MEDIUM 數')
+    expect(p).toContain('都算進關卡的 MEDIUM 數')
     expect(p).toContain('review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>')
   }
   // 修正提示：CRITICAL／HIGH 與沒加註記的 MEDIUM 一起修，LOW 不用修
@@ -169,13 +169,55 @@ test('test_review_prompt_hands_medium_to_chain_until_last_round', () => {
     expect(p).toContain('（等你決定）')
     expect(p).toContain(ASK)
     expect(p).toContain('記錄、不修')
-    expect(p).toContain('兩種都算進關卡的 MEDIUM 數')
+    expect(p).toContain('都算進關卡的 MEDIUM 數')
   }
   // 第 1 輪複審：要確認上一輪沒加註記的 MEDIUM 修好沒；等你在問的標「（等你決定）」，不再提
   const recheck = review(1)
   expect(recheck).toContain('這是修正後的複審（第 1 輪）')
   expect(recheck).toContain('CRITICAL／HIGH 與沒加註記的 MEDIUM 有沒有修好')
   expect(recheck).toContain('標「不修」「等你決定」的項目不要再提')
+})
+
+/** 審查 MEDIUM 第 2 條：第 2 輪複審（修正輪數用完）不再叫審查「MEDIUM 不加註記」，跟同一份提示要標「（等你決定）」的那句不矛盾；第 1 輪照舊 */
+test('test_recheck_prompt_drops_medium_no_mark_rule_when_fix_rounds_are_used_up', () => {
+  const c = mk('寫測試')
+  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, base: 'abc123', pitfalls: '', history: '', ...more })
+
+  const early = [review(1), review(1, { security: true })]
+  const last = [review(2), review(2, { security: true })]
+
+  for (const p of early) expect(p).toContain('沒修好的照原樣再列（MEDIUM 不加註記）')
+  for (const p of last) {
+    expect(p).toContain('這是修正後的複審（第 2 輪）')
+    expect(p).toContain('沒修好的照原樣再列')
+    expect(p).not.toContain('MEDIUM 不加註記')
+    expect(p).toContain('這次不會自動修')
+  }
+})
+
+/** 審查 MEDIUM 第 3 條：修正提示只寫這輪要依的那一份審查檔：資安審查之後依 SECURITY.md，其他依 REVIEW.md */
+test('test_fix_prompt_names_only_the_finished_review_file_when_fixing_review_findings', () => {
+  const c = mk('寫測試')
+
+  const code = buildPrompt(c, 'continue', '', { from: 'review', round: 1 })
+  const security = buildPrompt(c, 'continue', '', { from: 'review', round: 2, security: true } as any)
+
+  expect(code).toContain('修正第 1／2 輪：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH')
+  expect(code).not.toContain('.task/SECURITY.md')
+  expect(security).toContain('修正第 2／2 輪：依 .task/SECURITY.md 修正所有 CRITICAL、HIGH')
+  expect(security).not.toContain('.task/REVIEW.md')
+})
+
+/** 審查 MEDIUM 第 4 條：MEDIUM 分成三點之後，審查提示寫「都算進關卡的 MEDIUM 數」，不再寫「兩種」 */
+test('test_review_prompt_counts_every_medium_when_medium_rule_has_three_points', () => {
+  const c = mk('寫測試')
+
+  const prompts = [0, 1, 2].map(round => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', history: '' }))
+
+  for (const p of prompts) {
+    expect(p).toContain('都算進關卡的 MEDIUM 數')
+    expect(p).not.toContain('兩種都算進')
+  }
 })
 
 test('prompts use the configured name, project rules and review words', () => {

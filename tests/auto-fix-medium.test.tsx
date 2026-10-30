@@ -128,6 +128,36 @@ test('test_high_and_unmarked_medium_are_fixed_in_one_round_when_rounds_remain', 
   expect(h.fixes()).toHaveLength(2)
 })
 
+/** 審查 MEDIUM 第 3 條：自動派的修正提示只寫剛結束那份審查的審查檔（程式碼審查 → REVIEW.md、資安審查 → SECURITY.md），兩份檔都在也不混 */
+test('test_auto_fix_prompt_names_only_the_review_file_that_just_finished_when_both_files_exist', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
+  launchOneAtATime(data, clock)
+  // Alpha：程式碼審查剛結束，REVIEW.md 有沒註記的 MEDIUM；上一次資安審查的 SECURITY.md 也還在
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；空字串沒處理')
+  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理'
+  data.files[`${ALPHA}/.task/SECURITY.md`] = '- [LOW][風格] a.ts:1 — 舊的資安審查'
+  reviewJustFinished(data, ALPHA, 0)
+  // Beta：資安審查剛結束，SECURITY.md 有沒註記的 MEDIUM；程式碼審查的 REVIEW.md 已過關
+  data.git[BETA] = { branch: 'feature/beta', head: 'b1', files: ['app/Http/Middleware/Admin.php'] }
+  setCard(data, CARD_B, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；輸入沒驗')
+  data.files[`${BETA}/.task/REVIEW.md`] = '- [LOW][風格] x.php:1 — 縮排'
+  data.files[`${BETA}/.task/SECURITY.md`] = '- [MEDIUM][輸入驗證] app/Http/Middleware/Admin.php:3 — 沒檢查長度'
+  reviewJustFinished(data, BETA, 0, { security: true })
+
+  await h.refresh()
+
+  const sent = (root: string) => String(data.launches.find((l: any) => l.init.cwd === root)?.argv.at(-1) ?? '')
+  expect(data.launches).toHaveLength(2)
+  expect(sent(ALPHA)).toContain('修正第 1／2 輪：依 .task/REVIEW.md 修正所有')
+  expect(sent(ALPHA)).not.toContain('.task/SECURITY.md')
+  expect(sent(BETA)).toContain('修正第 1／2 輪：依 .task/SECURITY.md 修正所有')
+  expect(sent(BETA)).not.toContain('.task/REVIEW.md')
+})
+
 /** AC-2 */
 test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_full', async ($, on) => {
   const { data, clock } = fixture(on)

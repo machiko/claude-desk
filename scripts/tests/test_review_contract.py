@@ -55,8 +55,8 @@ class ReviewContractTest(unittest.TestCase):
         self.assertIn('`決定 MEDIUM 後 push、開 PR`', text)
         self.assertIn('多條', text)
         self.assertIn('選項裡不要用「；」', text)
-        # 兩種都算進關卡的 MEDIUM 數
-        self.assertIn('兩種都算進關卡的 MEDIUM', text)
+        # 每種 MEDIUM 都算進關卡的 MEDIUM 數
+        self.assertIn('都算進關卡的 MEDIUM', text)
 
     def test_workflow_docs_say_behavior_neutral_medium_is_recorded(self):
         """AC-1：docs/WORKFLOW.md 自動流程段與 /desk:flow 審查段都寫明不影響行為的 MEDIUM 直接記錄、不問。"""
@@ -84,6 +84,16 @@ class ReviewContractTest(unittest.TestCase):
             part = section(read(path), heading)
             self.assertRegex(part, r'可能影響行為的 MEDIUM[^\n]*自動派', path)
             self.assertIn('最多兩輪', part, path)
+
+    def test_unverifiable_ac_line_is_marked_your_decision_when_review_cannot_verify_spec(self):
+        """審查 MEDIUM 第 4 條：規格對照「無法判斷」的範本行帶「（等你決定）」，照抄也不會被當成要自動修；MEDIUM 分三點後寫「都算進」。"""
+        text = read(CONTRACT)
+
+        line = next(l for l in text.splitlines() if l.strip().startswith('- 無法判斷'))
+
+        self.assertIn('`- [MEDIUM][規格] — AC-n 無法驗證：…（等你決定）`', line)
+        self.assertIn('- 都算進關卡的 MEDIUM 數。', text)
+        self.assertNotIn('兩種都算進', text)
 
 
 if __name__ == '__main__':

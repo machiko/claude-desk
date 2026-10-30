@@ -155,7 +155,7 @@ test('a blocking review verdict without a chain sends a review fix, not a check 
     expect(c.state).toBe('failed')
     expect(dispatchable(c)).toContain('continue')
     const head = buildPrompt(c, 'continue').split('\n')[0]!
-    expect(head).toBe('修正：依 .task/REVIEW.md（資安審查之後的修正依 .task/SECURITY.md）修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
+    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
     expect(head).not.toContain('未通過')
   }
 })
