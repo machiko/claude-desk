@@ -1137,6 +1137,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 RELEASE_STEPS = [
     'origin/main',
     '/desk:card changelog',
+    '補文件',
     '.claude-plugin/plugin.json',
     'claude plugin validate .',
     'commit',
@@ -1180,7 +1181,7 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertNotIn('在主 repo、要發的 PR 都合併之後執行', skill)
 
     def test_release_docs_state_one_question_and_version_rule_when_releasing_desk(self):
-        """AC-4：發版段寫只問一次與題目範本、desk 的版號規則、照做的 9 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
+        """AC-4：發版段寫只問一次與題目範本、desk 的版號規則、照做的 10 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
         section = self.release_section()
         for part in ('只問一次', 'A) 照做', 'B) 改用', 'C) 先不發', '選 A／B 後一路做完不再問', '失敗就停'):
             self.assertIn(part, section)
@@ -1188,14 +1189,14 @@ class ReleaseDocsTest(unittest.TestCase):
         for part in ('feature/', '「新增」', '次版號', '0.38.0', '修訂號', '0.37.1', '0.27.0 起 12 次發版都符合'):
             self.assertIn(part, section)
         self.assertLess(section.find('次版號'), section.find('修訂號'))
-        # 9 步從暫存 worktree 開始、收尾移除它；歸檔寫在第 9 步之後，不在題目裡
+        # 10 步從暫存 worktree 開始、收尾移除它；歸檔寫在第 10 步之後，不在題目裡
         steps = re.findall(r'(?m)^\s+(\d+)\. (.*)$', section)
-        self.assertEqual([n for n, _ in steps], [str(i) for i in range(1, 10)])
+        self.assertEqual([n for n, _ in steps], [str(i) for i in range(1, 11)])
         self.assertIn('git worktree add', steps[0][1])
-        self.assertIn('git worktree remove', steps[8][1])
-        last_step = section.find(steps[8][1])
-        self.assertGreater(section.find('歸檔', last_step + len(steps[8][1])), 0)
-        self.assertNotIn('歸檔', section[:last_step + len(steps[8][1])])
+        self.assertIn('git worktree remove', steps[9][1])
+        last_step = section.find(steps[9][1])
+        self.assertGreater(section.find('歸檔', last_step + len(steps[9][1])), 0)
+        self.assertNotIn('歸檔', section[:last_step + len(steps[9][1])])
         readme = read(os.path.join(REPO, 'README.md'))
         row = next(l for l in readme.splitlines() if l.startswith('| ⚑ 發版 |'))
         self.assertIn('只問一次', row)
@@ -1231,9 +1232,9 @@ class CardOrderingDocsTest(unittest.TestCase):
         self.assertLess(item.find('橫切重構'), item.find('不超過 4 張'))
 
     def test_docs_tell_feature_cards_not_to_edit_shared_docs(self):
-        """AC-2：功能卡不改 README 與 WORKFLOW 的功能說明段，要補的說明寫在規格的目標或 Decisions，由發版 PR 一次補。"""
+        """AC-2：功能卡不改 README 與 WORKFLOW 的功能說明段，要補的說明寫在規格的目標或 Decisions 並標「待補文件」，發版的補文件步驟一次補。"""
         for text in (self.ordering_item(), self.readme_shared_docs_section()):
-            for part in ('功能卡不改 README', '功能說明段', '## 規格', 'Decisions', '發版 PR'):
+            for part in ('功能卡不改 README', '功能說明段', '## 規格', 'Decisions', '待補文件'):
                 self.assertIn(part, text)
         self.assertIn('橫切重構', self.readme_shared_docs_section())
 
