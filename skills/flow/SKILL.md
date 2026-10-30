@@ -39,8 +39,8 @@ desk 只讀卡片與 git，看不到對話內容。在主對話（不按 `g` 派
 
 ## 5 合併
 
-- 對話要做什麼：使用者要求時 `git push -u origin <分支>` 並對基準分支開 PR（GitHub 用 `gh pr create`）；PR 網址與分支頂端 commit 用 `done` 或手動寫進 History。不 force push、不推別的分支、不合併 PR。
-- 面板怎麼看得到：面板唯讀 PR 與 CI（GitHub 用 `gh`、Bitbucket 用 MCP），第二列依序寫「push 分支並開 PR」「PR 的 CI 在跑」「合併 PR（p 開啟）」。PR 開著又有新 commit 時出現「⇡ push」。合併由使用者按，合併後六段走到「上線」。
+- 對話要做什麼：使用者要求時 `git push -u origin <分支>` 並對基準分支開 PR（GitHub 用 `gh pr create`）；PR 網址與分支頂端 commit 用 `done` 或手動寫進 History。不 force push、不推別的分支、不合併 PR。專案的 `dispatch.json` 設了 `"autoPr": true` 時，審查過關後面板會自動派 Agent 開 PR 或 push（高風險改動除外），對話不用自己開。
+- 面板怎麼看得到：面板唯讀 PR 與 CI（GitHub 用 `gh`、Bitbucket 用 MCP），第二列依序寫「push 分支並開 PR」「PR 的 CI 在跑」「合併 PR（p 開啟）」。PR 開著又有新 commit 時出現「⇡ push」。設了 `autoPr` 時，動態會寫「審查通過，自動派 Agent 開 PR」或「自動派 Agent push 到 PR #n」。合併由使用者按，合併後六段走到「上線」。
 
 ## 6 上線
 

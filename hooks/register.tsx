@@ -32,7 +32,9 @@ import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, noteCardAsks, stopSuperseded } from './stale-agents'
 import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAgentQueue, isAgentQueued, notSent, queuePosition, readAgentQueue, requeue } from './agent-queue'
-import { DEMO_ONLY, archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
+import { DEMO_ONLY, archiveCase, autoPublish, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
+import { autoPrApplies, autoPrPlan, passWords } from './auto-pr'
+import type { AutoPrPlan } from './auto-pr'
 
 const PANE = 'desk'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -329,11 +331,17 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       const judged = step.skipped ? fresh?.head ?? c.git?.head : undefined
       // 免審查過關：判定的 HEAD 是檢查時的；跟現在的 HEAD 一樣才記得住它的分支。
       await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(judged ? { judgedHead: judged, judgedBranch: judged === c.git?.head ? c.git?.branch : undefined } : {}) } : r)
-      const text = step.needsHuman ? `${c.name} ${step.needsHuman}` : step.skipped ? `${c.name} 只動文件、檢查通過，免審查，可開 PR` : `${c.name} 審查通過，可開 PR`
+      // 專案設了 autoPr（高風險照舊停下等你看；發版線、detached HEAD 跟沒開一樣）：重讀一次 PR（不用快取，免得剛開的 PR 沒看到又開一個），決定開 PR、只 push 或不派。
+      const auto = !step.needsHuman && !tutorial && autoPrApplies(c) && (settings ?? await loadSettings($, options)).autoPr
+      const pr = auto ? await prProbe($, options, c.root, c.git!.branch, s.at, true) : undefined
+      const plan: AutoPrPlan | undefined = auto ? autoPrPlan({ ...c, pr }) : undefined
+      const words = passWords(c.name, plan, step.skipped)
+      const text = step.needsHuman ? `${c.name} ${step.needsHuman}` : words.feed
       await feedPush($, [{ at: s.at, text, tone: step.needsHuman ? 'warning' : 'success', card: c.statusPath }])
-      const say = step.needsHuman ? `${c.name}：${step.needsHuman}` : step.skipped ? `${c.name}：只動文件，免審查，可以開 PR` : `${c.name}：審查通過，可以開 PR`
+      const say = step.needsHuman ? `${c.name}：${step.needsHuman}` : words.say
       $.ui.toast(say, { timeoutMs: 10_000 })
       notify($, say)
+      if (plan) await autoPublish($, options, { ...c, pr }, plan)
     } else {
       await saveChain($, key, r => r ? { ...withMedium(r), round: step.round } : r)
       // 審查修正帶著剛結束的是不是資安審查：提示只寫那一份審查檔（SECURITY.md 或 REVIEW.md）。

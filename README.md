@@ -117,7 +117,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | v | 完成檢查；流程停在檢查段（指令改過、容器沒啟動、檢查中斷）時，跑完流程接著走 |
 | u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡、記 History 並歸檔（worktree 與分支保留；發版線與教學那件只清關卡） |
 | o／e／p | 開卡片／審查檔／PR；合併之後 footer 只列該段的主動作（沒打 tag：⚑ 發版與開啟；有 `release：` 關卡：上線確認與開啟；可歸檔：只剩 ⌫ 歸檔），輸出、審查檔、PR 收進 `m` |
-| ⇡ 開 PR／⇡ push | 合併段才出現、沒有快捷鍵，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag） |
+| ⇡ 開 PR／⇡ push | 合併段才出現、沒有快捷鍵，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag）。專案設了 `autoPr` 時審查過關會自動派，按鈕照樣可用 |
 | ⚑ 發版 | 上線段、還沒打 tag 時出現、沒有快捷鍵，按一下把發版請求（列出所有待發版的卡）填入輸入框，請求也列出發版後要歸檔並移除 worktree 與分支的卡（CI 通過、各卡狀態寫好之後才做；有 `release：` 關卡的卡改由按 `u` 歸檔）；Enter 送出後由對話照 [docs/WORKFLOW.md](docs/WORKFLOW.md) 的發版步驟做；對話只問一次：建議版號與理由、包含的卡、選照做後要做的動作（有要清理的卡時最後一項是歸檔並移除 worktree 與分支）寫成一題放進那幾張卡的「等你」，你在面板按 a（照做）、b（改用另一個版號）或 c（先不發）再按 `f`；選照做後一路做完不再問，失敗就停下寫進卡片。面板不打 tag、不 push |
 | t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`），確認後自動派實作（同 `g`：第一次先問核准檢查；「等你」有事、manual、worktree 有別人的改動時只確認不派；Agent 已滿就排隊）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
 | x／m／i | 展開全文（含完整歷程）／更多動作／說明 |
@@ -147,14 +147,14 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - **六段圖示**：● 已過、◉ 進行中、◆ 等你、✕ 卡住、○ 未到、· 不適用；上線確認後六個 ● 轉綠、狀態是 ✓「已上線」。
 - **卡片可能過期**：分支最近一次 commit 改到的程式（只改卡片的 commit 不算）比卡片新、又沒有 Agent 在跑時，現在卡提示「按 s 同步」，footer 也才列出「↻ 同步」（這一段沒有別的該按的鍵時它帶頭）。先寫卡、測試跑完才 commit 的不算過期。
 - **提醒**：登錄表「## 提醒」段 `- YYYY-MM-DD 事項` 到期前三天出現；`- 事項` 不寫日期時一直列在面板。面板上收成一列（多件寫「提醒 n 件 · 第一條」），按 `m` 展開全文（最多 4 列，其餘寫「還有 k 件」）。打勾 `[x]`、劃掉 `~~…~~`、縮排子項目與日期格式不對的行不算提醒。
-- **通知**：等你、流程暫停、可開 PR、按 `v` 的檢查未通過會送一次通知（走 Claude Code 的通知管道；自動流程的檢查沒過直接派修正，修到上限停下時送「流程已暫停」）。
+- **通知**：等你、流程暫停、可開 PR、自動開 PR、按 `v` 的檢查未通過會送一次通知（走 Claude Code 的通知管道；自動流程的檢查沒過直接派修正，修到上限停下時送「流程已暫停」）。
 - **新版本**：每 24 小時查一次 GitHub 上有沒有新的 desk（時間記在本機，重開也算），有就在面板與摘要列顯示「有新版本 x.y.z」；只提示、不安裝，查不到就不出聲。專案 `dispatch.json` 設 `"updateCheck": "off"` 關掉。
 
 ## desk 會寫什麼
 
 - 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History（接著跑 `/desk:card archive` 那支腳本歸檔，同 ⌫ 歸檔）；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步與審查不 push、不開 PR。
+- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步與審查不 push、不開 PR。專案設了 `autoPr` 時，審查過關（含只動文件、免審查過關）後自動派同一種推送 Agent，高風險改動照舊等你看；desk 自己不跑 git push 或 gh。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push；更新成功後自動執行 `/reload-plugins`，不重新啟動 Claude Code。
 - desk 自己不跑 `git push`、不開或合併 PR、不會部署；push、開 PR 交給它派的 Agent，合併由你按。
 
@@ -195,7 +195,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
 
-不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card` 放專案。
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card`、`autoPr` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
@@ -208,6 +208,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
   "projects": { "~/code/shop-worktrees/order-export": { "effort": "xhigh", "rules": ["只改 api/ 底下"] } },
   "user": "Alex",
   "maxAgents": 3,
+  "autoPr": true,
   "rules": ["測試只能用 make test，不要自己起資料庫"],
   "review": {
     "high": "實際的 bug、漏做權限檢查、漏寫稽核紀錄、測試沒測到需求",
@@ -235,6 +236,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `kinds.<種類>` | 依派工種類各設 `model`／`effort`，可設 `continue`（繼續與修正輪）、`reply`（回覆）、`review`（審查與資安審查）、`publish`（推送）；只寫其中一個的，另一個沿用任務覆寫或全域。優先順序：種類 > 任務覆寫 > 全域；同步仍用 `sync`。面板狀態列在「派工」後列出跟派工不同的種類 |
 | `user` | 寫進提示詞與卡片的人名（預設「使用者」） |
 | `maxAgents` | 同時在跑的工作桌背景 Agent 上限（預設 3，`0`＝不限）；整台機器一起算（別的專案、別的對話派的也算），停在提問或等批准的不算。超過的派工（含自動流程）排隊，面板寫第幾位、有空位依序派出，`k` 取消排隊；隊伍只在這個對話，重新載入就清空 |
+| `autoPr` | `true` 時審查過關（含只動文件、免審查過關）後自動派推送 Agent：還沒有 PR 就 push 並開 PR，PR 已開就只 push（已是最新就不派）。高風險改動、被拒絕過的 PR、流程暫停或別的對話開的流程都不自動開；不合併 PR、不打 tag。預設關，只認 `true`；建議寫在專案的 `dispatch.json`（例如每次過關都開 PR 的專案開、常先不 push 的專案不開） |
 | `rules`、`projects.<根目錄>.rules` | 每次派工都附上的專案規則 |
 | `review.high`／`security`／`categories` | 審查分級說明、資安審查範圍、類別範例 |
 | `review.template` | 審查契約檔（預設內附的 [templates/review.md](templates/review.md)） |

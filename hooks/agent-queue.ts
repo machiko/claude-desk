@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
-import { KIND_LABEL, markRefusal, normalizeRoot, queueRefusal, runningDeskAgents } from './dispatch'
+import { KIND_LABEL, markRefusal, normalizeRoot, pushRequest, queueRefusal, runningDeskAgents } from './dispatch'
 import type { DispatchKind, QueueEntry, QueueOpts, RawAgent } from './dispatch'
 import { paused } from './chain'
 import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
@@ -72,14 +72,17 @@ async function pauseOwnChain($: any, c: Case, mine: string, why: string): Promis
   return stopped
 }
 
+/** 自動排的這筆沒派出時要不要停下流程：推送是審查過關後才排的，沒派出流程仍是過關，合併段照舊可以按「⇡ 開 PR」。 */
+const pausesChain = (entry: Pick<QueueEntry, 'kind' | 'opts'>) => !!entry.opts.auto && entry.kind !== 'publish'
+
 /**
- * 從隊伍取出卻沒派出（已不在隊伍裡）：寫動態說原因；自動排的另把流程停下寫同一個原因。
+ * 從隊伍取出卻沒派出（已不在隊伍裡）：寫動態說原因；自動排的（推送除外）另把流程停下寫同一個原因。
  * `alert`：要人處理的原因（worktree 被別的對話改了），流程真的停下時跟自動流程一樣跳提示並發系統通知。
  */
 export async function notSent($: any, c: Case | undefined, entry: Pick<QueueEntry, 'statusPath' | 'kind' | 'opts'>, why: string, now: number, mine: string, alert = false) {
   const name = c?.name ?? entry.statusPath
   await feedPush($, [{ at: now, text: `${name} 排隊的${labelOf(entry.kind, entry.opts)}沒有派出：${why}`, tone: 'warning', card: entry.statusPath }])
-  if (!entry.opts.auto || !c) return
+  if (!pausesChain(entry) || !c) return
   if (!(await pauseOwnChain($, c, mine, why)) || !alert) return
   $.ui.toast(`${name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
   notify($, `${name}：流程已暫停，${why}`)
@@ -107,6 +110,12 @@ function approvalChanged(c: Case, entry: QueueEntry, trusted: Record<string, str
   return trusted[c.statusPath] === c.verify ? '' : '完成檢查在排隊期間改了，要重新核准：按 g 再派一次'
 }
 
+/** 自動排的開 PR 排隊期間 PR 已經開了（例如你按了「⇡ 開 PR」）：改成只 push，不再要求開第二個。 */
+function queuedOpts(c: Case, entry: QueueEntry): QueueEntry['opts'] {
+  if (entry.kind !== 'publish' || !entry.opts.auto || c.pr?.state !== 'OPEN') return entry.opts
+  return { ...entry.opts, text: pushRequest(c.git?.branch ?? '分支', c.pr.id) }
+}
+
 /**
  * 有空位就照順序派出排隊的：用這一輪重新整理的清單與快照算名額，每派出一件就重算，直到滿或隊伍空。
  * 輪到的那件現在不能派就移出並說原因；完成檢查正在跑或在檢查隊伍裡就先跳過、留在原位。回傳有沒有派出任何一件。
@@ -129,7 +138,7 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }
     const index = agentQueue.indexOf(entry)
     await setQueue($, agentQueue.filter(e => e !== entry))
-    const sent = await dispatch($, options, entry.opts.auto ? { ...c!, state: 'ready' } : c!, entry.kind, { ...entry.opts, fromQueue: index })
+    const sent = await dispatch($, options, entry.opts.auto ? { ...c!, state: 'ready' } : c!, entry.kind, { ...queuedOpts(c!, entry), fromQueue: index })
     // 名額被別處搶走：dispatch 已把它放回原位，這一輪不再派。
     if (isAgentQueued(entry.statusPath)) break
     if (sent) { running++; launched = true }
@@ -138,13 +147,13 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
   return launched
 }
 
-/** 面板的「■ 取消排隊」：移出隊伍、寫動態；自動排的把流程停下。 */
+/** 面板的「■ 取消排隊」：移出隊伍、寫動態；自動排的（推送除外）把流程停下。 */
 export async function cancelQueued($: any, c: Case) {
   const entry = agentQueue.find(e => e.statusPath === c.statusPath)
   if (!entry) return
   await setQueue($, agentQueue.filter(e => e !== entry))
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已取消排隊`, tone: 'suggestion', card: c.statusPath }])
-  if (entry.opts.auto) await pauseOwnChain($, c, await me($), CANCELLED)
+  if (pausesChain(entry)) await pauseOwnChain($, c, await me($), CANCELLED)
   $.ui.toast(`${c.name}：已取消排隊`)
   await restage($, c.statusPath)
 }

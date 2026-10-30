@@ -14,6 +14,7 @@ import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
+import type { AutoPrPlan } from './auto-pr'
 import { feedPush, loadJobs, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
@@ -45,12 +46,27 @@ export async function reply($: any, options: PluginOptions, c: Case, text?: stri
 /** 教學不派真的 Agent：合併照教學說的按 t。 */
 const TUTORIAL_PUBLISH = '教學不會真的 push：照教學的指示按 t 合併'
 
+/** 開 PR 要推送 Agent 做的那句：對基準分支（baseRefs 第一個）開 PR。 */
+async function openPrText($: any, options: PluginOptions, c: Case): Promise<string> {
+  const [target] = await baseRefs($, c, (await loadSettings($, options)).cardBase ?? '')
+  return openPrRequest(c.git?.branch ?? '分支', target ?? '')
+}
+
 /** 合併段的「⇡ 開 PR」（按兩次確認後）：派推送 Agent push 分支並對基準分支開 PR；desk 自己不跑 git push、gh。 */
 export async function publishPr($: any, options: PluginOptions, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if (tutorial) { $.ui.toast(`${c.name}：${TUTORIAL_PUBLISH}`); return }
-  const [target] = await baseRefs($, c, (await loadSettings($, options)).cardBase ?? '')
-  await dispatch($, options, c, 'publish', { text: openPrRequest(c.git?.branch ?? '分支', target ?? '') })
+  await dispatch($, options, c, 'publish', { text: await openPrText($, options, c) })
+}
+
+/**
+ * 審查過關後自動派推送（專案設了 autoPr）：open 開 PR、push 只推到已開的 PR；跟按鈕一樣派推送 Agent，desk 自己不跑 git push、gh。
+ * 自動派的不經手動派工的合併段判斷（過關當下六段還在審查段）；名額滿了照樣排進派工隊伍。
+ */
+export async function autoPublish($: any, options: PluginOptions, c: Case, plan: AutoPrPlan) {
+  if (plan.kind === 'skip') return
+  const text = plan.kind === 'open' ? await openPrText($, options, c) : pushRequest(c.git?.branch ?? '分支', plan.pr)
+  await dispatch($, options, { ...c, state: 'ready' }, 'publish', { text, auto: true })
 }
 
 /** 合併段 PR 已開後的「⇡ push」（按兩次確認後）：派推送 Agent 只 push、不開新 PR。派出去了、又有未提交的檔案時提醒只會推已 commit 的。 */

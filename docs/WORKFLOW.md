@@ -11,7 +11,7 @@
 | 主控台對話（開著 `/desk` 的那個 Claude Code 對話） | 規格、完成檢查、關卡判定、兩次失敗後的診斷 | 不在主 repo 切分支、不 push |
 | Agent（`claude --bg`，在各 worktree） | 實作到完成檢查綠、寫回 DESK 卡、`.task/REPORT.md`；被要求時（含合併段派的推送 Agent）push 自己的分支、開 PR | 不問問題等人（寫進卡的「等你」後結束）、不 force push、不推別的分支、不合併 PR、不上線 |
 | 審查對話（新對話、不接續 Agent） | 只看任務檔、自己重新執行完成檢查、看 diff | 不啟動容器、不改 port、不參考 Agent 的結論 |
-| 你 | 業務決策、合併、打 tag、部署；push、開 PR 在面板按「⇡ 開 PR」「⇡ push」派 Agent 做 | — |
+| 你 | 業務決策、合併、打 tag、部署；push、開 PR 在面板按「⇡ 開 PR」「⇡ push」派 Agent 做（專案設了 `autoPr` 時審查過關自動派，高風險改動照舊等你看） | — |
 
 ## 六段
 
@@ -21,7 +21,7 @@
 | 2 實作 | 寫程式 | 你按 `g` | Agent（`claude --bg`） | 交給下一段 | Agent 執行中 |
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
 | 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0，影響行為的 MEDIUM 也修完 | 卡片 `review：CRITICAL n、HIGH n…` |
-| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態） |
+| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次）；專案設了 `autoPr` 時審查過關後自動派（高風險照舊等你） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態） |
 | 6 上線 | 打 tag、部署、部署後步驟 | 你按「⚑ 發版」交給對話 | 對話照發版步驟做、你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。
@@ -31,10 +31,10 @@
 1. 你按 `g` 開始一輪。這張卡的完成檢查還沒核准過，按 `g` 時就先問（列出根目錄與指令全文），選「核准並派工」才派；之後同一張卡、同一條指令不再問。Agent 做完 → desk 自動執行完成檢查。
    - 流程停在檢查段時（Agent 把檢查指令改了、容器沒啟動、檢查中斷），「▶ 輪到你」寫原因；排除後按 `v`（指令改過的會先問一次），檢查跑完流程接著走。沒有暫停中的流程時，`v` 只跑檢查、記結果。
 2. 檢查紅 → 自動派「修正」；檢查綠 → 自動派審查（新對話）。
-3. 審查有 CRITICAL、HIGH 或可能影響行為的 MEDIUM → 同一輪自動派「依 .task/REVIEW.md 修正」（資安審查依 .task/SECURITY.md），回到 1；沒有要修的 → 過關，提醒你開 PR。只關於規格紀錄、文件、命名、重複這類不影響行為的 MEDIUM，審查直接記在審查檔（記錄、不修）與卡片 History、不修也不問你；要你決定的 MEDIUM（要改規格才能修、驗收情境無法驗證）才在審查檔標「（等你決定）」、寫進「等你」讓你選不修／修掉／改規格。流程是別的對話開的、審查完只剩要修的 MEDIUM（沒有 CRITICAL／HIGH、修正輪數還有）時，開著面板的這個對話會接手這輪流程並自動派修正，動態會寫明是接手的；還有 CRITICAL／HIGH 的照舊由開流程的對話處理。
+3. 審查有 CRITICAL、HIGH 或可能影響行為的 MEDIUM → 同一輪自動派「依 .task/REVIEW.md 修正」（資安審查依 .task/SECURITY.md），回到 1；沒有要修的 → 過關，提醒你開 PR；專案設了 `autoPr` 時改成自動派推送 Agent 開 PR（PR 已開只 push，已是最新就不派），合併仍由你按。只關於規格紀錄、文件、命名、重複這類不影響行為的 MEDIUM，審查直接記在審查檔（記錄、不修）與卡片 History、不修也不問你；要你決定的 MEDIUM（要改規格才能修、驗收情境無法驗證）才在審查檔標「（等你決定）」、寫進「等你」讓你選不修／修掉／改規格。流程是別的對話開的、審查完只剩要修的 MEDIUM（沒有 CRITICAL／HIGH、修正輪數還有）時，開著面板的這個對話會接手這輪流程並自動派修正，動態會寫明是接手的；還有 CRITICAL／HIGH 的照舊由開流程的對話處理。
 4. 修正最多兩輪（檢查與審查共用），第三次仍未通過就暫停，摘要列亮「● 等你」，動態寫原因。兩輪後只剩 MEDIUM 不暫停：過關，MEDIUM 交給「等你」。
 5. 審查通過後分支又有新 commit（例如你決定 MEDIUM 現在改、或在面板外改了程式）：那次審查不算數，六段退回「檢查」，流程自動重新檢查、重新審查（只看上次審查之後的 diff），不算修正輪數。只寫回卡片、沒有 commit 的決定不會退回。
-6. 流程碰不到合併與上線；合併段派的推送 Agent（push、開 PR）做完不跑檢查、不派審查、不算修正輪。
+6. 流程碰不到合併與上線；合併段派的推送 Agent（push、開 PR；含設了 `autoPr` 時過關自動派的）做完不跑檢查、不派審查、不算修正輪。自動派的推送名額滿了照樣排隊，取消排隊或沒派出不會讓流程暫停。
 7. 改程式的 Agent（繼續、回覆、修正）改的過程只跑相關的測試，收尾 commit 前跑一次完成檢查；做完 desk 再自動跑一次。整套測試不會被好幾個 Agent 反覆同時跑。
 
 ## 讓審查越來越準
@@ -49,7 +49,7 @@
 |---|---|---|
 | 低 | 只動 `*.md`、`docs/`、`*.txt` | 檢查通過就過關，免審查 |
 | 一般 | 其他 | 檢查 → 程式碼審查 |
-| 高 | Auth／Middleware、migration、CI 設定、Dockerfile／compose、相依套件鎖檔、`.env`，加上設定檔 `risk.high` 的專案路徑 | 檢查 → 程式碼審查 → 資安審查 → 停下來等你看過；開了 PR 就算看過 |
+| 高 | Auth／Middleware、migration、CI 設定、Dockerfile／compose、相依套件鎖檔、`.env`，加上設定檔 `risk.high` 的專案路徑 | 檢查 → 程式碼審查 → 資安審查 → 停下來等你看過；開了 PR 就算看過。設了 `autoPr` 也不自動開 PR |
 
 改了哪些檔＝分支相對「要併進去的分支」的 diff，基準依序找：PR 目標 → 最新的 `origin/release/*` → 專案 `dispatch.json` 的 `card.base` → `origin/HEAD`。都找不到就算一般風險。
 
