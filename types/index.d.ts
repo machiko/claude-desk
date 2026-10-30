@@ -5,8 +5,11 @@ export type Decision = { title: string; options: DecisionOption[] }
 /** 關卡：只有三種，其他寫法視為無法讀。 */
 export type Gate = { kind: 'spec' | 'review' | 'release' | 'unknown'; detail: string }
 
+/** 完成檢查沒過時從整份輸出整理出的摘要：幾支失敗（認不出框架就沒有）、每支「測試名：原因」；認不出時是去掉分隔線的尾巴。 */
+export type CheckSummary = { failed?: number; items: string[] }
+
 /** 工作桌自己跑過的驗證結果，按卡片路徑記住。 */
-export type Verify = { command: string; at: number; ok: boolean; exitCode: number; tail: string[]; truncated: boolean; /** 跑的時候分支的 HEAD；之後有新 commit 這次檢查就不算數。 */ head?: string }
+export type Verify = { command: string; at: number; ok: boolean; exitCode: number; tail: string[]; truncated: boolean; /** 跑的時候分支的 HEAD；之後有新 commit 這次檢查就不算數。 */ head?: string; /** 沒過時才有；舊紀錄沒有這欄，面板改列去掉分隔線的尾巴。 */ summary?: CheckSummary }
 
 /** 一件任務的狀態詞：等你 > 回覆／批准權限 > 關卡 > 進行 > 失敗 > 可做 > 閒置 > 無卡。 */
 export type CaseState = 'ask' | 'reply' | 'approve' | 'gate' | 'running' | 'failed' | 'ready' | 'done' | 'idle' | 'nocard'
