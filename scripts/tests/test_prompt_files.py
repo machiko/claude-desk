@@ -1,10 +1,9 @@
-"""hooks/dispatch.ts 的提示詞拆到 hooks/prompts/ 之後的檔案結構檢查（plugin test 的環境不能讀檔、不能跑 git，所以寫在這裡）。
+"""hooks/dispatch.ts 的提示詞拆到 hooks/prompts/ 之後的檔案結構檢查（plugin test 的環境不能讀檔，所以寫在這裡）。「沒改既有測試檔」是這次重構的一次性事實，由審查用 git diff 核對、記在卡片 History，不寫成永久測試（合併後會讓之後改到 tests/ 的分支變紅）。
 
 執行：python3 -m unittest discover -s scripts/tests
 """
 import os
 import re
-import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,7 +20,6 @@ PROMPT_HOME = {
 }
 # 搬到 hooks/next-words.ts、hooks/worktree-mark.ts 的判斷，dispatch.ts 只 re-export
 MOVED_LOGIC = ['idleNext', 'reviewNext', 'markOf', 'markRefusal']
-NEW_TEST = 'tests/prompt-files.test.tsx'
 # 比對跨檔重複時只看夠長的字串常值，短的（空字串、分隔符）本來就會重複
 MIN_LITERAL = 20
 
@@ -40,19 +38,7 @@ def literals(text):
     return {s for pair in found for s in pair if len(s) >= MIN_LITERAL}
 
 
-def git(*args):
-    return subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True)
-
-
 class PromptFilesTest(unittest.TestCase):
-    def test_no_existing_test_file_is_modified(self):
-        if git('rev-parse', '--verify', '--quiet', 'origin/main').returncode != 0:
-            self.skipTest('拿不到 origin/main（例如淺層 clone）')
-        out = git('diff', '--name-status', 'origin/main...HEAD', '--', 'tests/')
-        self.assertEqual(out.returncode, 0, out.stderr)
-        changed = [line.split('\t') for line in out.stdout.splitlines() if line]
-        self.assertEqual(changed, [['A', NEW_TEST]])
-
     def test_dispatch_keeps_only_settings_launch_and_refusals(self):
         text = read(DISPATCH)
         moved = [n for names in PROMPT_HOME.values() for n in names] + MOVED_LOGIC
