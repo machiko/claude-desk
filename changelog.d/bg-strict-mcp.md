@@ -1,1 +1,0 @@
-- 修正 背景 Agent 不再載入 MCP server（每件派工省下七支常駐程序），要用的專案在 dispatch.json 設 `mcp: true` 開回來
