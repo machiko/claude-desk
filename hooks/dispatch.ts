@@ -1,6 +1,6 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
-import { agentBusy, blocking, isMerged, isReleaseLine, needsPr, needsPush, parseVerdict } from './pipeline'
+import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush, parseVerdict, toFix } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
 import { AGENT_STOPPED, MAX_FIX_ROUNDS } from './chain'
 import type { ChainRun } from './chain'
@@ -257,9 +257,9 @@ function manualFixHead(c: Case): string {
   const stopped = c.chain?.stopped
   if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
   if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_DECIDE}），commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
-  // 審查結論擋住（審查不是工作桌派的、沒有流程紀錄）：檢查是過的，要修的是審查的 CRITICAL、HIGH。
+  // 審查結論還要修（CRITICAL＋HIGH，加上流程這輪要修的 MEDIUM）：檢查是過的，依審查檔修。
   const verdict = parseVerdict(c.gate)
-  if (verdict && blocking(verdict) > 0) return `修正：${reviewFixStep(REVIEW_FILE)}`
+  if (verdict && toFix(c, verdict) > 0) return `修正：${reviewFixStep(REVIEW_FILE)}`
   return `修正：完成檢查 \`${c.verify}\` 未通過。先自己跑一次看失敗原因，修到完成檢查綠，commit 後寫回卡片。`
 }
 
