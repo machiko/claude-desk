@@ -121,7 +121,7 @@ test('test_archive_stage_lists_only_archive', async ($, on) => {
   const ui = await mount($, clock)
   // 現在卡：檢查列只剩一行「檢查 ✓ 通過」，不列指令
   const drawn = await screen(ui)
-  expect(drawn).toContain(flat('檢查      ✓ 通過'))
+  expect(drawn).toContain(flat('測試      ✓ 通過'))
   expect(drawn).not.toContain('npmtest')
   expect(drawn).not.toContain('allgreen')
   // footer：這件只有歸檔；全域鍵照舊
@@ -176,7 +176,7 @@ test('test_ship_stage_lists_release_then_ship', async ($, on) => {
   expect(footer(mergedCase({ tag: 'v0.19.0', gate: '- 關卡：release：v0.19.0 待上線確認' }), false)).toEqual(['open', 'ship'])
 })
 
-/** AC-5：發版請求要求對話把確認點寫進卡片「等你」、狀態寫進度、收到決策才做下一步、做完清掉等你。 */
+/** AC-5：發版請求要求對話把確認題寫進卡片「等你」（只問一次）、狀態寫進度、收到決策先清掉等你。 */
 test('test_release_prompt_asks_confirmations_through_card', async ($, on) => {
   const { data, clock } = fixture(on)
   mergedBeta(data)
@@ -186,8 +186,8 @@ test('test_release_prompt_asks_confirmations_through_card', async ($, on) => {
   expect(data.fills).toHaveLength(1)
   const asked = data.fills[0].text as string
   expect(asked).toBe(releasePrompt([{ name: 'Beta', pr: { id: 12, state: 'MERGED', ci: 'none' } as any }]))
-  expect(asked).toStartWith('發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程，先提版號給我確認')
-  for (const part of ['版號', '打 tag 並 push', '「等你」', 'A) … B) …', '「狀態」寫做到哪一步', '收到我的決策才做下一步', '做完把「等你」清成無']) expect(asked).toContain(part)
+  expect(asked).toStartWith('發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程準備，只問我一次')
+  for (const part of ['版號', '只問我一次', '「等你」', 'A) 照做', 'B) 改用', 'C) 先不發', '「狀態」寫做到哪一步', '收到決策', '「等你」清成無']) expect(asked).toContain(part)
   expect(data.submitted).toHaveLength(0)
   await ui.unmount()
 })

@@ -466,7 +466,7 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false): Prom
   const trusted = await trustedChecks($)
   if (trusted[c.statusPath] !== c.verify) {
     if (auto) return false
-    const answer = await $.ui.ask(`在 ${c.root} 執行完成檢查：\n${c.verify}\n之後同一條指令不再問，自動流程也會用它。`, { header: `${c.name} 檢查`, options: ['執行', '取消'] }).catch(() => '')
+    const answer = await $.ui.ask(`在 ${c.root} 執行測試：\n${c.verify}\n之後同一條指令不再問，自動流程也會用它。`, { header: `${c.name} ${WORD.verify}`, options: ['執行', '取消'] }).catch(() => '')
     if (answer !== '執行') return false
     await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
     // 對話框可能開了很久：回答的這段時間 Agent 開始跑了，就不在它的 worktree 上跑檢查。

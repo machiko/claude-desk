@@ -102,7 +102,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk:card done <slug> <狀態一句>` | 主對話告一段落時寫回卡片：狀態、下一步（平常是到面板按 v；審查過關後有新 commit 是等自動重新檢查與審查，沒動靜就按 v；審查過關後沒有新 commit 是照面板開 PR 或合併）與 History（分支、HEAD）；規格沒確認會拒絕 |
 | `/desk:flow` | 在主對話（不派 Agent）走六段的說明：每段對話做什麼、面板怎麼看得到，末尾附一行 CLAUDE.md 規則 |
 | `/desk:card archive <slug>` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree） |
-| `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在主 repo 執行；沒有片段、版本段已存在、片段格式錯都不改檔） |
+| `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在要發版的那份 main 執行：主 repo，照「⚑ 發版」流程時是從 origin/main 開的暫存 worktree；沒有片段、版本段已存在、片段格式錯都不改檔） |
 
 焦點：`/desk` 或 ctrl+x tab 移到面板，ctrl+x tab 回輸入框。面板裡按 `i` 看完整快捷鍵。
 
@@ -118,7 +118,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡並記 History |
 | o／e／p | 開卡片／審查檔／PR；合併之後 footer 只列該段的主動作（沒打 tag：⚑ 發版與開啟；有 `release：` 關卡：上線確認與開啟；可歸檔：只剩 ⌫ 歸檔），輸出、審查檔、PR 收進 `m` |
 | ⇡ 開 PR／⇡ push | 合併段才出現、沒有快捷鍵，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag）。專案設了 `autoPr` 時審查過關會自動派，按鈕照樣可用 |
-| ⚑ 發版 | 上線段、還沒打 tag 時出現、沒有快捷鍵，按一下把發版請求（列出所有待發版的卡）填入輸入框；Enter 送出後由對話照 [docs/WORKFLOW.md](docs/WORKFLOW.md) 的發版步驟做；每個要你確認的點（版號、打 tag 並 push）寫進那幾張卡的「等你」，你在面板按選項字母＋`f` 回答，不用回對話打字。面板不打 tag、不 push |
+| ⚑ 發版 | 上線段、還沒打 tag 時出現、沒有快捷鍵，按一下把發版請求（列出所有待發版的卡）填入輸入框；Enter 送出後由對話照 [docs/WORKFLOW.md](docs/WORKFLOW.md) 的發版步驟做；對話只問一次：建議版號與理由、包含的卡、選照做後要做的動作寫成一題放進那幾張卡的「等你」，你在面板按 a（照做）、b（改用另一個版號）或 c（先不發）再按 `f`；選照做後一路做完不再問，失敗就停下寫進卡片。面板不打 tag、不 push |
 | t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
 | x／m／i | 展開全文／更多動作／說明 |
 | r | 重新整理（在 `m` 更多動作裡；平常定時、每回合結束、對話改了卡片或跑了 git 之後都會自動重讀） |
@@ -261,7 +261,7 @@ python3 -m unittest discover -s skills/card/tests   # /desk:card 的測試
 
 每張卡（分支）的 CHANGELOG 條目寫在 `changelog.d/<slug>.md`（slug＝worktree 資料夾名＝分支最後一段，例如 `changelog.d/check-public.md`），不改 `CHANGELOG.md`，所以各分支之間不會再搶「## 未發布」。片段檔只放條目：一行或多行 `- ` 開頭、動詞開頭（新增／修復／調整／移除），一條一個使用者看得到的主題，沒有標題、沒有版本；沒有使用者看得到的改動就不建這個檔（空檔會讓發版報錯）。目錄裡的 `.gitkeep` 讓它在沒有片段時也存在。
 
-發版（在主 repo、要發的 PR 都合併之後）：
+發版（要發的 PR 都合併之後，在要發版的那份 main：主 repo，或照「⚑ 發版」流程從 origin/main 開的暫存 worktree）：
 
 ```
 python3 skills/card/scripts/card.py changelog 0.27.0   # 或 /desk:card changelog 0.27.0
