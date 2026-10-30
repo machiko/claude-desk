@@ -825,6 +825,92 @@ class CardScriptTest(unittest.TestCase):
         self.assertNotEqual(self.branch_listed('feature/gamma'), '')
         self.assertIn('清理 gamma：worktree 與分支保留：分支還沒併入 main', r.stdout)
 
+    def commit_gitignore(self, *patterns):
+        """主 repo 加 .gitignore 並推到 origin，之後開的卡都從這裡分叉。"""
+        write(os.path.join(self.main, '.gitignore'), ''.join(f'{p}\n' for p in patterns))
+        git('add', '.gitignore', cwd=self.main)
+        git('commit', '-q', '-m', 'gitignore', cwd=self.main)
+        git('push', '-q', 'origin', 'main', cwd=self.main)
+
+    def put(self, wt, rel, text='x\n'):
+        path = os.path.join(wt, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        write(path, text)
+
+    def test_archive_cleanup_keeps_worktree_and_branch_when_ignored_local_config_present(self):
+        """審查 MEDIUM，D-07：git worktree remove 不加 --force 也會刪被 git 忽略的檔。Beta 已合併、沒有未提交的改動，
+        但有被忽略的 .env、.claude/settings.local.json，以及整個被忽略的 docker/ 裡的 .env.production：
+        worktree 與分支都保留、檔都還在；輸出、已歸檔那行與「## 提醒」寫明原因並列出這三個檔，提醒附自己刪的指令（不含 --force／-D）。"""
+        self.commit_gitignore('.env', '*.local.json', '__pycache__/', 'docker/')
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        self.put(beta, '.env', 'SECRET=1\n')
+        self.put(beta, '.claude/settings.local.json', '{}\n')
+        self.put(beta, 'docker/.env.production', 'DB=prod\n')
+        self.put(beta, '__pycache__/beta.cpython-312.pyc')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'beta-CARD.md')))
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertEqual(read(os.path.join(beta, '.env')), 'SECRET=1\n')
+        self.assertEqual(read(os.path.join(beta, 'docker', '.env.production')), 'DB=prod\n')
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        why = '有被 git 忽略的本機設定或資料（.claude/settings.local.json、.env、docker/.env.production）'
+        self.assertIn(f'清理 beta：worktree 與分支保留：{why}', r.stdout)
+        self.assertNotIn('__pycache__', r.stdout)
+        reg = read(self.reg)
+        self.assertRegex(reg, rf'(?m)^- beta：.*；worktree 保留：{re.escape(why)}$')
+        reminders = [l for l in reg[reg.index('## 提醒'):].splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(len(reminders), 1, reg)
+        self.assertTrue(reminders[0].startswith(f'- 清理 beta：{why}；看過後自己刪：'), reminders[0])
+        self.assertIn(f'git -C {self.main} worktree remove {beta}', reminders[0])
+        self.assertIn(f'git -C {self.main} branch -d feature/beta', reminders[0])
+        self.assertNotIn('--force', reminders[0])
+        self.assertNotIn(' -D', reminders[0])
+
+    def test_archive_cleanup_removes_worktree_without_note_when_only_rebuildable_files_ignored(self):
+        """審查 MEDIUM，D-07 的另一面：被忽略的只有 __pycache__、node_modules 這類可重建的（加上 desk 自己的 .desk、.task），
+        照常移除 worktree 與分支；輸出、已歸檔那行跟沒有被忽略的檔時一樣，不列這些項目、也不寫提醒。
+        lib/ 裡只有 __pycache__，git 會把整個 lib/ 列成被忽略的一項，也不算。"""
+        self.commit_gitignore('__pycache__/', 'node_modules/')
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        self.put(beta, '__pycache__/beta.cpython-312.pyc')
+        self.put(beta, 'lib/__pycache__/util.cpython-312.pyc')
+        self.put(beta, 'node_modules/left-pad/index.js')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertFalse(os.path.exists(beta))
+        self.assertEqual(self.branch_listed('feature/beta'), '')
+        self.assertRegex(r.stdout, r'(?m)^清理 beta：worktree 已移除；分支 feature/beta 已刪除$')
+        reg = read(self.reg)
+        self.assertRegex(reg, r'(?m)^- beta：.*；worktree 與分支已移除$')
+        self.assertNotIn('- 清理 beta', reg)
+
+    def test_archive_cleanup_lists_deleted_ignored_files_when_worktree_removed(self):
+        """審查 MEDIUM，D-07：被忽略的不是本機設定或資料、也不是可重建的（logs/、notes.txt.bak），照常移除 worktree 與分支，
+        但輸出、已歸檔那行與「## 提醒」列出一起刪掉的項目（可重建的不列），使用者看得到刪了什麼。"""
+        self.commit_gitignore('logs/', '*.bak', '__pycache__/')
+        beta = self.open_case('feature/beta', 'Beta', merged=True)
+        self.put(beta, 'logs/app.log')
+        self.put(beta, 'notes.txt.bak')
+        self.put(beta, '__pycache__/beta.cpython-312.pyc')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(os.path.realpath(beta), self.worktrees())
+        self.assertEqual(self.branch_listed('feature/beta'), '')
+        gone = '一起刪掉被 git 忽略的：logs/、notes.txt.bak'
+        self.assertRegex(r.stdout, rf'(?m)^清理 beta：worktree 已移除；分支 feature/beta 已刪除；{re.escape(gone)}$')
+        reg = read(self.reg)
+        self.assertRegex(reg, rf'(?m)^- beta：.*；worktree 與分支已移除；{re.escape(gone)}$')
+        reminders = [l for l in reg[reg.index('## 提醒'):].splitlines() if l.startswith('- 清理 ')]
+        self.assertEqual(reminders, [f'- 清理 beta：worktree 與分支已移除；{gone}'], reg)
+
     def test_archive_same_card_named_twice_is_archived_once(self):
         """同一張卡用 slug 和任務名各寫一次（審查 MEDIUM，D-04）：只歸檔、清理一次，不會 Traceback 也不多一份副本。"""
         self.open_case('feature/beta', 'Beta', merged=True)

@@ -93,7 +93,7 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
   8. 等 main 的 CI 通過：先取這次 commit 的 run id（`gh run list --branch main --commit <commit> --limit 1 --json databaseId -q '.[0].databaseId'`，還沒出現就等幾秒再查），再 `gh run watch <id> --exit-status`（非互動環境一定要給 id；`--exit-status` 讓 CI 失敗時回非零）；沒有 gh 就到 GitHub Actions 看
   9. 收尾：主 repo 在 main 且沒有改動就 `git merge --ff-only origin/main`（否則跳過並寫進狀態）、`git worktree remove <暫存路徑>`，每張卡的狀態寫「已發版 <版本>：tag 與 main 已推送，main 的 CI 通過」
 
-  發版請求列了要清理的卡（沒有 `release：` 關卡的卡）時，題目的動作最後多一項「歸檔並移除 worktree 與分支」：第 9 步寫好各卡狀態之後，在主 repo 跑 `/desk:card archive <slug>… --cleanup`，把這些卡歸檔並移除 worktree 與分支（你在題目選照做就是同意；只用 `git worktree remove`、`git branch -d`，不加 `--force`／`-D`、不碰遠端；沒併入、有未提交的改動或 git 拒絕的保留，原因與自己刪的指令寫進登錄表「## 提醒」），沒移除的項目與原因寫進「狀態」告訴你。
+  發版請求列了要清理的卡（沒有 `release：` 關卡的卡）時，題目的動作最後多一項「歸檔並移除 worktree 與分支」：第 9 步寫好各卡狀態之後，在主 repo 跑 `/desk:card archive <slug>… --cleanup`，把這些卡歸檔並移除 worktree 與分支（你在題目選照做就是同意；只用 `git worktree remove`、`git branch -d`，不加 `--force`／`-D`、不碰遠端；沒併入、有未提交的改動、有被 git 忽略的本機設定或資料（`.env*`、`*.local.*` 等）或 git 拒絕的保留，原因與自己刪的指令寫進登錄表「## 提醒」；其他被忽略的檔隨 worktree 一起刪，可重建的（`node_modules`、`__pycache__` 等）以外列在輸出與提醒），沒移除的項目與原因寫進「狀態」告訴你。
 
   之後你做的事：有 `release：` 關卡的卡不在這次清理，部署後按 `u` 確認上線，會接著自動歸檔（worktree 與分支保留）；其他還沒歸檔的卡照舊歸檔（面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`）。
 
