@@ -41,15 +41,20 @@ test('a real case waiting on its spec offers t to confirm it', async ($, on) => 
   expect(button?.props?.hotkey).toBe('t')
   expect(button?.props?.variant).toBe('primary')
   expect(await screen(ui)).toContain(flat('▶ 輪到你'))
-  expect(await screen(ui)).toContain(flat('看過規格（o 開卡片）後按 t 確認（或輸入 /desk:card spec beta ok）'))
+  expect(await screen(ui)).toContain(flat('看過規格（o 開卡片）後按 t 確認並派實作（或輸入 /desk:card spec beta ok）'))
   await ui.unmount()
 })
 
-test('pressing t twice confirms the spec like /desk:card spec ok and launches nothing', async ($, on) => {
+test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)
   onlySpec(data)
   scriptOk(data)
+  // 確認後自動派實作：派出去的 Agent 出現在 Beta 的 worktree
+  data.launch = async (e: any) => {
+    data.agents = [{ id: 'e0000000', kind: 'background', cwd: e.init.cwd, name: e.argv[3], sessionId: 'e0000000-0000-4000-8000-000000000000', state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, 'e0000000')
+  }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   const before = data.files[CARD_B]
@@ -80,9 +85,12 @@ test('pressing t twice confirms the spec like /desk:card spec ok and launches no
   await clock.settle()
   expect(log.list.some(e => e.text === 'Beta 規格已確認，可以派實作' && e.tone === 'success')).toBe(true)
   expect(await screen(ui)).not.toContain(flat('Beta 規格已確認，可以派實作'))
-  expect(await screen(ui)).toContain(flat('按 g 派 Agent：依審核修正'))
+  // 確認後同一次就派出實作（完成檢查先核准一次），不用再按 g
+  expect(data.asks).toHaveLength(1)
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(BETA)
+  expect(await screen(ui)).not.toContain(flat('按 g 派 Agent：依審核修正'))
   expect(await ui.find({ key: KEY })).toBeUndefined()
-  expect(data.launches).toHaveLength(0)
   await ui.unmount()
 })
 

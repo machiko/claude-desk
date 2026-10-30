@@ -5,11 +5,11 @@
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
-import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
+import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
 import { errorLine, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings } from './probes'
-import { normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
+import { afterSpecRefusal, normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
 import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
@@ -17,6 +17,7 @@ import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
 import { feedPush, loadJobs, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
+import { approveCheck } from './approve-check'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 
 export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
@@ -152,7 +153,7 @@ export async function archiveCase($: any, options: PluginOptions, c: Case) {
 
 /**
  * 真實模式的確認規格：執行 /desk:card spec <slug> ok 用的同一支腳本（在任務的 worktree 裡跑，認得出同一個專案），
- * 卡片由腳本改；只確認、不派工。腳本失敗（卡片已被改過、找不到卡）就提示錯誤原因（腳本印的第一行），關卡留著。
+ * 卡片由腳本改；確認後重讀，照按 g 的規則自動派實作（dispatchAfterSpec）。腳本失敗（卡片已被改過、找不到卡）就提示錯誤原因（腳本印的第一行），關卡留著、不派。
  */
 export async function confirmSpec($: any, options: PluginOptions, c: Case) {
   const r = await runCardScript($, options, c, 'spec-ok')
@@ -167,7 +168,31 @@ export async function confirmSpec($: any, options: PluginOptions, c: Case) {
   }
   await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success', card: c.statusPath }])
   await tellPanel($, now, '規格已確認，可以派實作', { name: c.name, skip: tutorial })
-  void refreshAfterWrite($, options)
+  await refreshAfterWrite($, options)
+  await dispatchAfterSpec($, options, c.statusPath)
+}
+
+/**
+ * 規格剛確認（面板 t、教學的 t、對話跑的 spec-ok）：用重讀後的卡照按 g 派實作。
+ * 「等你」還有事或手動派也不能派的，只說原因；完成檢查沒核准過先問（同一個對話框），不核准就不派；
+ * 核准了就當手動派工交給 dispatch：worktree 有別人的改動、啟動中、已在隊伍、Agent 已滿排隊都照按 g 處理。
+ */
+export async function dispatchAfterSpec($: any, options: PluginOptions, statusPath: string): Promise<boolean> {
+  const c = ((await read($, snapshotAtom)) as Snapshot | null)?.cases.find(x => x.statusPath === statusPath)
+  // 重讀到的關卡還是 spec（腳本失敗、重讀失敗）：沒有確認，不派也不出聲。
+  if (!c || c.demo || parseGate(c.gate)?.kind === 'spec') return false
+  const why = afterSpecRefusal(c)
+  if (why) { await notDispatched($, c, `規格已確認；沒有自動派實作（${why}）`); return false }
+  if (!(await approveCheck($, c))) { await notDispatched($, c, '規格已確認；沒有核准完成檢查，沒有派實作：要派時按 g'); return false }
+  return dispatch($, options, c, 'continue')
+}
+
+/** 確認規格後沒有派實作：提示、動態、下一則提示告訴對話都說同一句。 */
+async function notDispatched($: any, c: Case, text: string) {
+  const now = await $.clock.now()
+  $.ui.toast(`${c.name}：${text}`, { timeoutMs: 10_000 })
+  await feedPush($, [{ at: now, text: `${c.name} ${text}`, tone: 'suggestion', card: c.statusPath }])
+  await tellPanel($, now, text, { name: c.name, skip: tutorial })
 }
 
 /** 停止 desk 自己派出去、正在跑的那個背景 agent（名字要對得上這件任務最後一次派工），流程一併暫停。 */
