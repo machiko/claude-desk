@@ -117,10 +117,10 @@ test('summarizeCheck: python unittest → failing test names with reasons', () =
 test('summarizeCheck: plugin test / pytest / vitest counts and names', () => {
   expect(summarizeCheck(lines(PLUGIN_TEST))).toEqual({ failed: 2, items: ['first failing name：AssertionError: expect(received).toBe()（Expected: 9，Received: 12）', 'second failing name：Error: boom here'] })
   expect(summarizeCheck(lines(PYTEST))).toEqual({ failed: 2, items: ['test_sum：assert 12 == 9', 'test_load：FileNotFoundError: nope'] })
-  expect(summarizeCheck(lines(VITEST))).toEqual({ failed: 1, items: ['adds numbers：AssertionError: expected 12 to be 9 // Object.is equality'] })
-  expect(summarizeCheck(lines(JEST))).toEqual({ failed: 1, items: ['adds numbers：expect(received).toBe(expected) // Object.is equality（Expected: 9，Received: 12）'] })
-  // 認得出框架、但抓不到名稱：計數照算，下面列去掉分隔線的尾巴
-  expect(summarizeCheck(lines('collected 0 items / 1 error\n==== 1 failed in 0.1s ====\nImportError: no module x'))).toEqual({ failed: 1, items: ['collected 0 items / 1 error', '==== 1 failed in 0.1s ====', 'ImportError: no module x'] })
+  expect(summarizeCheck(lines(VITEST))).toEqual({ failed: 1, items: ['math > adds numbers：AssertionError: expected 12 to be 9 // Object.is equality'] })
+  expect(summarizeCheck(lines(JEST))).toEqual({ failed: 1, items: ['math › adds numbers：expect(received).toBe(expected) // Object.is equality（Expected: 9，Received: 12）'] })
+  // 認得出框架、但抓不到名稱：計數照算，下面列去掉分隔線的尾巴，並標明那是尾巴不是測試名
+  expect(summarizeCheck(lines('collected 0 items / 1 error\n==== 1 failed in 0.1s ====\nImportError: no module x'))).toEqual({ failed: 1, items: ['collected 0 items / 1 error', '==== 1 failed in 0.1s ====', 'ImportError: no module x'], isTail: true })
 })
 
 /** AC-4 */
@@ -142,4 +142,51 @@ test('summarizeCheck keeps at most fifty failures and caps long reasons', () => 
   expect(s.failed).toBe(60)
   expect(s.items).toHaveLength(50)
   expect(s.items[0]!.length).toBeLessThanOrEqual(200)
+})
+
+test('summarizeCheck: plain ERROR:/FAIL: lines and build errors are not test failures', () => {
+  // 只有 unittest 的「FAIL: 名稱 (模組.類別…)」才算；一般錯誤行照 AC-4 列尾巴、不算支數
+  expect(summarizeCheck(['ERROR: config.yml not found'])).toEqual({ items: ['ERROR: config.yml not found'] })
+  expect(summarizeCheck(['Collecting x', 'ERROR: Could not find a version that satisfies the requirement x', 'ERROR: No matching distribution found for x'])).toEqual({ items: ['Collecting x', 'ERROR: Could not find a version that satisfies the requirement x', 'ERROR: No matching distribution found for x'] })
+  expect(summarizeCheck(['FAIL: expected 3 rows, got 2', 'done'])).toEqual({ items: ['FAIL: expected 3 rows, got 2', 'done'] })
+  // esbuild 的 ✘ [ERROR] 不是測試失敗
+  const esbuild = ['✘ [ERROR] Could not resolve "x"', '    src/a.ts:1:17:', '1 error']
+  expect(summarizeCheck(esbuild)).toEqual({ items: esbuild })
+  // 舊版 unittest 的名稱行沒有方法名（模組.類別）也認得
+  expect(summarizeCheck(lines('FAIL: test_old (test_card.ArchiveTest)\n----\nAssertionError: 1 != 2\nFAILED (failures=1)'))).toEqual({ failed: 1, items: ['test_old：AssertionError: 1 != 2'] })
+})
+
+test('summarizeCheck: unittest does not count expected failures', () => {
+  const out = 'FAIL: test_a (m.T.test_a)\n----\nAssertionError: x\n----\nRan 3 tests in 0.1s\nFAILED (failures=1, expected failures=1, unexpected successes=1)'
+  expect(summarizeCheck(lines(out))).toEqual({ failed: 1, items: ['test_a：AssertionError: x'] })
+  expect(summarizeCheck(lines('ERROR: test_b (m.T.test_b)\nOSError: y\nFAILED (errors=2, skipped=1)')).failed).toBe(2)
+})
+
+test('summarizeCheck: same test name under different describes keeps its own reason', () => {
+  const vitest = ` ❯ tests/a.test.ts (2 tests | 2 failed)
+   × alpha > works 1ms
+   × beta > works 1ms
+ FAIL  tests/a.test.ts > alpha > works
+Error: alpha reason
+ FAIL  tests/a.test.ts > beta > works
+Error: beta reason
+      Tests  2 failed (2)`
+  expect(summarizeCheck(lines(vitest))).toEqual({ failed: 2, items: ['alpha > works：Error: alpha reason', 'beta > works：Error: beta reason'] })
+  const jest = `  alpha
+    ✕ works (1 ms)
+  beta
+    ✕ works (1 ms)
+  ● alpha › works
+    Error: alpha reason
+  ● beta › works
+    Error: beta reason
+Tests:       2 failed, 2 total`
+  expect(summarizeCheck(lines(jest))).toEqual({ failed: 2, items: ['alpha › works：Error: alpha reason', 'beta › works：Error: beta reason'] })
+})
+
+test('summarizeCheck caps long reasons without splitting a character', () => {
+  // 「e：Error: 」9 個字＋190 個 x＋兩個 emoji＝201 個字：截在第 200 個字，留下完整的第一個 emoji
+  const t = summarizeCheck(lines(`(fail) e [1ms]\n  Error: ${'x'.repeat(190)}😀😀\n 1 fail`))
+  expect(Array.from(t.items[0]!)).toHaveLength(200)
+  expect(t.items[0]!.endsWith('😀')).toBe(true)
 })

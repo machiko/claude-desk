@@ -123,14 +123,14 @@ function wrappedRows(ui: any, text: string, width: number, color: string, indent
 const FAILURE_LINES = 3
 
 /**
- * 沒過時結果列下面列的字：認得出框架就是「測試名：原因」（收合只列前 3 支，其餘寫「還有 n 支」），認不出或舊紀錄是去掉分隔線的尾巴；
- * 展開時列全部，再接摘要裡沒有的原始尾巴。
+ * 沒過時結果列下面列的字：認得出框架就是「測試名：原因」（收合只列前 3 支，其餘寫「還有 n 支」），認不出、抓不到名稱或舊紀錄是去掉分隔線的尾巴（全列）；
+ * 展開時列全部，再接摘要裡沒有的原始尾巴（分隔線不列）。
  */
 function failureLines(v: Verify, expanded: boolean): { items: string[]; more?: string; raw: string[] } {
   const items = v.summary?.items ?? v.tail.filter(l => !isSeparator(l))
-  const raw = expanded ? v.tail.filter(l => !items.includes(l)) : []
+  const raw = expanded ? v.tail.filter(l => !items.includes(l) && !isSeparator(l)) : []
   const failed = v.summary?.failed
-  if (failed === undefined) return { items, raw }
+  if (failed === undefined || v.summary?.isTail) return { items, raw }
   const shown = expanded ? items : items.slice(0, FAILURE_LINES)
   const hidden = Math.max(failed, items.length) - shown.length
   return { items: shown, ...(hidden > 0 ? { more: expanded ? `還有 ${hidden} 支沒列出` : `還有 ${hidden} 支（x 展開）` } : {}), raw }

@@ -128,3 +128,36 @@ test('now card keeps passing check rows unchanged', async ($, on) => {
   expect(shown).toContain(flat('npm testRan 48 tests in 1.2sOK'))
   await ui.unmount()
 })
+
+test('now card shows a lone ERROR line as tail without failure count', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data)
+  data.run = async (e: any) => e.argv[0] === 'sh' ? result(1, 'ERROR: config.yml not found\n-----') : result(0, '')
+  await $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
+  await clock.settle(); await clock.advance(2500); await clock.settle()
+  const v = (data.store.verifies as Record<string, Verify>)[CARD_A]!
+
+  const ui = await mount($, clock)
+  let shown = await screen(ui)
+  expect(shown).toContain(flat(`✕ 未通過（結束碼 1）· ${hhmm(v.at)}ERROR: config.yml not foundnpm test`))
+  expect(shown).not.toContain('支失敗')
+  // 展開也不多出孤零零的分隔線
+  await ui.press({ key: 'expand' })
+  shown = await screen(ui)
+  expect(shown).toContain(flat('ERROR: config.yml not foundnpm test'))
+  expect(shown).not.toContain('-----')
+  await ui.unmount()
+})
+
+test('now card does not count fallback tail lines as hidden failures', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data)
+  // pytest 收集錯誤：認得出框架（1 支）但抓不到名稱，下面是 4 行尾巴
+  const tail = ['ERROR tests/test_a.py', '!!!! Interrupted: 1 error !!!!', '==== 1 error in 0.05s ====', 'E   ImportError: no module x']
+  data.store.verifies = { [CARD_A]: failing({ summary: { failed: 1, items: tail, isTail: true }, tail }) }
+  const ui = await mount($, clock)
+  const shown = await screen(ui)
+  expect(shown).toContain(flat(`· ${hhmm(at)} · 1 支失敗${tail.join('')}npm test`))
+  expect(shown).not.toContain('還有')
+  await ui.unmount()
+})
