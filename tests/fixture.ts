@@ -84,6 +84,8 @@ export function fixture(on: any) {
     stops: [] as string[],
     /** 不是 null 就讓 `claude stop` 失敗，stderr 是這句；null 交給 run。 */
     stopError: null as string | null,
+    /** store.set 寫這些 key 時拒絕（模擬寫入失敗）：key → 拒絕原因；沒列的照常寫進 store。 */
+    storeDeny: {} as Record<string, string>,
     store: {} as Record<string, unknown>,
     /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
     root: SESSION_ROOT,
@@ -164,7 +166,7 @@ export function fixture(on: any) {
   on('session.id', () => ({ value: 'fixture-session' }))
   on('session.root', () => ({ value: data.root }))
   on('store.get', (_: any, e: any) => ({ value: data.store[e.key] ?? null }))
-  on('store.set', (_: any, e: any) => { data.store[e.key] = e.value; return { value: undefined } })
+  on('store.set', (_: any, e: any) => { if (data.storeDeny[e.key]) return { deny: data.storeDeny[e.key] }; data.store[e.key] = e.value; return { value: undefined } })
   on('ui.toast', (_: any, e: any) => { data.toasts.push(e.text); return { value: undefined } })
   on('ui.status', (_: any, e: any) => { data.status = e.text; return { value: undefined } })
   on('ui.open', (_: any, e: any) => {

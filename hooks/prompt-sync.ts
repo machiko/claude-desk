@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
 import type { PanelAction, SentRecord } from '../types'
 import { decisionName } from './card'
-import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext } from './desk-io'
+import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext, tellPanel } from './desk-io'
 import type { Timer } from './desk-io'
 import { specOkCards, touchesDesk } from './touch'
 import { sentState } from './turn'
@@ -49,12 +49,29 @@ let specOks: string[] = []
 
 const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
 
-/** 回合結束、重讀之後：這回合主對話確認了規格的那幾張，照面板按 t 的規則派實作；不在登錄表的路徑略過。 */
+/**
+ * Bash 的輸出：正常結束看 result 的 stdout；整條指令回報錯誤（exit 不是 0，例如 spec-ok 成功、後面串的指令失敗）時
+ * result 是錯誤文字、不是 { stdout }，模型讀到的輸出（stdout 在前）在 text。
+ */
+const bashOutput = (r: any): unknown => (r?.isError ? r.text : r?.result?.stdout)
+
+/** 回合結束、重讀之後：這回合主對話確認了規格的那幾張，照面板按 t 的規則派實作；不在登錄表的路徑略過。一張意外出錯不擋其他張，各自說原因。 */
 async function dispatchSpecOks($: any, deps: PromptSyncDeps, paths: readonly string[]) {
   const s = await read($, snapshot)
   if (!s || !deps.isActive()) return
   const want = new Set(paths.map(normPath))
-  for (const c of s.cases.filter(x => !x.demo && want.has(normPath(x.statusPath)))) await dispatchAfterSpec($, deps.options, c.statusPath)
+  for (const c of s.cases.filter(x => !x.demo && want.has(normPath(x.statusPath)))) {
+    try { await dispatchAfterSpec($, deps.options, c.statusPath) } catch (error) { await specOkDispatchFailed($, deps, error, c) }
+  }
+}
+
+/** 對話確認了規格、回合結束自動派實作時意外出錯：提示、動態（錯誤）、下一則提示告訴對話都說同一句，不默默吞掉。 */
+async function specOkDispatchFailed($: any, deps: PromptSyncDeps, error: unknown, c?: { name: string; statusPath: string }) {
+  const now = await $.clock.now()
+  const text = `規格已確認；自動派實作失敗（${error instanceof Error ? error.message : String(error)}）：要派時按 g`
+  $.ui.toast(c ? `${c.name}：${text}` : text, { timeoutMs: 10_000 })
+  await feedPush($, [{ at: now, text: c ? `${c.name} ${text}` : text, tone: 'error', ...(c ? { card: c.statusPath } : {}) }])
+  await tellPanel($, now, text, { ...(c ? { name: c.name } : {}), skip: deps.isTutorial() })
 }
 
 /** 從面板送出、還在等對話寫回的決策（卡片路徑 → 紀錄）。 */
@@ -173,8 +190,8 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
       void refreshed.then(() => settleSent($, e.turnId, endedAt)).catch(async (error: unknown) => {
         await feedPush($, [{ at: endedAt, text: `決策狀態更新失敗：${error instanceof Error ? error.message : String(error)}`, tone: 'error' }])
       })
-      // 派工自己會提示失敗原因；這裡只防意外的例外。
-      if (targets.length) void refreshed.then(() => dispatchSpecOks($, deps, targets)).catch(() => {})
+      // 派工自己會提示不能派的原因；意外的例外（每張卡的在 dispatchSpecOks 裡接住）也要說出來，不然卡片確認了卻什麼都沒發生。
+      if (targets.length) void refreshed.then(() => dispatchSpecOks($, deps, targets)).catch(async (error: unknown) => { await specOkDispatchFailed($, deps, error) })
     }
     return next(e)
   })
@@ -196,7 +213,7 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
     try { if (deps.isActive() && touchesDesk(e as any, deps.knownPaths())) touchSoon($, deps) } catch { /* 只是提早重讀，失敗就等定時更新 */ }
-    const cards = deps.isActive() && !e.agentId ? specOkCards(e as any, (result as any)?.result?.stdout) : []
+    const cards = deps.isActive() && !e.agentId ? specOkCards(e as any, bashOutput(result)) : []
     if (cards.length) specOks = [...new Set([...specOks, ...cards])]
     return result
   })

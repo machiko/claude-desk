@@ -307,6 +307,68 @@ test('conversation spec ok follows the t rules at turn end: refusal reason and q
   await ui.unmount()
 })
 
+/** 對話用串接指令確認規格：card.py 成功、後段指令失敗，Bash 整條回報錯誤（isError），回合結束照樣派實作；card.py 自己失敗的照舊不派（審查 MEDIUM，D-04） */
+test('test_conversation_spec_ok_dispatches_after_turn_ends_when_chained_bash_command_errors', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
+  atSpec(data, clock, [CARD_B, CARD_C])
+  // 照實機：整條指令 exit 不是 0 時 isError 為 true，result 是錯誤文字，模型讀到的輸出（stdout 在 stderr 前面）在 text
+  on('tool.call', { tool: 'Bash' }, (_: any, e: any) => {
+    const card = SLUG[String(specOkTarget(e))]
+    if (!card || !data.files[card]!.includes(SPEC_GATE)) { const failed = 'Exit code 1\n關卡不是 spec：…（目前是「無」），不動卡片\n'; return { isError: true, result: failed, text: failed } }
+    confirmCard(data, card)
+    const chained = `Exit code 1\n規格已確認（AC-1～AC-2），關卡清為「無」：${card}\nnpm ERR! Missing script: "lint"\n`
+    return { isError: true, result: chained, text: chained }
+  })
+  on('turn.complete', () => ({ text: '' }))
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  // Beta：card.py 確認成功，後面串的 npm run lint 失敗；Gamma：關卡早就清成「無」，card.py 自己失敗
+  await $.tool.call({ tool: 'Bash', command: `${script('beta')} && npm run lint` } as any)
+  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 關卡: '無' })
+  await $.tool.call({ tool: 'Bash', command: script('gamma') } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.launches).toHaveLength(0)
+
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(BETA)
+  expect(data.toasts).toContain('Beta：繼續已派出')
+  expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
+  await ui.unmount()
+})
+
+/** 對話確認規格後，回合結束自動派實作時意外出錯（例如核准紀錄寫不進去）：toast 說出失敗原因與「要派時按 g」，不默默吞掉（審查 MEDIUM，D-04） */
+test('test_conversation_spec_ok_shows_failure_reason_when_auto_dispatch_throws', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B], { trusted: false })
+  conversationBash(on, data)
+  // 核准完成檢查後要記下核准紀錄，這一步寫入失敗（store.set 被拒）
+  data.storeDeny = { trustedVerify: 'store 寫入失敗' }
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  await $.tool.call({ tool: 'Bash', command: script('beta') } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.asks).toHaveLength(1)
+  expect(data.launches).toHaveLength(0)
+  const failed = data.toasts.filter(t => t.startsWith('Beta：規格已確認；自動派實作失敗（'))
+  expect(failed).toHaveLength(1)
+  expect(failed[0]).toContain('store 寫入失敗')
+  expect(failed[0]!.endsWith('）：要派時按 g')).toBe(true)
+  await ui.unmount()
+})
+
 test('afterSpecRefusal blocks open decisions on top of the g rules', () => {
   const ready: any = { name: 'Beta', root: BETA, statusPath: CARD_B, state: 'ready', ask: '無', next: '依規格與實作計畫實作', verify: 'npm test', gate: '無', pipeline: { current: 'build', stages: [], note: '' } }
   expect(afterSpecRefusal(ready)).toBe('')
