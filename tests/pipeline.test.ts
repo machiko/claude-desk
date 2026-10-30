@@ -27,7 +27,7 @@ test('a check counts only for the current command and the current HEAD', () => {
 
 test('stages follow the evidence from the back', () => {
   expect(glyphs(mk({ 檢查: '無' }))).toBe('◆○○○○○')
-  expect(pipeline(mk({ 檢查: '無' }), undefined).note).toBe('尚缺完成檢查')
+  expect(pipeline(mk({ 檢查: '無' }), undefined).note).toBe('尚缺測試指令')
   expect(glyphs(mk({ 等你: '要嗎？A) 要 B) 不要' }))).toBe('◆○○○○○')
   expect(glyphs(mk())).toBe('●◆○○○○')
   expect(glyphs(mk(), ok())).toBe('●●●◆○○')
@@ -61,7 +61,7 @@ test('a release line only shows check and ship', () => {
   const c = mk({}, { git: { branch: 'release/v1.4', head: 'h1' } })
   const p = pipeline(c, ok())
   expect(p.stages.map(s => s.status)).toEqual(['na', 'na', 'done', 'na', 'na', 'wait'])
-  expect(stageParts(p, false).map(s => s.text)).toEqual(['檢查●', '上線◆'])
+  expect(stageParts(p, false).map(s => s.text)).toEqual(['測試●', '上線◆'])
   expect(pipeline(c, undefined).stages.find(s => s.id === 'check')!.status).toBe('wait')
 })
 
@@ -73,10 +73,10 @@ test('a commit after the review passed sends the case back to check, then to rev
   // 審查後有新 commit：舊結論不算，退回檢查
   expect(standingVerdict(stale())).toBeNull()
   expect(glyphs(stale())).toBe('●●◆○○○')
-  expect(pipeline(stale(), undefined).note).toBe('審查後有新 commit，需重新檢查')
+  expect(pipeline(stale(), undefined).note).toBe('驗收後有新 commit，需重新測試')
   // 新 HEAD 的檢查過了：輪到重新審查
   expect(glyphs(stale(), ok())).toBe('●●●◆○○')
-  expect(pipeline(stale(), ok()).note).toBe('審查後有新 commit，待重新審查')
+  expect(pipeline(stale(), ok()).note).toBe('驗收後有新 commit，待重新驗收')
   // 舊 HEAD 的檢查不算
   expect(glyphs(stale(), ok('old'))).toBe('●●◆○○○')
   // 合併後就不再退回

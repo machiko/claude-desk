@@ -57,7 +57,7 @@ export function parseGate(value: string | undefined): Gate | null {
   return m ? { kind: m[1]!.toLowerCase() as Gate['kind'], detail: m[2]!.trim() } : { kind: 'unknown', detail: raw }
 }
 
-export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '審查', release: '上線', unknown: '關卡' }
+export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '驗收', release: '上線', unknown: '關卡' }
 
 /** 整段被 `<` `>` 包住的是範本佔位（例如 `<可以直接派給 Agent 的一件事>`）；規則與 card.py 的 is_placeholder 相同。 */
 export const isPlaceholder = (text: string) => { const t = text.trim(); return t.startsWith('<') && t.endsWith('>') }
@@ -123,7 +123,8 @@ export function splitClauses(text: string): string[] {
   return out.map(s => s.trim()).filter(Boolean)
 }
 
-const OPTION = /(?<![A-Za-z0-9.])([A-Za-z]|\d{1,2})[)）]\s*/g
+/** 選項標記 `A)`、`1）`；前面是英數、`.`、`#` 的不算（`v0.1)`、「PR #13）」）。 */
+const OPTION = /(?<![A-Za-z0-9.#])([A-Za-z]|\d{1,2})[)）]\s*/g
 
 /** 等你欄：每個子句一個決策，`題目：A) … B) …` 的選項各自成列；沒選項就是一句話。 */
 export function parseDecisions(ask: string): Decision[] {
@@ -178,13 +179,48 @@ export const allPicked = (decisions: Decision[], picks: Record<string, string>) 
 export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`
 
 /**
- * 「⚑ 發版」填進輸入框的那句：列出所有已合併待發版的卡（有 PR 的附 PR 編號），請對話先提版號。
- * 確認點（版號、打 tag 並 push）走卡片「等你」：面板上那張卡會出現選項，按字母＋f 送回決策，不用回對話打字。
+ * 發版確認題選照做後依序做的動作。之後的卡（例如發版後自動歸檔）往後加收尾項目；確認題照順序列出，仍只問一次。
  */
-export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' | 'git' | 'gate'>[]): string {
+export const RELEASE_ACTIONS: readonly string[] = ['合併 CHANGELOG 片段', '改版號', '跑完整檢查', 'commit', '打 tag', 'push 主分支與 tag', '等 CI 通過']
+
+/** 發版請求列了要清理的卡時，接在動作最後的收尾項目（哪幾張、什麼時候、跑哪條指令寫在 releaseCleanup）。 */
+export const RELEASE_CLEANUP_ACTION = '歸檔並移除 worktree 與分支'
+
+/** 發版確認題的範本：整題一句、不用「；」，面板才會當成一個決策。 */
+export const RELEASE_QUESTION = '發版 v<版號>（<卡名與 PR，例如「Beta」PR #12>，<版號理由>），照做會依序：<動作，用 → 串>：A) 照做 v<版號>（推薦） B) 改用 v<另一個版號> 照做 C) 先不發'
+
+/** 發版請求裡「只問一次、選了照做就做到底」那段要求。 */
+export function releaseAsks(actions: readonly string[] = RELEASE_ACTIONS): string {
+  return [
+    `只問我一次：在這幾張卡的「等你」寫同一題，照這個範本、整題不用「；」：${RELEASE_QUESTION}`,
+    '版號照這個專案過去的慣例提，寫出理由',
+    `照做的動作依序是 ${actions.join(' → ')}（照專案的發版流程補上專案自己的步驟與收尾）`,
+    '回答任一張就算數，收到決策先把每張的「等你」清成無',
+    '選 A 或 B 後照順序做完、中間不再問，「狀態」寫做到哪一步',
+    '任何一步失敗就停、後面的不做（還沒 push 就不 push，已 push 的不回退、不 force push），失敗的步驟與原因寫進「狀態」，要我決定的才寫進「等你」',
+    '選 C 就清掉「等你」、什麼都不做',
+    '題目沒列的事一律不做（force push、改寫歷史、合併 PR、刪分支、改清單外的卡），要做就另外問',
+    '有 `release：` 關卡的卡留給我部署後按 u',
+  ].join('；')
+}
+
+/** 預設動作的發版要求。 */
+export const RELEASE_ASKS = releaseAsks()
+
+/** 有 release 關卡的卡部署後按 u 確認上線才歸檔，不在發版清理裡。 */
+const releaseGated = (c: Pick<Case, 'gate'>) => parseGate(c.gate)?.kind === 'release'
+
+/**
+ * 「⚑ 發版」填進輸入框的那句：列出所有已合併待發版的卡（有 PR 的附 PR 編號），請對話只問一次。
+ * 確認題（版號與理由、包含的卡、照做的動作）走卡片「等你」：面板上那幾張卡會出現 A／B／C，按字母＋f 送回決策；
+ * 選照做後對話一路做到 CI 通過，不再另外確認打 tag 與 push。
+ * 有沒有 release 關卡的卡時，動作最後多一項 RELEASE_CLEANUP_ACTION、請求尾端接 releaseCleanup：清理列在同一題，選照做就是同意。
+ */
+export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' | 'git' | 'gate'>[], actions: readonly string[] = RELEASE_ACTIONS): string {
   const list = cases.map(c => `「${c.name}」${c.pr ? `PR #${c.pr.id}` : ''}`).join('、')
+  const steps = cases.some(c => !releaseGated(c)) ? [...actions, RELEASE_CLEANUP_ACTION] : actions
   const cleanup = releaseCleanup(cases)
-  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程，先提版號給我確認。${RELEASE_ASKS}${cleanup ? `。${cleanup}` : ''}`
+  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程準備，只問我一次。${releaseAsks(steps)}${cleanup ? `。${cleanup}` : ''}`
 }
 
 /**
@@ -193,16 +229,12 @@ export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' 
  */
 export function releaseCleanup(cases: readonly Pick<Case, 'name' | 'root' | 'git' | 'gate'>[]): string {
   const slug = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
-  const gated = (c: Pick<Case, 'gate'>) => parseGate(c.gate)?.kind === 'release'
-  const clean = cases.filter(c => !gated(c))
+  const clean = cases.filter(c => !releaseGated(c))
   const parts = clean.length
     ? [`發版後歸檔這 ${clean.length} 張卡，並移除它們的 worktree 與分支（都已合併）：${clean.map(c => `「${c.name}」（${[slug(c), c.git?.branch].filter(Boolean).join('、')}）`).join('、')}；CI 通過、各卡狀態寫好之後才在主 repo 跑 ${CARD_CMD} archive ${clean.map(slug).join(' ')} --cleanup，把沒移除的項目與原因告訴我`]
     : []
-  return [...parts, ...cases.filter(gated).map(c => `「${c.name}」有 release 關卡，不在這次清理，部署後按 u 確認上線會自動歸檔`)].join('；')
+  return [...parts, ...cases.filter(releaseGated).map(c => `「${c.name}」有 release 關卡，不在這次清理，部署後按 u 確認上線會自動歸檔`)].join('；')
 }
-
-/** 發版請求裡「確認點寫進卡片」那段要求。 */
-export const RELEASE_ASKS = '每個要我確認的點（版號、打 tag 並 push）都寫進這幾張卡的「等你」（寫成 問題：A) … B) …），「狀態」寫做到哪一步；收到我的決策才做下一步，做完把「等你」清成無'
 
 /** 送出的提示是不是某件任務的決策（以「「任務名」決策：」開頭）：回傳任務名，不是就 null。 */
 export function decisionName(text: string): string | null {

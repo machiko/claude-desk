@@ -1057,7 +1057,7 @@ RELEASE_STEPS = [
     'git tag -a',
     'git push',
     'CI',
-    '歸檔',
+    'git worktree remove',
 ]
 
 
@@ -1080,6 +1080,40 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertEqual(len(re.findall(r'^\s+\d+\. ', section, re.M)), len(RELEASE_STEPS))
         readme = read(os.path.join(REPO, 'README.md'))
         self.assertRegex(readme, r'(?m)^\| ⚑ 發版 \|')
+
+    def test_release_steps_push_atomically_and_wait_ci_by_exit_status(self):
+        """審查 MEDIUM：push 用 --atomic（main 被拒時 tag 不推）；CI 先取 run id 再 watch --exit-status（非互動要 id、失敗回非零）；changelog 寫在要發版的那份 main，不只寫主 repo。"""
+        section = self.release_section()
+        self.assertIn('git push --atomic origin HEAD:main', section)
+        self.assertIn('gh run list --branch main --commit', section)
+        self.assertIn('--exit-status', section)
+        skill = read(os.path.join(REPO, 'skills', 'card', 'SKILL.md'))
+        readme = read(os.path.join(REPO, 'README.md'))
+        for text in (skill, readme):
+            self.assertIn('從 origin/main 開的暫存 worktree', text)
+        self.assertNotIn('在主 repo、要發的 PR 都合併之後執行', skill)
+
+    def test_release_docs_state_one_question_and_version_rule_when_releasing_desk(self):
+        """AC-4：發版段寫只問一次與題目範本、desk 的版號規則、照做的 9 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
+        section = self.release_section()
+        for part in ('只問一次', 'A) 照做', 'B) 改用', 'C) 先不發', '選 A／B 後一路做完不再問', '失敗就停'):
+            self.assertIn(part, section)
+        # 版號規則：有 feature 分支或「新增」升次版號（0.38.0），否則升修訂號（0.37.1），附過去發版的佐證
+        for part in ('feature/', '「新增」', '次版號', '0.38.0', '修訂號', '0.37.1', '0.27.0 起 12 次發版都符合'):
+            self.assertIn(part, section)
+        self.assertLess(section.find('次版號'), section.find('修訂號'))
+        # 9 步從暫存 worktree 開始、收尾移除它；歸檔寫在第 9 步之後，不在題目裡
+        steps = re.findall(r'(?m)^\s+(\d+)\. (.*)$', section)
+        self.assertEqual([n for n, _ in steps], [str(i) for i in range(1, 10)])
+        self.assertIn('git worktree add', steps[0][1])
+        self.assertIn('git worktree remove', steps[8][1])
+        last_step = section.find(steps[8][1])
+        self.assertGreater(section.find('歸檔', last_step + len(steps[8][1])), 0)
+        self.assertNotIn('歸檔', section[:last_step + len(steps[8][1])])
+        readme = read(os.path.join(REPO, 'README.md'))
+        row = next(l for l in readme.splitlines() if l.startswith('| ⚑ 發版 |'))
+        self.assertIn('只問一次', row)
+        self.assertNotIn('打 tag 並 push', row)
 
 
 if __name__ == '__main__':

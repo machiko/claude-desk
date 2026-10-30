@@ -399,15 +399,16 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
   for (const c of cur.cases) {
     if (c.demo) continue
     const p = before.get(c.statusPath)
-    const push = (text: string, tone: FeedEvent['tone']) => out.push({ at: cur.at, text, tone, card: c.statusPath })
+    const push = (text: string, tone: FeedEvent['tone'], whileState?: FeedEvent['whileState']) => out.push({ at: cur.at, text, tone, card: c.statusPath, ...(whileState ? { whileState } : {}) })
     if (!p) { push(`${c.name} 加入工作桌`, 'subtle'); continue }
-    if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) push(`${c.name} 等你：${fit(summary(c), 40)}`, 'warning')
-    else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning')
-    else if (c.state === 'approve' && p.state !== 'approve') push(`${c.name} Agent 等你批准權限`, 'warning')
-    else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning')
+    if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) push(`${c.name} 等你：${fit(summary(c), 40)}`, 'warning', 'ask')
+    else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning', 'reply')
+    else if (c.state === 'approve' && p.state !== 'approve') push(`${c.name} Agent 等你批准權限`, 'warning', 'approve')
+    else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning', 'gate')
     else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
     else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent 已完成`, 'subtle')
-    else if (c.state === 'failed' && p.state !== 'failed') push(`${c.name} 檢查未通過`, 'error')
+    // 流程暫停、檢查沒過、檢查中斷、容器沒起都已寫了原因、跳了 toast；只剩審查結論擋下、流程沒停（手動審查）要在這裡說。
+    else if (c.state === 'failed' && p.state !== 'failed' && reviewBlocks(c)) push(`${c.name} 審查有要修的問題`, 'error')
   }
   return out
 }
@@ -426,7 +427,31 @@ export function keepFeed(list: readonly FeedEvent[]): FeedEvent[] {
   })
 }
 
-/** 「最近」只看現在這件：屬於它的，與不屬於任何一件的（版本更新、某件已歸檔等）。 */
+/** 審查結論有要修的問題、流程沒停：stateOf 因為它算成 failed，沒有別處寫原因。 */
+function reviewBlocks(c: Case): boolean {
+  const verdict = parseVerdict(c.gate)
+  return !!verdict && blocking(verdict) > 0 && !c.chain?.stopped
+}
+
+const isIssue = (e: FeedEvent | undefined): e is FeedEvent => !!e && (e.tone === 'error' || e.tone === 'warning')
+
+/** 淡色事件（加入工作桌、Agent 已完成）不代表問題解決了：按 k 停掉後 Agent 離開清單，不能把停止原因收掉。 */
+const latest = (feed: readonly FeedEvent[], match: (e: FeedEvent) => boolean) => feed.find(e => match(e) && e.tone !== 'subtle')
+
+/**
+ * 「歷程」上方的問題列：這件最新一筆、不屬於任何一件的最新一筆（都略過淡色事件），各自是錯誤或警告才算，取比較新的那筆；沒有就 null。
+ * 之後發生一般事件（檢查通過等），那筆就不再是最新，問題列跟著消失；描述狀態的警告（等你、關卡等）在卡片離開那個狀態後也不算。feed 新的在前。
+ */
+export function issueOf(feed: readonly FeedEvent[], focus: Case | null): FeedEvent | null {
+  const found = focus ? latest(feed, e => e.card === focus.statusPath) : undefined
+  const mine = found && (!found.whileState || found.whileState === focus?.state) ? found : undefined
+  const global = latest(feed, e => !e.card)
+  // 時間一樣時看順序：feed 新的在前，排前面的比較新。
+  const candidates = [mine, global].filter(isIssue).sort((a, b) => b.at - a.at || feed.indexOf(a) - feed.indexOf(b))
+  return candidates[0] ?? null
+}
+
+/** 現在這件的動態：屬於它的，與不屬於任何一件的（版本更新、某件已歸檔等）。 */
 export function feedOf(feed: readonly FeedEvent[], focus: Case | null): FeedEvent[] {
   return feed.filter(e => !e.card || e.card === focus?.statusPath)
 }
