@@ -360,6 +360,15 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
 }
 
+/**
+ * 確認規格後自動派實作不能派的原因；空字串代表可以派。按 g 在「等你」有事時照樣能派，自動派不行：要你決定的事還沒決定。
+ * 其他照手動派繼續（manual、Agent 在跑、規格還擋著、沒有完成檢查、下一步只剩等待）。
+ */
+export function afterSpecRefusal(c: Case): string {
+  if (!saysNone(c.ask)) return '卡片「等你」還有要你決定的事'
+  return dispatchRefusal(c, 'continue')
+}
+
 /** 排隊等派的一筆：手動（g、w、s、y、⇡）或自動流程排的；opts 照原本派工的參數。 */
 export type QueueOpts = { text?: string; fix?: FixReason; auto?: boolean; security?: boolean }
 export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOpts; at: number }
