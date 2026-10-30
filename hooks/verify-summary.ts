@@ -1,7 +1,8 @@
 // 完成檢查沒過時，從整份輸出整理出「幾支失敗、哪幾支、為什麼」給現在卡看；修正 Agent 的提示仍用輸出尾巴。
+// 只認這個專案用的兩種輸出（Python unittest、claude plugin test）；其他框架走通用規則，不保證抓到測試名（D-06）。
 import type { CheckSummary } from '../types'
 
-/** 認不出框架時列幾行尾巴（跟 Verify.tail 一樣多）。 */
+/** 認不出框架時列幾行（跟 Verify.tail 一樣多）。 */
 const TAIL_LINES = 4
 /** 最多記幾支失敗；總數照算在 failed。 */
 const MAX_ITEMS = 50
@@ -20,7 +21,7 @@ type Parsed = { failed: number; items: string[] }
 /** 「名稱：原因」；照字（不是 UTF-16 單位）截，不會切出半個 emoji。 */
 const item = (name: string, reason?: string) => Array.from(reason ? `${name}：${reason}` : name).slice(0, MAX_ITEM_CHARS).join('')
 
-/** 從第 i+1 行起的第一行當原因；後面幾行有 Expected／Received（jest、plugin test 的 toBe）就接在括號裡。 */
+/** 從第 i+1 行起的第一行當原因；後面幾行有 Expected／Received（plugin test 的 toBe）就接在括號裡。 */
 function reasonAt(lines: string[], i: number, end: number): string | undefined {
   const body = lines.slice(i + 1, end).filter(l => !isSeparator(l))
   const first = body[0]?.trim()
@@ -65,16 +66,6 @@ function unittest(lines: string[]): Parsed {
   return { failed: total(counts, items), items }
 }
 
-/** pytest：short test summary 的 `FAILED path::name[參數 id] - 原因`／`ERROR …`（id 可以有空白與「 - 」）；總數看 `=== n failed, m errors … ===`。 */
-function pytest(lines: string[]): Parsed {
-  const items = lines.flatMap(l => {
-    const m = l.match(/^(?:FAILED|ERROR) (\S+?::[^\s[]+(?:\[.*?\])?)(?: - (.*))?$/)
-    return m ? [item(m[1]!.split('::').at(-1)!, m[2])] : []
-  })
-  const counts = lines.filter(l => /^=+ .*\b\d+ (failed|errors?)\b.* =+$/.test(l)).flatMap(l => [...l.matchAll(/\b(\d+) (?:failed|errors?)\b/g)].map(m => Number(m[1])))
-  return { failed: total(counts, items), items }
-}
-
 /**
  * claude plugin test：名稱行 `(fail) 名稱 [1.76ms]`，原因在下面縮排幾行；計數行 ` n fail`。
  * 2026-10-30 在 2.x 故意弄紅兩支看到的真實格式（沒有 ✕ 開頭）：
@@ -99,52 +90,23 @@ function pluginTest(lines: string[]): Parsed {
   return { failed: total(counts, items), items }
 }
 
-/** vitest／jest 的失敗標題：`FAIL  file > … > name`（vitest）、`● … › name`（jest；`● Console` 是 console 輸出不是測試）。 */
-const isFailHeader = (l: string) => /^\s*(●|FAIL)\s/.test(l) && !/^\s*● Console$/.test(l)
-
-/** 標題拿來配名稱行的鍵：vitest 是檔名後面的完整路徑（跟 `×` 行一樣），jest 是最後一段（`✕` 行只有這段）；`FAIL file` 這種檔案標題沒有鍵。 */
-function headerKey(header: string): string | undefined {
-  const text = header.trim()
-  if (text.startsWith('●')) return text.replace(/^●\s+/, '').split(' › ').at(-1)
-  const at = text.indexOf(' > ')
-  return at < 0 ? undefined : text.slice(at + 3)
-}
+/** 通用規則認「像是在講失敗」的行：fail／failed／failures、error／errors、exception，含 …Error／…Exception 結尾的類別名（不分大小寫）。 */
+const ERROR_LINE = /fail(?:ed|ures?)?\b|errors?\b|exceptions?\b/i
+/** 「0 fail」「0 errors」這種說沒有失敗的字樣不算；拿掉之後還有失敗字樣的行才是。 */
+const ZERO_COUNT = /\b0 (?:fail(?:ed|ures?)?|errors?|exceptions?)\b/gi
+const isErrorLine = (line: string) => ERROR_LINE.test(line.replace(ZERO_COUNT, ''))
 
 /**
- * vitest／jest：名稱行 `× suite > name 3ms`／`✕ name (5 ms)`，原因在對應的標題底下；總數看 `Tests: n failed`。
- * 同名的測試照出現順序各配各的標題；jest 的名稱改用 `●` 標題上的完整路徑。
- * jest 一次跑兩個以上的檔時不印 `✕` 行（2026-10-30 用 jest 27.5 實跑），改用 `●` 標題當名稱。
+ * 認不出框架：列含 FAIL／ERROR／Error 這類字的行（pytest 的 `FAILED path::name - 原因`、vitest 的 `FAIL file > name` 與 `AssertionError: …`
+ * 都會被抓到），最多最後幾行；一行都沒有就列去掉分隔線的尾巴。不算支數、不保證是測試名。
  */
-function vitestJest(lines: string[]): Parsed {
-  const headers = lines.flatMap((l, i) => (isFailHeader(l) ? [i] : []))
-  const after = (at: number) => headers.find(h => h > at) ?? lines.length
-  const byKey = new Map<string, number[]>()
-  for (const h of headers) {
-    const key = headerKey(lines[h]!)
-    if (key) byKey.set(key, [...(byKey.get(key) ?? []), h])
-  }
-  const isJest = (at: number) => lines[at]!.trim().startsWith('●')
-  const reason = (at: number) => reasonAt(lines, at, after(at))
-  const fromJest = (at: number) => item(lines[at]!.trim().replace(/^●\s+/, ''), reason(at))
-  const items: string[] = []
-  for (const l of lines) {
-    if (items.length >= MAX_ITEMS) break
-    const full = l.match(/^\s*[✕×] (.+?)(?:\s+\d+(?:\.\d+)?\s*ms|\s+\(\d+(?:\.\d+)?\s*m?s\))?$/)?.[1]
-    if (!full) continue
-    const at = byKey.get(full)?.shift()
-    items.push(at === undefined ? item(full) : isJest(at) ? fromJest(at) : item(full, reason(at)))
-  }
-  if (!items.length) items.push(...headers.filter(isJest).slice(0, MAX_ITEMS).map(fromJest))
-  const counts = lines.flatMap(l => l.match(/^\s*Tests:?\s+(\d+) failed\b/)?.[1] ?? []).map(Number)
-  return { failed: total(counts, items), items }
-}
-
-/** 認不出框架：最後幾行，去掉分隔線。 */
 function tailOf(lines: string[]): string[] {
-  return lines.filter(l => !isSeparator(l)).slice(-TAIL_LINES)
+  const kept = lines.filter(l => !isSeparator(l))
+  const hits = kept.filter(isErrorLine)
+  return (hits.length ? hits : kept).slice(-TAIL_LINES)
 }
 
-const PARSERS = [unittest, pytest, pluginTest, vitestJest]
+const PARSERS = [unittest, pluginTest]
 
 /** 照順序試，試到說得出有失敗的就停（後面的解析器不用跑）。 */
 function firstFailing(lines: string[]): Parsed | undefined {
@@ -156,8 +118,8 @@ function firstFailing(lines: string[]): Parsed | undefined {
 }
 
 /**
- * 依序試 unittest、pytest、plugin test、vitest／jest，第一個說得出有幾支失敗的算數；失敗數是 0（例如 plugin test 通過、後面串的指令沒過）就當認不出。
- * 認得出框架但抓不到名稱時，計數照算、下面列尾巴並標 isTail。
+ * 依序試 unittest、plugin test，第一個說得出有幾支失敗的算數；失敗數是 0（例如 plugin test 通過、後面串的指令沒過）就當認不出，走通用規則。
+ * 認得出框架但抓不到名稱時，計數照算、下面列通用規則的行並標 isTail。
  */
 export function summarizeCheck(lines: string[]): CheckSummary {
   const parsed = firstFailing(lines)

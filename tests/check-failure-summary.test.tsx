@@ -152,7 +152,7 @@ test('now card shows a lone ERROR line as tail without failure count', async ($,
 test('now card does not count fallback tail lines as hidden failures', async ($, on) => {
   const { data, clock } = fixture(on)
   alphaOnly(data)
-  // pytest 收集錯誤：認得出框架（1 支）但抓不到名稱，下面是 4 行尾巴
+  // 認得出框架（1 支）但抓不到名稱：下面是通用規則的 4 行，不算測試名
   const tail = ['ERROR tests/test_a.py', '!!!! Interrupted: 1 error !!!!', '==== 1 error in 0.05s ====', 'E   ImportError: no module x']
   data.store.verifies = { [CARD_A]: failing({ summary: { failed: 1, items: tail, isTail: true }, tail }) }
   const ui = await mount($, clock)
@@ -172,8 +172,9 @@ test('now card never shows zero failures', async ($, on) => {
 
   const ui = await mount($, clock)
   const shown = await screen(ui)
-  expect(shown).toContain(flat(`✕ 未通過（結束碼 2）· ${hhmm(v.at)}1 pass`))
-  expect(shown).toContain(flat('0 failRan 1 test across 1 file. [0.20s]src/a.ts(3,1): error TS2304'))
+  // 通用規則只列 tsc 那行；「0 fail」「1 pass」不出現
+  expect(shown).toContain(flat(`✕ 未通過（結束碼 2）· ${hhmm(v.at)}src/a.ts(3,1): error TS2304`))
+  expect(shown).not.toContain(flat('0 fail'))
   expect(shown).not.toContain('支失敗')
   await ui.unmount()
 })
