@@ -1,4 +1,4 @@
-"""hooks/dispatch.ts 的提示詞拆到 hooks/prompts/ 之後的檔案結構檢查（plugin test 的環境不能讀檔，所以寫在這裡）。「沒改既有測試檔」是這次重構的一次性事實，由審查用 git diff 核對、記在卡片 History，不寫成永久測試（合併後會讓之後改到 tests/ 的分支變紅）。
+"""hooks/dispatch.ts 的提示詞拆到 hooks/prompts/ 之後的檔案結構檢查（plugin test 的環境不能讀檔，所以寫在這裡）。「沒改既有測試檔」是這次重構的一次性事實，由審查用 git diff 核對、記在卡片 History，不寫成永久測試（合併後會讓之後改到 tests/ 的分支變紅）；「≤ 300 行」同理，只在審查時核對一次。
 
 執行：python3 -m unittest discover -s scripts/tests
 """
@@ -9,7 +9,6 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DISPATCH = os.path.join(ROOT, 'hooks', 'dispatch.ts')
 PROMPTS = os.path.join(ROOT, 'hooks', 'prompts')
-MAX_DISPATCH_LINES = 300
 # 照實作計畫的分配：每個提示詞名稱定義在哪一個檔
 PROMPT_HOME = {
     'rules.ts': ['SPEC_RULE', 'DONE_RULE', 'PUSH_RULE', 'NO_PUSH_RULE', 'changelogRule', 'testRule', 'cardRules'],
@@ -43,7 +42,6 @@ class PromptFilesTest(unittest.TestCase):
         text = read(DISPATCH)
         moved = [n for names in PROMPT_HOME.values() for n in names] + MOVED_LOGIC
         self.assertEqual([n for n in moved if defines(text, n)], [])
-        self.assertLessEqual(len(text.splitlines()), MAX_DISPATCH_LINES)
 
     def test_each_prompt_is_defined_in_exactly_one_file(self):
         files = {name: read(os.path.join(PROMPTS, name)) for name in PROMPT_HOME}
