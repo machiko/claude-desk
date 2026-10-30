@@ -39,10 +39,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(specOk.argv[0]).toBe('python3')
   expect(specOk.init.env).toEqual({ DESK_SETTINGS: P.settings, DESK_PROJECT_DIR: '' })
 
-  // 2 實作：按兩次 g，由腳本扮演 Agent
-  await turn(ui, '按 g 派 Agent')
-  await ui.press({ key: KEY('continue') })
-  await ui.press({ key: KEY('continue') })
+  // 2 實作：確認規格後自動派，由腳本扮演 Agent（不用按 g）
   await turn(ui, 'Agent 在寫程式')
   await step()
   expect(data.files[`${P.wt}/discount.py`]).toContain('def discount')
@@ -125,8 +122,6 @@ test('choosing C in the tutorial commits the change and the chain goes back to c
   await $.command.run({ command: 'desk', args: 'tutorial' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: KEY('tutorial') })
-  await ui.press({ key: KEY('continue') })
-  await ui.press({ key: KEY('continue') })
   await step()
   data.git[P.wt]!.head = 'h1'
   for (let i = 0; i < 12 && !String(data.files[P.card]).includes('MEDIUM 1、LOW 0；過'); i++) {
@@ -178,7 +173,7 @@ test('only the tutorial folder can be removed', () => {
   expect(tutorialPaths('/home/u/').dir).toBe('/home/u/.claude/desk-tutorial')
 })
 
-/** 開始教學、確認規格、派實作，停在模擬 Agent「在寫程式」。 */
+/** 開始教學、確認規格（自動派實作），停在模擬 Agent「在寫程式」。 */
 async function toBuilding($: any, data: any) {
   data.git[P.wt] = { branch: 'feature/discount', head: 'h0' }
   data.run = async (e: any) => {
@@ -188,8 +183,6 @@ async function toBuilding($: any, data: any) {
   await $.command.run({ command: 'desk', args: 'tutorial' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: KEY('tutorial') })
-  await ui.press({ key: KEY('continue') })
-  await ui.press({ key: KEY('continue') })
   return ui
 }
 

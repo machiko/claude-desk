@@ -78,20 +78,22 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 ## 開卡與歸檔
 
 - 開卡：`/desk:card new <分支> <卡名> [base]`（建 worktree＋DESK 卡＋登錄表列）。
-- 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時不能派實作，只能同步：同步平常收在「更多動作」m 裡）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡，就能按 `g`。審查會逐條對照驗收情境。
+- 規格：`/desk:card spec <slug> [需求]`（讀卡與程式、問 3–5 個釐清問題，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時不能派實作，只能同步：同步平常收在「更多動作」m 裡）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡：面板按 `t` 確認後自動派實作；在對話用指令確認的，回合結束後自動派。審查會逐條對照驗收情境。
 - 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。卡片「## 部署步驟」有已填的步驟時，腳本與面板的完成提示會列出筆數並提醒：步驟跟著卡片歸檔，隨發版線發版的卡要先把步驟搬到發版線卡片或登錄表「## 提醒」（只提醒，不自動搬）。
 - CHANGELOG：每張卡的條目寫在 `changelog.d/<slug>.md`（`- ` 開頭、動詞開頭的條目，沒有標題），Agent 的派工提示也這樣要求；不改 CHANGELOG.md，分支之間才不會搶「## 未發布」。專案的 CHANGELOG 用 Keep a Changelog 時，在專案 dispatch.json 設 `card.changelog.format = "keepachangelog"`，發版合併就改成 `## [Unreleased]`／`## [<版本>] - <日期>` 與 `### Added／Fixed…` 小節（動詞對照見 `/desk:card` 的 changelog 說明）。
 - 合併到發版線：PR 目標（或 git 看到併進的分支）是 `release/*` 的卡，隨那條發版線發版：上線段寫「隨 <發版線> 發版，待打 tag」，沒有自己的「⚑ 發版」，也不列進別張卡的發版請求；發版線打了 tag、tag 包含這張卡的 HEAD 後才能歸檔。
-- 發版：要發的 PR 都合併之後，在面板按「⚑ 發版」（上線段、還沒打 tag 的卡帶頭顯示）把列出所有待發版卡的發版請求填進輸入框，按 Enter 送給對話；對話先提版號，你確認後在主 repo 依序做（面板與背景 Agent 都不打 tag）。每個要你確認的點（版號、打 tag 並 push）對話都寫進要發版那幾張卡的「等你」（`問題：A) … B) …`），「狀態」寫做到哪一步；你在面板按選項字母＋`f` 送出「「任務名」決策：…」，對話收到決策才做下一步，做完把「等你」清成無。下面是 desk 本身的步驟，其他專案把版號檔換成自己的：
-  1. 快轉 main 到 origin/main：`git checkout main && git fetch origin && git merge --ff-only origin/main`
+- 發版：要發的 PR 都合併之後，在面板按「⚑ 發版」（上線段、還沒打 tag 的卡帶頭顯示）把列出所有待發版卡的發版請求填進輸入框，按 Enter 送給對話；對話只問一次：在要發版的每張卡「等你」寫同一題，題目有建議版號與理由、包含的卡與 PR、選照做後依序做的動作，範本是 `發版 v<版號>（<卡名與 PR>，<版號理由>），照做會依序：<動作，用 → 串>：A) 照做 v<版號>（推薦） B) 改用 v<另一個版號> 照做 C) 先不發`（整題不用「；」）。你在面板按 a、b 或 c 再按 `f` 送出「「任務名」決策：…」，回答任一張就算數，對話收到決策先把每張的「等你」清成無。選 A／B 後一路做完不再問，「狀態」寫做到哪一步；任何一步失敗就停、後面的不做（還沒 push 就不 push，已 push 的不回退、不 force push），失敗的步驟與原因寫進「狀態」；選 C 就什麼都不做。題目沒列的事（force push、改寫歷史、合併 PR、刪分支、改清單外的卡）一律不做。面板與背景 Agent 都不打 tag。desk 的版號規則：以最新 `v*` tag 為基準，這次的卡有 `feat/`／`feature/` 分支或片段有「新增」條目就升次版號（例如 0.37.0 → 0.38.0），否則升修訂號（0.37.0 → 0.37.1）；0.27.0 起 12 次發版都符合（只看「新增」會跟 0.29.0、0.31.0、0.32.0、0.34.0、0.36.0 不合）。下面是 desk 選照做後依序做的步驟，其他專案把版號檔換成自己的：
+  1. 從 origin/main 開暫存 worktree，以下都在那裡做：`git fetch origin && git worktree add --detach <暫存路徑> origin/main`
   2. `/desk:card changelog <版本>`：把片段合併成 `## <版本>` 段並刪掉片段檔；沒有片段、版本段已存在、片段格式錯都會報錯不改檔
   3. 改 `.claude-plugin/plugin.json` 的 `version` 成 `<版本>`
-  4. 跑 `claude plugin validate .` 與整套測試（`claude plugin test .`、`python3 -m unittest discover -s skills/card/tests`）
-  5. 在 main 上 commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
+  4. 跑 `claude plugin validate .` 與整套測試（`claude plugin test .`、`python3 -m unittest discover -s skills/card/tests`、`python3 -m unittest discover -s scripts/tests`）
+  5. commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
   6. 打 annotated tag：`git tag -a v<版本> -m "v<版本>"`
-  7. push main 與 tag：`git push origin main v<版本>`
-  8. 等 main 的 CI 通過（`gh run watch` 或到 GitHub Actions 看）
-  9. 把隨版發出的卡歸檔：面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`；有 `release：` 關卡的卡先部署、按 `u` 確認上線再歸檔
+  7. push 主分支與 tag：`git push --atomic origin HEAD:main v<版本>`（`--atomic`：origin/main 已前進、main 被拒時 tag 也不推，不會留下不在 main 上的 tag）
+  8. 等 main 的 CI 通過：先取這次 commit 的 run id（`gh run list --branch main --commit <commit> --limit 1 --json databaseId -q '.[0].databaseId'`，還沒出現就等幾秒再查），再 `gh run watch <id> --exit-status`（非互動環境一定要給 id；`--exit-status` 讓 CI 失敗時回非零）；沒有 gh 就到 GitHub Actions 看
+  9. 收尾：主 repo 在 main 且沒有改動就 `git merge --ff-only origin/main`（否則跳過並寫進狀態）、`git worktree remove <暫存路徑>`，每張卡的狀態寫「已發版 <版本>：tag 與 main 已推送，main 的 CI 通過」
+
+  之後你做的事：有 `release：` 關卡的卡部署後按 `u` 確認上線；歸檔照舊（面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`）。
 
 ## 常見狀況
 

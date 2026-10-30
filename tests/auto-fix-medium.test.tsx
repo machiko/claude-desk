@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat, feedLog } from './fixture'
 import { buildPrompt } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline, stageLabel } from '../hooks/pipeline'
@@ -161,6 +161,7 @@ test('test_auto_fix_prompt_names_only_the_review_file_that_just_finished_when_bo
 /** AC-2 */
 test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_full', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   const h = helpers($, data, clock)
   data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
@@ -176,13 +177,15 @@ test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_fu
   reviewJustFinished(data, ALPHA, 0)
   await h.refresh(); await h.step(); await h.step()
 
-  // 修正排進隊伍：六段停在審查「修正中」，沒有開 PR，也沒有審查通過
+  // 修正排進隊伍：六段停在驗收「修正中」，沒有開 PR，也沒有審查通過
   expect(data.launches).toHaveLength(0)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_A}` })
   const queued = await screen(ui)
-  expect(queued).toContain(flat('Alpha 自動派修正第 1 輪排隊中（第 1 位）'))
-  expect(queued).toContain(flat('規格● 實作● 檢查● 審查◉ 合併○ 上線○'))
+  // 排隊是一般事件：寫進動態紀錄，不上畫面
+  expect(log.has('Alpha 自動派修正第 1 輪排隊中（第 1 位）')).toBe(true)
+  expect(queued).not.toContain(flat('Alpha 自動派修正第 1 輪排隊中（第 1 位）'))
+  expect(queued).toContain(flat('規格● 實作● 測試● 驗收◉ 合併○ 上線○'))
   expect(queued).not.toContain('開PR')
   expect(await ui.find({ key: `case-${CARD_A}-open-pr` })).toBeFalsy()
   expect(data.toasts.some((t: string) => t.includes('審查通過'))).toBe(false)
@@ -190,12 +193,12 @@ test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_fu
   // 重新整理、名額還是滿的：照舊排著
   await h.refresh()
   expect(data.launches).toHaveLength(0)
-  expect(await screen(ui)).toContain(flat('審查◉ 合併○'))
-  // 審查段的說明（狀態列）：流程這輪要修 MEDIUM 時寫「…MEDIUM 1，修正中」，不算審查過了
+  expect(await screen(ui)).toContain(flat('驗收◉ 合併○'))
+  // 驗收段的說明（狀態列）：流程這輪要修 MEDIUM 時寫「…MEDIUM 1，修正中」，不算審查過了
   const base = buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}, undefined)
   const verify = (data.store.verifies as any)[CARD_A]
   const atReview = { ...base, git: data.git[ALPHA], chain: { round: 1, mediumFix: 1 } }
-  expect(stageLabel(pipeline(atReview as any, verify))).toBe('審查・CRITICAL 0、HIGH 0、MEDIUM 1，修正中')
+  expect(stageLabel(pipeline(atReview as any, verify))).toBe('驗收・CRITICAL 0、HIGH 0、MEDIUM 1，修正中')
   expect(stageLabel(pipeline({ ...atReview, chain: { round: 1 } } as any, verify))).toBe('合併・可開 PR')
 
   // 一個做完：派出修正第 1／2 輪，不會被當成「Agent 仍在執行」丟掉
@@ -299,9 +302,9 @@ test('test_no_medium_fix_is_sent_when_this_conversation_does_not_own_the_review'
   // (a) 六段照舊到合併「可開 PR（自審）」
   await ui.press({ key: `row-${CARD_C}` })
   const gamma = await screen(ui)
-  expect(gamma).toContain(flat('規格● 實作● 檢查● 審查● 合併◆'))
-  expect(gamma).toContain(flat('◆ 審查  CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0（自審）'))
-  expect(gamma).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（審查是自審，可按 w 派獨立審查）'))
+  expect(gamma).toContain(flat('規格● 實作● 測試● 驗收● 合併◆'))
+  expect(gamma).toContain(flat('◆ 驗收  CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0（自審）'))
+  expect(gamma).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（驗收是自審，可按 w 派獨立驗收）'))
   expect(await ui.find({ key: `case-${CARD_C}-open-pr` })).toBeTruthy()
   await ui.unmount()
 })

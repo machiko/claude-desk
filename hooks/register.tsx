@@ -7,7 +7,7 @@ import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry } from './card'
 import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
 import { archiveReview, commitTime, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
-import { deploySteps, mediumToFix, parseReminders, reviewTop } from './extras'
+import { deploySteps, historyEntries, mediumToFix, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
@@ -137,8 +137,9 @@ export async function refresh($: any, options: PluginOptions) {
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
       const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
       const steps = deploySteps(card)
+      const history = historyEntries(card)
       const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []
-      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(top.length ? { reviewTop: top } : {}) }
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -491,7 +492,7 @@ async function runVerify($: any, c: Case, auto = false, fromQueue = false): Prom
   const trusted = await trustedChecks($)
   if (trusted[c.statusPath] !== c.verify) {
     if (auto) return false
-    const answer = await $.ui.ask(`在 ${c.root} 執行完成檢查：\n${c.verify}\n之後同一條指令不再問，自動流程也會用它。`, { header: `${c.name} 檢查`, options: ['執行', '取消'] }).catch(() => '')
+    const answer = await $.ui.ask(`在 ${c.root} 執行測試：\n${c.verify}\n之後同一條指令不再問，自動流程也會用它。`, { header: `${c.name} ${WORD.verify}`, options: ['執行', '取消'] }).catch(() => '')
     if (answer !== '執行') return false
     await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
     // 對話框可能開了很久：回答的這段時間 Agent 開始跑了，就不在它的 worktree 上跑檢查。
@@ -530,7 +531,7 @@ async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
   await feedPush($, [{ at: now, text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, reason, { name: c.name, skip: auto || tutorial })
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
+  if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
   await restage($, c.statusPath)
   await spin($, false)
 }
@@ -546,7 +547,7 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
     const now = await $.clock.now()
     await feedPush($, [{ at: now, text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
     await tellPanel($, now, `檢查未執行：${reason}`, { name: c.name, skip: auto || tutorial })
-    if (auto) await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)
+    if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
     return false
@@ -563,6 +564,8 @@ async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
   await feedPush($, [{ at: result.at, text: `${c.name} ${outcome}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
   $.ui.toast(`${c.name}：${result.ok ? '檢查通過' : '檢查未通過'}`, { timeoutMs: 6000 })
+  // 你按 v 的檢查沒過送一次通知（每按一次 v 送一則，同一句不去重）；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
+  if (!result.ok && !auto) notify($, `${c.name}：${outcome}`, true)
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
@@ -755,8 +758,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
 }
 
 const notified = new Set<string>()
-export function notify($: any, text: string) {
-  if (!active || tutorial || notified.has(text)) return
+/** 系統通知：同一句只送一次（流程暫停、等你這類每次重新整理都會重算的事）；repeat 是你每做一次就該通知一次的（按 v 檢查沒過）。 */
+export function notify($: any, text: string, repeat = false) {
+  if (!active || tutorial || (!repeat && notified.has(text))) return
   notified.add(text)
   void Promise.resolve().then(() => $.ui.notify(text, { title: 'desk' })).catch(() => {})
 }

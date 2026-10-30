@@ -16,7 +16,7 @@ const APPROVING = { ...RUNNING, state: 'blocked', status: 'waiting', waitingFor:
 
 /** 會搶 worktree／卡片的四個動作：鍵、原本的標籤、處理端擋下時 toast 寫的動作；有確認的要按兩次。 */
 const LOCKABLE = {
-  verify: { label: '▶ 檢查', doing: '檢查', presses: 1 },
+  verify: { label: '▶ 測試', doing: '檢查', presses: 1 },
   'spec-ok': { label: '✓ 確認規格', doing: '確認規格', presses: 2 },
   ship: { label: '✓ 上線確認', doing: '確認上線', presses: 2 },
   archive: { label: '⌫ 歸檔', doing: '歸檔', presses: 2 },

@@ -43,7 +43,7 @@ test('verify asks once per command, runs in the case root, and records the resul
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: 'more' }) // 這張卡在等你決定，檢查鍵平常不出現；測檢查本身先展開全部動作
   const key = `case-${CARD_A}-verify`
-  expect((await ui.find({ key }))?.text).toBe('▶ 檢查')
+  expect((await ui.find({ key }))?.text).toBe('▶ 測試')
   await ui.press({ key })
   await clock.settle()
   expect(data.asks.length).toBe(1)

@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, openPrRequest, pushRequest } from '../hooks/dispatch'
+import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, pushRequest } from '../hooks/dispatch'
+import { parseGate } from '../hooks/card'
 import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
@@ -327,13 +328,77 @@ test('idle next: waiting-only next steps refuse continue and say what to do', ()
 
 /** AC-3 */
 test('a review next step refuses continue and points to v and w', () => {
-  const why = '下一步是審查：先按 v 執行完成檢查，再按 w 派審查（g 派的是繼續，不會審查）'
+  const why = '下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）'
   for (const next of ['審查', '派審查：/desk review 更多動作自動收回', '派獨立審查（w）', '按 w 派審查', '重新審查']) {
     const c = mk(next)
     expect(idleNext(next)).toBe(why)
     expect(dispatchable(c)).toEqual(['review', 'sync'])
     expect(dispatchRefusal(c, 'continue')).toBe(why)
     expect(dispatchRefusal(c, 'review')).toBe('')
+  }
+})
+
+/** AC-4：下一步寫舊詞或新詞，判斷結果一樣；卡片欄位「檢查」、關卡「review：」、審查檔照舊讀得到。 */
+test('test_next_step_old_and_new_words_are_recognized_alike', () => {
+  const waits: [string, string][] = [
+    ['到面板按 v 執行完成檢查', '到面板按 v 執行測試'],
+    ['等檢查與審查', '等測試與驗收'],
+    ['等自動檢查與審查；過了開 PR', '等自動測試與驗收；過了開 PR'],
+    ['等自動重新檢查與審查；沒動靜就到面板按 v', '等自動重新測試與驗收；沒動靜就到面板按 v'],
+    ['按 v 跑檢查；等審查', '按 v 跑測試；等驗收'],
+  ]
+  const reviews: [string, string][] = [
+    ['派審查（按 w）', '派驗收（按 w）'],
+    ['按 w 派審查', '按 w 派驗收'],
+    ['派獨立審查（w）', '派獨立驗收（w）'],
+    ['等檢查；派審查（按 w）', '等測試；派驗收（按 w）'],
+  ]
+  for (const [old, now] of [...waits, ...reviews]) {
+    expect(reviewNext(now)).toBe(reviewNext(old))
+    expect(idleNext(now)).toBe(idleNext(old))
+    expect(dispatchable(mk(now))).toEqual(dispatchable(mk(old)))
+    expect(dispatchRefusal(mk(now), 'continue')).toBe(dispatchRefusal(mk(old), 'continue'))
+  }
+  // 等待類：按 g 不會被當成工作派出
+  for (const [, now] of waits) {
+    expect(reviewNext(now)).toBe(false)
+    expect(dispatchRefusal(mk(now), 'continue')).toContain('沒有要 Agent 做的事')
+    expect(dispatchable(mk(now))).not.toContain('continue')
+  }
+  // 派審查／派驗收類：按 g 一樣提示先 v 再 w
+  for (const [, now] of reviews) {
+    expect(reviewNext(now)).toBe(true)
+    expect(dispatchRefusal(mk(now), 'continue')).toBe('下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）')
+  }
+  // 要做事的下一步照舊派得出去
+  for (const next of ['補測試', '修正驗收的 HIGH', '派驗收（補完 AC-3 的測試後）']) expect(idleNext(next)).toBe('')
+  // 解析契約不變：「檢查」欄、舊卡「驗證」欄、review： 關卡、.task/REVIEW.md
+  const fresh = buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, '<!-- DESK -->\n- 狀態：ok\n- 檢查：`npm test`\n- 等你：無\n- 下一步：等測試與驗收\n- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；要修\n<!-- /DESK -->', 1, {}, undefined)
+  expect(fresh.verify).toBe('npm test')
+  expect(mk('等審查').verify).toBe('true')
+  expect(parseGate(fresh.gate)).toMatchObject({ kind: 'review' })
+  expect(REVIEW_FILE).toBe('.task/REVIEW.md')
+})
+
+/** AC-5：派給 Agent 的提示不跟著改名。 */
+test('test_agent_prompts_keep_their_wording', () => {
+  const c = mk('依規格實作')
+  const prompts = {
+    continue: buildPrompt(c, 'continue'),
+    fixCheck: buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: ['boom'] }),
+    fixReview: buildPrompt(c, 'continue', '', { from: 'review', round: 1 }),
+    review: buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }),
+    security: buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }),
+  }
+  expect(prompts.continue).toContain('完成檢查')
+  expect(prompts.fixCheck).toContain('完成檢查')
+  expect(prompts.fixReview).toContain('完成檢查')
+  expect(prompts.review.startsWith('程式碼審查')).toBe(true)
+  expect(prompts.review).toContain('契約：templates/review.md')
+  expect(prompts.security.startsWith('資安審查')).toBe(true)
+  for (const p of Object.values(prompts)) {
+    expect(p).not.toContain('執行測試')
+    expect(p).not.toContain('派驗收')
   }
 })
 
