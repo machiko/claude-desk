@@ -44,10 +44,10 @@ function total(counts: number[], items: string[]): number {
 }
 
 /**
- * unittest 的名稱行：`FAIL: test_x (模組.類別.test_x)`，subTest 再接一段參數 `(i=1)`；
+ * unittest 的名稱行：`FAIL: test_x (模組.類別.test_x)`，subTest 依序再接訊息 `[m]` 與參數 `(i=1)`；
  * 後面一定接括號裡的點分名稱，`ERROR: config.yml not found` 這種一般錯誤行不算。
  */
-const UNITTEST_HEADER = /^(?:FAIL|ERROR): (\S+) \([\w.]+\)( \(.*\))?$/
+const UNITTEST_HEADER = /^(?:FAIL|ERROR): (\S+) \([\w.]+\)((?: \[.*\])?(?: \(.*\))?)$/
 
 /** Python unittest：`FAIL: test_x (…)`／`ERROR: …` 一段一支，原因是段內第一個沒縮排的 `…Error:`；總數看 `FAILED (failures=a, errors=b)`（不算 expected failures）。 */
 function unittest(lines: string[]): Parsed {
@@ -55,7 +55,7 @@ function unittest(lines: string[]): Parsed {
   const items = lines.flatMap((l, i) => {
     const m = l.match(UNITTEST_HEADER)
     if (!m) return []
-    const name = m[1]! + (m[2] ?? '')
+    const name = m[1]! + m[2]!
     const section = lines.slice(i + 1, nextIndex(lines, i, isHeader)).filter(s => !isSeparator(s))
     return [item(name, section.find(s => /^[A-Za-z_][\w.]*(Error|Exception)\b/.test(s)) ?? section.at(-1))]
   })

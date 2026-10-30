@@ -225,3 +225,45 @@ test('summarizeCheck: zero failures are not a failure count', () => {
   const xpass = lines(`u\n======\nUNEXPECTED SUCCESS: test_xpass (test_u.T.test_xpass)\n------\nRan 1 test in 0.001s\nFAILED (unexpected successes=1)`)
   expect(summarizeCheck(xpass)).toEqual({ items: ['u', 'UNEXPECTED SUCCESS: test_xpass (test_u.T.test_xpass)', 'Ran 1 test in 0.001s', 'FAILED (unexpected successes=1)'] })
 })
+
+// Python 3.12 真實輸出（2026-10-30 實跑）：subTest 帶訊息時名稱行接 [訊息]，再加參數就是 [訊息] (參數)
+const SUBTEST_MSG = `FEF
+======================================================================
+ERROR: test_kw (test_m.T.test_kw) [kw]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/x/test_m.py", line 5, in test_kw
+    raise ValueError('boom')
+ValueError: boom
+
+======================================================================
+FAIL: test_both (test_m.T.test_both) [m] (i=1)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/x/test_m.py", line 9, in test_both
+    self.assertTrue(i == 0)
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_msg (test_m.T.test_msg) [b]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/x/test_m.py", line 12, in test_msg
+    self.assertEqual('b', 'a')
+AssertionError: 'b' != 'a'
+- b
++ a
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.001s
+
+FAILED (failures=2, errors=1)`
+
+test('summarizeCheck: unittest subTest names keep their [message]', () => {
+  expect(summarizeCheck(lines(SUBTEST_MSG))).toEqual({
+    failed: 3,
+    items: ['test_kw [kw]：ValueError: boom', 'test_both [m] (i=1)：AssertionError: False is not true', "test_msg [b]：AssertionError: 'b' != 'a'"],
+  })
+  expect(summarizeCheck(['ERROR: config.yml not found [see docs]'])).toEqual({ items: ['ERROR: config.yml not found [see docs]'] })
+})
