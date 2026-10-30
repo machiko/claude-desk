@@ -273,35 +273,29 @@ test('test_medium_waiting_for_your_decision_is_never_auto_fixed', async ($, on) 
   }
 })
 
-/** AC-5 */
+/**
+ * AC-5 (a)：卡片上的審查結論是對話自己寫的（工作桌沒派審查），審查檔有沒註記的 MEDIUM：不派修正，六段照舊到合併「可開 PR（自審）」。
+ * (b) 依 D-07 改成接手，移到 test_medium_fix_is_taken_over_when_flow_belongs_to_another_conversation。
+ */
 test('test_no_medium_fix_is_sent_when_this_conversation_does_not_own_the_review', async ($, on) => {
   const { data, clock } = fixture(on)
   const h = helpers($, data, clock)
   data.agents = []
-  data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_C]: 'node test.mjs' }
+  data.store.trustedVerify = { [CARD_C]: 'node test.mjs' }
   launchOneAtATime(data, clock)
   // (a) Gamma：審查結論是對話自己寫的（沒有流程紀錄），審查檔有沒註記的 MEDIUM
   data.git[GAMMA] = { branch: 'feature/gamma', head: 'g1' }
   data.files[CARD_C] = data.files[CARD_C]!.replace('- 驗證：無', '- 驗證：`node test.mjs`').replace('- 下一步：無', '- 下一步：開 PR')
   setCard(data, CARD_C, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
   data.files[`${GAMMA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] g.ts:2 — 空字串沒處理'
-  // (b) Alpha：流程是別的對話開的，它的審查剛結束、審查檔有沒註記的 MEDIUM
-  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
-  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
-  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理'
-  reviewJustFinished(data, ALPHA, 0, { owner: 'other-session' })
-  const before = JSON.parse(JSON.stringify((data.store.chains as any)[ALPHA]))
-  const jobsBefore = JSON.parse(JSON.stringify((data.store.jobs as any)[ALPHA]))
 
   await h.refresh(); await h.step(); await h.step()
   const ui = await $.ui.mount(PANE(160))
   await h.refresh()
 
-  // (a)(b) 這個對話不派任何修正，別的對話的流程紀錄一字不變
+  // (a) 這個對話不派任何修正，也不替它開流程
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[ALPHA]).toEqual(before)
-  expect((data.store.jobs as any)[ALPHA]).toEqual(jobsBefore)
-  expect((data.store.chains as any)[GAMMA]).toBeUndefined()
+  expect((data.store.chains as any)?.[GAMMA]).toBeUndefined()
   // (a) 六段照舊到合併「可開 PR（自審）」
   await ui.press({ key: `row-${CARD_C}` })
   const gamma = await screen(ui)
@@ -310,4 +304,60 @@ test('test_no_medium_fix_is_sent_when_this_conversation_does_not_own_the_review'
   expect(gamma).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（審查是自審，可按 w 派獨立審查）'))
   expect(await ui.find({ key: `case-${CARD_C}-open-pr` })).toBeTruthy()
   await ui.unmount()
+})
+
+/**
+ * AC-5 (b)（依 D-07）：流程是別的對話開的、沒停下、沒過關，剛做完的審查 CRITICAL／HIGH 0、審查檔有沒註記的 MEDIUM、修正輪數還有：
+ * 這個對話接手流程（擁有者改成這個對話，輪數照算）並自動派修正一次，動態寫明是接手的；再重新整理不重派。
+ * 別的對話的流程還有 HIGH 時照舊不接手，紀錄一字不變。
+ */
+test('test_medium_fix_is_taken_over_when_flow_belongs_to_another_conversation', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  let feed: any[] = []
+  on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed') feed = e.value; return next(e) })
+  data.agents = []
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
+  launchOneAtATime(data, clock)
+  // Alpha：別的對話開的流程已用掉 1 輪，這輪審查剛結束，只剩一條沒註記的 MEDIUM
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；空字串沒處理')
+  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理'
+  reviewJustFinished(data, ALPHA, 1, { owner: 'other-session' })
+  // Beta：別的對話開的流程，審查還有 HIGH：不在接手範圍
+  data.git[BETA] = { branch: 'feature/beta', head: 'b1' }
+  setCard(data, CARD_B, 'review：CRITICAL 0、HIGH 1、MEDIUM 1、LOW 0；漏稽核')
+  data.files[`${BETA}/.task/REVIEW.md`] = '- [HIGH][稽核] a.ts:1 — 漏寫稽核紀錄\n- [MEDIUM][邊界] b.ts:2 — 空字串沒處理'
+  reviewJustFinished(data, BETA, 0, { owner: 'other-session' })
+  const betaChain = JSON.parse(JSON.stringify((data.store.chains as any)[BETA]))
+  const betaJobs = JSON.parse(JSON.stringify((data.store.jobs as any)[BETA]))
+
+  await h.refresh()
+
+  // 接手：派一次修正（輪數照算：第 2／2 輪），接續實作那個 session，提示要修沒註記的 MEDIUM
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(ALPHA)
+  expect(h.prompt(0).startsWith('修正第 2／2 輪：依 .task/REVIEW.md 修正所有')).toBe(true)
+  expect(h.prompt(0)).toContain('沒標「不修」「等你決定」的 MEDIUM')
+  expect(data.launches[0].argv[data.launches[0].argv.indexOf('--resume') + 1]).toBe(IMPL)
+  // 流程紀錄寫進 store：擁有者改成這個對話，輪數 1 → 2，記著這輪要修的 MEDIUM
+  const run = (data.store.chains as any)[ALPHA]
+  expect(run.owner).toBe(ME)
+  expect(run.round).toBe(2)
+  expect(run.mediumFix).toBe(1)
+  expect(run.stopped).toBeUndefined()
+  expect(run.passed).toBeUndefined()
+  expect((data.store.jobs as any)[ALPHA].last.owner).toBe(ME)
+  expect((data.store.jobs as any)[ALPHA].last.round).toBe(2)
+  // 動態寫明是接手別的對話開的流程
+  expect(feed.some(e => e.card === CARD_A && String(e.text).includes('接手別的對話開的流程'))).toBe(true)
+  // Beta 還有 HIGH：不接手、不派，紀錄一字不變
+  expect((data.store.chains as any)[BETA]).toEqual(betaChain)
+  expect((data.store.jobs as any)[BETA]).toEqual(betaJobs)
+
+  // 再重新整理：同一個修正不重派
+  await h.refresh(); await h.step()
+  expect(data.launches).toHaveLength(1)
+  expect(h.fixes()).toHaveLength(1)
+  expect(feed.filter(e => e.card === CARD_A && String(e.text).includes('接手別的對話開的流程'))).toHaveLength(1)
 })
