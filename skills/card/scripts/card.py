@@ -534,13 +534,13 @@ SQUASHED = 'squash／rebase 合併，git branch -d 認不出已併入'
 
 
 def merged_by_content(main, branch):
-    """squash／rebase 合併：分支不是 HEAD 的祖先，但內容已經在 HEAD 裡。merges_into_head、squashed_by_patch 任一認得就算，
+    """squash／rebase 合併：分支不是 HEAD 的祖先，但內容已經在 HEAD 裡。merges_into_head、merged_by_patch 任一認得就算，
     兩個都認不出來（包括 merge-base 找不到）就當沒併入。"""
     base = git('-C', main, 'merge-base', 'HEAD', branch)
     if base.returncode != 0:
         return False
     base = base.stdout.strip()
-    return merges_into_head(main, branch, base) or squashed_by_patch(main, branch, base)
+    return merges_into_head(main, branch, base) or merged_by_patch(main, branch, base)
 
 
 def merges_into_head(main, branch, base):
@@ -556,31 +556,51 @@ def merges_into_head(main, branch, base):
     return all(status == 'A' and released_fragment(main, base, path) for status, path in zip(parts[::2], parts[1::2]))
 
 
-# 算 patch-id 的 diff 兩邊用同一套選項，不受使用者的顏色、外部 diff、textconv、改名偵測設定影響。
-PATCH_DIFF = ('--no-color', '--no-ext-diff', '--no-textconv', '--no-renames')
+# 算 patch-id 的 diff 每處都用同一套選項，不受使用者的顏色、外部 diff、textconv、改名偵測、路徑前綴設定影響。
+# -U0：不看上下文，合進來之前別張卡改到上下幾行（squash commit 的上下文跟分支不同）也認得是同一份改動；
+# --no-prefix：log -R 反向時 a/、b/ 前綴會對調，patch-id 會把前綴算進去，拿掉才跟 revert commit 對得上。
+PATCH_DIFF = ('--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-prefix', '-U0')
+# 逐 commit 輸出 patch，每個前面一行「commit <sha>」，patch-id 才分得出是哪個 commit 的。
+PATCH_LOG = ('log', '-p', '--no-merges', '--no-show-signature', *PATCH_DIFF, '--format=commit %H')
 
 
-def squashed_by_patch(main, branch, base):
-    """squash commit：分支自分叉點以來的整體改動，跟 HEAD 這邊分叉後的某個 commit 是同一個 patch（patch-id 相同）。
-    同一版別張卡後來改到相鄰行時 merge-tree 會合出衝突，這裡看的是當初合進來的那個 commit，不受後來的改動影響。
-    被 revert 的不算：反向的 patch 出現得一樣多（revert 過）就當沒併入。分支沒有改動、git 失敗也不算。"""
-    whole = patch_ids(main, 'diff', *PATCH_DIFF, base, branch)
-    undo = patch_ids(main, 'diff', *PATCH_DIFF, branch, base)
-    head = patch_ids(main, 'log', '-p', '--no-merges', '--no-show-signature', *PATCH_DIFF, '--format=commit %H', f'{base}..HEAD')
-    if not whole or not undo or not head:
+def merged_by_patch(main, branch, base):
+    """分支的改動在 HEAD 這邊分叉後的非 merge commit 裡出現過（patch-id 相同）：整體改動就是其中一個 commit（squash），
+    或分支每個有改動的 commit 都在（rebase 合併，見 rebased_by_patch）。看的是當初合進來的 commit，
+    同一版別張卡後來改到相鄰行、merge-tree 合出衝突也認得。
+    被 revert 的不算：反向的 patch 出現得一樣多就當沒併入；整體改動被 revert 過，就不再逐 commit 看。分支沒有改動、git 失敗也不算。"""
+    head = [p for p, _ in patch_ids(main, *PATCH_LOG, f'{base}..HEAD')]
+    whole = [p for p, _ in patch_ids(main, 'diff', *PATCH_DIFF, base, branch)]
+    undo = [p for p, _ in patch_ids(main, 'diff', *PATCH_DIFF, branch, base)]
+    if not head or not whole or not undo:
         return False
-    return head.count(whole[0]) > head.count(undo[0])
+    if head.count(whole[0]) > head.count(undo[0]):
+        return True
+    return head.count(undo[0]) == 0 and rebased_by_patch(main, branch, base, head)
+
+
+def rebased_by_patch(main, branch, base, head):
+    """rebase 合併：分支每個有改動的 commit，在 head（HEAD 這邊各 commit 的 patch-id）裡都出現得比它的反向 patch 多。
+    分支裡有 merge commit 就不算：解衝突的內容在 merge commit 裡，逐 commit 比對不到。"""
+    span = f'{base}..{branch}'
+    merges = git('-C', main, 'rev-list', '--merges', span)
+    if merges.returncode != 0 or merges.stdout.strip():
+        return False
+    forward = {c: p for p, c in patch_ids(main, *PATCH_LOG, span)}
+    undo = {c: p for p, c in patch_ids(main, *PATCH_LOG, '-R', span)}
+    return bool(forward) and forward.keys() == undo.keys() and all(head.count(p) > head.count(undo[c]) for c, p in forward.items())
 
 
 def patch_ids(main, *args):
-    """git <args> 輸出的 patch 逐個算 patch-id（--stable，跟檔案順序、行號無關）；git 失敗回空清單。用 bytes 傳，非 UTF-8 的內容也照算。"""
+    """git <args> 輸出的 patch 逐個算 patch-id（--stable，跟檔案順序、行號無關），回傳 [(patch-id, commit)]；
+    沒有「commit <sha>」行的（git diff）commit 是一串 0。git 失敗回空清單。用 bytes 傳，非 UTF-8 的內容也照算。"""
     out = subprocess.run(['git', '-C', main, *args], capture_output=True, timeout=120)
     if out.returncode != 0:
         return []
     r = subprocess.run(['git', '-C', main, 'patch-id', '--stable'], input=out.stdout, capture_output=True, timeout=120)
     if r.returncode != 0:
         return []
-    return [l.split()[0] for l in r.stdout.decode('ascii', 'replace').splitlines() if l.strip()]
+    return [tuple(l.split()[:2]) for l in r.stdout.decode('ascii', 'replace').splitlines() if l.strip()]
 
 
 def released_fragment(main, base, path):
