@@ -361,13 +361,16 @@ async function queueReviewFix(data: any, clock: any, h: ReturnType<typeof helper
 /** AC-1（排隊的修正）：審查有 HIGH、名額滿而排隊的修正，空出名額後照常派出，流程不停。 */
 test('test_queued_review_fix_launches_when_slot_frees', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   setup(data, clock)
   const h = helpers($, data, clock)
   await queueReviewFix(data, clock, h)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_A}` })
   expect(data.launches).toHaveLength(0)
-  expect(await screen(ui)).toContain(flat('Alpha 自動派修正第 1 輪排隊中（第 1 位）'))
+  // 排隊是一般事件：寫進動態紀錄，不上畫面
+  expect(log.has('Alpha 自動派修正第 1 輪排隊中（第 1 位）')).toBe(true)
+  expect(await screen(ui)).not.toContain(flat('Alpha 自動派修正第 1 輪排隊中（第 1 位）'))
 
   h.finishOne()
   await h.refresh(); await h.step(); await h.step()
@@ -377,7 +380,7 @@ test('test_queued_review_fix_launches_when_slot_frees', async ($, on) => {
   expect(String(data.launches[0].argv.at(-1))).toContain('修正第 1／2 輪')
   expect(data.store.chains[ALPHA].stopped).toBeUndefined()
   expect(data.toasts).toContain('Alpha：修正第 1 輪已派出')
-  expect(await screen(ui)).not.toContain(flat('排隊的修正第 1 輪沒有派出：Agent 仍在執行'))
+  expect(log.has('排隊的修正第 1 輪沒有派出：Agent 仍在執行')).toBe(false)
   await ui.unmount()
 })
 
