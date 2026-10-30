@@ -208,7 +208,7 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
   const alpha = flat(await pick(ui, CARD_A))
   expect(alpha).toContain(flat('▶ 輪到你  驗收後有新 commit：按 v 重新執行測試；通過後按 w 重新驗收'))
   const beta = flat(await pick(ui, CARD_B))
-  expect(beta).toContain(flat('▶ 輪到你  按 w 派驗收（新對話）；有 CRITICAL／HIGH 會自動修正，過關後開 PR'))
+  expect(beta).toContain(flat('▶ 輪到你  按 w 派驗收（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後開 PR'))
   const gamma = flat(await pick(ui, CARD_C))
   expect(gamma).toContain(flat('（驗收是自審，可按 w 派獨立驗收）'))
   for (const shown of [alpha, beta, gamma]) expect(shown).not.toMatch(OLD_HINT)
@@ -240,7 +240,7 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
   expect(hints).toEqual([
     '驗收後有新 commit：按 v 重新執行測試；通過後自動重新驗收',
     '驗收後有新 commit：按 v 重新執行測試；通過後按 w 重新驗收',
-    '按 w 派驗收（新對話）；有 CRITICAL／HIGH 會自動修正，過關後開 PR',
+    '按 w 派驗收（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後開 PR',
     '接著自動驗收',
     '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事',
     '下一步是驗收：按 v 執行測試，通過後按 w 派驗收',

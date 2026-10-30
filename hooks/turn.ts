@@ -126,10 +126,10 @@ function checkTurnText(c: Case): string {
   return `按 v 執行測試；${willAutoReview(c) ? '通過後自動驗收' : '通過後按 w 派驗收'}`
 }
 
-/** 審查段：按 w，以及審查之後會怎樣：擋的自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
+/** 審查段：按 w，以及審查之後會怎樣：擋的（含影響行為的 MEDIUM）自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
 function reviewTurnText(c: Case): string {
   const head = c.chain?.stale ? '驗收後有新 commit：按 w 重新驗收（新對話）' : '按 w 派驗收（新對話）'
-  return `${head}；有 CRITICAL／HIGH 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
+  return `${head}；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
 }
 
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {

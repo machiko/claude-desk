@@ -4,7 +4,7 @@ import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '..
 import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
-import { parseVerdict, blocking, isMerged, pipeline, standingVerdict } from './pipeline'
+import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
 import { isDeskLaunch } from './dispatch'
 import type { JobRecord } from './dispatch'
 
@@ -317,9 +317,11 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
   const running = !!c.agent && !c.agent.asks
   const verdict = parseVerdict(c.gate)
   // 審查結論由自動流程處理：沒擋的就過、有擋的去修；流程停下或沒有流程時才要人。
+  // 停下時要修的 MEDIUM 也算 failed（按 g 修）；流程在走時只有 CRITICAL＋HIGH 算 running，要修的 MEDIUM 維持 ready，
+  // 排隊中的修正才不會被當成「Agent 仍在執行」丟掉。
   if (verdict) {
     if (running) return 'running'
-    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return blocking(verdict) > 0 ? 'failed' : 'ready'
+    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 ? 'failed' : 'ready'
     return blocking(verdict) > 0 ? 'running' : 'ready'
   }
   if (parseGate(c.gate)) return 'gate'
@@ -385,7 +387,7 @@ export function summary(c: Case): string {
   if (c.state === 'nocard') return '找不到卡片'
   if (c.state === 'failed' && c.chain?.stopped) return c.chain.stopped
   const verdict = standingVerdict(c)
-  if (verdict && blocking(verdict) === 0 && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : '審查通過，可開 PR'
+  if (verdict && toFix(c, verdict) === 0 && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : '審查通過，可開 PR'
   if (c.state === 'idle') return c.statusShort || c.status || '閒置'
   return c.next
 }
