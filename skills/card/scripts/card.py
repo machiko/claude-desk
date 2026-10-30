@@ -534,18 +534,53 @@ SQUASHED = 'squash／rebase 合併，git branch -d 認不出已併入'
 
 
 def merged_by_content(main, branch):
-    """squash／rebase 合併：分支不是 HEAD 的祖先，但把它合進 HEAD 結果跟 HEAD 一樣（內容已經在裡面）。
-    唯一容許的差別是發版合併掉的片段檔（見 released_fragment）。
-    有衝突、合出不同的內容，或 git 太舊沒有 merge-tree --write-tree（2.38 以前），都當沒併入。"""
-    merged = git('-C', main, 'merge-tree', '--write-tree', 'HEAD', branch)
+    """squash／rebase 合併：分支不是 HEAD 的祖先，但內容已經在 HEAD 裡。merges_into_head、squashed_by_patch 任一認得就算，
+    兩個都認不出來（包括 merge-base 找不到）就當沒併入。"""
     base = git('-C', main, 'merge-base', 'HEAD', branch)
-    if merged.returncode != 0 or base.returncode != 0:
+    if base.returncode != 0:
+        return False
+    base = base.stdout.strip()
+    return merges_into_head(main, branch, base) or squashed_by_patch(main, branch, base)
+
+
+def merges_into_head(main, branch, base):
+    """把分支合進 HEAD 結果跟 HEAD 一樣。唯一容許的差別是發版合併掉的片段檔（見 released_fragment）。
+    有衝突、合出不同的內容，或 git 太舊沒有 merge-tree --write-tree（2.38 以前），都不算。"""
+    merged = git('-C', main, 'merge-tree', '--write-tree', 'HEAD', branch)
+    if merged.returncode != 0:
         return False
     diff = git('-C', main, 'diff', '-z', '--no-renames', '--name-status', 'HEAD', merged.stdout.split('\n', 1)[0].strip())
     if diff.returncode != 0:
         return False
     parts = [p for p in diff.stdout.split('\0') if p]
-    return all(status == 'A' and released_fragment(main, base.stdout.strip(), path) for status, path in zip(parts[::2], parts[1::2]))
+    return all(status == 'A' and released_fragment(main, base, path) for status, path in zip(parts[::2], parts[1::2]))
+
+
+# 算 patch-id 的 diff 兩邊用同一套選項，不受使用者的顏色、外部 diff、textconv、改名偵測設定影響。
+PATCH_DIFF = ('--no-color', '--no-ext-diff', '--no-textconv', '--no-renames')
+
+
+def squashed_by_patch(main, branch, base):
+    """squash commit：分支自分叉點以來的整體改動，跟 HEAD 這邊分叉後的某個 commit 是同一個 patch（patch-id 相同）。
+    同一版別張卡後來改到相鄰行時 merge-tree 會合出衝突，這裡看的是當初合進來的那個 commit，不受後來的改動影響。
+    被 revert 的不算：反向的 patch 出現得一樣多（revert 過）就當沒併入。分支沒有改動、git 失敗也不算。"""
+    whole = patch_ids(main, 'diff', *PATCH_DIFF, base, branch)
+    undo = patch_ids(main, 'diff', *PATCH_DIFF, branch, base)
+    head = patch_ids(main, 'log', '-p', '--no-merges', '--no-show-signature', *PATCH_DIFF, '--format=commit %H', f'{base}..HEAD')
+    if not whole or not undo or not head:
+        return False
+    return head.count(whole[0]) > head.count(undo[0])
+
+
+def patch_ids(main, *args):
+    """git <args> 輸出的 patch 逐個算 patch-id（--stable，跟檔案順序、行號無關）；git 失敗回空清單。用 bytes 傳，非 UTF-8 的內容也照算。"""
+    out = subprocess.run(['git', '-C', main, *args], capture_output=True, timeout=120)
+    if out.returncode != 0:
+        return []
+    r = subprocess.run(['git', '-C', main, 'patch-id', '--stable'], input=out.stdout, capture_output=True, timeout=120)
+    if r.returncode != 0:
+        return []
+    return [l.split()[0] for l in r.stdout.decode('ascii', 'replace').splitlines() if l.strip()]
 
 
 def released_fragment(main, base, path):

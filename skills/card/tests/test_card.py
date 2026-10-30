@@ -695,6 +695,65 @@ class CardScriptTest(unittest.TestCase):
         self.assertNotEqual(self.branch_listed('feature/gamma'), '')
         self.assertIn('清理 gamma：worktree 與分支保留：分支還沒併入 main', r.stdout)
 
+    def commit_shared_file(self):
+        """主 repo 加一支 20 行的 app.txt 並推到 origin，之後開的卡都從這裡分叉。"""
+        write(os.path.join(self.main, 'app.txt'), ''.join(f'{i}\n' for i in range(1, 21)))
+        git('add', 'app.txt', cwd=self.main)
+        git('commit', '-q', '-m', 'app', cwd=self.main)
+        git('push', '-q', 'origin', 'main', cwd=self.main)
+
+    def change_line(self, wt, line, text):
+        path = os.path.join(wt, 'app.txt')
+        lines = read(path).splitlines(keepends=True)
+        lines[line - 1] = f'{text}\n'
+        write(path, ''.join(lines))
+        git('commit', '-q', '-am', f'app line {line}', cwd=wt)
+
+    def squash(self, branch, title):
+        git('merge', '-q', '--squash', branch, cwd=self.main)
+        git('commit', '-q', '-m', title, cwd=self.main)
+
+    def test_archive_cleanup_removes_worktree_when_squash_merged_and_later_card_changed_adjacent_line(self):
+        """同一版裡後合併的卡改到相鄰行（審查 MEDIUM，D-05）：Beta 改第 10 行先 squash，Delta 改第 11 行、
+        先把 main 併進來解衝突再 squash；兩張都照樣移除 worktree、分支保留，不會被判「分支還沒併入 main」。"""
+        self.commit_shared_file()
+        beta = self.open_case('feature/beta', 'Beta')
+        self.change_line(beta, 10, 'beta')
+        delta = self.open_case('feature/delta', 'Delta')
+        self.change_line(delta, 11, 'delta')
+        self.squash('feature/beta', 'Beta (#12)')
+        subprocess.run(['git', 'merge', '-q', '--no-ff', '--no-commit', 'main'], cwd=delta, capture_output=True)
+        resolved = ''.join(f'{i}\n' for i in range(1, 21)).replace('10\n11\n', 'beta\ndelta\n')
+        write(os.path.join(delta, 'app.txt'), resolved)
+        git('add', 'app.txt', cwd=delta)
+        git('commit', '-q', '--no-edit', cwd=delta)
+        self.squash('feature/delta', 'Delta (#13)')
+        self.assertEqual(read(os.path.join(self.main, 'app.txt')), resolved)
+
+        r = self.run_card('archive', 'beta', 'delta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for slug, wt in (('beta', beta), ('delta', delta)):
+            self.assertNotIn(os.path.realpath(wt), self.worktrees(), r.stdout)
+            self.assertNotEqual(self.branch_listed(f'feature/{slug}'), '')
+            self.assertIn(f'清理 {slug}：worktree 已移除；分支 feature/{slug} 保留：squash／rebase 合併，git branch -d 認不出已併入', r.stdout)
+        self.assertNotIn('還沒併入', r.stdout)
+
+    def test_archive_cleanup_keeps_worktree_and_branch_when_squash_merged_then_reverted(self):
+        """squash 合併後 main 又 revert 了那張（D-05 的反例）：內容已不在 main，照舊判「分支還沒併入 main」、兩樣都保留。"""
+        self.commit_shared_file()
+        beta = self.open_case('feature/beta', 'Beta')
+        self.change_line(beta, 10, 'beta')
+        self.squash('feature/beta', 'Beta (#12)')
+        git('revert', '--no-edit', 'HEAD', cwd=self.main)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(os.path.realpath(beta), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 與分支保留：分支還沒併入 main', r.stdout)
+
     def test_archive_same_card_named_twice_is_archived_once(self):
         """同一張卡用 slug 和任務名各寫一次（審查 MEDIUM，D-04）：只歸檔、清理一次，不會 Traceback 也不多一份副本。"""
         self.open_case('feature/beta', 'Beta', merged=True)
