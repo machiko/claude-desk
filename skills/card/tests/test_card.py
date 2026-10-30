@@ -427,13 +427,13 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('- 狀態：修好審查提到的 MEDIUM；本機測試全過\n', read(card))
 
     def test_new_card_rules_say_status_is_what_happened(self):
-        # one-next-step AC-5 的範本那半：開新卡的「卡片規則」與派工提示（hooks/dispatch.ts）寫同一句。
+        # one-next-step AC-5 的範本那半：開新卡的「卡片規則」與派工提示（卡片規則句在 hooks/prompts/rules.ts）寫同一句。
         rule = '狀態只寫發生了什麼，不寫下一步，也不寫 commit 編號、AC／D 編號'
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         text = read(self.card_path())
         rules = text[text.index('## 卡片規則'):text.index('## 規格')]
         self.assertIn(rule, rules)
-        self.assertIn(rule, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'dispatch.ts')))
+        self.assertIn(rule, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'prompts', 'rules.ts')))
 
     def test_done_notes_uncommitted_files(self):
         card, wt = self.confirmed_card_with_commit()
