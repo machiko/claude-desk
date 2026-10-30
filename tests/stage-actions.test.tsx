@@ -185,7 +185,7 @@ test('test_release_prompt_asks_confirmations_through_card', async ($, on) => {
   await clock.settle()
   expect(data.fills).toHaveLength(1)
   const asked = data.fills[0].text as string
-  expect(asked).toBe(releasePrompt([{ name: 'Beta', pr: { id: 12, state: 'MERGED', ci: 'none' } as any }]))
+  expect(asked).toBe(releasePrompt([{ name: 'Beta', root: BETA, git: { branch: 'feature/b' } as any, gate: PASSED.replace('- 關卡：', ''), pr: { id: 12, state: 'MERGED', ci: 'none' } as any }]))
   expect(asked).toStartWith('發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程準備，只問我一次')
   for (const part of ['版號', '只問我一次', '「等你」', 'A) 照做', 'B) 改用', 'C) 先不發', '「狀態」寫做到哪一步', '收到決策', '「等你」清成無']) expect(asked).toContain(part)
   expect(data.submitted).toHaveLength(0)

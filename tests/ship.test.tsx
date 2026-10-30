@@ -32,7 +32,7 @@ test('the ship button shows only when a tag holds the commit and the gate is rel
   expect((await ui.find({ key }))?.text).toBe('✓ 上線確認')
   await ui.press({ key })
   expect(data.files[CARD_B]).toContain('- 關卡：release：')
-  expect((await ui.find({ key }))?.text).toBe('再按 u 確認已上線（清除 release 關卡）')
+  expect((await ui.find({ key }))?.text).toBe('再按 u 確認上線並歸檔（清除 release 關卡）')
   await ui.press({ key })
   await clock.settle()
   expect(data.files[CARD_B]).toContain('- 關卡：無')

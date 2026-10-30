@@ -101,7 +101,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk:card spec <目標> [需求]` | 產生規格草稿並設 `spec：` 關卡；`… ok` 確認 |
 | `/desk:card done <slug> <狀態一句>` | 主對話告一段落時寫回卡片：狀態、下一步（平常是到面板按 v；審查過關後有新 commit 是等自動重新檢查與審查，沒動靜就按 v；審查過關後沒有新 commit 是照面板開 PR 或合併）與 History（分支、HEAD）；規格沒確認會拒絕 |
 | `/desk:flow` | 在主對話（不派 Agent）走六段的說明：每段對話做什麼、面板怎麼看得到，末尾附一行 CLAUDE.md 規則 |
-| `/desk:card archive <slug>` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree） |
+| `/desk:card archive <slug>… [--cleanup]` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree）；發版時帶 `--cleanup` 再移除已合併又乾淨的 worktree 與分支（`git worktree remove`、`git branch -d`），保留的寫進登錄表「## 提醒」 |
 | `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在要發版的那份 main 執行：主 repo，照「⚑ 發版」流程時是從 origin/main 開的暫存 worktree；沒有片段、版本段已存在、片段格式錯都不改檔） |
 
 焦點：`/desk` 或 ctrl+x tab 移到面板，ctrl+x tab 回輸入框。面板裡按 `i` 看完整快捷鍵。
@@ -115,10 +115,10 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | k | 停止 desk 派出去的 Agent（按兩次確認；對話保留） |
 | l | 展開 Agent 最近 10 行輸出 |
 | v | 完成檢查；流程停在檢查段（指令改過、容器沒啟動、檢查中斷）時，跑完流程接著走 |
-| u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡並記 History |
+| u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡、記 History 並歸檔（worktree 與分支保留；發版線與教學那件只清關卡） |
 | o／e／p | 開卡片／審查檔／PR；合併之後 footer 只列該段的主動作（沒打 tag：⚑ 發版與開啟；有 `release：` 關卡：上線確認與開啟；可歸檔：只剩 ⌫ 歸檔），輸出、審查檔、PR 收進 `m` |
 | ⇡ 開 PR／⇡ push | 合併段才出現、沒有快捷鍵，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag） |
-| ⚑ 發版 | 上線段、還沒打 tag 時出現、沒有快捷鍵，按一下把發版請求（列出所有待發版的卡）填入輸入框；Enter 送出後由對話照 [docs/WORKFLOW.md](docs/WORKFLOW.md) 的發版步驟做；對話只問一次：建議版號與理由、包含的卡、選照做後要做的動作寫成一題放進那幾張卡的「等你」，你在面板按 a（照做）、b（改用另一個版號）或 c（先不發）再按 `f`；選照做後一路做完不再問，失敗就停下寫進卡片。面板不打 tag、不 push |
+| ⚑ 發版 | 上線段、還沒打 tag 時出現、沒有快捷鍵，按一下把發版請求（列出所有待發版的卡）填入輸入框，請求也列出發版後要歸檔並移除 worktree 與分支的卡（CI 通過、各卡狀態寫好之後才做；有 `release：` 關卡的卡改由按 `u` 歸檔）；Enter 送出後由對話照 [docs/WORKFLOW.md](docs/WORKFLOW.md) 的發版步驟做；對話只問一次：建議版號與理由、包含的卡、選照做後要做的動作（有要清理的卡時最後一項是歸檔並移除 worktree 與分支）寫成一題放進那幾張卡的「等你」，你在面板按 a（照做）、b（改用另一個版號）或 c（先不發）再按 `f`；選照做後一路做完不再問，失敗就停下寫進卡片。面板不打 tag、不 push |
 | t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`），確認後自動派實作（同 `g`：第一次先問核准檢查；「等你」有事、manual、worktree 有別人的改動時只確認不派；Agent 已滿就排隊）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
 | x／m／i | 展開全文（含完整歷程）／更多動作／說明 |
 | r | 重新整理（在 `m` 更多動作裡；平常定時、每回合結束、對話改了卡片或跑了 git 之後都會自動重讀） |
@@ -152,7 +152,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 ## desk 會寫什麼
 
-- 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
+- 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History（接著跑 `/desk:card archive` 那支腳本歸檔，同 ⌫ 歸檔）；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
 - 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步與審查不 push、不開 PR。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push；更新成功後自動執行 `/reload-plugins`，不重新啟動 Claude Code。
