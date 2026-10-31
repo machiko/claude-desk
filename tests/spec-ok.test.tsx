@@ -45,6 +45,24 @@ test('a real case waiting on its spec offers t to confirm it', async ($, on) => 
   await ui.unmount()
 })
 
+/** 審查 MEDIUM 修正：確認規格就核准檢查，所以第二次按 t 之前要看得到整條指令（平常檢查列只顯示去掉前綴、依寬度截斷的短版） */
+test('test_arming_t_shows_the_full_check_command_that_confirming_approves', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlySpec(data)
+  const long = 'docker compose exec -T app npx vitest run tests/orders/export.test.ts && npm run lint'
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 驗證：`npm test`', `- 驗證：\`${long}\``)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  // 還沒按 t：短版，前綴看不到
+  expect(await screen(ui)).not.toContain(flat('docker compose exec -T app'))
+
+  await ui.press({ key: KEY })
+  await clock.settle()
+  // 按了一次：整條指令連前綴列出來（依欄寬換行，去空白後比對）
+  expect(await screen(ui)).toContain(flat(`核准這條（再按 t 之後自動執行）：${long}`))
+  await ui.unmount()
+})
+
 test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)
@@ -60,7 +78,7 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
   const before = data.files[CARD_B]
   await ui.press({ key: KEY })
   await clock.settle()
-  expect((await ui.find({ key: KEY }))?.text).toBe('再按 t 確認規格')
+  expect((await ui.find({ key: KEY }))?.text).toBe('再按 t 確認規格並核准檢查')
   expect(data.files[CARD_B]).toBe(before)
   expect(specRuns(data)).toHaveLength(0)
 
@@ -85,8 +103,8 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
   await clock.settle()
   expect(log.list.some(e => e.text === 'Beta 規格已確認，可以派實作' && e.tone === 'success')).toBe(true)
   expect(await screen(ui)).not.toContain(flat('Beta 規格已確認，可以派實作'))
-  // 確認後同一次就派出實作（完成檢查先核准一次），不用再按 g
-  expect(data.asks).toHaveLength(1)
+  // 確認後同一次就派出實作，不用再按 g；確認規格就算核准了檢查欄的指令，不再跳「核准並派工」（刻意的行為變更）
+  expect(data.asks).toHaveLength(0)
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
   expect(await screen(ui)).not.toContain(flat('按 g 派 Agent：依審核修正'))

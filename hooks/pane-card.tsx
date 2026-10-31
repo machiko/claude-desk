@@ -157,6 +157,8 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   const passTail = show?.ok && view.isExpanded ? show.tail : []
   const count = show?.summary?.failed !== undefined ? ` · ${show.summary.failed} 支失敗` : ''
   const room = Math.max(10, width - INDENT - KV_LABEL)
+  // 第二次按 t 之前：確認規格就會核准這條指令並自動執行，所以這時列出全文，不用去掉前綴的短版。
+  const specArmed = isArmed(view.armed, `${c.statusPath}\nspec-ok`, view.now)
   const result = running ? <Text color={COLOR.running}>執行中</Text>
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
     : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}${count}`}</Text>
@@ -169,7 +171,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
     head,
     ...(failure?.items ?? []).map(l => line(failure!.isNamed ? fitFailure(l, room) : fit(l, room), COLOR.bad)),
     ...(failure?.more ? [plainLine(failure.more, COLOR.faint)] : []),
-    plainLine(shortCommand(c.verify), COLOR.faint),
+    ...(specArmed ? wrapText(`核准這條（再按 t 之後自動執行）：${c.verify}`, room).map(l => line(l, COLOR.attention)) : [plainLine(shortCommand(c.verify), COLOR.faint)]),
     ...[...(failure?.raw ?? []), ...passTail].map(l => plainLine(l, COLOR.dim)),
   ]
 }
@@ -366,7 +368,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (!view.s.tutorial && busy && awaitsSpecOk(idle) && can('spec-ok')) locked('spec-ok', '✓ 確認規格')
   else if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nspec-ok`, view.now)
-    out.push(button({ key: prefix + 'spec-ok', hotkey: 't', isBoxed: armed || leadKey === 't', isLead: armed || leadKey === 't', isDim: !armed && leadKey !== 't', label: armed ? '再按 t 確認規格' : '✓ 確認規格', onPress: () => act.specOk(c) }))
+    out.push(button({ key: prefix + 'spec-ok', hotkey: 't', isBoxed: armed || leadKey === 't', isLead: armed || leadKey === 't', isDim: !armed && leadKey !== 't', label: armed ? '再按 t 確認規格並核准檢查' : '✓ 確認規格', onPress: () => act.specOk(c) }))
   }
   if (!view.s.tutorial && busy && canArchive(idle) && can('archive')) locked('archive', '⌫ 歸檔')
   else if (!view.s.tutorial && canArchive(c) && can('archive')) {

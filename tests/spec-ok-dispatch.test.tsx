@@ -4,7 +4,7 @@ import { appendTo, setFields, tutorialPaths, TUTORIAL_INTRO } from '../hooks/tut
 import { afterSpecRefusal } from '../hooks/dispatch'
 import { specOkCards, specOkMarks, specOkMatches, specOkTarget, specOkTargets, specOkVerdict } from '../hooks/touch'
 
-// 確認規格後自動派實作：面板按兩次 t 當下派；對話跑 /desk:card spec … ok 的，回合結束後派。核准、排隊、不能派的原因都跟按 g 一樣。
+// 確認規格後自動派實作：面板按兩次 t 當下派；對話跑 /desk:card spec … ok 的，回合結束後派。確認規格就算核准了檢查欄的指令；排隊、不能派的原因都跟按 g 一樣。
 const ALPHA = '/home/u/wt/alpha'
 const BETA = '/home/u/wt/beta'
 const GAMMA = '/home/u/wt/gamma'
@@ -82,7 +82,13 @@ function helpers($: any, clock: any) {
     await ui.press({ key: SPEC_OK(card) }); await clock.settle()
     await ui.press({ key: SPEC_OK(card) }); await clock.settle()
   }
-  return { refresh, pressT }
+  /** 面板上選那件、按兩次 g。 */
+  const pressG = async (ui: any, card: string) => {
+    await ui.press({ key: `row-${card}` })
+    await ui.press({ key: `case-${card}-continue` }); await clock.settle()
+    await ui.press({ key: `case-${card}-continue` }); await clock.settle()
+  }
+  return { refresh, pressT, pressG }
 }
 
 /** AC-1 */
@@ -135,8 +141,8 @@ test('test_spec_confirm_dispatches_build_agent_when_card_is_ready', { timeoutMs:
   await $.command.run({ command: 'desk', args: 'tutorial end' } as any)
 })
 
-/** AC-2 */
-test('test_spec_confirm_dispatches_nothing_when_check_approval_is_declined', { timeoutMs: 15000 }, async ($, on) => {
+/** 確認規格即核准檢查 AC-1：確認規格就算核准了檢查欄當時那條指令，同一次派實作不再跳「核准並派工」 */
+test('test_spec_ok_on_panel_trusts_the_check_and_dispatches_without_asking', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock } = fixture(on)
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   atSpec(data, clock, [CARD_B], { trusted: false })
@@ -145,30 +151,92 @@ test('test_spec_confirm_dispatches_nothing_when_check_approval_is_declined', { t
   await h.refresh()
   const ui = await $.ui.mount(PANE(120))
 
-  // 取消：規格照樣確認，沒有派
-  data.approve = '取消'
   await h.pressT(ui, CARD_B)
-  expect(data.asks).toHaveLength(1)
-  expect(data.askOptions[0]).toEqual(['核准並派工', '取消'])
   expect(data.files[CARD_B]).toContain('- 關卡：無')
-  expect(data.launches).toHaveLength(0)
-  expect(data.toasts).toContain('Beta：規格已確認；沒有核准完成檢查，沒有派實作：要派時按 g')
-  await h.refresh()
-  expect(await screen(ui)).toContain(flat('按 g 派 Agent：'))
-
-  // 核准：對話框還是只跳一次（跟按 g 同一個），同一次派出
-  data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', SPEC_GATE)
-  await h.refresh()
-  data.approve = '核准並派工'
-  await h.pressT(ui, CARD_B)
-  expect(data.asks).toHaveLength(2)
-  expect(data.askOptions[1]).toEqual(['核准並派工', '取消'])
+  expect(data.asks).toHaveLength(0)
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
   expect(data.toasts).toContain('Beta：繼續已派出')
-
   // 核准記在按 g 用的同一份紀錄：之後這張卡同一條指令按 g 不再問
-  expect((data.store.trustedVerify as Record<string, string>)[CARD_B]).toBe('npm test')
+  expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
+  await ui.unmount()
+})
+
+/** 確認規格即核准檢查 AC-3：「等你」還有事、確認後不能派，核准照樣記下；之後清掉「等你」按 g 派實作不再問 */
+test('test_spec_ok_records_trust_even_when_dispatch_is_refused', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B], { trusted: false })
+  scriptOk(data)
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 等你: '匯出要含稅嗎？A) 含 B) 不含' })
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  await h.pressT(ui, CARD_B)
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.launches).toHaveLength(0)
+  expect(data.asks).toHaveLength(0)
+  expect(data.toasts).toContain('Beta：規格已確認；沒有自動派實作（卡片「等你」還有要你決定的事）')
+  expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
+
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 等你: '無' })
+  await h.refresh()
+  await h.pressG(ui, CARD_B)
+  expect(data.asks).toHaveLength(0)
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(BETA)
+  expect(data.toasts).toContain('Beta：繼續已派出')
+  await ui.unmount()
+})
+
+/** 確認規格即核准檢查 AC-4：確認規格後檢查欄被改過，按 g 照舊跳「核准並派工」列出新指令；取消就不派 */
+test('test_g_asks_again_after_the_check_line_changes_since_spec_ok', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B], { trusted: false })
+  scriptOk(data)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  await h.pressT(ui, CARD_B)
+  expect(data.asks).toHaveLength(0)
+  expect(data.launches).toHaveLength(1)
+
+  // 實作的 Agent 做完，檢查欄被改成另一條指令
+  data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 驗證: '`npm test -- --grep x`' })
+  await h.refresh()
+  data.approve = '取消'
+  await h.pressG(ui, CARD_B)
+  expect(data.asks).toHaveLength(1)
+  expect(data.asks[0]).toContain('npm test -- --grep x')
+  expect(data.askOptions[0]).toEqual(['核准並派工', '取消'])
+  expect(data.launches).toHaveLength(1)
+  // 取消什麼都不記：紀錄還是確認規格時那條
+  expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
+  await ui.unmount()
+})
+
+/** 確認規格即核准檢查 AC-5：檢查欄還是 `<…>` 佔位或空白時確認規格，不記核准；派工照舊因缺完成檢查不派 */
+test('test_spec_ok_does_not_trust_a_placeholder_check', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
+  atSpec(data, clock, [CARD_B, CARD_C], { trusted: false })
+  scriptOk(data)
+  // Beta 的檢查欄還是範本佔位，Gamma 的空白
+  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 驗證: '`<一條 exit 0 代表做完的指令>`' })
+  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 驗證: '' })
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+
+  for (const card of [CARD_B, CARD_C]) await h.pressT(ui, card)
+  for (const card of [CARD_B, CARD_C]) expect(data.files[card]).toContain('- 關卡：無')
+  expect(data.launches).toHaveLength(0)
+  expect(data.asks).toHaveLength(0)
+  expect(data.store.trustedVerify).toBeUndefined()
+  for (const name of ['Beta', 'Gamma']) expect(data.toasts).toContain(`${name}：規格已確認；沒有自動派實作（卡片尚缺完成檢查，規格未通過）`)
   await ui.unmount()
 })
 
@@ -224,13 +292,12 @@ test('test_spec_confirm_dispatches_nothing_when_card_asks_or_is_manual_or_worktr
   await ui.unmount()
 })
 
-/** AC-5 */
-test('test_conversation_spec_ok_dispatches_after_turn_ends_but_not_from_subagent_or_failed_script', { timeoutMs: 15000 }, async ($, on) => {
+/** 確認規格即核准檢查 AC-2：主對話跑 spec-ok 確認的，回合結束重讀後派實作、不跳對話框；腳本失敗、subagent 跑的不派、不記核准 */
+test('test_conversation_spec_ok_dispatches_after_turn_ends_without_asking', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock } = fixture(on)
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
-  atSpec(data, clock, [CARD_B, CARD_C])
-  // Beta 的完成檢查還沒核准過：要在回合結束時才問
-  data.store.trustedVerify = { [CARD_C]: 'npm test' }
+  // 兩張的完成檢查都還沒核准過
+  atSpec(data, clock, [CARD_B, CARD_C], { trusted: false })
   conversationBash(on, data)
   const h = helpers($, clock)
   await h.refresh()
@@ -248,14 +315,14 @@ test('test_conversation_spec_ok_dispatches_after_turn_ends_but_not_from_subagent
   await $.tool.call({ tool: 'Bash', command: script('gamma') } as any)
   await clock.advance(1000); await clock.settle()
   expect(data.launches).toHaveLength(0)
-  // 回合結束、重讀後：這時才跳核准對話框（跟按 g 同一個），核准後派 Beta；Gamma 關卡留著、不派
+  // 回合結束、重讀後：確認規格就算核准了檢查，不跳對話框直接派 Beta；Gamma 關卡留著、不派、不記核准
   await $.turn.complete(turnDone())
   await clock.settle()
-  expect(data.asks).toHaveLength(1)
-  expect(data.askOptions[0]).toEqual(['核准並派工', '取消'])
+  expect(data.asks).toHaveLength(0)
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
   expect(data.toasts).toContain('Beta：繼續已派出')
+  expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
   expect(data.files[CARD_C]).toContain('- 關卡：spec：規格改寫中')
   expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
 
@@ -268,7 +335,7 @@ test('test_conversation_spec_ok_dispatches_after_turn_ends_but_not_from_subagent
   await $.turn.complete(turnDone('t1b'))
   await clock.settle()
   expect(data.launches).toHaveLength(1)
-  expect(data.asks).toHaveLength(1)
+  expect(data.asks).toHaveLength(0)
   expect(data.toasts.slice(toasts).some(t => t.startsWith('Gamma：'))).toBe(false)
 
   // (c) subagent 跑的 spec-ok（腳本成功）、手改卡片清掉關卡：只確認，不派、不問
@@ -279,7 +346,8 @@ test('test_conversation_spec_ok_dispatches_after_turn_ends_but_not_from_subagent
   await $.turn.complete(turnDone('t2'))
   await clock.settle()
   expect(data.launches).toHaveLength(1)
-  expect(data.asks).toHaveLength(1)
+  expect(data.asks).toHaveLength(0)
+  expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
   await ui.press({ key: `row-${CARD_C}` })
   await h.refresh()
   expect(await screen(ui)).toContain(flat('按 g 派 Agent：'))
@@ -357,7 +425,7 @@ test('test_conversation_spec_ok_shows_failure_reason_when_auto_dispatch_throws',
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   atSpec(data, clock, [CARD_B], { trusted: false })
   conversationBash(on, data)
-  // 核准完成檢查後要記下核准紀錄，這一步寫入失敗（store.set 被拒）
+  // 確認規格要記下核准紀錄，這一步寫入失敗（store.set 被拒）
   data.storeDeny = { trustedVerify: 'store 寫入失敗' }
   const h = helpers($, clock)
   await h.refresh()
@@ -369,7 +437,7 @@ test('test_conversation_spec_ok_shows_failure_reason_when_auto_dispatch_throws',
 
   await $.turn.complete(turnDone())
   await clock.settle()
-  expect(data.asks).toHaveLength(1)
+  expect(data.asks).toHaveLength(0)
   expect(data.launches).toHaveLength(0)
   const failed = data.toasts.filter(t => t.startsWith('Beta：規格已確認；自動派實作失敗（'))
   expect(failed).toHaveLength(1)
@@ -457,13 +525,13 @@ test('test_conversation_spec_ok_tells_user_to_press_g_when_card_cannot_be_read_a
 
 /**
  * 對話跑 spec-ok 串一條跑很久的指令，這段時間 Gamma 在別處確認了（面板按 t、subagent 或別的對話）：回合結束只派指令裡那張；
- * Gamma 不派、不提示、不跳核准對話框。成功那一行有印出來、輸出被截掉中間兩種都一樣（審查 MEDIUM，D-06）
+ * Gamma 不派、不提示、不跳核准對話框、不記核准。成功那一行有印出來、輸出被截掉中間兩種都一樣（審查 MEDIUM，D-06）
  */
 test('test_conversation_spec_ok_ignores_spec_card_confirmed_elsewhere_while_command_runs', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock } = fixture(on)
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
   atSpec(data, clock, [CARD_A, CARD_B, CARD_C])
-  // Gamma 的完成檢查還沒核准過：被算成這次對話確認的，回合結束就會跳核准對話框
+  // Gamma 的完成檢查還沒核准過：被算成這次對話確認的，回合結束就會派出並記下核准
   data.store.trustedVerify = { [CARD_A]: 'npm test', [CARD_B]: 'npm test' }
   const gammaSpec = data.files[CARD_C]!
   let isTruncated = false
@@ -510,6 +578,7 @@ test('test_conversation_spec_ok_ignores_spec_card_confirmed_elsewhere_while_comm
   expect(data.asks).toHaveLength(0)
   expect(data.toasts).toContain('Alpha：繼續已派出')
   expect(data.toasts.some(t => t.startsWith('Gamma：'))).toBe(false)
+  expect(data.store.trustedVerify).toEqual({ [CARD_A]: 'npm test', [CARD_B]: 'npm test' })
   await ui.unmount()
 })
 
