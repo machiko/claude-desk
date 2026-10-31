@@ -1,5 +1,5 @@
 // 完成檢查的核准：按 g 派實作前，這張卡的檢查指令還沒核准過就先問；確認規格時直接記下（trustCheck）。核准紀錄在 $.store（TRUST_KEY）。
-// 從 register.tsx 搬出來（只搬不改）；吃 $ 的函式一律用 function 宣告。
+// approveCheck 是從 register.tsx 搬出來的；吃 $ 的函式一律用 function 宣告。
 import type { Case } from '../types'
 import { TRUST_KEY } from './desk-io'
 
@@ -22,7 +22,6 @@ export async function approveCheck($: any, c: Case): Promise<boolean> {
   await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
   return true
 }
-
 
 /**
  * 確認規格（面板 t、對話 spec-ok、教學）就算核准了檢查欄當時那條指令：不問，記進按 g 用的同一份紀錄。

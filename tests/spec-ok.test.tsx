@@ -45,6 +45,24 @@ test('a real case waiting on its spec offers t to confirm it', async ($, on) => 
   await ui.unmount()
 })
 
+/** 審查 MEDIUM 修正：確認規格就核准檢查，所以第二次按 t 之前要看得到整條指令（平常檢查列只顯示去掉前綴、依寬度截斷的短版） */
+test('test_arming_t_shows_the_full_check_command_that_confirming_approves', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlySpec(data)
+  const long = 'docker compose exec -T app npx vitest run tests/orders/export.test.ts && npm run lint'
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 驗證：`npm test`', `- 驗證：\`${long}\``)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  // 還沒按 t：短版，前綴看不到
+  expect(await screen(ui)).not.toContain(flat('docker compose exec -T app'))
+
+  await ui.press({ key: KEY })
+  await clock.settle()
+  // 按了一次：整條指令連前綴列出來（依欄寬換行，去空白後比對）
+  expect(await screen(ui)).toContain(flat(`核准這條（再按 t 之後自動執行）：${long}`))
+  await ui.unmount()
+})
+
 test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)
