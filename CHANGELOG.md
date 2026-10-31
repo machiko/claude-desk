@@ -2,6 +2,10 @@
 
 ## 未發布
 
+## 0.42.0
+
+- 新增 做完的背景 Agent 由 desk 在下一次重新整理時自動 stop（對話保留，之後派工照常 --resume），不再等 daemon 回收；全域 dispatch.json 設 `stopDone: false` 關掉
+
 ## 0.41.0
 
 - 調整 背景 Agent 不再載入 MCP server（每件派工省下七支常駐程序），要用的專案在 dispatch.json 設 `mcp: true` 開回來
