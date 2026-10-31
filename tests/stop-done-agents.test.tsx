@@ -152,3 +152,25 @@ test('stop done: a desk-stopped finished agent does not pause the chain', async 
   expect(data.toasts.some((t: string) => t.includes(AGENT_STOPPED))).toBe(false)
   expect(data.stops).toEqual(['a0000001'])
 })
+
+/** 別的專案（不在這個登錄表上）最後一次派工的實作做完：先替它記成做完再停，那邊的 desk 下一輪看到 stopped 也不會當成被人停掉。 */
+test('stop done: another project\'s finished last launch is noted as finished before it is stopped', async ($, on) => {
+  const { data, clock } = fixture(on)
+  finished(data)
+  const OTHER = '/home/u/other-wt/delta'
+  const OTHER_SID = 'ffffffff-0000-4000-8000-000000000000'
+  data.store.jobs = { ...(data.store.jobs as any), [OTHER]: { sessionId: OTHER_SID, last: { launchName: LEFTOVER, nativeId: 'ffffffff', sessionId: OTHER_SID, kind: 'continue', startedAt: OLD_AT, fresh: false } } }
+  data.agents = [data.agents[0], { ...data.agents[1], id: 'ffffffff', cwd: OTHER, sessionId: OTHER_SID }]
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  expect((data.store.jobs as any)[OTHER].last.ended).toEqual({ how: 'finished' })
+
+  // 停掉之後清單裡 state 變 stopped、沒有 pid：紀錄照舊是做完
+  data.agents = data.agents.map(({ status: _s, pid: _p, ...a }: any) => ({ ...a, state: 'stopped' }))
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  expect([...data.stops].sort()).toEqual(['bbbbbbbb', 'ffffffff'])
+  expect((data.store.jobs as any)[OTHER].last.ended).toEqual({ how: 'finished' })
+})

@@ -194,9 +194,11 @@ export async function refresh($: any, options: PluginOptions) {
     await stopSuperseded($, cases, superseded, now)
     // 清單是真的（不是教學、claude agents 沒失敗）才看得出誰結束了。
     if (!tutorial && agentsOut && agentsOut.exitCode === 0) {
-      await noteEnded($, list, cases)
-      // 做完、程序還活著的工作桌 Agent 停掉；要在 noteEnded 之後，最後一次派工才先記成做完（停掉後不算被人停掉）。
-      if (settings?.stopDone !== false) await stopEnded($, cases, endedAlive(list), now)
+      // 做完、程序還活著的工作桌 Agent 要停掉：它們的根目錄（含別的專案、已歸檔的）也先記結束，
+      // 最後一次派工才先記成做完，停掉後那邊的流程不會當成被人停掉。
+      const ended = settings?.stopDone !== false ? endedAlive(list) : []
+      await noteEnded($, list, [...cases.filter(c => !c.demo).map(c => c.root), ...ended.map(a => a.root)])
+      await stopEnded($, cases, ended, now)
       await noteCardAsks($, list, cases, now)
     }
     // 先補派排隊的（同一輪的清單），流程這一輪新派的排在它們後面：先來先派。派出了就用重算過的快照，流程才看得到它在跑。
@@ -213,19 +215,17 @@ export async function refresh($: any, options: PluginOptions) {
 }
 
 /**
- * 最後一次派工的 Agent 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
+ * 這幾個根目錄（登錄表上的卡，加上要停掉的做完 Agent 所在的，可能是別的專案）最後一次派工的 Agent 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
  * 之後派工用它分辨「現在的改動是上一個 Agent 留下的」還是別的對話在改。每一次派工只記一次，審查與同步不動指紋。
  */
-async function noteEnded($: any, list: readonly any[], cases: readonly Case[]) {
-  for (const c of cases) {
-    if (c.demo) continue
-    const key = normalizeRoot(c.root)
+async function noteEnded($: any, list: readonly any[], roots: readonly string[]) {
+  for (const key of new Set(roots.map(normalizeRoot))) {
     const last = (await loadJobs($))[key]?.last
     if (!last || last.ended) continue
     const how = endedHow(list, last.launchName)
     if (!how) continue
     const codeAgent = last.kind === 'continue' || last.kind === 'reply' || last.kind === 'catchup'
-    const mark = codeAgent ? await worktreeMark($, c.root) : undefined
+    const mark = codeAgent ? await worktreeMark($, key) : undefined
     // 算指紋的這段時間可能剛派了新工：只改還是同一筆的紀錄。
     const all = await loadJobs($)
     const cur = all[key]?.last
