@@ -11,7 +11,7 @@ import { deploySteps, historyEntries, mediumToFix, parseReminders, reviewTop } f
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
@@ -756,7 +756,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
       const recorded = opts.security ? run?.securityHead : run?.reviewHead
       const base = recorded && recorded !== c.git?.branch ? recorded : undefined
       const paths = await deskPaths($, options)
-      const pitfalls = paths.pitfalls
+      const pitfalls = pitfallsFor(settings, paths.pitfalls, await home($))
       const template = settings.review.template || `${$.plugin.root}/templates/review.md`
       const recheck = !!opts.auto && !!run?.recheck && !opts.security
       const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target

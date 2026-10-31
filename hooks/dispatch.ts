@@ -1,7 +1,7 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
-import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
+import { CARD_CMD, PLAN_STEP, expandHome, isPlaceholder, named, parseGate, saysNone } from './card'
 import type { ChainRun } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 import { DONE_RULE, SPEC_RULE, cardRules, changelogRule, testRule } from './prompts/rules'
@@ -32,8 +32,12 @@ export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish' 
 /** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
 export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
 export type ModelKind = typeof MODEL_KINDS[number]
-/** 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。 */
-export type ReviewWords = { high: string; security: string; categories: string; template: string }
+/**
+ * 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。
+ * preflight 是審查前置指令（`{root}`、`{base}` 佔位），審查先跑、輸出當候選逐條驗證；空白不加前置句。
+ * pitfalls 是專案自己的常犯錯誤清單路徑（可用 `~`），優先於 plugin 選項與專案資料夾預設。
+ */
+export type ReviewWords = { high: string; security: string; categories: string; template: string; preflight?: string; pitfalls?: string }
 export type DispatchSettings = {
   model: string; effort: string; sync: { model: string; effort: string; fresh: boolean }
   projects: Record<string, { model?: string; effort?: string; rules?: string[] }>
@@ -72,6 +76,8 @@ export const DEFAULT_REVIEW: ReviewWords = {
   security: '授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩（log、匯出、版控）、機密與金鑰、檔案路徑、外部呼叫',
   categories: '授權、個資、測試、命名',
   template: '',
+  preflight: '',
+  pitfalls: '',
 }
 
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
@@ -99,7 +105,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     out.kinds = parseKinds(d?.kinds)
     out.user = str(d?.user) || DEFAULT_USER
     out.rules = strList(d?.rules)
-    out.review = { high: str(d?.review?.high) || DEFAULT_REVIEW.high, security: str(d?.review?.security) || DEFAULT_REVIEW.security, categories: str(d?.review?.categories) || DEFAULT_REVIEW.categories, template: str(d?.review?.template) }
+    out.review = { high: str(d?.review?.high) || DEFAULT_REVIEW.high, security: str(d?.review?.security) || DEFAULT_REVIEW.security, categories: str(d?.review?.categories) || DEFAULT_REVIEW.categories, template: str(d?.review?.template), preflight: str(d?.review?.preflight), pitfalls: str(d?.review?.pitfalls) }
     if (Array.isArray(d?.risk?.high)) for (const r of d.risk.high) {
       // 寫錯的正規式略過，不讓整份設定失效。
       try { if (str(r?.pattern) && str(r?.label)) out.riskHigh.push([new RegExp(str(r.pattern)), str(r.label)]) } catch { /* 略過 */ }
@@ -137,6 +143,12 @@ function parseKinds(v: unknown): DispatchSettings['kinds'] {
 }
 
 export const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
+
+/** 審查要讀的常犯錯誤清單：專案 dispatch.json 的 review.pitfalls（展開 ~）優先；空白用 fallback（plugin 選項 → 專案資料夾 review-pitfalls.md）。 */
+export function pitfallsFor(settings: DispatchSettings, fallback: string, home: string): string {
+  const own = settings.review.pitfalls ?? ''
+  return own ? expandHome(own, home) : fallback
+}
 
 /** 這件任務這種派工用的 model／effort：種類（kinds）> 任務覆寫 > 全域；同步另有自己的模型，解衝突照 continue（接任務的 session）。 */
 export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind): { model: string; effort: string; fresh: boolean } {

@@ -7,7 +7,7 @@ export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
 
 /** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單與過去審查紀錄在哪。 */
-export type ReviewOpts = { round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; history: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string }
+export type ReviewOpts = { round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; history: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string; /** 審查前置指令的 `{root}`；沒給用任務根目錄。 */ root?: string }
 
 /** 下一步以 .task/review-… 開頭時，那個路徑。 */
 export function reviewTask(c: Case): string {
@@ -39,6 +39,16 @@ function mergedBase(base: string, target?: string): string {
   return `這段含把 ${into} 併進來的 merge commit 時，${into} 帶進來的改動不審，改看 \`git log -p --remerge-diff --first-parent ${base}..HEAD\`（merge commit 只顯示衝突怎麼解，其他是分支自己的 commit）。`
 }
 
+/**
+ * 審查前置句（dispatch.json 的 review.preflight）：先跑那條指令，輸出只當候選、逐條驗證過才列；結果記在審查檔第一行。
+ * `{root}` 換成任務根目錄、`{base}` 換成這次看的基準（複審與重新審查是上次審查的 HEAD，第一次是基準分支，不明就空字串）；其他佔位原樣保留。
+ * desk 不執行也不檢查這條指令，失敗由審查自己略過。
+ */
+function preflightRule(cmd: string, vars: { root: string; base: string }, file: string): string {
+  const run = cmd.replace(/\{(root|base)\}/g, (_, k: 'root' | 'base') => vars[k]).trim()
+  return `審查前置：先執行 \`${run}\`，它的輸出是候選清單，每條都要自己逐條驗證過才准列進 ${file}，未驗證的不算；${file} 第一行記「前置：成功，候選 n 條，採用 m 條」。指令失敗（找不到、非 0、超時）就略過、照常審查，第一行記「前置：失敗（原因）」。`
+}
+
 export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
   // 「MEDIUM 不加註記」只在還有修正輪數時說：輪數用完時 mediumRule 要可能影響行為的標「（等你決定）」，兩句不能相反。
@@ -51,6 +61,7 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
   return [
     `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續 Agent、不參考 Agent 的結論。`,
     `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。自己重跑完成檢查 \`${c.verify}\`。`,
+    ...(words.preflight ? [preflightRule(words.preflight, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file)] : []),
     scope,
     ...(r?.pitfalls ? [`先讀專案常犯錯誤清單 ${r.pitfalls}，逐條對照這次的改動。`] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
