@@ -247,6 +247,23 @@ export function supersede(list: readonly any[], last: Readonly<Record<string, La
     : { list: [...acc.list, a], superseded: acc.superseded }, { list: [], superseded: [] })
 }
 
+/** 做完（done／failed）但程序還活著的工作桌 Agent。 */
+export type EndedAlive = { root: string; id: string; name: string; startedAt: number | null }
+
+/**
+ * 挑出做完、程序還活著的 Agent：工作桌派的（desk- 開頭）、state done／failed、不在跑（status 不是 busy／waiting）、
+ * JSON 有數字的 pid（程序早已退出的沒有 pid）、有 id。不看根目錄在不在工作桌上（歸檔後留下的也算）；停在提問（blocked）的不算。
+ */
+export function endedAlive(list: readonly any[]): EndedAlive[] {
+  return list.flatMap(a => {
+    const status = String(a?.status ?? '').toLowerCase()
+    const state = String(a?.state ?? '').toLowerCase()
+    const alive = a?.kind === 'background' && isDeskLaunch(String(a?.name ?? '')) && (state === 'done' || state === 'failed')
+      && status !== 'busy' && status !== 'waiting' && typeof a.pid === 'number' && typeof a.id === 'string' && !!a.id
+    return alive ? [{ root: cwdOf(a), id: a.id as string, name: plain(String(a.name)), startedAt: typeof a.startedAt === 'number' ? a.startedAt : null }] : []
+  })
+}
+
 export function agentInfo(a: any): AgentInfo {
   const waitsFor = waitsOf(a)
   return { ...(typeof a.id === 'string' ? { id: a.id } : {}), name: plain(String(a.name ?? a.id ?? '')), ...(typeof a.sessionId === 'string' ? { sessionId: a.sessionId } : {}), state: String(a.state ?? ''), status: String(a.status ?? ''), ...(a.waitingFor ? { waitingFor: plain(String(a.waitingFor)) } : {}), ...(waitsFor ? { waitsFor } : {}), ...(typeof a.startedAt === 'number' ? { startedAt: a.startedAt } : {}) }

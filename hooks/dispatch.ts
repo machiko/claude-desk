@@ -60,6 +60,8 @@ export type DispatchSettings = {
   autoPr: boolean
   /** 背景 Agent 要不要載入 MCP server。預設不載（`--strict-mcp-config`）：每個 MCP 都是一支常駐程序，派工一多就吃掉記憶體；要用再在 dispatch.json 設 `mcp: true`。 */
   mcp: boolean
+  /** 做完的背景 Agent 由工作桌在下一次重新整理時 `claude stop` 收掉：不停的話每支各佔幾百 MB，閒置到 daemon 回收。預設開，只有 JSON 的 false 關掉。 */
+  stopDone: boolean
 }
 
 export const DEFAULT_MAX_AGENTS = 3
@@ -83,7 +85,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, mcp: false }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, mcp: false, stopDone: true }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -114,6 +116,8 @@ export function parseSettings(text: string | null): DispatchSettings {
     out.autoPr = d?.autoPr === true
     // 同 autoPr：只認明確的 true。
     out.mcp = d?.mcp === true
+    // 反過來：預設開，只認明確的 false 關掉。
+    out.stopDone = d?.stopDone !== false
   } catch { /* 壞掉的設定檔當作沒有。 */ }
   return out
 }

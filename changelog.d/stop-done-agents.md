@@ -1,0 +1,1 @@
+- 新增 做完的背景 Agent 由 desk 在下一次重新整理時自動 stop（對話保留，之後派工照常 --resume），不再等 daemon 回收；全域 dispatch.json 設 `stopDone: false` 關掉
