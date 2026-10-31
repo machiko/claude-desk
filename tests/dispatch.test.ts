@@ -41,6 +41,14 @@ test('launch args omit empty flags, resume only with a session, and keep the pro
   expect(launchArgs('p', { launchName: 'n', sessionId: 's', model: 'opus', effort: 'high' })).toEqual(['claude', '--bg', '--name', 'n', '--resume', 's', '--model', 'opus', '--effort', 'high', '--strict-mcp-config', 'p'])
 })
 
+test('settings: stopDone is on unless the JSON says false', () => {
+  expect(parseSettings(null).stopDone).toBe(true)
+  expect(parseSettings(JSON.stringify({})).stopDone).toBe(true)
+  expect(parseSettings(JSON.stringify({ stopDone: false })).stopDone).toBe(false)
+  expect(parseSettings(JSON.stringify({ stopDone: 'false' })).stopDone).toBe(true)
+  expect(parseSettings(JSON.stringify({ stopDone: 0 })).stopDone).toBe(true)
+})
+
 test('launch args skip MCP servers unless mcp is on; settings only accept an explicit true', () => {
   expect(launchArgs('p', { launchName: 'n', mcp: true })).toEqual(['claude', '--bg', '--name', 'n', 'p'])
   expect(launchArgs('p', { launchName: 'n', mcp: false })).toContain('--strict-mcp-config')

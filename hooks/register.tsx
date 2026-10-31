@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, saysNone } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
 import { archiveReview, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToFix, parseReminders, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
@@ -31,7 +31,7 @@ import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } f
 import { isBusy, sentState } from './turn'
 import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
-import { lastLaunches, noteCardAsks, stopSuperseded } from './stale-agents'
+import { lastLaunches, noteCardAsks, stopEnded, stopSuperseded } from './stale-agents'
 import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAgentQueue, isAgentQueued, notSent, queuePosition, readAgentQueue, requeue } from './agent-queue'
 import { DEMO_ONLY, archiveCase, autoPublish, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
 import { autoPrApplies, autoPrPlan, passWords } from './auto-pr'
@@ -195,6 +195,8 @@ export async function refresh($: any, options: PluginOptions) {
     // 清單是真的（不是教學、claude agents 沒失敗）才看得出誰結束了。
     if (!tutorial && agentsOut && agentsOut.exitCode === 0) {
       await noteEnded($, list, cases)
+      // 做完、程序還活著的工作桌 Agent 停掉；要在 noteEnded 之後，最後一次派工才先記成做完（停掉後不算被人停掉）。
+      if (settings?.stopDone !== false) await stopEnded($, cases, endedAlive(list), now)
       await noteCardAsks($, list, cases, now)
     }
     // 先補派排隊的（同一輪的清單），流程這一輪新派的排在它們後面：先來先派。派出了就用重算過的快照，流程才看得到它在跑。
