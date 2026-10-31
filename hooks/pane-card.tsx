@@ -366,7 +366,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (!view.s.tutorial && busy && awaitsSpecOk(idle) && can('spec-ok')) locked('spec-ok', '✓ 確認規格')
   else if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nspec-ok`, view.now)
-    out.push(button({ key: prefix + 'spec-ok', hotkey: 't', isBoxed: armed || leadKey === 't', isLead: armed || leadKey === 't', isDim: !armed && leadKey !== 't', label: armed ? '再按 t 確認規格' : '✓ 確認規格', onPress: () => act.specOk(c) }))
+    out.push(button({ key: prefix + 'spec-ok', hotkey: 't', isBoxed: armed || leadKey === 't', isLead: armed || leadKey === 't', isDim: !armed && leadKey !== 't', label: armed ? '再按 t 確認規格並核准檢查' : '✓ 確認規格', onPress: () => act.specOk(c) }))
   }
   if (!view.s.tutorial && busy && canArchive(idle) && can('archive')) locked('archive', '⌫ 歸檔')
   else if (!view.s.tutorial && canArchive(c) && can('archive')) {

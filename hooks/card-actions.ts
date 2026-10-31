@@ -18,7 +18,7 @@ import type { AutoPrPlan } from './auto-pr'
 import { feedPush, loadJobs, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
-import { approveCheck } from './approve-check'
+import { trustCheck } from './approve-check'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 
 export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
@@ -190,16 +190,16 @@ export async function confirmSpec($: any, options: PluginOptions, c: Case) {
 
 /**
  * 規格剛確認（面板 t、教學的 t、對話跑的 spec-ok）：用重讀後的卡照按 g 派實作。
- * 「等你」還有事或手動派也不能派的，只說原因；完成檢查沒核准過先問（同一個對話框），不核准就不派；
- * 核准了就當手動派工交給 dispatch：worktree 有別人的改動、啟動中、已在隊伍、Agent 已滿排隊都照按 g 處理。
+ * 確認規格等於核准檢查欄當時的指令：先記下核准（不能派也記，之後按 g 不再問），不跳對話框；
+ * 「等你」還有事或手動派也不能派的，只說原因；其餘當手動派工交給 dispatch：worktree 有別人的改動、啟動中、已在隊伍、Agent 已滿排隊都照按 g 處理。
  */
 export async function dispatchAfterSpec($: any, options: PluginOptions, statusPath: string): Promise<boolean> {
   const c = ((await read($, snapshotAtom)) as Snapshot | null)?.cases.find(x => x.statusPath === statusPath)
   // 重讀到的關卡還是 spec（腳本失敗、重讀失敗）：沒有確認，不派也不出聲。
   if (!c || c.demo || parseGate(c.gate)?.kind === 'spec') return false
+  await trustCheck($, c)
   const why = afterSpecRefusal(c)
   if (why) { await notDispatched($, c, `規格已確認；沒有自動派實作（${why}）`); return false }
-  if (!(await approveCheck($, c))) { await notDispatched($, c, '規格已確認；沒有核准完成檢查，沒有派實作：要派時按 g'); return false }
   return dispatch($, options, c, 'continue')
 }
 

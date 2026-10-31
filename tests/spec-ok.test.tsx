@@ -60,7 +60,7 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
   const before = data.files[CARD_B]
   await ui.press({ key: KEY })
   await clock.settle()
-  expect((await ui.find({ key: KEY }))?.text).toBe('再按 t 確認規格')
+  expect((await ui.find({ key: KEY }))?.text).toBe('再按 t 確認規格並核准檢查')
   expect(data.files[CARD_B]).toBe(before)
   expect(specRuns(data)).toHaveLength(0)
 
@@ -85,8 +85,8 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
   await clock.settle()
   expect(log.list.some(e => e.text === 'Beta 規格已確認，可以派實作' && e.tone === 'success')).toBe(true)
   expect(await screen(ui)).not.toContain(flat('Beta 規格已確認，可以派實作'))
-  // 確認後同一次就派出實作（完成檢查先核准一次），不用再按 g
-  expect(data.asks).toHaveLength(1)
+  // 確認後同一次就派出實作，不用再按 g；確認規格就算核准了檢查欄的指令，不再跳「核准並派工」（刻意的行為變更）
+  expect(data.asks).toHaveLength(0)
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
   expect(await screen(ui)).not.toContain(flat('按 g 派 Agent：依審核修正'))
