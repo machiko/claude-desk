@@ -32,6 +32,13 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
    - `git -C <root> log --oneline -10`、`git -C <root> status --short`；分支已有改動就看它相對 merge-base 的 `git diff --stat`。
    - 需求牽涉的程式：路由、控制器／服務、權限設定、既有測試。範圍大就派 Explore agent 查，只帶回結論。
    - 不改程式、不 commit、不碰其他任務的卡。
+2b. **規格前審（有 `spec preflight:` 時）**：
+   - 步驟 1 印出 `spec preflight: <指令>` 時，先決定 `--paths`（步驟 2 讀到的相關程式模組，逗號分隔路徑清單）；將 `{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成模組路徑，其餘佔位原樣保留。
+   - 執行該前審指令並讀取輸出檔（預設 `.task/SPEC-gemini.md`）。
+   - 候選清單只當建議：與卡片 Scope、非目標衝突的丟掉；採用的寫進 AC 表，並在「對應測試」欄保留建議的測試名（標（新））。
+   - History 加一行：`- YYYY-MM-DD：規格前審：候選 m、採用 n、<丟棄原因一句>`（全數採用時寫全數採用）。
+   - 指令執行失敗（找不到指令、非 0、超時）就跳過前審照常寫規格，History 記一行：`- YYYY-MM-DD：規格前審：略過（<原因>）`。
+   - desk 不執行也不檢查這條指令。
 3. **已有規格時**：`filled AC` 不是 none，就先用 AskUserQuestion 問「取代／只補缺漏／取消」，照答案做。
 4. **釐清問題**：只問「答案會改變驗收情境」的事，能從卡片或程式讀到的不要問。
    - 用 AskUserQuestion，一次最多 4 題，總共 3–5 題；每題 2–4 個具體選項，推薦的放第一個並標「(Recommended)」。
