@@ -510,7 +510,10 @@ class CardScriptTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(archive, 'order-export-notes.md')))
 
     def test_archive_runs_configured_retro_command_with_slug_substitution(self):
-        """AC-1: card.retro 有設定時，archive 複製完 .task 檔後執行指令，代換 {slug} 並原樣印出 stdout。"""
+        """AC-1: card.retro 有設定時，archive 複製完 .task 檔後執行指令，代換 {slug} 並在 cleanup 前執行。"""
+        wt = self.open_case('feature/order-export', '訂單匯出', merged=True)
+        task = os.path.join(wt, '.task')
+        write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
         checker = (
             'python3 -c "'
             'import os, sys; '
@@ -518,18 +521,17 @@ class CardScriptTest(unittest.TestCase):
             'wt = os.path.isdir(sys.argv[2]); '
             'sys.exit(0 if (arch and wt) else 1)" '
             f'{os.path.join(self.t, "archive", "order-export-REVIEW.md")} '
-            f'{os.path.join(self.main + "-worktrees", "order-export")} '
+            f'{wt} '
             '&& echo retro-output for {slug}'
         )
         self.write_settings({'card': {'retro': checker}})
-        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
-        task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
-        write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
 
-        r = self.run_card('archive', 'order-export')
+        r = self.run_card('archive', 'order-export', '--cleanup')
 
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('retro-output for order-export', r.stdout)
+        # 歸檔完成後 cleanup 正常移除 worktree，證明 retro 是在 cleanup 前執行
+        self.assertNotIn(os.path.realpath(wt), self.worktrees())
 
     def test_archive_continues_when_retro_command_fails(self):
         """AC-2: card.retro 失敗時印出一行警示，但歸檔不中斷。"""
