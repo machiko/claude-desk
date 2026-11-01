@@ -229,7 +229,8 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
     "base": "origin/main",
     "check": "make test-worktree SLUG={slug}",
     "template": "~/my-templates/DESK-template.md",
-    "specRules": ["寫入操作的「則」要包含稽核紀錄"]
+    "specRules": ["寫入操作的「則」要包含稽核紀錄"],
+    "specPreflight": "agy-spec --root {root} --card {card} --paths {paths}"
   }
 }
 ```
@@ -253,6 +254,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
 | `updateCheck` | `"off"` 不自動檢查 desk 新版本；沒設＝每 24 小時查一次（`/desk update` 不受影響） |
 | `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base（desk 也拿它當 diff 與合併判斷的基準之一）、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
+| `card.specPreflight` | 規格前審指令：`/desk:card spec` 讀現況後提示執行，輸出當候選清單（`.task/SPEC-gemini.md`）供對話篩選併入規格；指令失敗跳過照常寫規格。任何會輸出規格候選的工具都行。`{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成相關模組檔案路徑（逗號分隔），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
 
 ## 開發
 

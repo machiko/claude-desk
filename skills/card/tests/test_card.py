@@ -208,6 +208,7 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('branch: feature/order-export', info)
         self.assertIn('user: Alex', info)
         self.assertIn('rule: 寫入操作要有稽核紀錄', info)
+        self.assertNotIn('spec preflight:', info)
         self.assertEqual(self.run_card('spec-init', 'order-export').stdout.strip(), f'已有「## 規格」：{card}')
         # 關卡不是 spec：拒絕；AC 還空著：拒絕
         self.assertNotEqual(self.run_card('spec-ok', 'order-export').returncode, 0)
@@ -221,6 +222,20 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('- 關卡：無', text)
         self.assertIn('- 狀態：規格已確認（AC-1～AC-2），可派實作', text)
         self.assertRegex(text, r'- D-02 \d{4}-\d{2}-\d{2} Alex：確認規格（AC-1～AC-2，共 2 條）與實作計畫（1 項）')
+
+    def test_card_command_outputs_spec_preflight_when_configured(self):
+        """AC-1: card.specPreflight 有設定時，card.py card <目標> 印出 spec preflight: <指令> 並保留佔位。"""
+        self.write_settings({'card': {'specPreflight': 'agy-spec --root {root} --card {card} --paths {paths}'}})
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        info = self.run_card('card', 'order-export').stdout
+        self.assertIn('spec preflight: agy-spec --root {root} --card {card} --paths {paths}', info)
+
+    def test_card_command_omits_spec_preflight_when_unset(self):
+        """AC-2: card.specPreflight 未設或空白時，不印出 spec preflight: 行。"""
+        self.write_settings({'card': {'specPreflight': '   '}})
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        info = self.run_card('card', 'order-export').stdout
+        self.assertNotIn('spec preflight:', info)
 
     def test_spec_ok_refuses_without_plan(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')

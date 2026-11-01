@@ -410,6 +410,8 @@ def cmd_card(arg):
     # 建議的完成檢查只對 worktree 有意義（{slug} 是 worktree 資料夾名）。
     if cfg('check') and WT_ROOT and os.path.dirname(root.rstrip('/')) == WT_ROOT.rstrip('/'):
         print(f'suggested check: {cfg("check").replace("{slug}", os.path.basename(root))}')
+    if cfg('specPreflight'):
+        print(f'spec preflight: {cfg("specPreflight")}')
     for rule in SPEC_RULES:
         print(f'rule: {rule}')
 
