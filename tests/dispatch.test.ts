@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, pushRequest } from '../hooks/dispatch'
+import { parseSettings, pitfallsFor, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, pushRequest } from '../hooks/dispatch'
 import { parseGate } from '../hooks/card'
 import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
@@ -608,4 +608,110 @@ test('settings: maxAgents falls back to 3 and only busy desk agents count as run
   for (const bad of ['-1', '2.5', '"4"', 'null']) expect(parseSettings(`{"maxAgents":${bad}}`).maxAgents).toBe(3)
   const bg = (name: string, status: string) => ({ kind: 'background', name, status, cwd: '/x' })
   expect(runningDeskAgents([bg('desk-m1-0', 'busy'), bg('desk-m1-1', 'waiting'), bg('desk-m1-2', 'idle'), bg('helper', 'busy'), { ...bg('desk-m1-3', 'busy'), kind: 'interactive' }, bg('desk-m1-4', 'BUSY')])).toBe(2)
+})
+
+/** review-preflight：審查前置指令（review.preflight）與常犯錯誤清單路徑（review.pitfalls）。 */
+const mkAt = (root: string) => buildCase({ name: 'A', statusPath: `${root}/.desk/CARD.md` }, card('寫測試'), 1, {}, undefined)
+const AGY = parseSettings(JSON.stringify({ review: { preflight: 'agy-review --root {root} --base {base}' } }))
+
+/** AC-1：第一次程式碼審查，佔位代換成任務根目錄與 diff 基準；前置句在契約那行之後，含候選、逐條驗證、第一行紀錄與失敗照審。 */
+test('test_review_prompt_includes_preflight_with_substitution', () => {
+  const p = buildPrompt(mkAt('/w/x'), 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '', history: '' }, AGY)
+  const lines = p.split('\n')
+  expect(lines[1]!.startsWith('契約：')).toBe(true)
+  const pre = lines[2]!
+  expect(pre).toContain('先執行 `agy-review --root /w/x --base origin/main`')
+  expect(pre).toContain('候選清單')
+  expect(pre).toContain('逐條驗證')
+  expect(pre).toContain('未驗證的不算')
+  expect(pre).toContain('.task/REVIEW.md')
+  expect(pre).toContain('第一行記「前置：成功，候選 n 條，採用 m 條」')
+  expect(pre).toContain('找不到、非 0、超時')
+  expect(pre).toContain('照常審查')
+  expect(pre).toContain('「前置：失敗（原因）」')
+})
+
+/** AC-2：複審、重新審查、資安審查都附前置句；複審與重新審查的 {base} 是那次看的基準，基準不明時代換成空字串。 */
+test('test_review_prompt_preflight_on_rereview_and_security', () => {
+  const c = mkAt('/w/x')
+  const rereview = buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', target: 'origin/main', pitfalls: '', history: '' }, AGY)
+  const recheck = buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, target: 'origin/main', pitfalls: '', history: '' }, AGY)
+  const security = buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }, AGY)
+  for (const p of [rereview, recheck]) expect(p).toContain('先執行 `agy-review --root /w/x --base abc123`')
+  expect(security).toContain('先執行 `agy-review --root /w/x --base`')
+  expect(security).toContain('.task/SECURITY.md 第一行記「前置：成功')
+  for (const p of [rereview, recheck, security]) expect(p).toContain('「前置：失敗（原因）」')
+  // 資安審查有基準分支時用它
+  expect(buildPrompt(c, 'review', '', undefined, { round: 0, security: true, target: 'origin/main', pitfalls: '', history: '' }, AGY)).toContain('--base origin/main`')
+})
+
+/** 加這個功能之前的審查提示詞（到「任務：」之前），用來確認沒設前置時逐字不變。 */
+const SNAP_GRADES = (file: string) => `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 授權、個資、測試、命名）。寫進 ${file}（整份覆寫）。`
+const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）不加註記、不寫進 等你，工作桌會跟 CRITICAL／HIGH 一起自動派修正；要你決定才能處理的（驗收情境無法驗證、要改規格才能修）才審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」。都算進關卡的 MEDIUM 數。'
+const SNAP_GATE = '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>'
+const SNAP_CONTRACT = '契約：templates/review.md。自己重跑完成檢查 `true`。'
+const SNAPSHOT = {
+  code: [
+    '程式碼審查：這是新的對話，不接續 Agent、不參考 Agent 的結論。', SNAP_CONTRACT,
+    '看這個分支相對 origin/main 的 diff（從 git merge-base 起算）。',
+    '先讀專案常犯錯誤清單 /h/pitfalls.md，逐條對照這次的改動。',
+    SNAP_GRADES('.task/REVIEW.md'), SNAP_MEDIUM, SNAP_GATE,
+    '審完後看 /h/reviews 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 /h/pitfalls.md 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。',
+    '不改程式、不 commit。',
+  ],
+  security: [
+    '資安審查：這是新的對話，不接續 Agent、不參考 Agent 的結論。', SNAP_CONTRACT,
+    '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。',
+    '資安審查只看：授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩（log、匯出、版控）、機密與金鑰、檔案路徑、外部呼叫；其他交給程式碼審查。',
+    SNAP_GRADES('.task/SECURITY.md'), SNAP_MEDIUM, SNAP_GATE,
+    '不改程式、不 commit。',
+  ],
+  rereview: [
+    '程式碼審查：這是新的對話，不接續 Agent、不參考 Agent 的結論。', SNAP_CONTRACT,
+    '這是修正後的複審（第 1 輪）：只看 `git diff abc123..HEAD`。先讀現有 .task/REVIEW.md 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 與沒加註記的 MEDIUM 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列（MEDIUM 不加註記），卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」「等你決定」的項目不要再提。',
+    SNAP_GRADES('.task/REVIEW.md'), SNAP_MEDIUM, SNAP_GATE,
+    '不改程式、不 commit。',
+  ],
+}
+
+/** AC-3：沒設、空白或不是字串的 review.preflight 解析成空字串；程式碼審查、資安審查、複審的提示詞與加功能前逐字相同。 */
+test('test_review_prompt_without_preflight_unchanged', () => {
+  const c = mk('寫測試')
+  const unset = [parseSettings(null), parseSettings(JSON.stringify({ review: {} })), parseSettings(JSON.stringify({ review: { preflight: '   ' } })), parseSettings(JSON.stringify({ review: { preflight: 42 } }))]
+  for (const s of unset) {
+    expect(s.review.preflight).toBe('')
+    const prompts = {
+      code: buildPrompt(c, 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '/h/pitfalls.md', history: '/h/reviews' }, s),
+      security: buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }, s),
+      rereview: buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '', history: '' }, s),
+    }
+    for (const [k, p] of Object.entries(prompts)) {
+      expect(p).not.toContain('前置')
+      expect(p.split('\n任務：')[0]).toBe(SNAPSHOT[k as keyof typeof SNAPSHOT].join('\n'))
+    }
+  }
+})
+
+/** AC-4：專案的 review.pitfalls（展開 ~）優先於 plugin 選項與專案資料夾預設；空白退回原本的路徑。 */
+test('test_pitfalls_path_prefers_project_setting', () => {
+  const s = parseSettings(JSON.stringify({ review: { pitfalls: '~/repo/docs/review-pitfalls.md' } }))
+  expect(s.review.pitfalls).toBe('~/repo/docs/review-pitfalls.md')
+  expect(pitfallsFor(s, '/opt/plugin-option/pitfalls.md', '/home/u')).toBe('/home/u/repo/docs/review-pitfalls.md')
+  expect(pitfallsFor(parseSettings(JSON.stringify({ review: { pitfalls: '/abs/pitfalls.md' } })), '/opt/x.md', '/home/u')).toBe('/abs/pitfalls.md')
+  for (const blank of [parseSettings(null), parseSettings(JSON.stringify({ review: { pitfalls: '  ' } })), parseSettings(JSON.stringify({ review: { pitfalls: 7 } }))]) {
+    expect(blank.review.pitfalls).toBe('')
+    expect(pitfallsFor(blank, '/opt/plugin-option/pitfalls.md', '/home/u')).toBe('/opt/plugin-option/pitfalls.md')
+    expect(pitfallsFor(blank, '/home/u/.claude/handoffs/shop/review-pitfalls.md', '/home/u')).toBe('/home/u/.claude/handoffs/shop/review-pitfalls.md')
+  }
+})
+
+/** AC-5：壞 JSON 當作沒設；不認得的佔位原樣保留、不丟錯。 */
+test('test_preflight_unknown_placeholder_kept', () => {
+  const broken = parseSettings('{"review": {"preflight": "x"')
+  expect(broken.review.preflight).toBe('')
+  expect(broken.review.pitfalls).toBe('')
+  expect(buildPrompt(mk('寫測試'), 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, broken)).not.toContain('前置')
+  const s = parseSettings(JSON.stringify({ review: { preflight: 'lint {unknown} --root {root} {base} {ROOT} $& {root}' } }))
+  const p = buildPrompt(mkAt('/w/x'), 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '', history: '' }, s)
+  expect(p).toContain('先執行 `lint {unknown} --root /w/x origin/main {ROOT} $& /w/x`')
 })

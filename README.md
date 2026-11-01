@@ -217,7 +217,9 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
     "high": "實際的 bug、漏做權限檢查、漏寫稽核紀錄、測試沒測到需求",
     "security": "授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩、機密與金鑰",
     "categories": "授權、稽核、個資、測試、命名",
-    "template": "~/my-templates/review.md"
+    "template": "~/my-templates/review.md",
+    "preflight": "agy-review --root {root} --base {base}",
+    "pitfalls": "~/code/shop/docs/review-pitfalls.md"
   },
   "risk": { "high": [{ "pattern": "(^|/)Billing/", "label": "金流" }] },
   "checkServices": { "run-tests": ["mysql"] },
@@ -244,6 +246,8 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `rules`、`projects.<根目錄>.rules` | 每次派工都附上的專案規則 |
 | `review.high`／`security`／`categories` | 審查分級說明、資安審查範圍、類別範例 |
 | `review.template` | 審查契約檔（預設內附的 [templates/review.md](templates/review.md)） |
+| `review.preflight` | 審查前置指令：每次審查（程式碼審查、資安審查、複審、重新審查）先執行，輸出當候選清單、逐條驗證過才列進審查檔，審查檔第一行記前置成功與否；指令失敗就略過照常審。任何會輸出候選清單的工具都行（lint、SAST、另一個模型的 CLI…）。`{root}` 換成任務根目錄、`{base}` 換成這次審查看的基準（不明時空字串），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
+| `review.pitfalls` | 常犯錯誤清單路徑（可用 `~`），讓清單跟著 repo 走；優先於 plugin 選項 `pitfallsPath` 與專案資料夾的 `review-pitfalls.md`，空白照原本順序 |
 | `risk.high` | 額外的高風險路徑（正規式）；碰到就加跑資安審查並停下來等你看 |
 | `checkServices` | 完成檢查裡出現這個指令名時需要哪些容器服務 |
 | `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
