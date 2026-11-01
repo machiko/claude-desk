@@ -1,1 +1,0 @@
-- 新增 專案 dispatch.json 的 card.specPreflight（規格前審指令）與 /desk:card spec 步驟 2b 規格前審流程

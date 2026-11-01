@@ -2,6 +2,12 @@
 
 ## 未發布
 
+## 0.44.0
+
+- 新增 專案 dispatch.json 的 card.retro（歸檔回顧指令）與 SKILL.md 歸檔 pitfalls 互動追加流程
+- 新增 專案 dispatch.json 的 review.preflight（審查前置指令，輸出當候選逐條驗證）與 review.pitfalls（常犯錯誤清單路徑）
+- 新增 專案 dispatch.json 的 card.specPreflight（規格前審指令）與 /desk:card spec 步驟 2b 規格前審流程
+
 ## 0.43.0
 
 - 調整 確認規格同時核准卡片「檢查」欄的指令，派實作不再多問一次「核准並派工」；指令之後被改過仍會重新問；第二次按 t 之前面板列出檢查指令全文，對話的規格回報也附全文

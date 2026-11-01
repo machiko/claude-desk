@@ -1,1 +1,0 @@
-- 新增 專案 dispatch.json 的 review.preflight（審查前置指令，輸出當候選逐條驗證）與 review.pitfalls（常犯錯誤清單路徑）
