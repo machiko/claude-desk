@@ -58,6 +58,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -831,14 +832,16 @@ def archive_one(slug, path, root, cleanup_after):
             write(os.path.join(ARCHIVE, f'{slug}-{f}'), read(os.path.join(task, f)))
     retro = cfg('retro')
     if retro:
-        cmd = retro.replace('{slug}', slug)
+        cmd = retro.replace('{slug}', shlex.quote(slug))
         try:
-            r = subprocess.run(cmd, shell=True, text=True, capture_output=True, cwd=root)
+            r = subprocess.run(cmd, shell=True, text=True, capture_output=True, cwd=root, timeout=60)
             if r.stdout:
                 print(r.stdout.rstrip('\n'))
             if r.returncode != 0:
                 err = (r.stderr or '').strip()
                 print(f'回顧指令失敗（{r.returncode}）：{err or cmd}')
+        except subprocess.TimeoutExpired:
+            print(f'回顧指令超時（60s）：{cmd}')
         except Exception as e:
             print(f'回顧指令失敗：{e}')
     # 移除 worktree 會連 .desk、.task 一起刪，所以清理排在複製之後。

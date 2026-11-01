@@ -511,7 +511,17 @@ class CardScriptTest(unittest.TestCase):
 
     def test_archive_runs_configured_retro_command_with_slug_substitution(self):
         """AC-1: card.retro 有設定時，archive 複製完 .task 檔後執行指令，代換 {slug} 並原樣印出 stdout。"""
-        self.write_settings({'card': {'retro': 'echo retro-output for {slug}'}})
+        checker = (
+            'python3 -c "'
+            'import os, sys; '
+            'arch = os.path.isfile(sys.argv[1]); '
+            'wt = os.path.isdir(sys.argv[2]); '
+            'sys.exit(0 if (arch and wt) else 1)" '
+            f'{os.path.join(self.t, "archive", "order-export-REVIEW.md")} '
+            f'{os.path.join(self.main + "-worktrees", "order-export")} '
+            '&& echo retro-output for {slug}'
+        )
+        self.write_settings({'card': {'retro': checker}})
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
         write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
