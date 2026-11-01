@@ -48,6 +48,8 @@ CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree �
   card.template   DESK 卡模板（預設 plugin 內附的 templates/DESK-template.md）
   card.archive    歸檔資料夾（預設登錄表旁邊的 archive/）
   card.specRules  寫規格時要額外遵守的專案規則（字串陣列）
+  card.specPreflight  規格前審指令，{root}、{card}、{paths} 會換成對應路徑
+  card.retro      歸檔回顧指令，{slug} 會換成卡片名稱
   card.changelog.format  changelog 的格式：不設是「## 未發布」＋扁平條目；"keepachangelog" 依 Keep a Changelog
                   （動詞對照：新增→Added、調整→Changed、移除→Removed、修復→Fixed、修補→Security）
 """
@@ -56,6 +58,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -827,6 +830,20 @@ def archive_one(slug, path, root, cleanup_after):
     for f in sorted(os.listdir(task)) if os.path.isdir(task) else []:
         if re.match(r'(REVIEW|SECURITY|PLAN|REPORT|review-.*)\.md$', f):
             write(os.path.join(ARCHIVE, f'{slug}-{f}'), read(os.path.join(task, f)))
+    retro = cfg('retro')
+    if retro:
+        cmd = retro.replace('{slug}', shlex.quote(slug))
+        try:
+            r = subprocess.run(cmd, shell=True, text=True, capture_output=True, cwd=root, timeout=60)
+            if r.stdout:
+                print(r.stdout.rstrip('\n'))
+            if r.returncode != 0:
+                err = (r.stderr or '').strip()
+                print(f'回顧指令失敗（{r.returncode}）：{err or cmd}')
+        except subprocess.TimeoutExpired:
+            print(f'回顧指令超時（60s）：{cmd}')
+        except Exception as e:
+            print(f'回顧指令失敗：{e}')
     # 移除 worktree 會連 .desk、.task 一起刪，所以清理排在複製之後。
     said, suffix, kept, commands = cleanup(root) if cleanup_after else ('', '', '', [])
     lines = read(REG).split('\n')
