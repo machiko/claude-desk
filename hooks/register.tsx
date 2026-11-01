@@ -7,7 +7,7 @@ import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, saysNone } from './card'
 import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
 import { archiveReview, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
-import { deploySteps, historyEntries, mediumToFix, parseReminders, reviewTop } from './extras'
+import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
@@ -143,8 +143,11 @@ export async function refresh($: any, options: PluginOptions) {
       const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
       const steps = deploySteps(card)
       const history = historyEntries(card)
-      const top = parseVerdict(base.gate) || run ? reviewTop(await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null)) : []
-      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}) }
+      // 審查檔只讀一次：CRITICAL、HIGH 前幾條與第一行的前置結果。
+      const reviewText = parseVerdict(base.gate) || run ? await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null) : null
+      const top = reviewTop(reviewText)
+      const preflight = preflightLine(reviewText)
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))

@@ -244,6 +244,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState, mergedAtHead(c))}`, width, false, COLOR.dim, 1))
   // 面板外有新的變更、卡片沒跟著寫：提示同步（新對話只讀卡片與 git，把五欄寫回）。
   if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
+  if (c.preflight) rows.push(...kvRows(ui, '前置', c.preflight, width, false, c.preflight.startsWith('失敗') ? COLOR.attention : COLOR.dim, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, GATE_LABEL.review, c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；等你時也不換成別的話）。
   // Agent 在跑時 u 與歸檔都鎖著：已打 tag（要你按 u 或歸檔）或六段全過時不叫你做，只說它完成後再做；
