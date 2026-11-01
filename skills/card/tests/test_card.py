@@ -509,6 +509,44 @@ class CardScriptTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(archive, 'order-export-REVIEW.md')))
         self.assertFalse(os.path.exists(os.path.join(archive, 'order-export-notes.md')))
 
+    def test_archive_runs_configured_retro_command_with_slug_substitution(self):
+        """AC-1: card.retro 有設定時，archive 複製完 .task 檔後執行指令，代換 {slug} 並原樣印出 stdout。"""
+        self.write_settings({'card': {'retro': 'echo retro-output for {slug}'}})
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
+        write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('retro-output for order-export', r.stdout)
+
+    def test_archive_continues_when_retro_command_fails(self):
+        """AC-2: card.retro 失敗時印出一行警示，但歸檔不中斷。"""
+        self.write_settings({'card': {'retro': 'sh -c "exit 7"'}})
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
+        write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('回顧指令失敗', r.stdout)
+        archive = os.path.join(self.t, 'archive')
+        self.assertTrue(os.path.isfile(os.path.join(archive, 'order-export-CARD.md')))
+
+    def test_archive_omits_retro_when_unset(self):
+        """AC-3: card.retro 未設或空白時，不執行回顧指令。"""
+        self.write_settings({'card': {'retro': '   '}})
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
+        write(os.path.join(task, 'REVIEW.md'), '- [LOW] x\n')
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('回顧', r.stdout)
+
     def test_archive_reminds_filled_deploy_steps(self):
         """卡片「## 部署步驟」有 2 項已填（另有一項空白 1.）：照常歸檔，印出筆數、逐項列出與搬移提醒。"""
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
