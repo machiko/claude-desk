@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, pitfallsFor, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, pushRequest } from '../hooks/dispatch'
+import { parseSettings, pitfallsFor, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, prHowOf, pushRequest } from '../hooks/dispatch'
 import { parseGate } from '../hooks/card'
 import type { JobRecord, RootJobs } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
@@ -571,11 +571,11 @@ test('publish prompt: push and PR only, keeps the gate, no spec or changelog dut
   const p = buildPrompt(atMerge(), 'publish', openPrRequest('feature/a', 'origin/main'))
   const pushOnly = buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12))
 
-  expect(p.split('\n')[0]).toBe('推送：push feature/a 並對 main 開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束。只推已 commit 的：不 commit、不改程式、不 rebase。')
+  expect(p.split('\n')[0]).toBe('推送：push feature/a 並對 main 開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR 時，push 完把開 PR 的網址寫進 等你 後結束。只推已 commit 的：不 commit、不改程式、不 rebase。')
   // 只 push：不叫它開 PR，也沒有開不了 PR 時寫等你那句
   expect(pushOnly.split('\n')[0]).toBe('推送：只 push feature/a（PR #12 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程。只推已 commit 的：不 commit、不改程式、不 rebase。')
   expect(pushOnly).not.toContain('開不了 PR')
-  expect(openPrRequest('feature/a', '')).toBe('push feature/a 並開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你 後結束')
+  expect(openPrRequest('feature/a', '')).toBe('push feature/a 並開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR 時，push 完把開 PR 的網址寫進 等你 後結束')
   expect(pushRequest('feature/a', undefined)).toContain('只 push feature/a（PR 已開，不開新 PR）')
   expect(p).toContain('可以 push 這件任務自己的分支')
   expect(p).toContain('不 force push')
@@ -740,4 +740,42 @@ test('test_preflight_unknown_placeholder_kept', () => {
   const s = parseSettings(JSON.stringify({ review: { preflight: 'lint {unknown} --root {root} {base} {ROOT} $& {root}' } }))
   const p = buildPrompt(mkAt('/w/x'), 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '', history: '' }, s)
   expect(p).toContain('先執行 `lint {unknown} --root /w/x origin/main {ROOT} $& /w/x`')
+})
+
+test('open PR request follows the origin: gh on GitHub, bb_post on Bitbucket, push-only elsewhere, pr.open overrides', () => {
+  const github = openPrRequest('feature/a', 'origin/main', prHowOf({ host: 'github', repo: { owner: 'acme', repo: 'shop' } }))
+  expect(github).toContain('push feature/a 並對 main 開 PR 用 gh：')
+  expect(github).toContain('`gh pr list --head feature/a --state open`')
+  expect(github).toContain('`gh pr create --base main --head feature/a`')
+  expect(github).toContain('沒有 gh 或 gh 沒登入時，push 完把開 PR 的網址寫進 等你 後結束')
+  expect(github).not.toContain('bb_post')
+
+  const bitbucket = openPrRequest('feature/a', 'release/v1', prHowOf({ host: 'bitbucket', repo: { workspace: 'acme', repo: 'shop' } }))
+  expect(bitbucket).toContain('push feature/a 並對 release/v1 開 PR 用 Bitbucket MCP：')
+  expect(bitbucket).toContain('`bb_get /repositories/acme/shop/pullrequests`')
+  expect(bitbucket).toContain('source.branch.name="feature/a" AND state="OPEN"')
+  expect(bitbucket).toContain('`bb_post /repositories/acme/shop/pullrequests`')
+  expect(bitbucket).toContain('destination.branch.name=release/v1')
+  expect(bitbucket).toContain('close_source_branch=true')
+  expect(bitbucket).toContain('沒有 bb_post 工具時，push 完把開 PR 的網址寫進 等你 後結束')
+  expect(bitbucket).not.toContain('gh pr')
+  // 以前的提示詞說 Bitbucket 開不了 PR，推送 Agent 就真的不開；現在不能再這樣寫
+  expect(bitbucket).not.toContain('開不了 PR')
+
+  // 認不出的平台（GitLab、自架）：只 push、留網址，跟沒給 how 一樣
+  expect(openPrRequest('feature/a', 'origin/main', prHowOf(null))).toBe(openPrRequest('feature/a', 'origin/main'))
+  expect(prHowOf(null)).toEqual({ host: 'other' })
+
+  // 專案 pr.open 覆寫：不看 origin，{branch}／{target} 換成分支與目標（目標去掉 origin/）
+  const glab = openPrRequest('feature/a', 'origin/main', prHowOf({ host: 'github', repo: { owner: 'acme', repo: 'shop' } }, 'glab mr create --source-branch {branch} --target-branch {target}'))
+  expect(glab).toBe('push feature/a 並對 main 開 PR 用 `glab mr create --source-branch feature/a --target-branch main`，PR 網址寫進歷程；指令失敗時push 完把開 PR 的網址寫進 等你 後結束')
+  expect(glab).not.toContain('gh pr create')
+  expect(prHowOf({ host: 'bitbucket', repo: { workspace: 'acme', repo: 'shop' } }, '  ')).toEqual({ host: 'bitbucket', repo: 'acme/shop' })
+})
+
+test('settings: pr.open is a trimmed string, missing or wrong type is empty', () => {
+  expect(parseSettings(JSON.stringify({ pr: { open: ' glab mr create --target-branch {target} ' } })).prOpen).toBe('glab mr create --target-branch {target}')
+  expect(parseSettings(JSON.stringify({ pr: { open: 3 } })).prOpen).toBe('')
+  expect(parseSettings(JSON.stringify({ pr: 'x' })).prOpen).toBe('')
+  expect(parseSettings(null).prOpen).toBe('')
 })

@@ -30,7 +30,7 @@ const PR_STALE_MS = 60 * 60_000
 const MERGE_MISS_MS = 2 * 60_000
 const LOGS_TIMEOUT_MS = 15_000
 let deskVersion: string | undefined
-type Remote = { host: 'bitbucket'; repo: Repo } | { host: 'github'; repo: GhRepo } | null
+export type Remote = { host: 'bitbucket'; repo: Repo } | { host: 'github'; repo: GhRepo } | null
 const remotes = new Map<string, Remote>()
 const tags = new Map<string, string>()
 /** at＝最後一次嘗試、okAt＝最後一次讀成功；failed 時套 PR_RETRY_MS。 */
@@ -170,15 +170,19 @@ function remoteOf(url: string): Remote {
   return gh ? { host: 'github', repo: gh } : null
 }
 
+/** 這個 worktree 的 origin 是哪一家（讀 PR 與推送 Agent 開 PR 都看它）。只快取認得出來的 remote：之後才加 origin 或改網址，下一輪就會重讀。 */
+export async function originRemote($: any, root: string): Promise<Remote> {
+  if (!remotes.get(root)) remotes.set(root, remoteOf((await git($, root, ['remote', 'get-url', 'origin'])) ?? ''))
+  return remotes.get(root) ?? null
+}
+
 /**
  * 這個分支的 PR 與 CI：Bitbucket 用 MCP 的 bb_get、GitHub 用 gh pr list，都是唯讀；發版線不查。
  * 5 分鐘快取，CI 跑中時每次更新都查；讀失敗後一分鐘內不再試，舊結果超過一小時就不顯示。
  */
 export async function prProbe($: any, options: PluginOptions, root: string, branch: string, now: number, force = false): Promise<PrInfo | undefined> {
   if (/^release\//.test(branch) || branch === 'HEAD') return undefined
-  // 只快取認得出來的 remote：之後才加 origin 或改網址，下一輪就會重讀。
-  if (!remotes.get(root)) remotes.set(root, remoteOf((await git($, root, ['remote', 'get-url', 'origin'])) ?? ''))
-  const remote = remotes.get(root)
+  const remote = await originRemote($, root)
   if (!remote) return undefined
   const own = prs.get(root)
   const cached = own?.branch === branch ? own : undefined
