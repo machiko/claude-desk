@@ -228,14 +228,17 @@ export const ciFailed = (c: Case): boolean => c.pipeline?.current === 'merge' &&
 /** 「輪到你」叫你按 g 修的時候（檢查失敗、流程停下、Agent 被停掉、PR 的 CI 失敗）：下一步寫什麼，g 都要派得出去。 */
 export const fixByG = (c: Case): boolean => c.state === 'failed' || ciFailed(c)
 
+/** 已合併、停在上線段（還沒上線）：分支已進基準分支，不派實作、審查，也不跑檢查。發版線沒有合併段，不算。 */
+export const mergedUnshipped = (c: Case): boolean => c.pipeline?.current === 'ship' && isMerged(c)
+
 /** 現在可以派哪些：進行中一律不派；等回覆只給回覆；規格未確認或沒有完成檢查不能派實作；同步隨時可。 */
 export function dispatchable(c: Case): DispatchKind[] {
   if (c.manual || c.state === 'running' || c.state === 'nocard') return []
   if (c.state === 'reply') return ['reply', 'sync']
   // 等權限批准：回覆放行不了工具，只能同步。
   if (c.state === 'approve') return ['sync']
-  // 已上線：沒有要實作或審查的東西，只能同步。
-  if (c.state === 'done') return ['sync']
+  // 已上線，或已合併還沒上線（分支已進基準分支）：沒有要實作或審查的東西，只能同步。
+  if (c.state === 'done' || mergedUnshipped(c)) return ['sync']
   // 規格還沒確認（關卡 spec：…）：不派實作也不審查，只能同步。
   if (parseGate(c.gate)?.kind === 'spec') return ['sync']
   // 規格段還是範本、六段停在規格段：一樣只能同步（已經審查過、合併、打 tag 的不擋）。

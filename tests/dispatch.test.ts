@@ -92,6 +92,26 @@ test('what can be dispatched follows the card: running none, review needs a chec
   expect(dispatchable(mk('寫測試', { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }))).toEqual(['reply', 'sync'])
 })
 
+/** 合併後更多動作 AC-5 */
+test('test_dispatchable_returns_only_sync_once_merged', () => {
+  const passed = card('依審核修正').replace('- 關卡：無', '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  const at = (extra: Partial<Case>): Case => {
+    const c = { ...buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, passed, 1, {}, undefined), ...extra }
+    return { ...c, pipeline: pipeline(c, undefined) }
+  }
+  const viaPr = at({ git: { branch: 'feature/a', head: 'h' }, pr: { id: 12, state: 'MERGED', ci: 'none' } })
+  const viaGit = at({ git: { branch: 'feature/a', head: 'h' }, mergedInto: 'origin/main' })
+  const open = at({ git: { branch: 'feature/a', head: 'h' }, pr: { id: 12, state: 'OPEN', ci: 'pass' } })
+  const releaseLine = at({ git: { branch: 'release/v1.4', head: 'h' } })
+
+  expect(dispatchable(viaPr)).toEqual(['sync'])
+  expect(dispatchable(viaGit)).toEqual(['sync'])
+  expect(dispatchRefusal(viaPr, 'review')).not.toBe('')
+  // 還沒合併的照舊能派審查；發版線沒有合併段，不受影響
+  expect(dispatchable(open)).toContain('review')
+  expect(dispatchable(releaseLine)).toEqual(['continue', 'sync'])
+})
+
 test('reply refusal names why: waiting agents can be answered, others say why not', () => {
   const asks = { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }
   expect(replyRefusal(mk('寫測試', asks))).toBe('')

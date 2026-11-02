@@ -3,7 +3,7 @@ import type { Case, Verify } from '../types'
 import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
 import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
-import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
+import { KIND_LABEL, dispatchable, mergedUnshipped, normalizeRoot } from './dispatch'
 import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
 import { checkApprovalLine, gitLine, isArmed, mergedAtHead } from './extras'
 import type { ApprovalKey, HeldReason } from './extras'
@@ -379,8 +379,9 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   }
   if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
   if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
-  if (c.verify && can('verify') && busy) locked('verify', `▶ ${WORD.verify}`)
-  else if (c.verify && can('verify')) {
+  // 已合併還沒上線：分支已進基準分支，展開全部也不列檢查。
+  if (c.verify && !mergedUnshipped(c) && can('verify') && busy) locked('verify', `▶ ${WORD.verify}`)
+  else if (c.verify && !mergedUnshipped(c) && can('verify')) {
     // 檢查還沒核准：按兩次，第一次在檢查列列出全文，第二次核准並執行。
     const armed = !checkApproved(view, c) && isArmed(view.armed, `${c.statusPath}\nverify`, view.now)
     out.push(button({ key: prefix + 'verify', hotkey: 'v', isBoxed: armed, isDim: !armed && (isVerifying || leadKey !== 'v'), isLead: armed || (!isVerifying && leadKey === 'v'), label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} ${WORD.verify}中` : queuedAt >= 0 ? '… 排隊中' : armed ? `再按 v 核准並執行${WORD.verify}` : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
