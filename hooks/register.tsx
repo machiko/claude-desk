@@ -96,6 +96,8 @@ export async function refresh($: any, options: PluginOptions) {
     const error = text !== null ? null : tutorial ? `無法讀取教學的登錄表 ${path}；輸入 /desk tutorial end 回到你的任務` : registryError(paths!, missing)
     const rows = parseRegistry(text ?? '', await home($))
     knownPaths = [...(path ? [path] : []), ...rows.map(r => r.statusPath)]
+    // desk 自己發版的待辦要在探測之前記：同回合的 archive --cleanup 會刪掉 worktree。
+    if (!tutorial) await noteReleased($, rows).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
     // 教學不看真的背景 agent，只看模擬的那一個。
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
     const jobs = await loadJobs($)
@@ -210,7 +212,6 @@ export async function refresh($: any, options: PluginOptions) {
     await autoChain($, options, drained ? (await read($, snapshot)) ?? cur : cur)
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
-    if (!tutorial) await noteReleased($, cur).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
     // 讀取失敗不代表登錄表不存在：拿掉建立按鈕，錯誤照樣是紅字。

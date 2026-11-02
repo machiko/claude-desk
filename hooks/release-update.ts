@@ -2,7 +2,8 @@
 // 回合結束（重讀與規格確認派工之後）跑一次 runUpdate，沿用它的前置檢查、訊息與自動重新載入。同一版只跑一次，失敗只回報不重試。
 // 發版第 10 步寫狀態與 archive --cleanup 常在同一回合：回合結束時卡片可能已經不在，所以要回合中先記下來。
 // 跨檔傳 $ 的函式一律用 function 宣告（箭頭函式會被引擎掃描拒絕載入）。
-import type { Case, Snapshot } from '../types'
+import { parseCard, projectRoot } from './card'
+import type { RegistryRow } from './card'
 import { feedPush, tellPanel } from './desk-io'
 import { isNewer } from './update'
 import { runUpdate } from './update-run'
@@ -29,17 +30,26 @@ async function loadPending($: any): Promise<ReleaseUpdate | null> {
   return v && typeof v.version === 'string' ? v : null
 }
 
-/** 重新整理讀到的卡：第一張（不含示範任務）寫「已發版」的 desk 專案卡，版號跟已記的不同就記成待辦。 */
-export async function noteReleased($: any, s: Snapshot) {
-  const released = s.cases.filter((c: Case) => !c.demo && releasedVersion(c.status))
-  for (const c of released) {
-    if (!(await isDeskProject($, c.root))) continue
-    const version = releasedVersion(c.status)!
-    if ((await loadPending($))?.version === version) return
-    const next: ReleaseUpdate = { version, name: c.name, handled: false }
-    await $.store.set(RELEASE_UPDATE_KEY, next)
-    return
-  }
+/** 一張登錄表列的卡：寫了「已發版」而且是 desk 專案，就回傳版號與卡名。讀不到卡片或 plugin.json 就不算。 */
+async function releasedDeskCard($: any, row: RegistryRow): Promise<{ version: string; name: string } | null> {
+  const text = await $.fs.read(row.statusPath).catch(() => null)
+  const version = typeof text === 'string' ? releasedVersion(parseCard(text)?.['狀態'] ?? '') : null
+  if (!version || !(await isDeskProject($, projectRoot(row.statusPath)))) return null
+  return { version, name: row.name }
+}
+
+/**
+ * 重新整理一開始（讀完登錄表、還沒跑 claude agents 與各卡探測）就看：同回合的 archive --cleanup 會刪掉 worktree，晚了就讀不到 plugin.json。
+ * 寫「已發版」的 desk 專案卡挑版號最大的；沒有待辦或比已記的新才記成待辦，不倒退（登錄表留著上一版的已發版卡也不會蓋掉新版）。
+ */
+export async function noteReleased($: any, rows: readonly RegistryRow[]) {
+  const found = (await Promise.all(rows.map(row => releasedDeskCard($, row)))).filter(x => x !== null)
+  const newest = found.reduce<{ version: string; name: string } | null>((best, x) => (!best || isNewer(x.version, best.version) ? x : best), null)
+  if (!newest) return
+  const pending = await loadPending($)
+  if (pending && !isNewer(newest.version, pending.version)) return
+  const next: ReleaseUpdate = { ...newest, handled: false }
+  await $.store.set(RELEASE_UPDATE_KEY, next)
 }
 
 /**

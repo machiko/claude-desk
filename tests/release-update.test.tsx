@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, CARD_B, NOW, REGISTRY } from './fixture'
+import { fixture, feedLog, CARD_A, CARD_B, NOW, REGISTRY } from './fixture'
 import { setFields } from '../hooks/tutorial'
 import { world } from './update-world'
 
@@ -97,4 +97,66 @@ test('test_blocked_folder_install_reports_once_and_does_not_retry', async ($, on
   await endTurn($, clock, 't2')
   expect(blocked()).toHaveLength(1)
   expect(changes).toEqual([])
+})
+
+const ALPHA = '/home/u/wt/alpha'
+/** Alpha 是上一版留在登錄表的已發版卡（例如有 release 關卡、還沒按 u）。 */
+function olderReleased(data: any) {
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 狀態: '已發版 0.43.0：tag 與 main 已推送，main 的 CI 通過' })
+  data.files[`${ALPHA}/.claude-plugin/plugin.json`] = JSON.stringify({ name: 'desk', version: '0.43.0' })
+}
+
+test('test_older_released_card_ahead_in_the_registry_does_not_hide_the_new_release', async ($, on) => {
+  const { data, clock } = fixture(on)
+  on('turn.complete', () => ({ text: '' }))
+  const { changes } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
+  released(data, true)
+  olderReleased(data)
+  data.store.releaseUpdate = { version: '0.43.0', name: 'Alpha', handled: true }
+  await refresh($, clock)
+  expect(data.store.releaseUpdate).toMatchObject({ version: '0.44.0', name: 'Beta', handled: false })
+
+  await endTurn($, clock)
+  expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
+  expect(data.reloads.length).toBe(1)
+})
+
+test('test_archiving_the_new_release_card_does_not_roll_the_pending_back_to_an_older_card', async ($, on) => {
+  const { data, clock } = fixture(on)
+  on('turn.complete', () => ({ text: '' }))
+  const { changes } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
+  released(data, true)
+  olderReleased(data)
+  await refresh($, clock)
+  // 同一回合 archive --cleanup 只拿掉 Beta：剩下上一版的 Alpha
+  data.files[REGISTRY] = data.files[REGISTRY]!.split('\n').filter(l => !l.startsWith('| Beta |')).join('\n')
+  delete data.files[CARD_B]
+
+  await endTurn($, clock)
+  expect(data.store.releaseUpdate).toMatchObject({ version: '0.44.0', handled: true })
+  expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
+})
+
+test('test_release_status_is_noted_before_a_cleanup_mid_refresh_removes_the_worktree', async ($, on) => {
+  const { data, clock } = fixture(on)
+  on('turn.complete', () => ({ text: '' }))
+  const { changes } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
+  released(data, true)
+  // archive --cleanup 在這輪重新整理跑探測（claude agents）時完成：登錄表列、卡片與 worktree 都不見了
+  const exec = data.exec
+  let cleaned = false
+  data.exec = (e: any) => {
+    if (!cleaned && e.argv[0] === 'claude' && e.argv[1] === 'agents') {
+      cleaned = true
+      data.files[REGISTRY] = data.files[REGISTRY]!.split('\n').filter((l: string) => !l.startsWith('| Beta |')).join('\n')
+      for (const path of Object.keys(data.files)) if (path.startsWith(`${BETA}/`)) delete data.files[path]
+    }
+    return exec(e)
+  }
+  await refresh($, clock)
+  expect(cleaned).toBe(true)
+
+  await endTurn($, clock)
+  expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
+  expect(data.reloads.length).toBe(1)
 })
