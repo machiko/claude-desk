@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, BAND, CARD_A, CARD_B, NOW, leaves, text } from './fixture'
+import { fixture, PANE, BAND, CARD_A, CARD_B, NOW, TRUSTED, leaves, text } from './fixture'
 
 test('the now card shows the case that needs a person; the list holds the rest with digit hotkeys', async ($, on) => {
   const { data } = fixture(on)
@@ -37,16 +37,20 @@ test('picking options lights them and fill puts the answer in the prompt', async
   await ui.unmount()
 })
 
-test('verify asks once per command, runs in the case root, and records the result', async ($, on) => {
+test('verify needs two presses once per command, runs in the case root, and records the result', async ($, on) => {
   const { data, clock } = fixture(on)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: 'more' }) // 這張卡在等你決定，檢查鍵平常不出現；測檢查本身先展開全部動作
   const key = `case-${CARD_A}-verify`
   expect((await ui.find({ key }))?.text).toBe('▶ 測試')
+  // 還沒核准：第一次只待確認，第二次核准並執行，不跳對話框
   await ui.press({ key })
   await clock.settle()
-  expect(data.asks.length).toBe(1)
+  expect(data.processCalls.length).toBe(0)
+  await ui.press({ key })
+  await clock.settle()
+  expect(data.asks.length).toBe(0)
   expect(data.processCalls.length).toBe(1)
   expect(data.processCalls[0].argv).toEqual(['sh', '-c', 'node test.mjs'])
   expect(data.processCalls[0].init).toEqual({ cwd: '/home/u/wt/alpha', timeoutMs: 600000 })
@@ -54,24 +58,27 @@ test('verify asks once per command, runs in the case root, and records the resul
   expect(data.store.trustedVerify).toEqual({ [CARD_A]: 'node test.mjs' })
   expect((data.store.verifies as any)[CARD_A].ok).toBe(true)
   data.run = async () => ({ exitCode: 2, stdout: 'one\ntwo\n', stderr: 'boom', isStdoutTruncated: false, isStderrTruncated: false })
+  // 核准過的同一條指令：按一次就跑
   await ui.press({ key })
   await clock.settle()
-  expect(data.asks.length).toBe(1)
+  expect(data.asks.length).toBe(0)
   expect(await ui.find({ type: 'Text', text: /✕ 未通過（結束碼 2）/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /boom/ })).toBeDefined()
   expect(data.toasts.filter(t => t.includes('檢查')).length).toBe(2)
   await ui.unmount()
 })
 
-test('a declined verify runs nothing', async ($, on) => {
+test('a single press on an unapproved verify runs nothing', async ($, on) => {
   const { data, clock } = fixture(on)
-  data.answer = '取消'
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: 'more' }) // 這張卡在等你決定，檢查鍵平常不出現；測檢查本身先展開全部動作
   await ui.press({ key: `case-${CARD_A}-verify` })
   await clock.settle()
+  await clock.advance(3500)
+  await clock.settle()
   expect(data.processCalls.length).toBe(0)
+  expect(data.asks.length).toBe(0)
   expect(data.store.trustedVerify).toBeUndefined()
   await ui.unmount()
 })
@@ -194,7 +201,8 @@ test('continue launches claude --bg in the case root, confirms the session and s
   await ui.press({ key: `case-${CARD_A}-continue` })
   await clock.settle()
   expect(data.launches.length).toBe(0)
-  expect((await ui.find({ key: `case-${CARD_A}-continue` }))?.text).toBe('再按 g 確認繼續（opus · high）')
+  // 檢查還沒核准：第二次按 g 同時核准它
+  expect((await ui.find({ key: `case-${CARD_A}-continue` }))?.text).toBe('再按 g 確認核准檢查並繼續（opus · high）')
   await ui.press({ key: `case-${CARD_A}-continue` })
   await clock.settle()
   expect(data.launches.length).toBe(1)
@@ -220,6 +228,7 @@ test('a running case offers no dispatch, and a failed launch is reported without
   const { data, clock } = fixture(on)
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
   data.launch = async () => ({ exitCode: 1, stdout: '', stderr: 'not logged in', isStdoutTruncated: false, isStderrTruncated: false })
+  data.store.trustedVerify = { ...TRUSTED }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await $.command.run({ command: 'desk', args: 'go Beta' } as any)
   await clock.settle()

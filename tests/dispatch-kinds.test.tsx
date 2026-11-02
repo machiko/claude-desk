@@ -27,6 +27,8 @@ function threeCases(data: any, clock: any, settings: object) {
   data.gh = []
   data.store.chains = { '/home/u/wt/beta': { owner: 'other-session', startedAt: 0, round: 0, passed: true, reviewHead: 'c2', judgedHead: 'c2' } }
   data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' } }
+  // Gamma 的檢查已核准：這裡測的是模型，不是核准（沒核准的 /desk go 不派）。
+  data.store.trustedVerify = { [CARD_C]: 'node test.mjs' }
   data.agents = []
   data.launch = async (e: any) => {
     const id = `c000000${data.launches.length}`

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, result, text, flat } from './fixture'
+import { fixture, feedLog, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, TRUSTED, result, text, flat } from './fixture'
 import { historyEntries } from '../hooks/extras'
 import { issueOf, hhmm } from '../hooks/model'
 import type { Case, FeedEvent } from '../types'
@@ -327,6 +327,7 @@ test('test_history_reads_only_the_focused_card_and_never_writes_it', async ($, o
   const { data, clock } = fixture(on)
   const log = feedLog(on)
   setup(data, clock)
+  data.store.trustedVerify = { ...TRUSTED }
   data.files[CARD_B] = `${data.files[CARD_B]!}\n\n## History\n\n- 2030-01-04：Beta 的私事：別處的歷程\n`
   const before = { [CARD_A]: data.files[CARD_A], [CARD_B]: data.files[CARD_B] }
   const h = helpers($, clock)

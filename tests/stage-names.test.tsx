@@ -36,6 +36,8 @@ function threeStages(data: any, clock: any) {
   data.git[GAMMA] = { branch: 'feature/gamma', head: 'g1' }
   data.store.chains = { [ALPHA]: { owner: 'other-session', startedAt: 0, round: 0, passed: true, reviewHead: 'a1', judgedHead: 'a1' } }
   data.store.verifies = { [CARD_A]: ok('a1'), [CARD_B]: ok('b1') }
+  // 檢查都核准過：按一次 v 就跑（沒核准要按兩次，另外測）
+  data.store.trustedVerify = { [CARD_A]: 'npm test', [CARD_B]: 'npm test', [CARD_C]: 'npm test' }
   let n = 0
   data.launch = async (e: any) => {
     n++
@@ -213,14 +215,13 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
   expect(gamma).toContain(flat('（驗收是自審，可按 w 派獨立驗收）'))
   for (const shown of [alpha, beta, gamma]) expect(shown).not.toMatch(OLD_HINT)
 
-  // 按 v 的確認框
+  // 檢查沒核准時按一次 v：不跳對話框，按鈕與檢查列說「測試」
   data.store.trustedVerify = {}
   await pick(ui, CARD_A)
   await ui.press({ key: `case-${CARD_A}-verify` })
   await clock.settle()
-  expect(data.asks.at(-1)).toContain(`在 ${ALPHA} 執行測試：\nnpm test\n`)
-  expect(data.askHeaders.at(-1)).toBe('Alpha 測試')
-  expect(data.asks.at(-1)).not.toContain('完成檢查')
+  expect(data.asks).toHaveLength(0)
+  expect((await ui.find({ key: `case-${CARD_A}-verify` }))?.text).toBe('再按 v 核准並執行測試')
   await ui.unmount()
 
   // 各種情境的「輪到你」

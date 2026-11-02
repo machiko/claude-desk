@@ -107,7 +107,7 @@ async function foreignChanges($: any, c: Case, entry: QueueEntry): Promise<strin
 /** 手動排的繼續：排隊時核准的完成檢查跟卡片現在的不同，就不替你派。 */
 function approvalChanged(c: Case, entry: QueueEntry, trusted: Record<string, string>): string {
   if (entry.kind !== 'continue' || entry.opts.auto || !c.verify) return ''
-  return trusted[c.statusPath] === c.verify ? '' : '完成檢查在排隊期間改了，要重新核准：按 g 再派一次'
+  return trusted[c.statusPath] === c.verify ? '' : '完成檢查在排隊期間改了，要重新核准：按兩次 g 再派一次'
 }
 
 /** 自動排的開 PR 排隊期間 PR 已經開了（例如你按了「⇡ 開 PR」）：改成只 push，不再要求開第二個。 */

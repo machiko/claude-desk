@@ -5,7 +5,10 @@ import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary } from 
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
 import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
-import { gitLine, isArmed, mergedAtHead } from './extras'
+import { checkApprovalLine, gitLine, isArmed, mergedAtHead } from './extras'
+import type { ApprovalKey } from './extras'
+import { isApproved } from './approve-check'
+import { CHECK_CHANGED, CHECK_UNAPPROVED } from './chain'
 import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
@@ -36,6 +39,16 @@ export function turnCtx(view: PaneView, c: Case): TurnCtx {
   const agentQueued = (view.agentQueue ?? []).indexOf(c.statusPath) + 1
   return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, ...(agentQueued ? { agentQueued } : {}), tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now }
 }
+
+/** 檢查列上待確認的鍵（確認規格、執行檢查、派實作），沒有就是 null。 */
+function approvalKey(view: PaneView, c: Case): ApprovalKey | null {
+  const on = (id: string) => isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
+  return on('spec-ok') ? 't' : on('verify') ? 'v' : on('continue') ? 'g' : null
+}
+/** 這張卡現在的檢查指令核准過了；畫面沒給核准紀錄就當核准過。 */
+const checkApproved = (view: PaneView, c: Case) => !view.trusted || isApproved(view.trusted, c)
+/** 這個對話的流程停在檢查段，原因是指令沒核准（或改過）：別的對話開的按 v 接不下去，不算。 */
+const heldUnapproved = (c: Case) => !!c.chain?.heldAtCheck && !c.chain.foreign && (c.chain.stopped === CHECK_CHANGED || c.chain.stopped === CHECK_UNAPPROVED)
 
 const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '處理中', none: '— 沒有待辦' }
 const TURN_COLOR: Record<Turn['who'], string> = { you: COLOR.attention, ai: COLOR.running, none: COLOR.faint }
@@ -157,8 +170,8 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   const passTail = show?.ok && view.isExpanded ? show.tail : []
   const count = show?.summary?.failed !== undefined ? ` · ${show.summary.failed} 支失敗` : ''
   const room = Math.max(10, width - INDENT - KV_LABEL)
-  // 第二次按 t 之前：確認規格就會核准這條指令並自動執行，所以這時列出全文，不用去掉前綴的短版。
-  const specArmed = isArmed(view.armed, `${c.statusPath}\nspec-ok`, view.now)
+  // 第二次按 t、v、g 就會核准這條指令，或流程正停在它沒核准：列出全文，不用去掉前綴的短版。
+  const approval = checkApprovalLine(approvalKey(view, c), heldUnapproved(c), checkApproved(view, c), c.verify)
   const result = running ? <Text color={COLOR.running}>執行中</Text>
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
     : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}${count}`}</Text>
@@ -171,7 +184,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
     head,
     ...(failure?.items ?? []).map(l => line(failure!.isNamed ? fitFailure(l, room) : fit(l, room), COLOR.bad)),
     ...(failure?.more ? [plainLine(failure.more, COLOR.faint)] : []),
-    ...(specArmed ? wrapText(`核准這條（再按 t 之後自動執行）：${c.verify}`, room).map(l => line(l, COLOR.attention)) : [plainLine(shortCommand(c.verify), COLOR.faint)]),
+    ...(approval ? wrapText(approval, room).map(l => line(l, COLOR.attention)) : [plainLine(shortCommand(c.verify), COLOR.faint)]),
     ...[...(failure?.raw ?? []), ...passTail].map(l => plainLine(l, COLOR.dim)),
   ]
 }
@@ -337,9 +350,11 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   }
   else for (const k of dispatchable(c).filter(isKeyed).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
     const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
+    // 檢查還沒核准：第二次按 g 同時核准它（第一次已在檢查列列出全文）。
+    const approving = k === 'continue' && !checkApproved(view, c) ? '核准檢查並' : ''
     // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
     const hint = k === 'sync' && cardBehind(c, view.now)
-    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
+    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${approving}${KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
   }
   if (!ctx.agentQueued && canStop(c) && can('stop')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nstop`, view.now)
@@ -359,7 +374,11 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
   if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
   if (c.verify && can('verify') && busy) locked('verify', `▶ ${WORD.verify}`)
-  else if (c.verify && can('verify')) out.push(button({ key: prefix + 'verify', hotkey: 'v', isDim: isVerifying || leadKey !== 'v', isLead: !isVerifying && leadKey === 'v', label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} ${WORD.verify}中` : queuedAt >= 0 ? '… 排隊中' : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
+  else if (c.verify && can('verify')) {
+    // 檢查還沒核准：按兩次，第一次在檢查列列出全文，第二次核准並執行。
+    const armed = !checkApproved(view, c) && isArmed(view.armed, `${c.statusPath}\nverify`, view.now)
+    out.push(button({ key: prefix + 'verify', hotkey: 'v', isBoxed: armed, isDim: !armed && (isVerifying || leadKey !== 'v'), isLead: armed || (!isVerifying && leadKey === 'v'), label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} ${WORD.verify}中` : queuedAt >= 0 ? '… 排隊中' : armed ? `再按 v 核准並執行${WORD.verify}` : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
+  }
   if (canShip(c) && can('ship') && busy) locked('ship', '✓ 上線確認')
   else if (canShip(c) && can('ship')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)

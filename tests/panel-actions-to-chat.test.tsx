@@ -100,9 +100,7 @@ function expectInOrder(context: string, order: RegExp[]) {
 test('test_panel_spec_ok_and_ship_attach_in_order_with_case_and_result', async ($, on) => {
   const { data, clock } = fixture(on)
   const { ui, twice } = await fourCases($, data, clock)
-  // 確認規格後會自動派實作（由 spec-ok-dispatch 測）；這裡只看附上的順序，不核准檢查就不派。
-  // 派出去的話 Agent 在跑，twice 往前推的 60 秒要多跑很多輪，單跑就從 0.3 秒變 3 秒，整套並行時會逾時。
-  data.approve = '取消'
+  // 確認規格後會自動派實作（由 spec-ok-dispatch 測）；這裡只看附上的順序。
 
   await twice(CARD_B, `case-${CARD_B}-spec-ok`)
   await twice(CARD_C, `case-${CARD_C}-ship`)
@@ -119,9 +117,8 @@ test('test_panel_verify_and_dispatch_attach_in_order_with_case_and_result', asyn
 
   await focus(ui, CARD_A)
   await ui.press({ key: 'more' })
-  await ui.press({ key: `case-${CARD_A}-verify` })
-  await clock.settle()
-  await clock.advance(60_000)
+  // 檢查還沒核准：按兩次 v 核准並執行
+  await twice(CARD_A, `case-${CARD_A}-verify`)
   await twice(CARD_A, `case-${CARD_A}-continue`)
   await $.prompt.submit({ text: '現在狀況？' } as any)
 
@@ -133,6 +130,7 @@ test('test_panel_verify_and_dispatch_attach_in_order_with_case_and_result', asyn
 test('test_attached_panel_actions_are_not_repeated', async ($, on) => {
   const { data, clock } = fixture(on)
   archivable(data)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
   const ui = await archiveBeta($, clock)
   await $.prompt.submit({ text: '第一則' } as any)
   expect(lastContext(data)).toMatch(line('Beta', '已歸檔'))

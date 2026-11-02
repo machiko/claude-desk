@@ -71,6 +71,8 @@ test('placeholder check: a real command still dispatches and runs', async ($, on
   expect(s).not.toContain(flat('尚缺完成檢查'))
   await ui.unmount()
 
+  // /desk verify 只跑核准過的
+  data.store.trustedVerify = { [CARD_B]: 'npm test' }
   await $.command.run({ command: 'desk', args: 'verify Beta' } as any)
   await clock.settle(); await clock.advance(3000); await clock.settle()
   const runs = sh(data)

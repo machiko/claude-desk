@@ -16,14 +16,14 @@ import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs,
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
 import { MAX_FIX_ROUNDS, handedOver, judgedAt, nextStep, paused, seenHeads } from './chain'
-import { approveCheck, trustedChecks } from './approve-check'
+import { isApproved, trustCheck, trustedChecks, unapprovedText } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
 import type { ChainRun, ChainStep } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, TRUST_KEY, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, registryError, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
+import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, registryError, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
 import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
@@ -509,7 +509,7 @@ async function startedSince($: any, c: Case): Promise<boolean> {
   return !!agent && isBusy({ ...c, agent })
 }
 
-/** 完成檢查：第一次跑某條指令先問；之後同一條直接跑。結果記在 $.store，重開也在。 */
+/** 完成檢查：只跑核准過的指令（面板按兩次 v／g 或確認規格時核准）；結果記在 $.store，重開也在。 */
 /** 排隊等著跑的檢查（同一時間只跑一個：測試共用主工作區的容器與資料庫，同時跑會互相干擾）。 */
 const checkQueue: { statusPath: string; auto: boolean }[] = []
 /**
@@ -523,22 +523,15 @@ export const verifyPending = (statusPath: string): boolean => checking === statu
 /** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，流程派審查的那一刻六段不退回實作。 */
 let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
 
-/** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒核准、按了取消、已經在跑或在排）是 false。 */
+/** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒核准、已經在跑或在排）是 false。 */
 async function runVerify($: any, c: Case, auto = false, fromQueue = false): Promise<boolean> {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
   if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return false }
   if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return false }
   if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return false }
-  const trusted = await trustedChecks($)
-  if (trusted[c.statusPath] !== c.verify) {
-    if (auto) return false
-    const answer = await $.ui.ask(`在 ${c.root} 執行測試：\n${c.verify}\n之後同一條指令不再問，自動流程也會用它。`, { header: `${c.name} ${WORD.verify}`, options: ['執行', '取消'] }).catch(() => '')
-    if (answer !== '執行') return false
-    await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
-    // 對話框可能開了很久：回答的這段時間 Agent 開始跑了，就不在它的 worktree 上跑檢查。
-    if (await busyRefused($, c, '檢查')) return false
-  }
-  // 問完之後再看一次：等你回答的這段時間，它可能已經被排進隊伍或開始跑了。
+  // 沒核准的不跑也不問：面板按兩次 v 才核准（第一次在檢查列列出全文）。
+  if (!isApproved(await trustedChecks($), c)) { if (!auto) $.ui.toast(unapprovedText(c)); return false }
+  // 讀核准紀錄之後再看一次：這段時間它可能已經被排進隊伍或開始跑了。
   if (checking === c.statusPath || (!fromQueue && isQueued(c.statusPath))) return false
   // 已經有別的檢查在跑：排隊，跑完一個再接下一個。
   if (checking !== null) {
@@ -712,12 +705,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return false }
   if (await starting($, c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
   if (!fromQueue && isAgentQueued(c.statusPath)) { if (!opts.auto) $.ui.toast(alreadyQueued(c)); return false }
-  // 從隊伍派出的：排隊前已核准過，排隊期間檢查改了的在隊伍那邊就擋下，不再跳對話框。
-  if (kind === 'continue' && !opts.auto && !fromQueue) {
-    if (!(await approveCheck($, c))) return false
-    // 等你回答的這段時間，可能已經從別處派出去了（例如又打了 /desk go）。
-    if (await starting($, c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
-  }
+  // 派實作要先核准完成檢查（面板第二次按 g 就核准）；從隊伍派出的排隊前已核准過，排隊期間檢查改了的在隊伍那邊就擋下。
+  if (kind === 'continue' && !opts.auto && !fromQueue && !isApproved(await trustedChecks($), c)) { $.ui.toast(unapprovedText(c)); return false }
   const settings = await loadSettings($, options)
   const { model, effort, fresh } = modelFor(settings, c.root, kind)
   const jobs = await loadJobs($)
@@ -879,6 +868,8 @@ export const register: Register = (on, options) => {
       // 回覆示範任務要說清楚是示範任務，不只是找不到。
       const c = caseNamed(s, m[2]!) ?? (m[1] === 'reply' ? s?.cases.find(x => x.demo && x.name.includes(m[2]!)) ?? null : null)
       if (!c) return { text: `找不到任務「${m[2]}」。` }
+      // 沒核准的檢查不跑、也不派實作（做完會自動跑它），不彈框：說去面板按兩次。
+      if ((m[1] === 'verify' || KIND_ARG[m[1]!] === 'continue') && !isApproved(await trustedChecks($), c)) return { text: unapprovedText(c) }
       if (m[1] === 'verify') {
         // 跟面板的 v 同一個鎖：Agent 在跑就不在它的 worktree 上跑檢查。
         if (await busyNow($, c, true)) return { text: `${c.name}：${WORD.busyRefused}檢查` }
@@ -937,6 +928,7 @@ export const register: Register = (on, options) => {
       queue: await read($, queueAtom),
       agentQueue: await readAgentQueue($),
       armed: await read($, armedAtom),
+      trusted: await trustedChecks($),
       logsOpen: await read($, logsOpenAtom),
       logView: await read($, logViewAtom),
       isHelp: await read($, helpAtom),
@@ -961,11 +953,18 @@ export const register: Register = (on, options) => {
         return { ...others, [k]: mine[String(index)] === key ? Object.fromEntries(Object.entries(mine).filter(([i]) => i !== String(index))) : { ...mine, [String(index)]: key } }
       }),
       fill: c => void fillDecision($, c),
-      verify: c => void (async () => { if (!(await busyRefused($, c, '檢查'))) await runVerify($, c) })(),
+      verify: c => void (async () => {
+        if (isApproved(await trustedChecks($), c)) { if (!(await busyRefused($, c, '檢查'))) await runVerify($, c); return }
+        // 還沒核准（或指令改過）：按兩次，第一次在檢查列列出全文，第二次核准並執行。
+        if (await confirmedIdle($, c, 'verify', '檢查') && await trustCheck($, c)) await runVerify($, c)
+      })(),
       open: c => void openCard($, c),
       dispatch: (c, kind) => void (async () => {
         if (kind === 'reply') return reply($, options, c)
-        if (await confirmed($, `${c.statusPath}\n${kind}`)) await dispatch($, options, c, kind)
+        if (!(await confirmed($, `${c.statusPath}\n${kind}`))) return
+        // 第二次按 g 就核准這張卡的完成檢查（沒核准時第一次已在檢查列列出全文）。
+        if (kind === 'continue') await trustCheck($, c)
+        await dispatch($, options, c, kind)
       })(),
       stop: c => void (async () => { if (await confirmed($, `${c.statusPath}\nstop`)) await stopAgent($, c) })(),
       // 還沒派出去，按一次就取消，不用確認。

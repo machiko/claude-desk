@@ -1,55 +1,16 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, REGISTRY, result, leaves, text, flat } from './fixture'
+import { fixture, PANE, CARD_A, result, leaves, text, flat } from './fixture'
+import { PREFIX, ROOT, alphaOnly, helpers, sh } from './alpha-chain'
 import { AGENT_STOPPED } from '../hooks/chain'
 
-// 完成檢查的核准：按 g 開始一輪流程時就問；流程停在檢查段時說得出為什麼，排除後按 v 就接著走。
-const ROOT = '/home/u/wt/alpha'
-const PREFIX = `case-${CARD_A}-`
-const CHANGED = '完成檢查的指令改過、還沒經你核准：按 v 看指令並核准，核准後流程接著走'
+// 完成檢查的核准：按兩次 g 開始一輪流程時就核准（第一次列出指令）；流程停在檢查段時說得出為什麼，排除後按 v 就接著走。
+const CHANGED = '完成檢查的指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
 const COMPOSE = { options: { composeDir: '/home/u/app' } }
 const IN_APP = 'docker compose exec -T app php artisan test'
 const svc = (Service: string, State = 'running') => JSON.stringify({ Service, State, Health: '' })
-const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh').length
-
-/** 只看 Alpha：卡片沒有待決策、沒有別的 Agent；每次派工都換一個背景 agent，跑到 finish() 才結束。 */
-function alphaOnly(data: any, clock: any) {
-  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |`
-  data.git[ROOT] = { branch: 'feature/alpha', head: 'h1' }
-  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
-  data.agents = []
-  let n = 0
-  data.launch = async (e: any) => {
-    n++
-    const id = `a000000${n}`
-    data.agents = [{ id, kind: 'background', cwd: ROOT, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
-    return result(0, id)
-  }
-}
-
-function helpers($: any, data: any, clock: any) {
-  const step = async () => { await clock.advance(2500); await clock.settle() }
-  return {
-    step,
-    refresh: async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() },
-    finish: async () => {
-      data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
-      await $.command.run({ command: 'desk', args: 'refresh' } as any)
-      await clock.settle(); await step(); await step(); await step()
-    },
-    verify: async () => { await $.command.run({ command: 'desk', args: 'verify Alpha' } as any); await clock.settle(); await step(); await step() },
-    prompt: (i: number) => String(data.launches[i].argv[data.launches[i].argv.length - 1]),
-    setGate: (g: string) => { data.files[CARD_A] = data.files[CARD_A]!.replace(/- 關卡：.*$/m, `- 關卡：${g}`) },
-    setCheck: (cmd: string) => { data.files[CARD_A] = data.files[CARD_A]!.replace(/- 驗證：.*$/m, `- 驗證：\`${cmd}\``) },
-    /** 面板上按兩次 g（派工要按兩次確認）。 */
-    pressGo: async (ui: any) => {
-      await ui.press({ key: `${PREFIX}continue` }); await clock.settle()
-      await ui.press({ key: `${PREFIX}continue` }); await clock.settle()
-    },
-  }
-}
 
 /** AC-1 */
-test('pressing g asks to approve the check command before dispatching and the chain runs it without pausing', async ($, on) => {
+test('pressing g twice approves the check command and the chain runs it without pausing', async ($, on) => {
   const { data, clock } = fixture(on)
   alphaOnly(data, clock)
   const h = helpers($, data, clock)
@@ -59,39 +20,36 @@ test('pressing g asks to approve the check command before dispatching and the ch
   await h.pressGo(ui)
   await ui.unmount()
 
-  // 先問：根目錄、指令全文、做完會自動執行；選項只有兩個
-  expect(data.asks.length).toBe(1)
-  expect(data.asks[0]).toContain(ROOT)
-  expect(data.asks[0]).toContain('node test.mjs')
-  expect(data.asks[0]).toContain('自動執行')
-  expect(data.askOptions[0]).toEqual(['核准並派工', '取消'])
-  // 核准後派出實作
+  // 不跳對話框：第二次按 g 就核准並派出實作
+  expect(data.asks.length).toBe(0)
   expect(data.launches.length).toBe(1)
   expect(data.store.trustedVerify).toEqual({ [CARD_A]: 'node test.mjs' })
 
   // 實作結束：自動執行完成檢查，不停在「尚未核准」，綠了接著派審查
   await h.finish()
-  expect(data.asks.length).toBe(1)
+  expect(data.asks.length).toBe(0)
   expect(sh(data)).toBe(1)
   expect(data.launches.length).toBe(2)
   expect(h.prompt(1)).toContain('程式碼審查')
   expect((data.store.chains as any)[ROOT].stopped).toBeUndefined()
   expect(data.toasts.some(t => t.includes('核准') || t.includes('授權'))).toBe(false)
 
-  // 審查通過；同一張卡、同一條指令再按 g：不再問，直接派
+  // 審查通過；同一張卡、同一條指令再按 g：不用再核准，按鈕不寫「核准檢查」
   h.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可合併')
   await h.finish()
   expect((data.store.chains as any)[ROOT].passed).toBe(true)
   ui = await $.ui.mount(PANE(120))
   await ui.press({ key: 'more' }) // 合併段平常不列 g；展開全部動作再按
-  await h.pressGo(ui)
+  await ui.press({ key: `${PREFIX}continue` }); await clock.settle()
+  expect((await ui.find({ key: `${PREFIX}continue` }))?.text).not.toContain('核准')
+  await ui.press({ key: `${PREFIX}continue` }); await clock.settle()
   await ui.unmount()
-  expect(data.asks.length).toBe(1)
+  expect(data.asks.length).toBe(0)
   expect(data.launches.length).toBe(3)
 })
 
 /** AC-2 */
-test('declining the check approval on g dispatches nothing', async ($, on) => {
+test('a single g press on an unapproved check dispatches nothing', async ($, on) => {
   const { data, clock } = fixture(on)
   alphaOnly(data, clock)
   const h = helpers($, data, clock)
@@ -99,15 +57,11 @@ test('declining the check approval on g dispatches nothing', async ($, on) => {
   const ui = await $.ui.mount(PANE(120))
   const before = flat(text(await ui.drawn()))
 
-  // 選「取消」
-  data.approve = '取消'
-  await h.pressGo(ui)
-  // 直接關掉對話框（沒有回答）
-  data.approve = ''
-  await h.pressGo(ui)
-  await h.step()
+  // 只按一次 g，沒在時限內按第二次
+  await ui.press({ key: `${PREFIX}continue` }); await clock.settle()
+  await clock.advance(3500); await clock.settle()
 
-  expect(data.asks.length).toBe(2)
+  expect(data.asks.length).toBe(0)
   expect(data.launches.length).toBe(0)
   expect(data.store.trustedVerify).toBeUndefined()
   expect(data.store.chains).toBeUndefined()
@@ -178,12 +132,16 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
   await clock.settle()
 
-  // 一、指令未核准：Agent 改了指令 → 暫停；按 v、對話框選「執行」→ 通過 → 自動派審查
+  // 一、指令未核准：Agent 改了指令 → 暫停；面板按兩次 v 核准並執行 → 通過 → 自動派審查
   h.setCheck(IN_APP)
   await h.finish()
   expect(chain().stopped).toBe(CHANGED)
-  await h.verify()
-  expect(data.asks.length).toBe(1)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `${PREFIX}verify` }); await clock.settle()
+  await ui.press({ key: `${PREFIX}verify` }); await clock.settle()
+  await ui.unmount()
+  await h.step(); await h.step()
+  expect(data.asks.length).toBe(0)
   expect(sh(data)).toBe(1)
   expect(chain().stopped).toBeUndefined()
   expect(data.launches.length).toBe(2)
@@ -225,7 +183,7 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   expect(data.launches.length).toBe(5)
   expect(h.prompt(4)).toContain('程式碼審查')
   expect(chain().round).toBe(2)
-  expect(data.asks.length).toBe(1)
+  expect(data.asks.length).toBe(0)
 })
 
 test('chain paused at the check because containers are down or the check broke sends one notification each', COMPOSE, async ($, on) => {
@@ -383,7 +341,7 @@ test('a chain paused at the check by another conversation says where it resumes 
   expect(shown.s).not.toContain(flat(`▶ 輪到你  ${CHANGED}`))
 })
 
-/** 流程停在檢查段後，Agent 把卡片的檢查整條清掉：不能再說「按 v 看指令並核准」（按 v 只會說卡片尚缺完成檢查），改叫你填檢查。 */
+/** 流程停在檢查段後，Agent 把卡片的檢查整條清掉：不能再說「按兩次 v 核准」（按 v 只會說卡片尚缺完成檢查），改叫你填檢查。 */
 test('a chain paused at the check whose check was then cleared asks for a check, not v', async ($, on) => {
   const { data, clock } = fixture(on)
   alphaOnly(data, clock)
@@ -400,6 +358,6 @@ test('a chain paused at the check whose check was then cleared asks for a check,
   await ui.unmount()
 
   expect(shown).toContain(flat('▶ 輪到你  卡片尚缺完成檢查：開卡片（o）'))
-  expect(shown).not.toContain(flat('按 v 看指令並核准'))
+  expect(shown).not.toContain(flat('按兩次 v 核准'))
   expect(leaves(o, 'Text').some((t: any) => t.props?.bold)).toBe(true)
 })

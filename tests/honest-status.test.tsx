@@ -8,7 +8,7 @@ import type { Case, Verify } from '../types'
 const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'
-const UNAPPROVED = '完成檢查的指令改過、還沒經你核准：按 v 看指令並核准，核准後流程接著走'
+const UNAPPROVED = '完成檢查的指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 只留 Beta 一件：審查過關、沒有 PR、沒有 Agent 在跑；流程是別的對話開的，不會自動派工。 */

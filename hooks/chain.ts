@@ -7,10 +7,10 @@ import type { Risk } from './risk'
 
 export const MAX_FIX_ROUNDS = 2
 
-/** 實作做完、要自動執行的完成檢查不是你核准過的那條：不跑，停下來等你按 v 看過。`_WHY` 是不帶按鍵說明的原因。 */
+/** 實作做完、要自動執行的完成檢查不是你核准過的那條：不跑，停下來在檢查列列出全文，等你按兩次 v 核准。`_WHY` 是不帶按鍵說明的原因。 */
 export const CHECK_CHANGED_WHY = '完成檢查的指令改過、還沒經你核准'
 export const CHECK_UNAPPROVED_WHY = '完成檢查的指令還沒經你核准'
-const APPROVE_HINT = '：按 v 看指令並核准，核准後流程接著走'
+const APPROVE_HINT = '：按兩次 v 核准並執行，流程接著走'
 export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
 export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
 /** 流程裡的 Agent 被停掉（面板 k 或外面 `claude stop`）：不算做完，不跑檢查、不派審查或修正；它可能留下改到一半的東西，看過再重開。 */

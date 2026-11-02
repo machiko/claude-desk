@@ -190,7 +190,7 @@ export async function confirmSpec($: any, options: PluginOptions, c: Case) {
 
 /**
  * 規格剛確認（面板 t、教學的 t、對話跑的 spec-ok）：用重讀後的卡照按 g 派實作。
- * 確認規格等於核准檢查欄當時的指令：先記下核准（不能派也記，之後按 g 不再問），不跳對話框；
+ * 確認規格等於核准檢查欄當時的指令：先記下核准（不能派也記，之後按 g 不用再核准），不跳對話框；
  * 「等你」還有事或手動派也不能派的，只說原因；其餘當手動派工交給 dispatch：worktree 有別人的改動、啟動中、已在隊伍、Agent 已滿排隊都照按 g 處理。
  */
 export async function dispatchAfterSpec($: any, options: PluginOptions, statusPath: string): Promise<boolean> {
