@@ -1403,10 +1403,13 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertNotIn('在主 repo、要發的 PR 都合併之後執行', skill)
 
     def test_release_docs_state_one_question_and_version_rule_when_releasing_desk(self):
-        """AC-4：發版段寫只問一次與題目範本、desk 的版號規則、照做的 10 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
+        """AC-4：發版段指向 /desk:release（題目範本與規則只在 skills/release/SKILL.md）、寫 desk 的版號規則與照做的 10 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
         section = self.release_section()
-        for part in ('只問一次', 'A) 照做', 'B) 改用', 'C) 先不發', '選 A／B 後一路做完不再問', '失敗就停'):
+        for part in ('/desk:release', 'skills/release/SKILL.md', '只問一次', '失敗就停'):
             self.assertIn(part, section)
+        # 範本與「做到底」的規則字句搬進 SKILL.md（test_release_skill.py 驗），WORKFLOW 不再寫一份
+        for part in ('A) 照做', 'B) 改用', 'C) 先不發', '選 A／B 後一路做完不再問'):
+            self.assertNotIn(part, section)
         # 版號規則：有 feature 分支或「新增」升次版號（0.38.0），否則升修訂號（0.37.1），附過去發版的佐證
         for part in ('feature/', '「新增」', '次版號', '0.38.0', '修訂號', '0.37.1', '0.27.0 起 12 次發版都符合'):
             self.assertIn(part, section)

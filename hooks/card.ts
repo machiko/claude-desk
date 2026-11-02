@@ -178,62 +178,30 @@ export const allPicked = (decisions: Decision[], picks: Record<string, string>) 
 /** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件任務的決策。 */
 export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`
 
-/**
- * 發版確認題選照做後依序做的動作。之後的卡（例如發版後自動歸檔）往後加收尾項目；確認題照順序列出，仍只問一次。
- */
-export const RELEASE_ACTIONS: readonly string[] = ['合併 CHANGELOG 片段', '改版號', '跑完整檢查', 'commit', '打 tag', 'push 主分支與 tag', '等 CI 通過']
-
-/** 發版請求列了要清理的卡時，接在動作最後的收尾項目（哪幾張、什麼時候、跑哪條指令寫在 releaseCleanup）。 */
-export const RELEASE_CLEANUP_ACTION = '歸檔並移除 worktree 與分支'
-
-/** 發版確認題的範本：整題一句、不用「；」，面板才會當成一個決策。 */
-export const RELEASE_QUESTION = '發版 v<版號>（<卡名與 PR，例如「Beta」PR #12>，<版號理由>），照做會依序：<動作，用 → 串>：A) 照做 v<版號>（推薦） B) 改用 v<另一個版號> 照做 C) 先不發'
-
-/** 發版請求裡「只問一次、選了照做就做到底」那段要求。 */
-export function releaseAsks(actions: readonly string[] = RELEASE_ACTIONS): string {
-  return [
-    `只問我一次：在這幾張卡的「等你」寫同一題，照這個範本、整題不用「；」：${RELEASE_QUESTION}`,
-    '版號照這個專案過去的慣例提，寫出理由',
-    `照做的動作依序是 ${actions.join(' → ')}（照專案的發版流程補上專案自己的步驟與收尾）`,
-    '回答任一張就算數，收到決策先把每張的「等你」清成無',
-    '選 A 或 B 後照順序做完、中間不再問，「狀態」寫做到哪一步',
-    '任何一步失敗就停、後面的不做（還沒 push 就不 push，已 push 的不回退、不 force push），失敗的步驟與原因寫進「狀態」，要我決定的才寫進「等你」',
-    '選 C 就清掉「等你」、什麼都不做',
-    '題目沒列的事一律不做（force push、改寫歷史、合併 PR、刪分支、改清單外的卡），要做就另外問',
-    '有 `release：` 關卡的卡留給我部署後按 u',
-  ].join('；')
-}
-
-/** 預設動作的發版要求。 */
-export const RELEASE_ASKS = releaseAsks()
-
 /** 有 release 關卡的卡部署後按 u 確認上線才歸檔，不在發版清理裡。 */
 const releaseGated = (c: Pick<Case, 'gate'>) => parseGate(c.gate)?.kind === 'release'
 
 /**
- * 「⚑ 發版」填進輸入框的那句：列出所有已合併待發版的卡（有 PR 的附 PR 編號），請對話只問一次。
- * 確認題（版號與理由、包含的卡、照做的動作）走卡片「等你」：面板上那幾張卡會出現 A／B／C，按字母＋f 送回決策；
- * 選照做後對話一路做到 CI 通過，不再另外確認打 tag 與 push。
- * 有沒有 release 關卡的卡時，動作最後多一項 RELEASE_CLEANUP_ACTION、請求尾端接 releaseCleanup：清理列在同一題，選照做就是同意。
+ * 「⚑ 發版」填進輸入框的那行：`/desk:release` 接所有已合併待發版的卡（有 PR 的附 PR 編號），括號裡是 releaseCleanup。
+ * 只問一次、A／B／C、失敗就停這些規則在 skills/release/SKILL.md，送出後由對話載入照做；這裡只列要發什麼。
  */
-export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' | 'git' | 'gate'>[], actions: readonly string[] = RELEASE_ACTIONS): string {
+export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' | 'git' | 'gate'>[]): string {
   const list = cases.map(c => `「${c.name}」${c.pr ? `PR #${c.pr.id}` : ''}`).join('、')
-  const steps = cases.some(c => !releaseGated(c)) ? [...actions, RELEASE_CLEANUP_ACTION] : actions
   const cleanup = releaseCleanup(cases)
-  return `發版：已合併待發版 ${cases.length} 件（${list}）；照這個專案的發版流程準備，只問我一次。${releaseAsks(steps)}${cleanup ? `。${cleanup}` : ''}`
+  return `${RELEASE_CMD} ${list}${cleanup ? `（${cleanup}）` : ''}`
 }
 
 /**
- * 發版請求尾端的清理段：沒有 release 關卡的卡在 CI 通過、狀態寫好後一次歸檔並移除 worktree 與分支（/desk:card archive … --cleanup）；
- * 有 release 關卡的卡不在這次清理，部署後按 u 確認上線時自動歸檔。兩種都沒有就是空字串。
+ * 發版請求括號裡的清理對象：沒有 release 關卡的卡列「slug 分支」，發版後歸檔並移除 worktree 與分支；
+ * 有 release 關卡的卡不在這次清理，部署後按 u。全部都有 release 關卡時只寫一句、不列 slug 與分支。
  */
 export function releaseCleanup(cases: readonly Pick<Case, 'name' | 'root' | 'git' | 'gate'>[]): string {
   const slug = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
   const clean = cases.filter(c => !releaseGated(c))
-  const parts = clean.length
-    ? [`發版後歸檔這 ${clean.length} 張卡，並移除它們的 worktree 與分支（都已合併）：${clean.map(c => `「${c.name}」（${[slug(c), c.git?.branch].filter(Boolean).join('、')}）`).join('、')}；CI 通過、各卡狀態寫好之後才在主 repo 跑 ${CARD_CMD} archive ${clean.map(slug).join(' ')} --cleanup，把沒移除的項目與原因告訴我`]
-    : []
-  return [...parts, ...cases.filter(releaseGated).map(c => `「${c.name}」有 release 關卡，不在這次清理，部署後按 u 確認上線會自動歸檔`)].join('；')
+  const gated = cases.filter(releaseGated)
+  if (!clean.length && gated.length > 1) return '都有 release 關卡，不清理，部署後按 u'
+  const parts = clean.length ? [`歸檔並移除 worktree 與分支：${clean.map(c => [slug(c), c.git?.branch].filter(Boolean).join(' ')).join('、')}`] : []
+  return [...parts, ...gated.map(c => `「${c.name}」有 release 關卡，部署後按 u`)].join('；')
 }
 
 /** 送出的提示是不是某件任務的決策（以「「任務名」決策：」開頭）：回傳任務名，不是就 null。 */
@@ -256,6 +224,8 @@ export function projectRoot(statusPath: string): string {
  */
 /** 開卡、規格、歸檔的指令（plugin 內附的 skill，名稱帶 plugin 前綴）。 */
 export const CARD_CMD = '/desk:card'
+/** 發版請求的指令：skills/release/SKILL.md。 */
+export const RELEASE_CMD = '/desk:release'
 /** 上線確認寫進卡片的字：狀態「<tag> 已上線（工作桌確認）」、下一步「可歸檔：…」；六段也靠它們認得已確認上線。 */
 export const SHIPPED_WORD = '已上線'
 export const ARCHIVE_WORD = '可歸檔'
