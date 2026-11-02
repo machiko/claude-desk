@@ -44,7 +44,7 @@ function onlyBeta(data: any, base: string) {
 
 /**
  * 三種「原本的條件」：規格段停在 spec 關卡（t），上線段有 tag 包含 HEAD、關卡是 release（u），六段全過（歸檔）；
- * 卡片都有完成檢查（v）。同一件任務不會同時在三段，所以分三種卡片各驗一次。
+ * 卡片都有完成檢查（v），但已合併還沒上線的上線段連 m 展開都不列檢查。同一件任務不會同時在三段，所以分三種卡片各驗一次。
  */
 const STAGES: { name: string; ids: Lockable[]; setup: (data: any) => void }[] = [
   {
@@ -57,7 +57,7 @@ const STAGES: { name: string; ids: Lockable[]; setup: (data: any) => void }[] = 
   },
   {
     name: 'ship',
-    ids: ['verify', 'ship'],
+    ids: ['ship'],
     setup: data => {
       data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', '- 關卡：release：v0.2.0 待上線確認')
       data.git[BETA] = { branch: 'feature/b', head: 'h1', tag: 'v0.2.0', remote: GITHUB }
@@ -173,8 +173,9 @@ test('test_running_case_keeps_stop_logs_open_and_other_cases_unlocked', async ($
   data.agents = [RUNNING]
   const ui = await mount($, clock)
   await ui.press({ key: `row-${CARD_B}` })
+  // 已合併還沒上線：檢查連鎖定的淡色文字都不列
   expect(await ui.find({ type: 'Button', key: `${PREFIX}verify` })).toBeUndefined()
-  expect(await lockedText(ui, 'verify')).toBeDefined()
+  expect(await lockedText(ui, 'verify')).toBeUndefined()
   const card = data.files[CARD_B]!
 
   // 輸出、開啟、發版照常

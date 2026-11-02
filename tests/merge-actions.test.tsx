@@ -4,6 +4,7 @@ import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { stageActions } from '../hooks/turn'
 import { caseActions } from '../hooks/pane-card'
+import { CHECK_UNAPPROVED } from '../hooks/chain'
 import type { Case, Verify } from '../types'
 
 const BETA = '/home/u/wt/beta'
@@ -225,6 +226,44 @@ test('merge actions: show-all outside the merge stage has no retreat group', () 
   expect(actionOrder(earlier, true)).toEqual(['continue', 'review', 'sync', 'verify', 'open'])
 })
 
+const MERGED_PR = { id: 12, state: 'MERGED', ci: 'none', url: 'https://github.com/acme/shop/pull/12' } as const
+/** 分支已進基準分支：展開更多動作也沒有要繼續、審查或檢查的東西。 */
+const DISPATCH_KEYS = ['continue', 'review', 'verify', 'retreat']
+
+/** 合併後更多動作 AC-1 */
+test('test_merged_pr_card_more_actions_drop_continue_review_and_verify', () => {
+  const merged = mergeCase({ pr: MERGED_PR })
+  const shown = actionOrder(merged, true)
+
+  expect(merged.pipeline!.current).toBe('ship')
+  expect(shown).toEqual(['sync', 'pr', 'release', 'open'])
+  for (const id of DISPATCH_KEYS) expect(shown).not.toContain(id)
+})
+
+/** 合併後更多動作 AC-2 */
+test('test_git_merged_card_more_actions_only_sync_release_and_open', () => {
+  const merged = mergeCase({ mergedInto: 'origin/main' })
+  const shown = actionOrder(merged, true)
+
+  expect(merged.pipeline!.current).toBe('ship')
+  expect(shown).toEqual(['sync', 'release', 'open'])
+  for (const id of DISPATCH_KEYS) expect(shown).not.toContain(id)
+})
+
+/** 合併後更多動作 AC-3 */
+test('test_tagged_release_gate_card_more_actions_drop_continue_review_and_verify', () => {
+  const tagged = mergeCase({ pr: MERGED_PR, tag: 'v1.5.0' }, '- 關卡：release：v1.5.0')
+  const viaGit = mergeCase({ mergedInto: 'origin/main', tag: 'v1.5.0' }, '- 關卡：release：v1.5.0')
+
+  expect(tagged.pipeline!.current).toBe('ship')
+  expect(actionOrder(tagged, true)).toEqual(['sync', 'pr', 'ship', 'open'])
+  expect(actionOrder(viaGit, true)).toEqual(['sync', 'ship', 'open'])
+  for (const id of DISPATCH_KEYS) {
+    expect(actionOrder(tagged, true)).not.toContain(id)
+    expect(actionOrder(viaGit, true)).not.toContain(id)
+  }
+})
+
 /** AC-5 */
 test('merge actions: a normal case confirms without the review-file reminder and dispatches on the second press', async ($, on) => {
   const { data, clock } = fixture(on)
@@ -249,4 +288,23 @@ test('merge actions: a normal case confirms without the review-file reminder and
   expect(data.launches).toHaveLength(1)
   expect(promptOf(data).split('\n')[0]).toContain(PUBLISH_HEAD)
   expect(data.fills).toHaveLength(0)
+})
+
+/** 審查 MEDIUM：已合併還沒上線、這個對話的流程先前停在檢查沒核准：v 已經不列，檢查列不再叫你按兩次 v。 */
+test('merged case held at an unapproved check does not ask to press v twice', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data)
+  data.gh = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
+  data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: CHECK_UNAPPROVED, heldAtCheck: true } }
+
+  const ui = await mount($)
+  const normal = await buttonKeys(ui)
+  await ui.press({ key: 'more' })
+  const shown = await screen(ui)
+  const all = await buttonKeys(ui)
+  await ui.unmount()
+
+  expect(normal).toEqual(['release', 'open'])
+  expect(all).not.toContain('verify')
+  expect(shown).not.toContain(flat('按兩次 v'))
 })
