@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, paneReminders, reminderWhen, reviewTop, mediumToFix, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
+import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, paneReminders, reminderWhen, reviewTop, preflightLine, mediumToFix, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
 
 test('confirm fires only on a second press of the same action within 3 seconds', () => {
   const a = confirmStep(null, 'x\ncontinue', 1000)
@@ -64,6 +64,27 @@ test('reminders: done, struck, nested, malformed-date and separator lines are no
 test('review top lists CRITICAL and HIGH only', () => {
   const md = '# 審查\n- [MEDIUM][命名] a.php:3 — x\n- [HIGH][稽核] b.php:10 — 漏寫稽核紀錄\n- [CRITICAL][資料範圍] c.php:5 — 沒做權限檢查\n- [LOW] d'
   expect(reviewTop(md)).toEqual(['HIGH 稽核 b.php:10 — 漏寫稽核紀錄', 'CRITICAL 資料範圍 c.php:5 — 沒做權限檢查'])
+})
+
+test('preflight line reads success and failure from the first line', () => {
+  expect(preflightLine('前置：成功，候選 5 條，採用 2 條\n# 審查\n- [HIGH] a.ts:1 — x')).toBe('成功，候選 5 條，採用 2 條')
+  expect(preflightLine('前置：成功，候選 0 條，採用 0 條')).toBe('成功，候選 0 條，採用 0 條')
+  expect(preflightLine('前置：失敗（找不到指令 agy-review）\n# 審查')).toBe('失敗（找不到指令 agy-review）')
+  expect(preflightLine(null)).toBeNull()
+  expect(preflightLine('# 審查\n前置：成功，候選 5 條，採用 2 條')).toBeNull()
+})
+
+/** AC-4 */
+test('test_parse_preflight_rejects_malformed_header', () => {
+  expect(preflightLine('前置：成功\n# 審查')).toBeNull()
+  expect(preflightLine('前置：候選 a 條\n# 審查')).toBeNull()
+  expect(preflightLine('前置：失敗（）\n# 審查')).toBeNull()
+})
+
+/** AC-5 */
+test('test_parse_preflight_strips_control_sequences_and_crlf', () => {
+  expect(preflightLine('前置：失敗（\u001b[31m逾時\u001b[0m 60 秒）\r\n# 審查\r\n')).toBe('失敗（逾時 60 秒）')
+  expect(preflightLine('前置：成功，候選 3 條，採用 1 條\r\n- [HIGH] a.ts:1 — x\r\n')).toBe('成功，候選 3 條，採用 1 條')
 })
 
 test('git status v2 counts ahead, behind, changed, untracked', () => {

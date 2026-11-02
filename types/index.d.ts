@@ -75,6 +75,8 @@ export type Case = {
   history?: HistoryEntry[]
   /** 審查檔的 CRITICAL、HIGH 前三條。 */
   reviewTop?: string[]
+  /** 審查檔第一行的前置結果（「成功，候選 n 條，採用 m 條」或「失敗（原因）」）。 */
+  preflight?: string
 }
 
 /** footer 版本格的四種狀態。 */

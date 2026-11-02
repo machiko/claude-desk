@@ -117,6 +117,19 @@ export function reviewTop(text: string | null, n = 3): string[] {
 }
 
 /**
+ * 審查檔第一行的前置結果：「前置：成功，候選 n 條，採用 m 條」→「成功，候選 n 條，採用 m 條」，
+ * 「前置：失敗（原因）」→「失敗（原因）」。不在第一行、格式不對、沒有檔案都回 null。先去掉控制序列與 \r。
+ */
+export function preflightLine(text: string | null): string | null {
+  if (!text) return null
+  const first = plain(text.replace(/\r\n?/g, '\n').split('\n')[0]!).trim()
+  const ok = first.match(/^前置：成功，候選 (\d+) 條，採用 (\d+) 條$/)
+  if (ok) return `成功，候選 ${ok[1]} 條，採用 ${ok[2]} 條`
+  const fail = first.match(/^前置：失敗（(.+)）$/)
+  return fail ? `失敗（${fail[1]}）` : null
+}
+
+/**
  * 審查檔裡要自動修的 MEDIUM 條數：「- [MEDIUM]…」開頭的行（不分大小寫，跟 reviewTop 同一種比對），行尾是註記就不算：
  * 結尾的括號以「不修」或「等你決定」收尾（「（記錄、不修）」「（不修）」「（等你決定）」「（上一輪已列，等你決定）」，後面可以接句號、空白）。
  * 說明裡的括號照算，不管在中間或結尾（例如「（parse 失敗後不修正預設值）」「（不修會 crash）」「（若不修正會顯示前一天）」），
