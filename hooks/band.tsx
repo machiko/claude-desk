@@ -1,5 +1,5 @@
 // 摘要列：輸入框上方一行。左邊是面板上選的那件（沒選就是進行中的那件，再沒有就是現在該看的那件）與它的六段，右邊是在等你的那件。
-// 版面先算好（純函式，可測），再畫；放不下時依序：段名縮成字形 → 拿掉備註 → 任務名截斷 → 拿掉右邊。
+// 版面先算好（純函式，可測），再畫；放不下時依序：截短那句話 → 段名縮成字形 → 拿掉備註 → 任務名截斷 → 拿掉右邊。
 import type { Case, Snapshot, StageStatus } from '../types'
 import { displayWidth, fit, focusCase, liveCases, summary } from './model'
 import { stageParts } from './pipeline'
@@ -16,6 +16,8 @@ export type BandPart = { text: string; color: string; bold?: boolean }
 export type BandLayout = { lead: BandPart[]; wait: BandPart | null; notice: BandPart | null; button: string; buttonWidth: number }
 
 const NARROW = 48
+/** 寬版六段配截短的那句話：那句話至少留這麼寬，再窄就改走字形版、讓那句話完整。 */
+const MIN_NOTE = 10
 const width = (parts: BandPart[]) => parts.reduce((n, p) => n + displayWidth(p.text), 0)
 
 function leadCase(s: Snapshot, selected: string | null): Case | null {
@@ -74,9 +76,20 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
     return { text: `● ${fit(w.name, max - 2 - displayWidth(tail))}${tail}`, color: COLOR.attention, bold: true }
   }
 
+  // 寬版六段圖示在字前，每段多一格：放不下整句話時，那句話最多截掉這幾格，右邊的等你／提醒保持完整；
+  // 要截更多（或剩不到 MIN_NOTE）就照舊改走字形版。
+  const wideShortNote = (): { lead: BandPart[]; wait: BandPart | null } | null => {
+    const base = [...head, name(24), { text: ' ', color: COLOR.dim }, ...strip(false)]
+    const grown = lead.pipeline ? stageParts(lead.pipeline, false).length : 0
+    const wait = waitPart(40)
+    const left = room - width(base) - width(more) - (wait ? displayWidth(wait.text) + 3 : 0) - 2
+    if (!noteText || left < Math.max(MIN_NOTE, displayWidth(noteText) - grown)) return null
+    return { lead: [...base, { ...note[0]!, text: `  ${fit(noteText, left)}` }, ...more], wait }
+  }
   // 由寬到窄試，第一個放得下的就用。
-  const tries: (() => { lead: BandPart[]; wait: BandPart | null })[] = [
+  const tries: (() => { lead: BandPart[]; wait: BandPart | null } | null)[] = [
     () => ({ lead: [...head, name(24), { text: ' ', color: COLOR.dim }, ...strip(false), ...note, ...more], wait: waitPart(40) }),
+    wideShortNote,
     () => ({ lead: [...head, name(20), { text: '  ', color: COLOR.dim }, ...strip(true), ...label, ...note, ...more], wait: waitPart(22) }),
     () => ({ lead: [...head, name(18), { text: '  ', color: COLOR.dim }, ...strip(true), ...label, ...more], wait: waitPart(18) }),
     () => ({ lead: [...head, name(16), { text: '  ', color: COLOR.dim }, ...strip(true), ...label], wait: null }),
@@ -84,6 +97,7 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   ]
   for (const t of tries) {
     const r = t()
+    if (!r) continue
     const total = width(r.lead) + (r.wait ? displayWidth(r.wait.text) + 3 : 0)
     if (total <= room) return { ...r, notice, button, buttonWidth }
   }

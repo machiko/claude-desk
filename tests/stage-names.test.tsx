@@ -85,9 +85,9 @@ test('test_stage_labels_read_test_and_acceptance', async ($, on) => {
     expect(shown).not.toMatch(OLD_STAGE)
     expect(shown).not.toContain('實作 檢查 審查')
   }
-  expect(alpha).toContain('規格● 實作● 測試◆ 驗收○ 合併○ 上線○')
-  expect(beta).toContain('規格● 實作● 測試● 驗收◆ 合併○ 上線○')
-  expect(gamma).toContain('規格● 實作● 測試● 驗收● 合併◆ 上線○')
+  expect(alpha).toContain('● 規格 ● 實作 ◆ 測試 ○ 驗收 ○ 合併 ○ 上線')
+  expect(beta).toContain('● 規格 ● 實作 ● 測試 ◆ 驗收 ○ 合併 ○ 上線')
+  expect(gamma).toContain('● 規格 ● 實作 ● 測試 ● 驗收 ◆ 合併 ○ 上線')
   // 欄寬與對齊不變：段名都是兩個全形字，表頭每段 5 欄，跟列上字形的間距一樣
   expect(STAGES.map(s => displayWidth(s.label))).toEqual([4, 4, 4, 4, 4, 4])
   expect(beta).toContain('●    ●    ●    ◆    ○    ○')
@@ -96,7 +96,7 @@ test('test_stage_labels_read_test_and_acceptance', async ($, on) => {
   // 窄：現在卡的六段列照樣是新段名，清單只畫字形
   const narrow = await mount($, clock, 44)
   const narrowAlpha = await pick(narrow, CARD_A)
-  expect(narrowAlpha).toContain('規格● 實作● 測試◆ 驗收○ 合併○ 上線○')
+  expect(narrowAlpha).toContain('● 規格 ● 實作 ◆ 測試 ○ 驗收 ○ 合併 ○ 上線')
   expect(narrowAlpha).not.toMatch(OLD_STAGE)
   expect(flat(narrowAlpha)).toContain('▷Alpha●●◆○○○')
   await narrow.unmount()
@@ -130,6 +130,17 @@ test('test_stage_labels_read_test_and_acceptance', async ($, on) => {
   await ui.unmount()
   await clock.advance(2500)
   await clock.settle()
+})
+
+/** 六段圖示在字前 AC-4：現在卡寬度 < 30 時六段列只畫字形，沒有段名與空白，跟改之前相同。 */
+test('test_narrow_now_card_draws_stages_as_bare_glyphs', async ($, on) => {
+  const { data, clock } = fixture(on)
+  threeStages(data, clock)
+  const ui = await mount($, clock, 28)
+  await pick(ui, CARD_A)
+  const row = await ui.find({ type: 'Text', text: /^[●◉◎◆✕○·]{6}$/ })
+  expect(String(row?.text)).toBe('●●◆○○○')
+  await ui.unmount()
 })
 
 /** AC-2 */

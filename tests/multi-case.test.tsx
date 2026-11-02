@@ -58,9 +58,9 @@ const finish = (data: any, root: string) => { data.agents = data.agents.map((a: 
 const setGate = (data: any, card: string, g: string) => { data.files[card] = data.files[card]!.replace(/- 關卡：.*$/m, `- 關卡：${g}`) }
 const step = async (clock: any) => { await clock.advance(2500); await clock.settle() }
 
-/** 現在卡上的六段（`規格● 實作● …`）與全部任務表格那一列的六段字形。 */
+/** 現在卡上的六段（`● 規格 ● 實作 …`）與全部任務表格那一列的六段字形。 */
 async function cardStages(ui: any): Promise<string> {
-  const t = await ui.find({ type: 'Text', text: /^規格[●◉◆✕○·]/ })
+  const t = await ui.find({ type: 'Text', text: /^[●◉◎◆✕○·] 規格/ })
   return String(t?.text ?? '')
 }
 async function rowGlyphs(ui: any, card: string): Promise<string> {
@@ -125,9 +125,9 @@ test('a running review shows the review stage active, not build', async ($, on) 
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const alpha = await bothViews(ui, CARD_A)
 
-  expect(alpha.card).toBe('規格● 實作● 測試● 驗收◉ 合併○ 上線○')
+  expect(alpha.card).toBe('● 規格 ● 實作 ● 測試 ◉ 驗收 ○ 合併 ○ 上線')
   expect(alpha.row).toBe(glyphsOf(alpha.card))
-  expect(alpha.card).not.toContain('實作◆')
+  expect(alpha.card).not.toContain('◆ 實作')
   // 單看六段推算：審查 Agent 在跑、檢查通過
   const reviewing = betaCase({ agent: { id: 'r1', name: 'desk-r', state: 'working', status: 'busy', kind: 'review' }, chain: { round: 0, lastKind: 'review' } })
   expect(stageLabel(pipeline(reviewing, passedAt('b1')))).toBe('驗收・驗收中')
@@ -147,9 +147,9 @@ test('a running or queued check shows the check stage active', async ($, on) => 
   const alpha = await bothViews(ui, CARD_A)
   const beta = await bothViews(ui, CARD_B)
 
-  expect(alpha.card).toBe('規格● 實作● 測試◉ 驗收○ 合併○ 上線○')
+  expect(alpha.card).toBe('● 規格 ● 實作 ◉ 測試 ○ 驗收 ○ 合併 ○ 上線')
   expect(alpha.row).toBe(glyphsOf(alpha.card))
-  expect(beta.card).toBe('規格● 實作● 測試◉ 驗收○ 合併○ 上線○')
+  expect(beta.card).toBe('● 規格 ● 實作 ◉ 測試 ○ 驗收 ○ 合併 ○ 上線')
   expect(beta.row).toBe(glyphsOf(beta.card))
   // 註記：在跑的寫測試執行中、排隊的寫排隊中；上一次在同一個 HEAD 通過過也一樣退回檢查段
   expect(stageLabel(pipeline(betaCase(), undefined, true))).toBe('測試・測試執行中')
@@ -174,7 +174,7 @@ test('a running sync keeps the stage it had', async ($, on) => {
   const during = await bothViews(ui, CARD_A)
 
   expect(data.launches.length).toBe(1)
-  expect(before.card).toBe('規格● 實作● 測試● 驗收◆ 合併○ 上線○')
+  expect(before.card).toBe('● 規格 ● 實作 ● 測試 ◆ 驗收 ○ 合併 ○ 上線')
   expect(during.card).toBe(before.card)
   expect(during.row).toBe(glyphsOf(before.card))
   await focus(ui, CARD_A)
@@ -229,7 +229,7 @@ test('between a passing check and the auto review the turn line does not ask you
   await step(clock)
 
   expect(launchedBefore).toBe(1)
-  expect(stages).toBe('規格● 實作● 測試● 驗收◆ 合併○ 上線○')
+  expect(stages).toBe('● 規格 ● 實作 ● 測試 ◆ 驗收 ○ 合併 ○ 上線')
   expect(card).toContain('◐ 處理中')
   expect(card).toContain('接著自動驗收')
   expect(card).not.toContain('按 w 派驗收')
@@ -276,13 +276,13 @@ test('two cases chained together show their own stages at every step', async ($,
   await step(clock)
   await look('兩件都過關')
 
-  const S = (s: string) => `規格● 實作${s}`
+  const S = (s: string) => `● 規格 ${s}`
   expect(seen).toEqual([
-    { label: '實作中', alpha: S('◉ 測試○ 驗收○ 合併○ 上線○'), alphaRow: '●◉○○○○', beta: S('◉ 測試○ 驗收○ 合併○ 上線○'), betaRow: '●◉○○○○' },
-    { label: 'Alpha 檢查、Beta 排隊', alpha: S('● 測試◉ 驗收○ 合併○ 上線○'), alphaRow: '●●◉○○○', beta: S('● 測試◉ 驗收○ 合併○ 上線○'), betaRow: '●●◉○○○' },
-    { label: 'Alpha 審查、Beta 檢查', alpha: S('● 測試● 驗收◉ 合併○ 上線○'), alphaRow: '●●●◉○○', beta: S('● 測試◉ 驗收○ 合併○ 上線○'), betaRow: '●●◉○○○' },
-    { label: '兩件都在審查', alpha: S('● 測試● 驗收◉ 合併○ 上線○'), alphaRow: '●●●◉○○', beta: S('● 測試● 驗收◉ 合併○ 上線○'), betaRow: '●●●◉○○' },
-    { label: '兩件都過關', alpha: S('● 測試● 驗收● 合併◆ 上線○'), alphaRow: '●●●●◆○', beta: S('● 測試● 驗收● 合併◆ 上線○'), betaRow: '●●●●◆○' },
+    { label: '實作中', alpha: S('◉ 實作 ○ 測試 ○ 驗收 ○ 合併 ○ 上線'), alphaRow: '●◉○○○○', beta: S('◉ 實作 ○ 測試 ○ 驗收 ○ 合併 ○ 上線'), betaRow: '●◉○○○○' },
+    { label: 'Alpha 檢查、Beta 排隊', alpha: S('● 實作 ◉ 測試 ○ 驗收 ○ 合併 ○ 上線'), alphaRow: '●●◉○○○', beta: S('● 實作 ◉ 測試 ○ 驗收 ○ 合併 ○ 上線'), betaRow: '●●◉○○○' },
+    { label: 'Alpha 審查、Beta 檢查', alpha: S('● 實作 ● 測試 ◉ 驗收 ○ 合併 ○ 上線'), alphaRow: '●●●◉○○', beta: S('● 實作 ◉ 測試 ○ 驗收 ○ 合併 ○ 上線'), betaRow: '●●◉○○○' },
+    { label: '兩件都在審查', alpha: S('● 實作 ● 測試 ◉ 驗收 ○ 合併 ○ 上線'), alphaRow: '●●●◉○○', beta: S('● 實作 ● 測試 ◉ 驗收 ○ 合併 ○ 上線'), betaRow: '●●●◉○○' },
+    { label: '兩件都過關', alpha: S('● 實作 ● 測試 ● 驗收 ◆ 合併 ○ 上線'), alphaRow: '●●●●◆○', beta: S('● 實作 ● 測試 ● 驗收 ◆ 合併 ○ 上線'), betaRow: '●●●●◆○' },
   ])
   expect(data.launches.length).toBe(4)
   expect(data.toasts.filter(t => t.includes('審查通過')).length).toBe(2)
@@ -312,7 +312,7 @@ test('a check that breaks midway still lets the queued case run', async ($, on) 
   const ui = await $.ui.mount(PANE(100))
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const alpha = await bothViews(ui, CARD_A)
-  expect(alpha.card).not.toContain('測試◉')
+  expect(alpha.card).not.toContain('◉ 測試')
   // 「最近」只放現在這件：換回 Alpha 才看得到它的檢查中斷
   await focus(ui, CARD_A)
   expect(JSON.stringify(await ui.drawn())).toContain('Alpha 檢查中斷')
@@ -347,8 +347,8 @@ test('an agent desk cannot match to a dispatch counts as writing code', async ($
 
   expect(data.launches.length).toBe(1)
   expect(data.toasts).toContain('Alpha：驗收已派出')
-  expect(before.card).toBe('規格● 實作● 測試● 驗收◆ 合併○ 上線○')
-  expect(launching.card).toBe('規格● 實作● 測試● 驗收◉ 合併○ 上線○')
+  expect(before.card).toBe('● 規格 ● 實作 ● 測試 ◆ 驗收 ○ 合併 ○ 上線')
+  expect(launching.card).toBe('● 規格 ● 實作 ● 測試 ◉ 驗收 ○ 合併 ○ 上線')
   expect(launching.row).toBe(glyphsOf(launching.card))
   await ui.unmount()
 })
@@ -379,7 +379,7 @@ test('a queued check that can no longer run lets the one behind it go next', asy
 
   expect(stats.cwds).toEqual([ALPHA, GAMMA])
   expect(stats.max).toBe(1)
-  expect(beta.card).not.toContain('測試◉')
+  expect(beta.card).not.toContain('◉ 測試')
   expect(beta.row).toBe(glyphsOf(beta.card))
   await drain(clock)
 })

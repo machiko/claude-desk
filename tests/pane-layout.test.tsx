@@ -172,7 +172,7 @@ test('test_running_now_card_animates_and_shows_elapsed_and_last_line', async ($,
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
   const busyGlyph = async () => (await ui.find({ type: 'Text', text: /處理中/ }))?.text[0]
-  const pulse = async () => text(await ui.drawn()).match(/實作([◉◎])/)?.[1]
+  const pulse = async () => text(await ui.drawn()).match(/([◉◎]) 實作/)?.[1]
   const glyph0 = await busyGlyph()
   const stage0 = await pulse()
   expect(stage0).toBeDefined()

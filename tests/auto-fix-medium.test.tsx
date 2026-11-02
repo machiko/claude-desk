@@ -185,7 +185,7 @@ test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_fu
   // 排隊是一般事件：寫進動態紀錄，不上畫面
   expect(log.has('Alpha 自動派修正第 1 輪排隊中（第 1 位）')).toBe(true)
   expect(queued).not.toContain(flat('Alpha 自動派修正第 1 輪排隊中（第 1 位）'))
-  expect(queued).toContain(flat('規格● 實作● 測試● 驗收◉ 合併○ 上線○'))
+  expect(queued).toContain(flat('● 規格 ● 實作 ● 測試 ◉ 驗收 ○ 合併 ○ 上線'))
   expect(queued).not.toContain('開PR')
   expect(await ui.find({ key: `case-${CARD_A}-open-pr` })).toBeFalsy()
   expect(data.toasts.some((t: string) => t.includes('審查通過'))).toBe(false)
@@ -193,7 +193,7 @@ test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_fu
   // 重新整理、名額還是滿的：照舊排著
   await h.refresh()
   expect(data.launches).toHaveLength(0)
-  expect(await screen(ui)).toContain(flat('驗收◉ 合併○'))
+  expect(await screen(ui)).toContain(flat('◉ 驗收 ○ 合併'))
   // 驗收段的說明（狀態列）：流程這輪要修 MEDIUM 時寫「…MEDIUM 1，修正中」，不算審查過了
   const base = buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}, undefined)
   const verify = (data.store.verifies as any)[CARD_A]
@@ -302,7 +302,7 @@ test('test_no_medium_fix_is_sent_when_this_conversation_does_not_own_the_review'
   // (a) 六段照舊到合併「可開 PR（自審）」
   await ui.press({ key: `row-${CARD_C}` })
   const gamma = await screen(ui)
-  expect(gamma).toContain(flat('規格● 實作● 測試● 驗收● 合併◆'))
+  expect(gamma).toContain(flat('● 規格 ● 實作 ● 測試 ● 驗收 ◆ 合併'))
   expect(gamma).toContain(flat('◆ 驗收  CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0（自審）'))
   expect(gamma).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（驗收是自審，可按 w 派獨立驗收）'))
   expect(await ui.find({ key: `case-${CARD_C}-open-pr` })).toBeTruthy()
