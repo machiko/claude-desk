@@ -243,7 +243,8 @@ class CardScriptTest(unittest.TestCase):
         return r
 
     def test_new_with_trivial_flag_marks_spec_and_sets_spec_gate(self):
-        """AC-1：new 最後帶 --trivial（也可以同時給 base）照常開卡；規格第一行標瑣事、預填一條驗收情境、關卡設成瑣事的 spec 關卡，--trivial 不被當成 base。"""
+        """AC-1：new 最後帶 --trivial（也可以同時給 base）照常開卡；規格第一行標瑣事、關卡設成瑣事的 spec 關卡，--trivial 不被當成 base。
+        驗收情境維持範本、不預填：認不到填好的 AC（跟一般卡一樣），面板（model.ts 的 specGap，與 filled AC 同規則）才會提示輸入 /desk:card spec 寫規格，不叫你按 t。"""
         r = self.new_trivial('fix-typo', '修註解', 'origin/main')
 
         card = self.card_path('fix-typo')
@@ -252,12 +253,13 @@ class CardScriptTest(unittest.TestCase):
         spec = load_card().spec_section(text)
         first = next(l for l in spec.split('\n') if l.strip())
         self.assertTrue(first.startswith('- 類型：瑣事（'), first)
-        ac = next(l for l in spec.split('\n') if l.startswith('| AC-1 |'))
-        self.assertIn('完成檢查與 CI', ac)
-        self.assertIn('全過，沒有測試斷言被改壞', ac)
+        tpl_ac = next(l for l in read(TEMPLATE).split('\n') if l.startswith('| AC-1 |'))
+        self.assertIn(tpl_ac, spec.split('\n'))
         self.assertIn('- 關卡：spec：待確認規格（瑣事）', text)
         self.assertIn('瑣事卡：規格一句、免前審', r.stdout)
-        self.assertIn('filled AC: AC-1', self.run_card('card', 'fix-typo').stdout)
+        self.assertIn('filled AC: none', self.run_card('card', 'fix-typo').stdout)
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        self.assertIn('filled AC: none', self.run_card('card', 'order-export').stdout)
         # 沒給 base 時 --trivial 也不會被當成 base
         self.new_trivial('fix-readme', '修說明')
         self.assertEqual(subprocess.run(['git', 'branch', '--show-current'], cwd=os.path.dirname(os.path.dirname(self.card_path('fix-readme'))),
@@ -267,7 +269,9 @@ class CardScriptTest(unittest.TestCase):
     def test_new_trivial_keeps_goal_line_when_template_has_no_blank_line_under_spec(self):
         """審查 MEDIUM：自訂模板「## 規格」下直接接「- 目標：」時，類型行自成一行，不黏到目標行。"""
         tpl = os.path.join(self.t, 'tight-template.md')
-        write(tpl, re.sub(r'(?m)^## 規格\n\n', '## 規格\n', read(TEMPLATE)))
+        tight, n = re.subn(r'(?m)^## 規格\n\n', '## 規格\n', read(TEMPLATE))
+        self.assertEqual(n, 1, '內建模板「## 規格」下的空行改了寫法，這支測試要跟著改')
+        write(tpl, tight)
         self.write_settings({'card': {'template': tpl}})
 
         self.new_trivial()
@@ -303,6 +307,9 @@ class CardScriptTest(unittest.TestCase):
         """AC-4：瑣事卡的實作計畫還是範本時 spec-ok 照樣拒絕、卡片不變；填好計畫才清關卡並記 Decisions 與 History。"""
         self.new_trivial()
         card = self.card_path('fix-typo')
+        # spec 步驟預填的那條驗收情境（SKILL 2c），實作計畫還是範本
+        write(card, read(card).replace('| AC-1 | <前提：角色、資料、狀態> | <操作或事件> | <看得到的結果：畫面、回應、資料、log> | `<測試名稱>` |',
+                                       '| AC-1 | 改動只有文字或註解 | 跑完成檢查與 CI | 全過，沒有測試斷言被改壞 | 完成檢查與 CI |'))
         before = read(card)
 
         r = self.run_card('spec-ok', 'fix-typo')
@@ -1586,12 +1593,18 @@ class TrivialCardDocsTest(unittest.TestCase):
     """瑣事卡：規則只寫在 SKILL.md 的規格步驟，README 與 WORKFLOW 只寫用途並指到 /desk:card。"""
 
     def test_docs_describe_trivial_card_and_batch_release(self):
-        """AC-6：SKILL 寫明 trivial: yes 時跳過規格前審與釐清問題、規格怎麼寫；README 的 new 列有 --trivial；WORKFLOW 開卡段有瑣事卡與小卡併成一版發；三處規則不重複。"""
+        """AC-6：SKILL 寫明 trivial: yes 時跳過規格前審與釐清問題、由 spec 這一步預填那條驗收情境（四欄內容）、規格怎麼寫；README 的 new 列有 --trivial；WORKFLOW 開卡段有瑣事卡與小卡併成一版發；三處規則不重複。"""
         skill = read(os.path.join(REPO, 'skills', 'card', 'SKILL.md'))
         spec_steps = skill[skill.index('## 產生規格（spec）'):]
         rule = next(l for l in spec_steps.splitlines() if 'trivial: yes' in l)
-        for part in ('跳過', '2b', '規格前審', '釐清問題', '目標一句', '非目標可省', '預填', '實作計畫', 'spec：待確認規格（瑣事）'):
+        for part in ('跳過', '2b', '規格前審', '釐清問題', '目標一句', '非目標可省', '實作計畫', 'spec：待確認規格（瑣事）'):
             self.assertIn(part, rule)
+        # 預填那條由這一步寫，四欄內容寫明；不再說開卡時已預填
+        for part in ('這一步', '預填', '改動只有文字或註解', '跑完成檢查與 CI', '全過，沒有測試斷言被改壞', '對應測試', '完成檢查與 CI', '要補可補'):
+            self.assertIn(part, rule)
+        self.assertNotIn('保留預填', rule)
+        new_flag = next(l for l in skill.splitlines() if l.strip().startswith('- `new` 帶 `--trivial`'))
+        self.assertNotIn('預填', new_flag)
         self.assertIn('--trivial', skill.split('---')[1], 'frontmatter description 要提 --trivial')
 
         readme = read(os.path.join(REPO, 'README.md'))

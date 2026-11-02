@@ -7,7 +7,7 @@
 
 用法：
   card.py new <分支> <卡名> [base]             從主 repo 建 worktree（資料夾名取分支最後一段）、DESK 卡、登錄表列
-                                               --trivial（任何位置）：瑣事卡，規格段標「類型：瑣事」、預填一條驗收情境、關卡設 spec：待確認規格（瑣事）
+                                               --trivial（任何位置）：瑣事卡，規格段標「類型：瑣事」、關卡設 spec：待確認規格（瑣事）；驗收情境維持範本，由 spec 步驟預填
   card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
@@ -228,7 +228,6 @@ def spec_section(text):
 
 TRIVIAL_FLAG = '--trivial'
 TRIVIAL_LINE = '- 類型：瑣事（只改註解、CHANGELOG、沒被測試引用的說明文字；規格一句、免前審、不問釐清題，測試、CI 與審查風險照舊）'
-TRIVIAL_AC = '| AC-1 | 改動只有文字或註解 | 跑完成檢查與 CI | 全過，沒有測試斷言被改壞 | 完成檢查與 CI |'
 TRIVIAL_GATE = 'spec：待確認規格（瑣事）'
 
 
@@ -238,14 +237,12 @@ def is_trivial(text):
 
 
 def trivial_card(text):
-    """把開好的卡改成瑣事卡：「## 規格」標題下插類型行、模板的 AC-1 列換成預填的那條。模板沒有規格段或 AC-1 列就回 None。"""
+    """把開好的卡改成瑣事卡：「## 規格」標題下插類型行，驗收情境維持範本（預填那條由 /desk:card spec 寫）。模板沒有規格段就回 None。"""
     head = re.search(r'^## 規格[ \t]*\n', text, re.M)
     if not head:
         return None
     # 類型行自成一行：模板標題下有沒有空行都一樣，不會黏到下一行。
-    marked = text[:head.end()] + '\n' + TRIVIAL_LINE + '\n' + text[head.end():].lstrip('\n')
-    filled, n = re.subn(r'^\|\s*AC-1\s*\|.*$', lambda _: TRIVIAL_AC, marked, count=1, flags=re.M)
-    return filled if n else None
+    return text[:head.end()] + '\n' + TRIVIAL_LINE + '\n' + text[head.end():].lstrip('\n')
 
 
 def filled_ac(text):
@@ -392,7 +389,7 @@ def cmd_new(branch, name, base=None, trivial=False):
         # 建 worktree 之前就檢查，模板不合用時什麼都不動。
         content = trivial_card(content)
         if content is None:
-            fail(f'卡片模板沒有「## 規格」段或 AC-1 列，開不了瑣事卡：{TPL}')
+            fail(f'卡片模板沒有「## 規格」段，開不了瑣事卡：{TPL}')
     slug = branch.rsplit('/', 1)[-1]
     wt = os.path.join(WT_ROOT, slug)
     if os.path.exists(wt):
@@ -410,7 +407,7 @@ def cmd_new(branch, name, base=None, trivial=False):
     card = os.path.join(wt, '.desk', 'CARD.md')
     write(card, content)
     if trivial:
-        # 預填的驗收情境會讓面板認成規格已填好，所以開卡就設 spec 關卡，確認前不派工。
+        # 開卡就設 spec 關卡：spec 步驟預填驗收情境後，確認前也不會派工。驗收情境不在這裡預填，面板才會像一般卡提示去寫規格。
         set_gate(card, TRIVIAL_GATE)
     exclude = git('-C', MAIN, 'rev-parse', '--git-path', 'info/exclude').stdout.strip()
     exclude = exclude if os.path.isabs(exclude) else os.path.join(MAIN, exclude)
