@@ -177,14 +177,16 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
     : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}${count}`}</Text>
     : <Text color={COLOR.faint}>{v && v.command === c.verify ? '有新 commit，需重新執行' : '尚未執行'}</Text>
   const head = <Box flexDirection="row" paddingLeft={INDENT}><Text color={COLOR.faint}>{pad(WORD.verify, KV_LABEL)}</Text>{result}</Box>
-  if (brief) return [head]
   const line = (text: string, color: string) => <Box flexDirection="row" paddingLeft={INDENT + KV_LABEL}><Text color={color} wrap="truncate-end">{text}</Text></Box>
   const plainLine = (text: string, color: string) => line(fit(text, room), color)
+  const approvalRows = approval ? wrapText(approval, room).map(l => line(l, COLOR.attention)) : []
+  // 可歸檔的卡沒展開只列結果；要核准的指令全文照樣列，第二次按才不會核准一條沒看到的指令。
+  if (brief) return [head, ...approvalRows]
   return [
     head,
     ...(failure?.items ?? []).map(l => line(failure!.isNamed ? fitFailure(l, room) : fit(l, room), COLOR.bad)),
     ...(failure?.more ? [plainLine(failure.more, COLOR.faint)] : []),
-    ...(approval ? wrapText(approval, room).map(l => line(l, COLOR.attention)) : [plainLine(shortCommand(c.verify), COLOR.faint)]),
+    ...(approval ? approvalRows : [plainLine(shortCommand(c.verify), COLOR.faint)]),
     ...[...(failure?.raw ?? []), ...passTail].map(l => plainLine(l, COLOR.dim)),
   ]
 }

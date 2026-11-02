@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, flat, text } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, REGISTRY, flat, text } from './fixture'
 import { PREFIX, ROOT, alphaOnly, helpers, sh } from './alpha-chain'
 
 // 完成檢查的核准改成面板按兩次 v／g：第一次在檢查列列出指令全文，第二次核准並執行（或派工）；全程不跳對話框。
@@ -135,5 +135,24 @@ test('test_arming_expires_after_confirm_window', async ($, on) => {
   await press(ui, clock, VERIFY)
   expect(sh(data)).toBe(1)
   expect(data.asks).toHaveLength(0)
+  await ui.unmount()
+})
+
+/** 審查 MEDIUM：可歸檔的卡沒展開時檢查只列結果；檢查沒核准，第一次按 v 照樣列出全文，不會核准一條沒看到的指令。 */
+test('test_first_v_on_an_archivable_card_lists_the_full_check', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.agents = []
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.git['/home/u/wt/beta'] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git', tag: 'v0.19.0' }
+  data.gh = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await ui.find({ key: `case-${CARD_B}-archive` })).toBeDefined()
+
+  await press(ui, clock, `case-${CARD_B}-verify`)
+  expect(sh(data)).toBe(0)
+  expect(await screen(ui)).toContain(flat('核准這條（再按 v 之後執行）：npm test'))
   await ui.unmount()
 })
