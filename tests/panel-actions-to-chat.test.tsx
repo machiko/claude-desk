@@ -100,7 +100,9 @@ function expectInOrder(context: string, order: RegExp[]) {
 test('test_panel_spec_ok_and_ship_attach_in_order_with_case_and_result', async ($, on) => {
   const { data, clock } = fixture(on)
   const { ui, twice } = await fourCases($, data, clock)
-  // 確認規格後會自動派實作（由 spec-ok-dispatch 測）；這裡只看附上的順序。
+  // 確認規格後會自動派實作（由 spec-ok-dispatch 測）；這裡只看附上的順序，讓派工啟動失敗、沒有 Agent 在跑。
+  // 有 Agent 在跑的話，twice 往前推的 60 秒要多跑很多輪，單跑就要 3 秒以上，整套並行時會逾時（CI 曾逾時 5 秒）。
+  data.launch = async () => result(1, '', 'not launched in this test')
 
   await twice(CARD_B, `case-${CARD_B}-spec-ok`)
   await twice(CARD_C, `case-${CARD_C}-ship`)
