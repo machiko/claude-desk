@@ -4,6 +4,7 @@ import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { stageActions } from '../hooks/turn'
 import { caseActions } from '../hooks/pane-card'
+import { CHECK_UNAPPROVED } from '../hooks/chain'
 import type { Case, Verify } from '../types'
 
 const BETA = '/home/u/wt/beta'
@@ -287,4 +288,23 @@ test('merge actions: a normal case confirms without the review-file reminder and
   expect(data.launches).toHaveLength(1)
   expect(promptOf(data).split('\n')[0]).toContain(PUBLISH_HEAD)
   expect(data.fills).toHaveLength(0)
+})
+
+/** 審查 MEDIUM：已合併還沒上線、這個對話的流程先前停在檢查沒核准：v 已經不列，檢查列不再叫你按兩次 v。 */
+test('merged case held at an unapproved check does not ask to press v twice', async ($, on) => {
+  const { data } = fixture(on)
+  onlyBeta(data)
+  data.gh = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
+  data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: CHECK_UNAPPROVED, heldAtCheck: true } }
+
+  const ui = await mount($)
+  const normal = await buttonKeys(ui)
+  await ui.press({ key: 'more' })
+  const shown = await screen(ui)
+  const all = await buttonKeys(ui)
+  await ui.unmount()
+
+  expect(normal).toEqual(['release', 'open'])
+  expect(all).not.toContain('verify')
+  expect(shown).not.toContain(flat('按兩次 v'))
 })

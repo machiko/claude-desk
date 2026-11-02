@@ -106,7 +106,13 @@ test('test_dispatchable_returns_only_sync_once_merged', () => {
 
   expect(dispatchable(viaPr)).toEqual(['sync'])
   expect(dispatchable(viaGit)).toEqual(['sync'])
-  expect(dispatchRefusal(viaPr, 'review')).not.toBe('')
+  // 手動排的（等名額時 PR 被合併、按了舊鍵）：跟自動排的一樣說已經合併，不叫你按 v、w 或改下一步
+  for (const next of ['派審查', '等審查', '依審核修正']) {
+    const c = { ...viaPr, next }
+    expect(dispatchRefusal(c, 'continue')).toBe('已經合併')
+    expect(dispatchRefusal(c, 'review')).toBe('已經合併')
+  }
+  expect(dispatchRefusal(viaGit, 'publish')).toBe('已經合併')
   // 還沒合併的照舊能派審查；發版線沒有合併段，不受影響
   expect(dispatchable(open)).toContain('review')
   expect(dispatchable(releaseLine)).toEqual(['continue', 'sync'])

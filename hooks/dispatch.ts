@@ -279,6 +279,8 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (dispatchable(c).includes(kind)) return ''
   if (c.manual) return MANUAL
   if (c.state === 'running' || (kind === 'publish' && agentBusy(c))) return BUSY
+  // 排隊等名額時 PR 被合併、或按了還沒重新整理的舊鍵：跟自動排的一樣說已經合併，不叫你按已經不列的 v、w。
+  if (mergedUnshipped(c)) return '已經合併'
   if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
   if (specBlocks(c)) return specGapReason(c)
   if (parseGate(c.gate)?.kind === 'spec') return '規格還沒確認'

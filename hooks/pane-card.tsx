@@ -47,9 +47,9 @@ function approvalKey(view: PaneView, c: Case): ApprovalKey | null {
 }
 /** 這張卡現在的檢查指令核准過了；畫面沒給核准紀錄就當核准過。 */
 const checkApproved = (view: PaneView, c: Case) => !view.trusted || isApproved(view.trusted, c)
-/** 這個對話的流程停在檢查段，原因是指令改過或從沒核准過：別的對話開的按 v 接不下去，不算。 */
+/** 這個對話的流程停在檢查段，原因是指令改過或從沒核准過：別的對話開的按 v 接不下去，不算；已合併還沒上線的不列 v，也不算。 */
 function heldReason(c: Case): HeldReason | null {
-  if (!c.chain?.heldAtCheck || c.chain.foreign) return null
+  if (!c.chain?.heldAtCheck || c.chain.foreign || mergedUnshipped(c)) return null
   return c.chain.stopped === CHECK_CHANGED ? 'changed' : c.chain.stopped === CHECK_UNAPPROVED ? 'unapproved' : null
 }
 
