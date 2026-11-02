@@ -92,8 +92,8 @@ export async function fillDecision($: any, c: Case) {
 }
 
 /**
- * 「⚑ 發版」：把列出所有已合併待發版卡的發版請求填進輸入框，你按 Enter 送給對話；版號由對話提、你確認後照文件的步驟發版。
- * 面板不打 tag、不 push、不派工、不跑任何指令，也不自動送出。
+ * 「⚑ 發版」：填一行 `/desk:release` 短請求（所有已合併待發版的卡與清理對象）進輸入框，你按 Enter 送給對話；
+ * 對話載入 skills/release/SKILL.md，版號由對話提、你確認後照規則發版。面板不打 tag、不 push、不派工、不跑任何指令，也不自動送出。
  */
 export async function fillRelease($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }

@@ -176,7 +176,7 @@ test('test_ship_stage_lists_release_then_ship', async ($, on) => {
   expect(footer(mergedCase({ tag: 'v0.19.0', gate: '- 關卡：release：v0.19.0 待上線確認' }), false)).toEqual(['open', 'ship'])
 })
 
-/** AC-5：發版請求要求對話把確認題寫進卡片「等你」（只問一次）、狀態寫進度、收到決策先清掉等你。 */
+/** AC-5：發版請求只填一行 `/desk:release`；確認題寫進卡片「等你」、只問一次這些規則改由 skills/release/SKILL.md 交代。 */
 test('test_release_prompt_asks_confirmations_through_card', async ($, on) => {
   const { data, clock } = fixture(on)
   mergedBeta(data)
@@ -186,8 +186,10 @@ test('test_release_prompt_asks_confirmations_through_card', async ($, on) => {
   expect(data.fills).toHaveLength(1)
   const asked = data.fills[0].text as string
   expect(asked).toBe(releasePrompt([{ name: 'Beta', root: BETA, git: { branch: 'feature/b' } as any, gate: PASSED.replace('- 關卡：', ''), pr: { id: 12, state: 'MERGED', ci: 'none' } as any }]))
-  expect(asked).toStartWith('發版：已合併待發版 1 件（「Beta」PR #12）；照這個專案的發版流程準備，只問我一次')
-  for (const part of ['版號', '只問我一次', '「等你」', 'A) 照做', 'B) 改用', 'C) 先不發', '「狀態」寫做到哪一步', '收到決策', '「等你」清成無']) expect(asked).toContain(part)
+  // 一行短請求；只問一次、A／B／C 等確認規則在 skills/release/SKILL.md，由對話載入
+  expect(asked).toStartWith('/desk:release 「Beta」PR #12')
+  for (const part of ['（歸檔並移除 worktree 與分支：', 'beta feature/b']) expect(asked).toContain(part)
+  for (const rule of ['只問我一次', 'A) 照做', '「等你」']) expect(asked).not.toContain(rule)
   expect(data.submitted).toHaveLength(0)
   await ui.unmount()
 })

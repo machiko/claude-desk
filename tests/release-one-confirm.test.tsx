@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, text, flat, PANE, CARD_A, CARD_B, CARD_C, REGISTRY } from './fixture'
-import { parseDecisions, releasePrompt, RELEASE_ACTIONS } from '../hooks/card'
+import { parseDecisions, releasePrompt } from '../hooks/card'
 
 const ALPHA = '/home/u/wt/alpha'
 const BETA = '/home/u/wt/beta'
@@ -11,7 +11,10 @@ const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過
 const GITHUB = 'git@github.com:acme/shop.git'
 const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送出'
 const LINE = 'release/v26.2.7'
-const CHAIN = RELEASE_ACTIONS.join(' → ')
+/** skills/release/SKILL.md 的照做動作順序（tests/release-skill.test.ts 與 skills/card/tests/test_release_skill.py 驗 SKILL.md 本身）。 */
+const CHAIN = '合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過'
+/** 搬進 skills/release/SKILL.md 的規則字句：發版請求裡不再出現。 */
+const RULES = ['只問我一次', 'A) 照做', '→', '不 force push', '題目沒列的事']
 const pr = (n: number, dest = 'main') => ({ number: n, state: 'MERGED', baseRefName: dest, headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
 /** 已合併、審查過關（沒有 release 關卡）的卡；root、分支跟 setup 的 git 一致，發版請求的清理段才對得上畫面。 */
 const merged = (name: string, id: number, root: string, branch: string) => ({ name, root, git: { branch } as any, gate: PASSED.replace('- 關卡：', ''), pr: { id, state: 'MERGED', ci: 'none' } as any })
@@ -57,7 +60,7 @@ async function pressRelease(ui: any, data: any, clock: any): Promise<string> {
   return data.fills[0].text as string
 }
 
-/** AC-1：發版請求只問一次：一題寫建議版號與理由、包含的卡與 PR、照做的動作，選項 A／B／C；不再有兩個確認點。 */
+/** AC-1：發版請求是一行 `/desk:release`：列卡名、PR 與清理對象，不帶規則字句（只問一次、A／B／C 在 skill 裡），不超過 200 字。 */
 test('test_release_prompt_asks_one_question_with_version_cards_and_actions_when_release_pressed', async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data)
@@ -65,10 +68,9 @@ test('test_release_prompt_asks_one_question_with_version_cards_and_actions_when_
   const asked = await pressRelease(ui, data, clock)
 
   expect(asked).toBe(releasePrompt([BETA_CASE, GAMMA_CASE]))
-  expect(asked).toStartWith('發版：已合併待發版 2 件（「Beta」PR #12、「Gamma」PR #13）；照這個專案的發版流程準備，只問我一次')
-  expect(CHAIN).toBe('合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過')
-  for (const part of ['只問我一次', '這幾張卡的「等你」寫同一題', '版號', '理由', '「Beta」PR #12', '「Gamma」PR #13', CHAIN, 'A) 照做', 'B) 改用', 'C) 先不發']) expect(asked).toContain(part)
-  for (const gone of ['先提版號給我確認', '打 tag 並 push', 'Alpha']) expect(asked).not.toContain(gone)
+  expect(asked).toBe('/desk:release 「Beta」PR #12、「Gamma」PR #13（歸檔並移除 worktree 與分支：beta feature/b、gamma fix/c）')
+  for (const gone of [...RULES, 'Alpha']) expect(asked).not.toContain(gone)
+  expect(asked.length).toBeLessThanOrEqual(200)
   // 沒有自動送出，toast 照舊
   expect(data.submitted).toHaveLength(0)
   expect(data.toasts.some((t: string) => t.includes(FILLED))).toBe(true)
@@ -110,32 +112,21 @@ test('test_release_question_shows_one_decision_with_three_options_when_it_lists_
   await ui.unmount()
 })
 
-/** AC-3：選照做後做到底、失敗就停；動作清單多一項時照順序列在「等 CI 通過」之後，仍只問一題、選項仍是 A／B／C。 */
-test('test_release_prompt_runs_listed_actions_to_end_and_stops_when_a_step_fails', () => {
-  const cases = [BETA_CASE, GAMMA_CASE]
-  const asked = releasePrompt(cases, [...RELEASE_ACTIONS, '歸檔這幾張卡'])
-  for (const part of [
-    '回答任一張就算數',
-    '收到決策先把每張的「等你」清成無',
-    '選 A 或 B 後照順序做完、中間不再問',
-    '「狀態」寫做到哪一步',
-    '任何一步失敗就停、後面的不做',
-    '還沒 push 就不 push',
-    '已 push 的不回退、不 force push',
-    '失敗的步驟與原因寫進「狀態」',
-    '要我決定的才寫進「等你」',
-    '選 C 就清掉「等你」、什麼都不做',
-    `${CHAIN} → 歸檔這幾張卡`,
-  ]) expect(asked).toContain(part)
-  // 仍只要一題、選項仍是 A／B／C
-  expect(asked.match(/只問我一次/g)).toHaveLength(2)
-  for (const key of ['A) 照做', 'B) 改用', 'C) 先不發']) expect(asked.split(key)).toHaveLength(2)
-  expect(asked).not.toMatch(/D\) /)
-  // 預設的請求不多出那一項
-  expect(releasePrompt(cases)).not.toContain('歸檔這幾張卡')
+/** AC-2：括號列清理對象（slug 與分支）與有 release 關卡的卡；全部都有 release 關卡時只寫一句、不列 slug 與分支；沒有 PR 的卡只寫卡名。 */
+test('test_release_request_lists_cleanup_targets_and_release_gated_cards', () => {
+  const gated = (c: ReturnType<typeof merged>) => ({ ...c, gate: 'release：待上線' })
+  const beta = merged('Beta', 12, BETA, 'feature/b')
+  const gamma = merged('Gamma', 13, GAMMA, 'feature/c')
+  expect(releasePrompt([beta, gated(gamma)])).toBe('/desk:release 「Beta」PR #12、「Gamma」PR #13（歸檔並移除 worktree 與分支：beta feature/b；「Gamma」有 release 關卡，部署後按 u）')
+  const allGated = releasePrompt([gated(beta), gated(gamma)])
+  expect(allGated).toBe('/desk:release 「Beta」PR #12、「Gamma」PR #13（都有 release 關卡，不清理，部署後按 u）')
+  for (const target of ['beta', 'gamma', 'feature/']) expect(allGated).not.toContain(target)
+  // 沒有 PR 的卡只寫「卡名」
+  const delta = { ...merged('Delta', 0, '/home/u/wt/delta', 'fix/d'), pr: undefined }
+  expect(releasePrompt([beta, delta])).toBe('/desk:release 「Beta」PR #12、「Delta」（歸檔並移除 worktree 與分支：beta feature/b、delta fix/d）')
 })
 
-/** AC-5：範圍外的卡不列；按下只填輸入框，不跑外部指令、卡片不變；請求寫明題目沒列的事不做、release 關卡留給使用者。 */
+/** AC-3：範圍外的卡（沒合併的、併進發版線的）不列；按下只填輸入框，不跑外部指令、卡片不變。 */
 test('test_release_prompt_skips_unmerged_cases_and_forbids_unlisted_actions_when_pressed', async ($, on) => {
   const { data, clock } = fixture(on)
   const calls = setup(data, LINE)
@@ -146,10 +137,8 @@ test('test_release_prompt_skips_unmerged_cases_and_forbids_unlisted_actions_when
   const asked = await pressRelease(ui, data, clock)
 
   expect(asked).toBe(releasePrompt([BETA_CASE]))
-  expect(asked).toContain('已合併待發版 1 件（「Beta」PR #12）')
+  expect(asked).toBe('/desk:release 「Beta」PR #12（歸檔並移除 worktree 與分支：beta feature/b）')
   for (const gone of ['Alpha', 'Gamma', 'PR #13']) expect(asked).not.toContain(gone)
-  expect(asked).toContain('題目沒列的事一律不做（force push、改寫歷史、合併 PR、刪分支、改清單外的卡），要做就另外問')
-  expect(asked).toContain('有 `release：` 關卡的卡留給我部署後按 u')
   // 只填輸入框：不送出、不跑 git／gh／claude、三張卡片一字不變
   expect(data.submitted).toHaveLength(0)
   expect(data.launches.length).toBe(launches)
