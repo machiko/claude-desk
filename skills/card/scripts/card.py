@@ -22,7 +22,8 @@
   card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
                                                可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
                                                移除已併入主 repo 目前分支、沒有未提交改動的 worktree（git worktree remove）與分支（git branch -d），
-                                               不用 --force／-D、不碰遠端；主 worktree 不移除。沒併入、有改動、有被 git 忽略的本機設定或資料
+                                               不用 --force／-D、不碰遠端；主 worktree 不移除。只有一個例外：worktree 含 submodule 時 git 不加
+                                               --force 一律拒絕，乾淨已先確認過，才改加 --force 再試一次，輸出與提醒註明。沒併入、有改動、有被 git 忽略的本機設定或資料
                                                （.env*、*.local.* 等，見 IGNORED_LOCAL）或 git 拒絕的保留，每張印一行「清理 <slug>：…」，
                                                原因與自己刪的指令寫進登錄表「## 提醒」；有保留不算失敗。其他被忽略的檔隨 worktree 刪掉，
                                                可重建的（node_modules、__pycache__ 等，見 IGNORED_DISPOSABLE）以外的列在輸出與提醒
@@ -795,20 +796,31 @@ def scan_ignored_dir(root, rel):
     return found, rest
 
 
+SUBMODULE_REFUSAL = 'containing submodules cannot be moved or removed'
+FORCED_SUBMODULE = '含 submodule，以 --force 移除（已先確認乾淨）'
+
+
 def remove_worktree(main, root):
-    """乾淨才 git worktree remove（不加 --force）。回傳 (保留原因, 一起刪掉的被忽略項目)；保留原因是空字串代表已移除。
-    被 git 忽略的本機設定或資料也算不乾淨：status --porcelain 看不到它們，worktree remove 卻會一起刪掉。"""
+    """乾淨才 git worktree remove（不加 --force）。回傳 (保留原因, 一起刪掉的被忽略項目, 備註)；保留原因是空字串代表已移除。
+    被 git 忽略的本機設定或資料也算不乾淨：status --porcelain 看不到它們，worktree remove 卻會一起刪掉。
+    git 只因 worktree 含 submodule 而拒絕（不加 --force 一律拒絕，跟乾不乾淨無關）時，乾淨已經在這裡確認過，
+    改加 --force 再試一次，備註寫 FORCED_SUBMODULE；其他拒絕原因照舊保留。"""
     dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.splitlines() if l.strip()]
     if dirty:
-        return f'有未提交的改動（{len(dirty)} 個檔）', []
+        return f'有未提交的改動（{len(dirty)} 個檔）', [], ''
     ignored = ignored_items(root)
     if ignored is None:
-        return '讀不到被 git 忽略的檔（git status 失敗）', []
+        return '讀不到被 git 忽略的檔（git status 失敗）', [], ''
     local, other = ignored
     if local:
-        return f'有被 git 忽略的本機設定或資料（{shown(local)}）', []
+        return f'有被 git 忽略的本機設定或資料（{shown(local)}）', [], ''
     r = git('-C', main, 'worktree', 'remove', root)
-    return (git_reason(r), []) if r.returncode != 0 else ('', other)
+    if r.returncode == 0:
+        return '', other, ''
+    if SUBMODULE_REFUSAL not in r.stderr + r.stdout:
+        return git_reason(r), [], ''
+    r = git('-C', main, 'worktree', 'remove', '--force', root)
+    return (git_reason(r), [], '') if r.returncode != 0 else ('', other, FORCED_SUBMODULE)
 
 
 def cleanup(root):
@@ -831,12 +843,12 @@ def cleanup(root):
     squashed = not ancestor and merged_by_content(main, branch)
     remove_branch = f'git -C {main} branch {"-D" if squashed else "-d"} {branch}'
     if not ancestor and not squashed:
-        why, gone = f'分支還沒併入 {git_branch(main) or "主 repo 的 HEAD"}', []
+        why, gone, forced = f'分支還沒併入 {git_branch(main) or "主 repo 的 HEAD"}', [], ''
     else:
-        why, gone = remove_worktree(main, root)
+        why, gone, forced = remove_worktree(main, root)
     if why:
         return f'worktree 與分支保留：{why}', f'；worktree 保留：{why}', why, [remove_wt, remove_branch]
-    note = f'；一起刪掉被 git 忽略的：{shown(gone)}' if gone else ''
+    note = (f'；{forced}' if forced else '') + (f'；一起刪掉被 git 忽略的：{shown(gone)}' if gone else '')
     if squashed:
         why = f'worktree 已移除，分支 {branch} 保留：{SQUASHED}{note}'
         return f'worktree 已移除；分支 {branch} 保留：{SQUASHED}{note}', f'；{why}', why, [remove_branch]

@@ -729,6 +729,67 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(self.branch_listed('feature/beta'), '')
         self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 已刪除', r.stdout)
 
+    def add_submodule(self):
+        """主 repo 加一個 submodule 並推到 origin：之後開的 worktree 都帶著 gitlink，git worktree remove 不加 --force 一律拒絕。"""
+        sub = os.path.join(self.t, 'sub')
+        os.makedirs(sub)
+        git('init', '-q', '-b', 'main', cwd=sub)
+        git('config', 'user.email', 't@example.com', cwd=sub)
+        git('config', 'user.name', 't', cwd=sub)
+        write(os.path.join(sub, 'lib.txt'), 'x\n')
+        git('add', 'lib.txt', cwd=sub)
+        git('commit', '-q', '-m', 'sub', cwd=sub)
+        git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'knowledge', cwd=self.main)
+        git('commit', '-q', '-m', 'add submodule', cwd=self.main)
+        git('push', '-q', 'origin', 'main', cwd=self.main)
+
+    def open_case_with_submodule(self, merged):
+        """開卡後把 submodule 真的 checkout 出來：git 只擋「有內容」的 submodule（或 worktree 的 modules 目錄存在），只有 gitlink 不擋。"""
+        wt = self.open_case('feature/beta', 'Beta', merged=merged)
+        git('-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q', cwd=wt)
+        self.assertTrue(os.path.isfile(os.path.join(wt, 'knowledge', 'lib.txt')))
+        return wt
+
+    def test_archive_cleanup_removes_worktree_with_submodule_using_force_when_clean(self):
+        """worktree 含 submodule：git worktree remove 不加 --force 一律拒絕（跟乾不乾淨無關）。Beta 已合併、乾淨，
+        腳本改加 --force 再試一次，worktree 與分支移除，輸出與登錄表註明用了 --force。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        # 真的會被 git 擋：不加 --force 移不掉
+        r0 = subprocess.run(['git', 'worktree', 'remove', wt], cwd=self.main, capture_output=True, text=True)
+        self.assertNotEqual(r0.returncode, 0)
+        self.assertIn('containing submodules', r0.stderr)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(os.path.realpath(wt), self.worktrees())
+        self.assertFalse(os.path.exists(wt))
+        self.assertEqual(self.branch_listed('feature/beta'), '')
+        self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 已刪除；含 submodule，以 --force 移除（已先確認乾淨）', r.stdout)
+        reg = read(self.reg)
+        self.assertRegex(reg, r'(?m)^- beta：.*worktree 與分支已移除；含 submodule，以 --force 移除（已先確認乾淨）$')
+        self.assertIn('- 清理 beta：worktree 與分支已移除；含 submodule，以 --force 移除（已先確認乾淨）', reg[reg.index('## 提醒'):])
+
+    def test_archive_cleanup_keeps_dirty_worktree_with_submodule_without_force(self):
+        """worktree 含 submodule 但有未提交的改動：不升級到 --force，worktree 與分支保留，提醒的指令也不含 --force。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        write(os.path.join(wt, 'beta.txt'), 'changed\n')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(os.path.realpath(wt), self.worktrees())
+        self.assertEqual(read(os.path.join(wt, 'beta.txt')), 'changed\n')
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertRegex(r.stdout, r'(?m)^清理 beta：worktree 與分支保留：有未提交的改動（1 個檔）')
+        self.assertNotIn('--force', r.stdout)
+        reminders = read(self.reg)[read(self.reg).index('## 提醒'):]
+        line = next(l for l in reminders.splitlines() if l.startswith('- 清理 beta：'))
+        self.assertIn(f'git -C {self.main} worktree remove {wt}', line)
+        self.assertNotIn('--force', line)
+
     def test_archive_cleanup_keeps_worktree_and_branch_when_dirty_or_unmerged(self):
         """AC-2：Beta 已合併但有未提交的改動、Gamma 乾淨但沒併入 main：兩張都歸檔，worktree 與分支都保留，提醒寫原因與自己刪的指令。"""
         beta = self.open_case('feature/beta', 'Beta', merged=True)
