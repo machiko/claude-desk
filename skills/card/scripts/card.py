@@ -296,8 +296,10 @@ def plan_files(text):
     return out
 
 
-def git(*args, check=False):
-    r = subprocess.run(['git', *args], capture_output=True, text=True, timeout=120)
+def git(*args, check=False, c_locale=False):
+    """c_locale：要比對 git 的錯誤訊息字面時設 True，用 LC_ALL=C 跑，帶翻譯的 git 也輸出英文。"""
+    env = {**os.environ, 'LC_ALL': 'C'} if c_locale else None
+    r = subprocess.run(['git', *args], capture_output=True, text=True, timeout=120, env=env)
     if check and r.returncode != 0:
         fail(r.stderr.strip() or f'git {" ".join(args)} 失敗')
     return r
@@ -800,12 +802,42 @@ SUBMODULE_REFUSAL = 'containing submodules cannot be moved or removed'
 FORCED_SUBMODULE = '含 submodule，以 --force 移除（已先確認乾淨）'
 
 
+def changed_files(root):
+    """未提交的改動（含 submodule 內部：不管 .gitmodules 的 ignore 設定）。"""
+    return [l for l in git('-C', root, 'status', '--porcelain', '--ignore-submodules=none').stdout.splitlines() if l.strip()]
+
+
+def submodule_reason(root):
+    """--force 會連 submodule 裡的東西一起刪，也跳過 git 自己的乾淨檢查，所以先逐一（遞迴）看 worktree 裡已 checkout 的 submodule：
+    沒有未提交的改動、沒有被忽略的本機設定或資料，HEAD 也在它的遠端分支上（worktree 裡 submodule 的 commit 只存在這個 worktree 的
+    git 目錄，沒推上去的話移除後就找不到）。回傳 (保留原因, 一起刪掉的被忽略項目)；保留原因是空字串代表可以 --force。"""
+    r = git('-C', root, 'submodule', '--quiet', 'foreach', '--recursive', 'echo "$displaypath"')
+    if r.returncode != 0:
+        return '讀不到 submodule（git submodule foreach 失敗）', []
+    other = []
+    for sub in (l for l in r.stdout.splitlines() if l.strip()):
+        path = os.path.join(root, sub)
+        dirty = changed_files(path)
+        if dirty:
+            return f'submodule {sub} 有未提交的改動（{len(dirty)} 個檔）', []
+        ignored = ignored_items(path)
+        if ignored is None:
+            return f'讀不到 submodule {sub} 被 git 忽略的檔（git status 失敗）', []
+        local, rest = ignored
+        if local:
+            return f'submodule {sub} 有被 git 忽略的本機設定或資料（{shown([f"{sub}/{x}" for x in local])}）', []
+        if not git('-C', path, 'branch', '-r', '--contains', 'HEAD').stdout.strip():
+            return f'submodule {sub} 有沒推上去的 commit（HEAD 不在它的遠端分支上）', []
+        other.extend(f'{sub}/{x}' for x in rest)
+    return '', other
+
+
 def remove_worktree(main, root):
     """乾淨才 git worktree remove（不加 --force）。回傳 (保留原因, 一起刪掉的被忽略項目, 備註)；保留原因是空字串代表已移除。
     被 git 忽略的本機設定或資料也算不乾淨：status --porcelain 看不到它們，worktree remove 卻會一起刪掉。
-    git 只因 worktree 含 submodule 而拒絕（不加 --force 一律拒絕，跟乾不乾淨無關）時，乾淨已經在這裡確認過，
-    改加 --force 再試一次，備註寫 FORCED_SUBMODULE；其他拒絕原因照舊保留。"""
-    dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.splitlines() if l.strip()]
+    git 只因 worktree 含 submodule 而拒絕（不加 --force 一律拒絕，跟乾不乾淨無關）時，再確認每個 submodule 內部也乾淨（submodule_reason），
+    才改加 --force 再試一次，備註寫 FORCED_SUBMODULE；其他拒絕原因照舊保留。"""
+    dirty = changed_files(root)
     if dirty:
         return f'有未提交的改動（{len(dirty)} 個檔）', [], ''
     ignored = ignored_items(root)
@@ -814,13 +846,16 @@ def remove_worktree(main, root):
     local, other = ignored
     if local:
         return f'有被 git 忽略的本機設定或資料（{shown(local)}）', [], ''
-    r = git('-C', main, 'worktree', 'remove', root)
+    r = git('-C', main, 'worktree', 'remove', root, c_locale=True)
     if r.returncode == 0:
         return '', other, ''
     if SUBMODULE_REFUSAL not in r.stderr + r.stdout:
         return git_reason(r), [], ''
+    why, inside = submodule_reason(root)
+    if why:
+        return why, [], ''
     r = git('-C', main, 'worktree', 'remove', '--force', root)
-    return (git_reason(r), [], '') if r.returncode != 0 else ('', other, FORCED_SUBMODULE)
+    return (git_reason(r), [], '') if r.returncode != 0 else ('', other + inside, FORCED_SUBMODULE)
 
 
 def cleanup(root):

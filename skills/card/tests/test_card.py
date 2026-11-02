@@ -32,6 +32,10 @@ def git(*args, cwd):
     subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
 
 
+def git_out(*args, cwd):
+    return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
 # 與 hooks/project.ts 的 projectKey 同一張表（tests/project.test.tsx 的 KEY_CASES）
 KEY_CASES = [
     ('/home/u/shop/.git', 'shop'),
@@ -729,17 +733,22 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(self.branch_listed('feature/beta'), '')
         self.assertIn('清理 beta：worktree 已移除；分支 feature/beta 已刪除', r.stdout)
 
-    def add_submodule(self):
-        """主 repo 加一個 submodule 並推到 origin：之後開的 worktree 都帶著 gitlink，git worktree remove 不加 --force 一律拒絕。"""
+    def add_submodule(self, ignore_dirty=False):
+        """主 repo 加一個 submodule 並推到 origin：之後開的 worktree 都帶著 gitlink，git worktree remove 不加 --force 一律拒絕。
+        submodule 自己的 .gitignore 忽略 .env；ignore_dirty=True 時 .gitmodules 設 ignore = dirty（git status 看不到 submodule 裡的改動）。"""
         sub = os.path.join(self.t, 'sub')
         os.makedirs(sub)
         git('init', '-q', '-b', 'main', cwd=sub)
         git('config', 'user.email', 't@example.com', cwd=sub)
         git('config', 'user.name', 't', cwd=sub)
         write(os.path.join(sub, 'lib.txt'), 'x\n')
-        git('add', 'lib.txt', cwd=sub)
+        write(os.path.join(sub, '.gitignore'), '.env\n')
+        git('add', 'lib.txt', '.gitignore', cwd=sub)
         git('commit', '-q', '-m', 'sub', cwd=sub)
         git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'knowledge', cwd=self.main)
+        if ignore_dirty:
+            git('config', '-f', '.gitmodules', 'submodule.knowledge.ignore', 'dirty', cwd=self.main)
+            git('add', '.gitmodules', cwd=self.main)
         git('commit', '-q', '-m', 'add submodule', cwd=self.main)
         git('push', '-q', 'origin', 'main', cwd=self.main)
 
@@ -789,6 +798,60 @@ class CardScriptTest(unittest.TestCase):
         line = next(l for l in reminders.splitlines() if l.startswith('- 清理 beta：'))
         self.assertIn(f'git -C {self.main} worktree remove {wt}', line)
         self.assertNotIn('--force', line)
+
+    def assert_kept_with_submodule(self, r, wt, reason):
+        """含 submodule 的 worktree 沒升級到 --force：worktree 與分支保留，輸出寫原因，提醒的指令也不含 --force。"""
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(os.path.realpath(wt), self.worktrees())
+        self.assertNotEqual(self.branch_listed('feature/beta'), '')
+        self.assertRegex(r.stdout, rf'(?m)^清理 beta：worktree 與分支保留：{re.escape(reason)}')
+        self.assertNotIn('--force', r.stdout)
+        reminders = read(self.reg)[read(self.reg).index('## 提醒'):]
+        line = next(l for l in reminders.splitlines() if l.startswith('- 清理 beta：'))
+        self.assertNotIn('--force', line)
+
+    def test_archive_cleanup_keeps_worktree_when_submodule_has_changes_hidden_by_ignore_dirty(self):
+        """.gitmodules 設 ignore = dirty：submodule 裡改過的檔，一般的 git status 看不到；照樣算未提交改動，不升級到 --force。"""
+        self.add_submodule(ignore_dirty=True)
+        wt = self.open_case_with_submodule(merged=True)
+        write(os.path.join(wt, 'knowledge', 'lib.txt'), 'changed\n')
+        self.assertEqual(git_out('status', '--porcelain', cwd=wt), '')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, '有未提交的改動（1 個檔）')
+        self.assertEqual(read(os.path.join(wt, 'knowledge', 'lib.txt')), 'changed\n')
+
+    def test_archive_cleanup_keeps_worktree_when_submodule_has_ignored_local_settings(self):
+        """submodule 裡被它自己的 .gitignore 忽略的 .env 是本機設定：不升級到 --force，原因寫出 submodule 裡的路徑。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        write(os.path.join(wt, 'knowledge', '.env'), 'TOKEN=x\n')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有被 git 忽略的本機設定或資料（knowledge/.env）')
+        self.assertEqual(read(os.path.join(wt, 'knowledge', '.env')), 'TOKEN=x\n')
+
+    def test_archive_cleanup_keeps_worktree_when_submodule_commit_is_not_pushed(self):
+        """在 worktree 的 submodule 裡 commit、沒推到 submodule 的遠端，上層 bump 後合併：移除會讓那個 commit 消失，不升級到 --force。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=False)
+        sub = os.path.join(wt, 'knowledge')
+        git('config', 'user.email', 't@example.com', cwd=sub)
+        git('config', 'user.name', 't', cwd=sub)
+        write(os.path.join(sub, 'notes.txt'), 'only here\n')
+        git('add', 'notes.txt', cwd=sub)
+        git('commit', '-q', '-m', 'local only', cwd=sub)
+        head = git_out('rev-parse', 'HEAD', cwd=sub)
+        git('add', 'knowledge', cwd=wt)
+        git('commit', '-q', '-m', 'bump knowledge', cwd=wt)
+        git('merge', '-q', '--no-ff', '-m', 'merge feature/beta', 'feature/beta', cwd=self.main)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
+        self.assertEqual(git_out('rev-parse', 'HEAD', cwd=sub), head)
 
     def test_archive_cleanup_keeps_worktree_and_branch_when_dirty_or_unmerged(self):
         """AC-2：Beta 已合併但有未提交的改動、Gamma 乾淨但沒併入 main：兩張都歸檔，worktree 與分支都保留，提醒寫原因與自己刪的指令。"""
