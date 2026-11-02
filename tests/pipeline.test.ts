@@ -61,7 +61,7 @@ test('a release line only shows check and ship', () => {
   const c = mk({}, { git: { branch: 'release/v1.4', head: 'h1' } })
   const p = pipeline(c, ok())
   expect(p.stages.map(s => s.status)).toEqual(['na', 'na', 'done', 'na', 'na', 'wait'])
-  expect(stageParts(p, false).map(s => s.text)).toEqual(['測試●', '上線◆'])
+  expect(stageParts(p, false).map(s => s.text)).toEqual(['● 測試', '◆ 上線'])
   expect(pipeline(c, undefined).stages.find(s => s.id === 'check')!.status).toBe('wait')
 })
 

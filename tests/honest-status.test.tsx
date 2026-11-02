@@ -113,7 +113,7 @@ test('a new commit after review sends the case back to check, while old branch-n
   const oldCheck = { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'feature/b' }
 
   expect(moved).toContain(flat('▶ 輪到你  驗收後有新 commit：按 v 重新執行測試'))
-  expect(moved).toContain(flat('實作● 測試◆'))
+  expect(moved).toContain(flat('● 實作 ◆ 測試'))
   expect(noteOf({ round: 0, passed: true, stale: true }, checkAt('c1'))).toBe('測試・驗收後有新 commit，需重新測試')
   expect(moved).not.toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(same).toContain(flat('▶ 輪到你  按 ⇡ 開 PR 派 Agent push 並開 PR'))
@@ -169,7 +169,7 @@ test('a verdict the agent wrote itself counts but is marked self-review with w o
   expect(noChain).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（驗收是自審，可按 w 派獨立驗收）'))
   expect(noChain).toContain(flat('◆ 驗收  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2（自審）'))
   expect(noChainW?.props?.hotkey).toBe('w')
-  expect(self).toContain(flat('規格● 實作● 測試● 驗收● 合併◆'))
+  expect(self).toContain(flat('● 規格 ● 實作 ● 測試 ● 驗收 ◆ 合併'))
   expect(self).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（驗收是自審，可按 w 派獨立驗收）'))
   expect(self).toContain(flat('◆ 驗收  CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2（自審）'))
   expect(noteOf({ round: 0, selfReview: true }, checkAt('c2'))).toBe('合併・可開 PR（自審）')
@@ -192,7 +192,7 @@ test('a stopped chain shows its reason and the key to press instead of the next 
   const verify = await ui.find({ key: `${PREFIX}verify` })
 
   expect(shown).toContain(flat(`▶ 輪到你  ${UNAPPROVED}`))
-  expect(shown).toContain(flat('實作● 測試✕ 驗收'))
+  expect(shown).toContain(flat('● 實作 ✕ 測試 ○ 驗收'))
   expect(noteOf({ round: 0, stopped: UNAPPROVED })).toBe(`測試・${UNAPPROVED}`)
   expect(shown).not.toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR'))
   expect(shown).not.toContain(flat('✓ 完成'))

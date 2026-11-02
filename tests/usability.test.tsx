@@ -100,7 +100,8 @@ test('a due reminder shows in the meters and on the bar when nobody waits', asyn
   expect(await ui.find({ type: 'Text', text: '決定 rag-proxy 是否退役' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /很久以後/ })).toBeUndefined()
   await ui.unmount()
-  const band = await $.ui.mount(BAND(120))
+  // 六段圖示在字前、整列多 6 欄：120 欄放不下寬版六段加整句提醒，用 130 欄。
+  const band = await $.ui.mount(BAND(130))
   const drawn: any = await band.drawn()
   expect(JSON.stringify(drawn).includes('◷ 決定 rag-proxy 是否退役（還有 2 天）')).toBe(true)
   await band.unmount()

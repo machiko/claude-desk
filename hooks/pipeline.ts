@@ -197,9 +197,9 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   return { stages: STAGES.map(s => ({ ...s, status: status[s.id] })), current: done ? null : effective, note: effective ? notes[effective] ?? '' : '' }
 }
 
-/** `規格● 實作◉ 測試○ …` 的分段，給畫圖用；`compact` 只畫字形。 */
+/** `● 規格 ◉ 實作 ○ 測試 …` 的分段（圖示在字前），給畫圖用；`compact` 只畫字形。 */
 export function stageParts(p: Pipeline, compact: boolean): { text: string; status: StageStatus }[] {
-  return p.stages.filter(s => s.status !== 'na').map(s => ({ text: compact ? STAGE_GLYPH[s.status] : `${s.label}${STAGE_GLYPH[s.status]}`, status: s.status }))
+  return p.stages.filter(s => s.status !== 'na').map(s => ({ text: compact ? STAGE_GLYPH[s.status] : `${STAGE_GLYPH[s.status]} ${s.label}`, status: s.status }))
 }
 
 export function stageLabel(p: Pipeline): string {

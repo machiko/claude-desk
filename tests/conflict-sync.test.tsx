@@ -75,7 +75,7 @@ async function bandText($: any): Promise<string> {
 }
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 async function cardStages(ui: any): Promise<string> {
-  const t = await ui.find({ type: 'Text', text: /^規格[●◉◆✕○·]/ })
+  const t = await ui.find({ type: 'Text', text: /^[●◉◎◆✕○·] 規格/ })
   return String(t?.text ?? '')
 }
 async function focus(ui: any, statusPath: string) {
@@ -118,7 +118,7 @@ test('test_conflict_agent_is_dispatched_once_when_reviewed_branch_conflicts_with
 
   expect(await screen(ui)).toContain(flat('Agent 在合併基準分支、解衝突（l 看輸出）'))
   // 進行中那段在 ◉／◎ 間交替
-  expect(await cardStages(ui)).toMatch(/合併[◉◎]/)
+  expect(await cardStages(ui)).toMatch(/[◉◎] 合併/)
   // 六段的合併段（狀態列寫現在在跑的那件停在哪一段）
   expect(data.status).toContain('合併・合併基準分支、解衝突中')
   await ui.unmount()
@@ -185,8 +185,8 @@ test('test_conflict_agent_is_not_retried_when_head_is_unchanged_after_an_attempt
   expect(shown).toContain(flat('與 main 有衝突：在對話把 main 合併進來、解衝突並 commit（自動合併試過一次沒解開）'))
   expect(seen.feed.some(e => String(e.text).includes('流程已暫停'))).toBe(false)
   const stages = await cardStages(ui)
-  expect(stages).toContain('驗收●')
-  expect(stages).toContain('合併✕')
+  expect(stages).toContain('● 驗收')
+  expect(stages).toContain('✕ 合併')
   await ui.unmount()
 })
 
