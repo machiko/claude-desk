@@ -1,1 +1,0 @@
-- 調整 「⚑ 發版」改填一行 /desk:release 短請求（卡名、PR、要清理的卡），發版規則搬進 desk:release skill 只留一份，WORKFLOW、flow 與 README 的發版段改成指向它

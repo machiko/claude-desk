@@ -2,6 +2,11 @@
 
 ## 未發布
 
+## 0.45.0
+
+- 新增 面板「現在這件」的「前置」列，顯示審查前置指令的結果（成功的候選與採用數、失敗原因），審查檔沒有這行就不顯示
+- 調整 「⚑ 發版」改填一行 /desk:release 短請求（卡名、PR、要清理的卡），發版規則搬進 desk:release skill 只留一份，WORKFLOW、flow 與 README 的發版段改成指向它
+
 ## 0.44.0
 
 - 新增 專案 dispatch.json 的 card.retro（歸檔回顧指令）與 SKILL.md 歸檔 pitfalls 互動追加流程
