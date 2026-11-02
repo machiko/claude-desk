@@ -97,7 +97,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk update` | 把 desk 自己更新到 GitHub 上的最新版本（面板 footer 有新版時的「⇡ 更新到 <版本>」、沒查過時的「⇡ 檢查並更新」按鈕相同，只用點的、不綁快捷鍵；已是最新只顯示「✓ 已是最新版本」字樣，要重查就用這個指令）；更新後自動重新載入（不行就預填 `/reload-plugins`）；desk 自己發版後，工作桌會在回合結束自動跑一次 |
 | `/desk tutorial` | 教學：在沙盒裡把六段走一遍，旁邊配幾件示範任務（`/desk tutorial end` 結束並刪除沙盒） |
 | `/desk off` | 這個對話關閉工作桌 |
-| `/desk:card new <分支> <卡名> [base]` | 建 worktree、DESK 卡、登錄表列 |
+| `/desk:card new <分支> <卡名> [base] [--trivial]` | 建 worktree、DESK 卡、登錄表列；`--trivial`：瑣事卡，規格只寫一句、免前審，細節見 /desk:card |
 | `/desk:card spec <目標> [需求]` | 產生規格草稿並設 `spec：` 關卡；`… ok` 確認（實作計畫跟其他進行中的卡同檔時一併預警） |
 | `/desk:card overlap <slug>` | 列出實作計畫跟登錄表上其他進行中的卡同檔的檔案（`同檔預警：…`，沒有就印「無」） |
 | `/desk:card done <slug> <狀態一句>` | 主對話告一段落時寫回卡片：狀態、下一步（平常是到面板按 v；審查過關後有新 commit 是等自動重新檢查與審查，沒動靜就按 v；審查過關後沒有新 commit 是照面板開 PR 或合併）與 History（分支、HEAD）；規格沒確認會拒絕 |
