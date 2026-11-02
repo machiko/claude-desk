@@ -100,6 +100,8 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 
   發版請求列了要清理的卡（沒有 `release：` 關卡的卡）時，第 10 步寫好各卡狀態之後由對話照 `/desk:release` 在主 repo 跑 `/desk:card archive <slug>… --cleanup`，把這些卡歸檔並移除 worktree 與分支（你在題目選照做就是同意；只用 `git worktree remove`、`git branch -d`，不加 `--force`／`-D`、不碰遠端；沒併入、有未提交的改動、有被 git 忽略的本機設定或資料（`.env*`、`*.local.*` 等）或 git 拒絕的保留，原因與自己刪的指令寫進登錄表「## 提醒」；其他被忽略的檔隨 worktree 一起刪，可重建的（`node_modules`、`__pycache__` 等）以外列在輸出與提醒），沒移除的項目與原因寫進「狀態」告訴你。
 
+  專案是 desk 自己時，題目的動作最後再多一項「更新 desk 並重載」（接在「歸檔並移除 worktree 與分支」之後；沒有要清理的卡就接在等 CI 通過之後）：由工作桌在回合結束自動跑一次 `/desk update` 並重新載入，對話不用做；本機資料夾安裝要在預設分支、沒有未提交改動與未 push 的 commit 才會更新，更新失敗（含被擋下）只在動態回報一次、不重試。
+
   之後你做的事：有 `release：` 關卡的卡不在這次清理，部署後按 `u` 確認上線，會接著自動歸檔（worktree 與分支保留）；其他還沒歸檔的卡照舊歸檔（面板點兩次「⌫ 歸檔」或 `/desk:card archive <slug>`）。
 
 ## 常見狀況
