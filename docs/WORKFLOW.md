@@ -21,7 +21,7 @@
 | 2 實作 | 寫程式 | 你按 `g` | Agent（`claude --bg`） | 交給下一段 | Agent 執行中 |
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
 | 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0，影響行為的 MEDIUM 也修完 | 卡片 `review：CRITICAL n、HIGH n…` |
-| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次）；專案設了 `autoPr` 時審查過關後自動派（高風險照舊等你） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態）；fetch 基準分支後用 `git merge-tree` 試合併，有衝突標 ✕「與 main 有衝突」 |
+| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次）；專案設了 `autoPr` 時審查過關後自動派（高風險照舊等你） | 推送 Agent push、開 PR（依 origin：GitHub `gh pr create`、Bitbucket MCP `bb_post`、其他只 push 留網址，或專案 `pr.open` 指定指令）；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態）；fetch 基準分支後用 `git merge-tree` 試合併，有衝突標 ✕「與 main 有衝突」 |
 | 6 上線 | 打 tag、部署、部署後步驟 | 你按「⚑ 發版」交給對話 | 對話照發版步驟做、你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。

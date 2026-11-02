@@ -8,8 +8,8 @@ import type { Case, Snapshot } from '../types'
 import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
 import { errorLine, reasonLine, slugOf } from './model'
-import { baseRefs, deskPaths, lastLine, loadSettings } from './probes'
-import { afterSpecRefusal, normalizeRoot, openPrRequest, pushRequest, replyRefusal } from './dispatch'
+import { baseRefs, deskPaths, lastLine, loadSettings, originRemote } from './probes'
+import { afterSpecRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, replyRefusal } from './dispatch'
 import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
@@ -46,10 +46,11 @@ export async function reply($: any, options: PluginOptions, c: Case, text?: stri
 /** 教學不派真的 Agent：合併照教學說的按 t。 */
 const TUTORIAL_PUBLISH = '教學不會真的 push：照教學的指示按 t 合併'
 
-/** 開 PR 要推送 Agent 做的那句：對基準分支（baseRefs 第一個）開 PR。 */
+/** 開 PR 要推送 Agent 做的那句：對基準分支（baseRefs 第一個）開 PR，做法依 origin（或專案 `pr.open`）。 */
 async function openPrText($: any, options: PluginOptions, c: Case): Promise<string> {
-  const [target] = await baseRefs($, c, (await loadSettings($, options)).cardBase ?? '')
-  return openPrRequest(c.git?.branch ?? '分支', target ?? '')
+  const settings = await loadSettings($, options)
+  const [target] = await baseRefs($, c, settings.cardBase ?? '')
+  return openPrRequest(c.git?.branch ?? '分支', target ?? '', prHowOf(await originRemote($, c.root), settings.prOpen))
 }
 
 /** 合併段的「⇡ 開 PR」（按兩次確認後）：派推送 Agent push 分支並對基準分支開 PR；desk 自己不跑 git push、gh。 */

@@ -14,7 +14,8 @@ import { REVIEW_NEXT_AT_REVIEW, idleNext, reviewNext } from './next-words'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
 export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
-export { openPrRequest, pushRequest } from './prompts/publish'
+export { openPrRequest, openPrSteps, prHowOf, pushRequest } from './prompts/publish'
+export type { PrHow } from './prompts/publish'
 export { REVIEW_FILE, SECURITY_FILE, reviewTask } from './prompts/review'
 export type { ReviewOpts } from './prompts/review'
 export { REVIEW_NEXT, idleNext, reviewNext } from './next-words'
@@ -62,6 +63,8 @@ export type DispatchSettings = {
   maxAgents: number
   /** 審查過關（含免審查過關）後自動派推送 Agent push 並開 PR（PR 已開只 push）；只認 JSON 的 true，建議寫在專案的 dispatch.json。 */
   autoPr: boolean
+  /** 專案 `pr.open`：推送 Agent 開 PR 的覆寫指令（`{branch}`、`{target}` 會換掉），給 GitLab、自架等 desk 認不出的平台；空白＝依 origin（GitHub 用 gh、Bitbucket 用 MCP、其他只 push）。 */
+  prOpen: string
   /** 背景 Agent 要不要載入 MCP server。預設不載（`--strict-mcp-config`）：每個 MCP 都是一支常駐程序，派工一多就吃掉記憶體；要用再在 dispatch.json 設 `mcp: true`。 */
   mcp: boolean
   /** 做完的背景 Agent 由工作桌在下一次重新整理時 `claude stop` 收掉：不停的話每支各佔幾百 MB，閒置到 daemon 回收。預設開，只有 JSON 的 false 關掉。 */
@@ -91,7 +94,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, mcp: false, stopDone: true }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -115,6 +118,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     }
     out.composeDir = str(d?.composeDir)
     out.cardBase = str(d?.card?.base)
+    out.prOpen = str(d?.pr?.open)
     out.updateCheck = d?.updateCheck === false || str(d?.updateCheck).toLowerCase() === 'off' ? 'off' : ''
     // 非負整數照用（0＝不限）；負數、小數、字串都當沒寫。
     out.maxAgents = Number.isInteger(d?.maxAgents) && d.maxAgents >= 0 ? d.maxAgents : DEFAULT_MAX_AGENTS

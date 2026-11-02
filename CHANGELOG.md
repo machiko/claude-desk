@@ -2,6 +2,8 @@
 
 ## 未發布
 
+- 新增 推送 Agent 開 PR 的做法依 origin 決定：GitHub 用 `gh pr create`、Bitbucket 用 MCP 的 `bb_get` 查重複再 `bb_post`（這一種派工自動載入 MCP）、認不出的平台只 push 並把網址寫進「等你」；專案 `dispatch.json` 新增 `pr.open` 可覆寫成任何指令（GitLab 的 `glab mr create` 等）。之前提示詞寫死「Bitbucket 開不了 PR」，Bitbucket 專案按「⇡ 開 PR」永遠只留網址
+
 ## 0.47.0
 
 - 重構 拆解 hooks/register.tsx 單體架構，抽離完成檢查排程（verify-runner.ts）與背景 Agent 派工管理（dispatch-runner.ts），降低模組複雜度
