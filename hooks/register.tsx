@@ -28,6 +28,7 @@ import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
+import { noteReleased } from './release-update'
 import { isBusy, sentState } from './turn'
 import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
@@ -209,6 +210,7 @@ export async function refresh($: any, options: PluginOptions) {
     await autoChain($, options, drained ? (await read($, snapshot)) ?? cur : cur)
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
+    if (!tutorial) await noteReleased($, cur).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
     // 讀取失敗不代表登錄表不存在：拿掉建立按鈕，錯誤照樣是紅字。

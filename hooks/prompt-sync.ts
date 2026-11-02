@@ -1,5 +1,5 @@
 // 面板與對話同步：選取的任務附在每則提示、面板做過的操作附在下一則你打的提示、從面板送出的決策鎖到對話寫回卡片、對話動到卡片時提早重讀、
-// 主對話確認規格（/desk:card spec … ok）的回合結束後自動派實作。
+// 主對話確認規格（/desk:card spec … ok）的回合結束後自動派實作；desk 自己發版的，派完再自動更新 desk。
 // 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、面板操作紀錄的附加與清除、送出的決策與兩個計時器。
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
@@ -13,6 +13,7 @@ import { slugOf } from './model'
 import { sentState } from './turn'
 import { refreshAfterWrite } from './register'
 import { dispatchAfterSpec } from './card-actions'
+import { afterReleaseUpdate } from './release-update'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
@@ -146,6 +147,16 @@ async function specOkTell($: any, deps: PromptSyncDeps, text: string, tone: 'err
   await tellPanel($, now, text, { ...(c ? { name: c.name } : {}), skip: deps.isTutorial() })
 }
 
+/** 回合結束、派完工：這回合看到 desk 自己發版就更新一次；意外出錯記進動態，不重試。 */
+async function releaseUpdateAfterTurn($: any, at: number) {
+  try {
+    const s = await read($, snapshot)
+    await afterReleaseUpdate($, s?.versions?.desk)
+  } catch (error) {
+    await feedPush($, [{ at, text: `desk 發版後自動更新失敗：${error instanceof Error ? error.message : String(error)}`, tone: 'error' }]).catch(() => {})
+  }
+}
+
 /** 從面板送出、還在等對話寫回的決策（卡片路徑 → 紀錄）。 */
 export async function readSent($: any): Promise<Record<string, SentRecord>> {
   return read($, sentAtom)
@@ -269,7 +280,9 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
         await feedPush($, [{ at: endedAt, text: `決策狀態更新失敗：${error instanceof Error ? error.message : String(error)}`, tone: 'error' }])
       })
       // 派工自己會提示不能派的原因；意外的例外（每張卡的在 dispatchSpecOks 裡接住）也要說出來，不然卡片確認了卻什麼都沒發生。
-      if (targets.length || unsure.length) void refreshed.then(() => dispatchSpecOks($, deps, targets, unsure)).catch(async (error: unknown) => { await specOkDispatchFailed($, deps, error) })
+      const dispatched = targets.length || unsure.length ? refreshed.then(() => dispatchSpecOks($, deps, targets, unsure)).catch(async (error: unknown) => { await specOkDispatchFailed($, deps, error) }) : refreshed
+      // desk 自己發版了：派完工才更新，重新載入排在對話閒下來。
+      void dispatched.then(() => releaseUpdateAfterTurn($, endedAt))
     }
     return next(e)
   })

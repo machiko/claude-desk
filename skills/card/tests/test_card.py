@@ -1428,6 +1428,22 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertNotIn('打 tag 並 push', row)
 
 
+    def test_release_docs_add_update_desk_closing_for_desk_itself(self):
+        """AC-1：清理段落之後有 desk 自己的收尾：題目最後多一項「更新 desk 並重載」、工作桌回合結束自動做、本機資料夾的前提、失敗只回報不重試；10 步編號不變，README 的 /desk update 列跟著寫。"""
+        section = self.release_section()
+        cleanup = section.find('--cleanup')
+        self.assertGreater(cleanup, 0)
+        closing = section.find('更新 desk 並重載', cleanup)
+        self.assertGreater(closing, cleanup, f'清理段落之後找不到「更新 desk 並重載」：\n{section}')
+        paragraph = section[section.rfind('\n', 0, closing):section.find('\n', closing)]
+        for part in ('專案是 desk 自己', '歸檔並移除 worktree 與分支」之後', '回合結束', '對話不用做', '預設分支', '未提交', '不重試'):
+            self.assertIn(part, paragraph)
+        steps = re.findall(r'(?m)^\s+(\d+)\. ', section)
+        self.assertEqual(steps, [str(i) for i in range(1, 11)])
+        readme = read(os.path.join(REPO, 'README.md'))
+        row = next(l for l in readme.splitlines() if l.startswith('| `/desk update` |'))
+        self.assertIn('desk 自己發版後，工作桌會在回合結束自動跑一次', row)
+
 class CardOrderingDocsTest(unittest.TestCase):
     """開卡順序與共用檔規則：WORKFLOW 的「- 開卡順序」、README 的「### 文件與共用檔」、SKILL.md 的 new 提醒。"""
 
