@@ -156,3 +156,30 @@ test('test_first_v_on_an_archivable_card_lists_the_full_check', async ($, on) =>
   expect(await screen(ui)).toContain(flat('核准這條（再按 v 之後執行）：npm test'))
   await ui.unmount()
 })
+
+/** 審查 MEDIUM：按 w 開的流程修完、這張卡從沒核准過檢查而停下：檢查列說「還沒核准的指令」，不說「改過的指令」。 */
+test('test_chain_held_on_a_never_approved_check_lists_it_as_unapproved', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'review Alpha' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  // 審查有 HIGH → 自動修正；修完要跑的檢查從沒核准過 → 停下
+  h.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  await h.finish()
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1)).toContain('修正第 1／2 輪')
+  h.setGate('無')
+  data.git[ROOT]!.head = 'h2'
+  await h.finish()
+  expect(sh(data)).toBe(0)
+  expect((data.store.chains as any)[ROOT].stopped).toContain('完成檢查的指令還沒經你核准')
+
+  const ui = await $.ui.mount(PANE(160))
+  const shown = await screen(ui)
+  expect(shown).toContain(flat('還沒核准的指令（按兩次 v 核准並執行）：node test.mjs'))
+  expect(shown).not.toContain(flat('改過的指令'))
+  await ui.unmount()
+})

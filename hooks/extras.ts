@@ -13,16 +13,19 @@ export const isArmed = (armed: Armed | null, key: string, now: number) => !!arme
 
 /** 檢查列上待確認的是哪個鍵：t 確認規格、v 執行檢查、g 派實作；第二次按下去就會核准這條檢查。 */
 export type ApprovalKey = 't' | 'v' | 'g'
+/** 流程停在檢查段、因為指令沒核准：changed 是核准過別的指令（卡片上的檢查被改過），unapproved 是這張卡從沒核准過。 */
+export type HeldReason = 'changed' | 'unapproved'
 /**
  * 檢查列要不要列出指令全文（不去掉前綴的短版）：第二次按就會核准它，或流程正停在它沒核准。
  * t 待確認一律列（確認規格就核准）；v、g 只在還沒核准時列（核准過按 v 直接跑、按 g 不多核准什麼）。
  */
-export function checkApprovalLine(armedKey: ApprovalKey | null, heldUnapproved: boolean, approved: boolean, verify: string): string | null {
+export function checkApprovalLine(armedKey: ApprovalKey | null, held: HeldReason | null, approved: boolean, verify: string): string | null {
   if (armedKey === 't') return `核准這條（再按 t 之後自動執行）：${verify}`
   if (approved) return null
   if (armedKey === 'v') return `核准這條（再按 v 之後執行）：${verify}`
   if (armedKey === 'g') return `核准這條（再按 g 之後派工，做完自動執行）：${verify}`
-  return heldUnapproved ? `改過的指令（按兩次 v 核准並執行）：${verify}` : null
+  if (held === 'changed') return `改過的指令（按兩次 v 核准並執行）：${verify}`
+  return held === 'unapproved' ? `還沒核准的指令（按兩次 v 核准並執行）：${verify}` : null
 }
 
 /** Agent 最近幾行有意義的輸出：清掉控制序列、略過雜訊與連續重複。 */

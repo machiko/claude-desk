@@ -6,7 +6,7 @@ import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable, normalizeRoot } from './dispatch'
 import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
 import { checkApprovalLine, gitLine, isArmed, mergedAtHead } from './extras'
-import type { ApprovalKey } from './extras'
+import type { ApprovalKey, HeldReason } from './extras'
 import { isApproved } from './approve-check'
 import { CHECK_CHANGED, CHECK_UNAPPROVED } from './chain'
 import { compactStatus } from './digest-status'
@@ -47,8 +47,11 @@ function approvalKey(view: PaneView, c: Case): ApprovalKey | null {
 }
 /** 這張卡現在的檢查指令核准過了；畫面沒給核准紀錄就當核准過。 */
 const checkApproved = (view: PaneView, c: Case) => !view.trusted || isApproved(view.trusted, c)
-/** 這個對話的流程停在檢查段，原因是指令沒核准（或改過）：別的對話開的按 v 接不下去，不算。 */
-const heldUnapproved = (c: Case) => !!c.chain?.heldAtCheck && !c.chain.foreign && (c.chain.stopped === CHECK_CHANGED || c.chain.stopped === CHECK_UNAPPROVED)
+/** 這個對話的流程停在檢查段，原因是指令改過或從沒核准過：別的對話開的按 v 接不下去，不算。 */
+function heldReason(c: Case): HeldReason | null {
+  if (!c.chain?.heldAtCheck || c.chain.foreign) return null
+  return c.chain.stopped === CHECK_CHANGED ? 'changed' : c.chain.stopped === CHECK_UNAPPROVED ? 'unapproved' : null
+}
 
 const TURN_LABEL: Record<Turn['who'], string> = { you: '▶ 輪到你', ai: '處理中', none: '— 沒有待辦' }
 const TURN_COLOR: Record<Turn['who'], string> = { you: COLOR.attention, ai: COLOR.running, none: COLOR.faint }
@@ -171,7 +174,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   const count = show?.summary?.failed !== undefined ? ` · ${show.summary.failed} 支失敗` : ''
   const room = Math.max(10, width - INDENT - KV_LABEL)
   // 第二次按 t、v、g 就會核准這條指令，或流程正停在它沒核准：列出全文，不用去掉前綴的短版。
-  const approval = checkApprovalLine(approvalKey(view, c), heldUnapproved(c), checkApproved(view, c), c.verify)
+  const approval = checkApprovalLine(approvalKey(view, c), heldReason(c), checkApproved(view, c), c.verify)
   const result = running ? <Text color={COLOR.running}>執行中</Text>
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
     : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}${count}`}</Text>
