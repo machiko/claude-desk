@@ -2,6 +2,11 @@
 
 ## 未發布
 
+## 0.47.0
+
+- 重構 拆解 hooks/register.tsx 單體架構，抽離完成檢查排程（verify-runner.ts）與背景 Agent 派工管理（dispatch-runner.ts），降低模組複雜度
+- 效能 優化 dispatch.json 載入管線與卡片 Markdown 解析快取，減少重複磁碟 I/O，大幅提升輪詢刷新與測試套件執行效率
+
 ## 0.46.3
 
 - 新增 /desk:card new 的 --trivial 瑣事卡：規格只寫一句、不跑規格前審、不問釐清題，測試、CI 與審查風險照舊；文件加小卡併成一版發的建議
