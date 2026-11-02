@@ -264,6 +264,19 @@ class CardScriptTest(unittest.TestCase):
                                         capture_output=True, text=True).stdout.strip(), 'feature/fix-readme')
         self.assertIn('- 關卡：spec：待確認規格（瑣事）', read(self.card_path('fix-readme')))
 
+    def test_new_trivial_keeps_goal_line_when_template_has_no_blank_line_under_spec(self):
+        """審查 MEDIUM：自訂模板「## 規格」下直接接「- 目標：」時，類型行自成一行，不黏到目標行。"""
+        tpl = os.path.join(self.t, 'tight-template.md')
+        write(tpl, re.sub(r'(?m)^## 規格\n\n', '## 規格\n', read(TEMPLATE)))
+        self.write_settings({'card': {'template': tpl}})
+
+        self.new_trivial()
+
+        spec = load_card().spec_section(read(self.card_path('fix-typo')))
+        lines = [l for l in spec.split('\n') if l.strip()]
+        self.assertEqual(lines[0], load_card().TRIVIAL_LINE)
+        self.assertTrue(lines[1].startswith('- 目標：'), lines[1])
+
     def test_card_command_prints_trivial_and_omits_spec_preflight_for_trivial_card(self):
         """AC-2：設了規格前審的專案，瑣事卡的 card 多印 trivial: yes、不印 spec preflight:。"""
         self.write_settings({'card': {'specPreflight': 'agy-spec --card {card}'}})

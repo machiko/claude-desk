@@ -242,7 +242,8 @@ def trivial_card(text):
     head = re.search(r'^## 規格[ \t]*\n', text, re.M)
     if not head:
         return None
-    marked = text[:head.end()] + '\n' + TRIVIAL_LINE + text[head.end():]
+    # 類型行自成一行：模板標題下有沒有空行都一樣，不會黏到下一行。
+    marked = text[:head.end()] + '\n' + TRIVIAL_LINE + '\n' + text[head.end():].lstrip('\n')
     filled, n = re.subn(r'^\|\s*AC-1\s*\|.*$', lambda _: TRIVIAL_AC, marked, count=1, flags=re.M)
     return filled if n else None
 
