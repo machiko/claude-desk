@@ -52,7 +52,7 @@ export type PaneView = {
 }
 export type PaneActions = {
   select: (statusPath: string) => void
-  /** 回到工作桌自己挑的那件（「更多動作」裡，有選取時才出現）。 */
+  /** 回到工作桌自己挑的那件（現在卡上方的區段標題列與「更多動作」裡，有選取時才出現）。 */
   deselect: () => void
   pick: (c: Case, index: number, key: string) => void
   fill: (c: Case) => void
@@ -360,12 +360,16 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
   if (narrow) rows.push(section(ui, title, width, tally))
   else {
     const letters = heads.map(h => pad(h, STAGE_COL)).join('').trimEnd()
-    if (g.lead >= displayWidth(title) + 1) {
-      // 計數靠右，放在段名後面剩下的寬度（任務名越長越少）；至少隔 2 格，放不下整段不放。
-      const free = width - g.lead - displayWidth(letters) - partsWidth(tally)
-      const right = tally.length && free >= 2 ? [<Text key="gap">{' '.repeat(free)}</Text>, ...tally.map((p, i) => <Text key={`t${i}`} color={p.color}>{p.text}</Text>)] : []
+    // 計數靠右，放在段名後面剩下的寬度（任務名越長越少），至少隔 2 格。
+    const free = width - g.lead - displayWidth(letters) - partsWidth(tally)
+    if (g.lead >= displayWidth(title) + 1 && (!tally.length || free >= 2)) {
+      const right = tally.length ? [<Text key="gap">{' '.repeat(free)}</Text>, ...tally.map((p, i) => <Text key={`t${i}`} color={p.color}>{p.text}</Text>)] : []
       rows.push(<Box flexDirection="row"><Text color={COLOR.dim} bold>{pad(title, g.lead)}</Text><Text color={COLOR.faint}>{letters}</Text>{right}</Box>)
-    } else { rows.push(section(ui, title, width, tally)); rows.push(<Text color={COLOR.faint}>{' '.repeat(g.lead) + letters}</Text>) }
+    } else {
+      // 區名放不進任務名欄，或同一列放不下計數（寬版並排時清單那欄只有 49–64 格）：區名＋計數一列，段名另起一列。
+      rows.push(section(ui, title, width, tally))
+      rows.push(<Text color={COLOR.faint}>{' '.repeat(g.lead) + letters}</Text>)
+    }
   }
   // 數字鍵只給真的任務；示範任務（教學背景）只是畫面，不能選。
   const real = cases.filter(c => !c.demo)
@@ -440,7 +444,7 @@ function historyRows(ui: any, view: PaneView, focus: Case | null, width: number)
 }
 
 const HELP: [string, string][] = [
-  ['1–9', '選任務（數字依清單固定，選了不會換號；取消選取在標題列或「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
+  ['1–9', '選任務（數字依清單固定，選了不會換號；取消選取在「現在 · 你選的」那列或「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／驗收／同步（按兩次確認；同步平常收在 m，卡片落後分支時才出現）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）；派工排隊中是取消排隊（按一次）'], ['l', 'Agent 輸出'],
   ['v', '執行測試；指令還沒核准（或改過）時按兩次，第一次列出全文'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文（含完整歷程）'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
@@ -463,7 +467,8 @@ const DESELECT_WIDTH = displayWidth(WORD.deselect) + 2
 
 /**
  * 現在卡上方的區段標題：說出現在卡是誰挑的。自動挑選時後接「另有 n 件等你」（現在卡以外需要人的件數）；
- * 你選的時後接「<任務名> · 之後每則對話都附上它的卡」與「✕ 取消選取」（只用點的）。放不下整段拿掉，不截字。
+ * 你選的時後接「<任務名> · 之後每則對話都附上它的卡」與「✕ 取消選取」（只用點的）。
+ * 放不下時由寬到窄退讓、不截字：省掉提示字只留任務名與按鈕 → 只留按鈕（寬版並排時現在卡那欄只有 46–61 格）→ 連按鈕都放不下才只剩區名。
  */
 function nowTitle(ui: any, view: PaneView, focus: Case | null, width: number, act: PaneActions) {
   const { Box, Text, Button } = ui
@@ -471,12 +476,15 @@ function nowTitle(ui: any, view: PaneView, focus: Case | null, width: number, ac
   const head = isPicked ? WORD.nowPicked : WORD.nowAuto
   const room = width - displayWidth(head) - 2
   if (isPicked && focus) {
-    const note = `${focus.name} · ${WORD.pickedNote}`
-    if (displayWidth(note) + DESELECT_WIDTH > room) return label(ui, head)
+    const full = `${focus.name} · ${WORD.pickedNote}`
+    // 區名之後：「  <字>」＋「  ✕ 取消選取」要放得進剩下的寬度（room 已扣掉區名後的 2 格）。
+    const fits = (n: string) => (n ? 2 + displayWidth(n) : 0) + DESELECT_WIDTH <= room + 2
+    const note = fits(full) ? full : fits(focus.name) ? focus.name : ''
+    if (!fits(note)) return label(ui, head)
     return (
       <Box flexDirection="row">
         <Text color={COLOR.dim} bold>{head}</Text>
-        <Text color={COLOR.text}>{`  ${note}`}</Text>
+        {note ? <Text color={COLOR.text}>{`  ${note}`}</Text> : null}
         <Text>{'  '}</Text>
         <Button key="deselect-title" plain dimColor label={WORD.deselect} onPress={act.deselect} />
       </Box>
