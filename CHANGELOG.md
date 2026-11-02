@@ -2,6 +2,8 @@
 
 ## 未發布
 
+- 修復 `/desk:card archive --cleanup` 在 worktree 含 submodule 時清不掉：git 不加 `--force` 一律拒絕移除含 submodule 的 worktree，分支也因為還被佔用刪不掉。現在腳本自己確認乾淨（沒有未提交改動、沒有被忽略的本機設定）後，只對這一種拒絕改加 `--force` 再試一次，輸出與登錄表提醒註明「含 submodule，以 --force 移除」；其他拒絕原因照舊保留
+
 ## 0.47.0
 
 - 重構 拆解 hooks/register.tsx 單體架構，抽離完成檢查排程（verify-runner.ts）與背景 Agent 派工管理（dispatch-runner.ts），降低模組複雜度
