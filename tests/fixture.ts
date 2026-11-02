@@ -9,6 +9,8 @@ export const REGISTRY = `${PROJECT_DIR}/projects-scope.md`
 export const CARD_A = '/home/u/wt/alpha/.desk/CARD.md'
 export const CARD_B = '/home/u/wt/beta/.desk/CARD.md'
 export const CARD_C = '/home/u/wt/gamma/.desk/CARD.md'
+/** Alpha、Beta 預設的完成檢查：測的不是核准時，先放進 `data.store.trustedVerify`（`/desk go`、`/desk verify` 只做核准過的）。 */
+export const TRUSTED = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
 
 export const BAND = (bodyColumns: number) => ({ plugin: 'desk', component: 'AbovePrompt', surface: 'terminal',
   props: { hasSurvey: false, isWorking: false, bodyColumns, maxRows: 3, scroll: { offset: 0, total: 0, visible: 0 }, view: {} } } as any)
@@ -75,8 +77,6 @@ export function fixture(on: any) {
     submitted: [] as any[],
     asks: [] as string[],
     answer: '執行',
-    /** 按 g 時核准完成檢查的那個對話框（選項有「核准並派工」）的回答；其他對話框用 answer。 */
-    approve: '核准並派工',
     /** 每個對話框的選項，跟 asks 一一對應。 */
     askOptions: [] as string[][],
     /** 每個對話框的標題，跟 asks 一一對應。 */
@@ -190,7 +190,7 @@ export function fixture(on: any) {
     data.asks.push(String(q?.question ?? ''))
     data.askOptions.push(labels)
     data.askHeaders.push(String(q?.header ?? ''))
-    return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: labels.includes('核准並派工') ? data.approve : data.answer } } }
+    return { result: { questions: e.questions, answers: { [String(q?.question ?? '')]: data.answer } } }
   })
   // 拒絕＝交給核心：測試裡沒有核心的實作，$.command.run 會被拒（跟 Claude Code 不讓 plugin 執行一樣是 reject）。
   on('command.run', { command: 'reload-plugins' }, async (_: any, e: any, next: any) => {

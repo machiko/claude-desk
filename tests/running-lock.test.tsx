@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, BAND, PANE, CARD_A, CARD_B, NOW, REGISTRY, result, text, flat } from './fixture'
+import { fixture, BAND, PANE, CARD_A, CARD_B, NOW, REGISTRY, TRUSTED, result, text, flat } from './fixture'
 
 const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
@@ -29,12 +29,12 @@ const lockedText = (ui: any, id: Lockable) => ui.find({ type: 'Text', text: `${L
 /** 按下去引擎找不到可按的按鈕（只是文字）就丟錯：回 true 代表按不了。 */
 const pressRefused = async (ui: any, key: string) => ui.press({ key }).then(() => false, () => true)
 
-/** 只留 Beta 一件；Agent 由呼叫端給。 */
+/** 只留 Beta 一件；Agent 由呼叫端給。完成檢查都核准過（按一次 v 就跑）；沒核准要按兩次的另外測。 */
 function onlyBeta(data: any, base: string) {
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_B] = base
   data.gh = []
-  data.store = {}
+  data.store = { trustedVerify: { ...TRUSTED } }
   data.agents = []
   data.toasts.length = 0
   data.asks.length = 0
@@ -276,16 +276,20 @@ test('test_queued_or_approved_check_does_not_run_once_agent_started', async ($, 
   expect(await screen(ui)).not.toContain(flat('排隊中'))
   await ui.unmount()
 
-  // 核准對話框：問的時候還閒置，回答的這段時間 Agent 開始跑
+  // 檢查沒核准：第一次按 v 只待確認，這時 Agent 開始跑；第二次按（核准並執行）被擋下，也不記核准
   onlyBeta(data, data.files[CARD_B]!)
   data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: GITHUB }
-  Object.defineProperty(data, 'answer', { configurable: true, get: () => { data.agents = [RUNNING]; return '執行' } })
+  data.store = {}
   const again = await mount($, clock)
   await again.press({ key: `${PREFIX}verify` })
   await clock.settle()
-  expect(data.asks).toHaveLength(1)
+  data.agents = [RUNNING]
+  await again.press({ key: `${PREFIX}verify` })
+  await clock.settle()
+  expect(data.asks).toHaveLength(0)
   expect(data.toasts).toContain('Beta：Agent 仍在執行，完成後再檢查')
   expect(data.processCalls.some((c: any) => c.argv.join(' ') === 'sh -c npm test')).toBe(false)
+  expect(data.store.trustedVerify).toBeUndefined()
   await again.unmount()
 })
 

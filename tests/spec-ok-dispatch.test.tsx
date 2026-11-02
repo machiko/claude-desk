@@ -190,7 +190,7 @@ test('test_spec_ok_records_trust_even_when_dispatch_is_refused', { timeoutMs: 15
   await ui.unmount()
 })
 
-/** 確認規格即核准檢查 AC-4：確認規格後檢查欄被改過，按 g 照舊跳「核准並派工」列出新指令；取消就不派 */
+/** 確認規格即核准檢查 AC-4：確認規格後檢查欄被改過，按一次 g 在檢查列列出新指令、不派；沒按第二次就不記核准 */
 test('test_g_asks_again_after_the_check_line_changes_since_spec_ok', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock } = fixture(on)
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
@@ -207,13 +207,14 @@ test('test_g_asks_again_after_the_check_line_changes_since_spec_ok', { timeoutMs
   data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
   data.files[CARD_B] = setFields(data.files[CARD_B]!, { 驗證: '`npm test -- --grep x`' })
   await h.refresh()
-  data.approve = '取消'
-  await h.pressG(ui, CARD_B)
-  expect(data.asks).toHaveLength(1)
-  expect(data.asks[0]).toContain('npm test -- --grep x')
-  expect(data.askOptions[0]).toEqual(['核准並派工', '取消'])
+  await ui.press({ key: `row-${CARD_B}` })
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  expect(flat(text(await ui.drawn()))).toContain(flat('核准這條（再按 g 之後派工，做完自動執行）：npm test -- --grep x'))
+  expect(data.asks).toHaveLength(0)
   expect(data.launches).toHaveLength(1)
-  // 取消什麼都不記：紀錄還是確認規格時那條
+  // 沒按第二次什麼都不記：紀錄還是確認規格時那條
+  await clock.advance(3500); await clock.settle()
+  expect(data.launches).toHaveLength(1)
   expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
   await ui.unmount()
 })

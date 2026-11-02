@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE } from './fixture'
+import { fixture, PANE, TRUSTED } from './fixture'
 
 const RAW = ';2;218;124;92mDiscombobulating…\u001b[50;1H\u001b[46;3H\u001b[H\r\u001b[42B·\u001b[3GDiscombobulating…\u001b[50;1H\r\u001b[2C\u001b[42BDiscomb'
 
@@ -30,6 +30,7 @@ test('meaningful line skips spinners, timers, token counts and cut fragments', (
 
 test('a failed check with colored output still draws the pane', async ($, on) => {
   const { data, clock } = fixture(on)
+  data.store.trustedVerify = { ...TRUSTED }
   data.run = async () => ({ exitCode: 1, stdout: '\u001b[31m  FAIL  \u001b[39m Tests\\Feature\\XTest\n\u001b[2K\rTests:  1 failed', stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, leaves, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, TRUSTED, leaves, result, text, flat } from './fixture'
 import { limitParts, resetText } from '../hooks/pane'
 import { hhmm } from '../hooks/model'
 
@@ -178,6 +178,7 @@ test('test_ages_read_as_time_ago', async ($, on) => {
 /** AC-5：header 寫「讀取」；footer 的上下文、容器、模型講清楚方向與意思；檢查失敗寫結束碼。 */
 test('test_status_words_state_direction_and_meaning', { options: { composeDir: '/home/u/app' } }, async ($, on) => {
   const { data, clock } = fixture(on)
+  data.store.trustedVerify = { ...TRUSTED }
   data.usage = { startedAt: NOW, context: { percent: 62 }, rateLimits: [] }
   const svc = (Service: string) => JSON.stringify({ Service, State: 'running', Health: '' })
   data.compose = [svc('app'), svc('mysql')].join('\n')
