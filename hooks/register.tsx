@@ -28,7 +28,7 @@ import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
-import { noteReleased } from './release-update'
+import { noteReleased, noteReleasedNow } from './release-update'
 import { isBusy, sentState } from './turn'
 import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
@@ -816,7 +816,11 @@ export function notify($: any, text: string, repeat = false) {
 
 /** 卡片或登錄表剛被改過（卡片腳本、對話、回合結束）後重新整理：已有一輪在跑（可能在改之前就讀過）就等它結束再讀一輪。 */
 export async function refreshAfterWrite($: any, options: PluginOptions) {
-  if (refreshing) await refreshing.catch(() => {})
+  if (refreshing) {
+    // 進行中那輪可能在改之前就讀過登錄表：desk 發版的待辦先記，不等它跑完探測（同回合的 archive --cleanup 會刪掉 worktree）。
+    if (!tutorial) await noteReleasedNow($, options).catch(() => { /* 下一輪重新整理再看 */ })
+    await refreshing.catch(() => {})
+  }
   return refresh($, options)
 }
 

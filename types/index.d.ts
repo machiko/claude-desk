@@ -169,6 +169,8 @@ declare module 'claude-code' {
       contentOffset: number
       /** desk 在這個 session 載入了幾次（含 /reload-plugins）；更新後判斷新版是否已載入。 */
       loads: number
+      /** 這個對話的重新整理看到的 desk 發版（版號最大的那張已發版卡），回合結束處理；別的對話看不到，已處理的版號記在 $.store 的 releaseUpdate。 */
+      releaseNoted: { version: string; name: string } | null
     }
   }
 }

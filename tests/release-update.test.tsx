@@ -34,9 +34,9 @@ test('test_turn_end_after_release_status_updates_desk_and_reloads_once', async (
   const { changes } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
   released(data, true)
   await refresh($, clock)
-  // 回合還沒結束：只記下，不更新
+  // 回合還沒結束：只記在這個對話自己的狀態，不更新，也不寫進所有對話共用的 store
   expect(changes).toEqual([])
-  expect(data.store.releaseUpdate).toMatchObject({ version: '0.44.0', handled: false })
+  expect(data.store.releaseUpdate).toBeUndefined()
 
   await endTurn($, clock)
   expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
@@ -114,11 +114,11 @@ test('test_older_released_card_ahead_in_the_registry_does_not_hide_the_new_relea
   olderReleased(data)
   data.store.releaseUpdate = { version: '0.43.0', name: 'Alpha', handled: true }
   await refresh($, clock)
-  expect(data.store.releaseUpdate).toMatchObject({ version: '0.44.0', name: 'Beta', handled: false })
 
   await endTurn($, clock)
   expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
   expect(data.reloads.length).toBe(1)
+  expect(data.store.releaseUpdate).toMatchObject({ version: '0.44.0', name: 'Beta', handled: true })
 })
 
 test('test_archiving_the_new_release_card_does_not_roll_the_pending_back_to_an_older_card', async ($, on) => {
@@ -155,6 +155,69 @@ test('test_release_status_is_noted_before_a_cleanup_mid_refresh_removes_the_work
   }
   await refresh($, clock)
   expect(cleaned).toBe(true)
+
+  await endTurn($, clock)
+  expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
+  expect(data.reloads.length).toBe(1)
+})
+
+test('test_release_noted_by_another_conversation_is_not_taken_at_this_turn_end', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  on('turn.complete', () => ({ text: '' }))
+  const { calls } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
+  data.store.updateCheck = { at: NOW, latest: '0.43.0', current: '0.43.0' }
+  // 別的對話（desk 專案）記下、還沒處理的發版；這個對話的登錄表沒有 desk 的已發版卡
+  data.store.releaseUpdate = { version: '0.44.0', name: 'Beta', handled: false }
+  await refresh($, clock)
+  await endTurn($, clock)
+  expect(calls.filter(a => a[0] === 'claude' && a[1] === 'plugin')).toEqual([])
+  expect(data.reloads.length).toBe(0)
+  expect(feedTexts(log)).not.toContain(NOTE)
+  expect(data.store.releaseUpdate).toEqual({ version: '0.44.0', name: 'Beta', handled: false })
+})
+
+test('test_release_already_handled_by_another_conversation_is_not_run_again', async ($, on) => {
+  const { data, clock } = fixture(on)
+  on('turn.complete', () => ({ text: '' }))
+  const { calls } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
+  released(data, true)
+  data.store.releaseUpdate = { version: '0.44.0', name: 'Beta', handled: true }
+  await refresh($, clock)
+  await endTurn($, clock)
+  expect(calls.filter(a => a[0] === 'claude' && a[1] === 'plugin')).toEqual([])
+  expect(data.reloads.length).toBe(0)
+})
+
+test('test_card_written_while_a_refresh_is_running_is_noted_before_waiting_for_it', async ($, on) => {
+  const { data, clock } = fixture(on)
+  on('turn.complete', () => ({ text: '' }))
+  on('tool.call', { tool: 'Write' }, (_: any, e: any) => { data.files[e.file_path] = e.content; return { result: { type: 'update', filePath: e.file_path } } })
+  const { changes } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
+  data.files[`${BETA}/.claude-plugin/plugin.json`] = JSON.stringify({ name: 'desk', version: '0.44.0' })
+  data.store.updateCheck = { at: NOW, latest: '0.43.0', current: '0.43.0' }
+  await refresh($, clock)
+  // 下一輪重新整理卡在 claude agents（例如 git 觸發的那輪還在跑探測）
+  const exec = data.exec
+  let hold: (() => void) | null = null
+  const held = new Promise<void>(resolve => { hold = resolve })
+  let entered = false
+  data.exec = (e: any) => {
+    if (!entered && e.argv[0] === 'claude' && e.argv[1] === 'agents') { entered = true; return held.then(() => exec(e)) }
+    return exec(e)
+  }
+  const running = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  expect(entered).toBe(true)
+  // 這時對話寫了「已發版」，800ms 後要重讀；接著 archive --cleanup 拿掉 Beta 的登錄表列、卡片與 worktree
+  await $.tool.call({ tool: 'Write', file_path: CARD_B, content: setFields(data.files[CARD_B]!, { 狀態: RELEASED }) } as any)
+  await clock.advance(800)
+  await clock.settle()
+  data.files[REGISTRY] = data.files[REGISTRY]!.split('\n').filter(l => !l.startsWith('| Beta |')).join('\n')
+  for (const path of Object.keys(data.files)) if (path.startsWith(`${BETA}/`)) delete data.files[path]
+  hold!()
+  await running
+  await clock.settle()
 
   await endTurn($, clock)
   expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
