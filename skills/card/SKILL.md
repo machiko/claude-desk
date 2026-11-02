@@ -1,6 +1,6 @@
 ---
 name: card
-description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] 建 worktree＋DESK 卡＋登錄表列；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡（實作計畫跟其他進行中的卡同檔時一併預警）；overlap <slug> 列出實作計畫跟其他進行中的卡同檔的檔案；done <slug> <狀態一句> 主對話告一段落時寫回狀態、下一步與 History；archive <slug>… [--cleanup] 把卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾並更新登錄表，--cleanup 再移除已合併又乾淨的 worktree 與分支；changelog <版本> 發版時把 changelog.d/*.md 片段合併成 CHANGELOG 的版本段落。配合 /desk 工作桌使用。
+description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [base] [--trivial] 建 worktree＋DESK 卡＋登錄表列（--trivial 開瑣事卡，規格一句、免規格前審）；spec <slug|任務名|main> [需求] 讀卡與程式、問 3–5 個釐清問題、把目標／非目標／驗收情境與實作計畫寫進卡片「## 規格」並設 spec 關卡；spec <slug> ok 確認規格與計畫、清關卡（實作計畫跟其他進行中的卡同檔時一併預警）；overlap <slug> 列出實作計畫跟其他進行中的卡同檔的檔案；done <slug> <狀態一句> 主對話告一段落時寫回狀態、下一步與 History；archive <slug>… [--cleanup] 把卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾並更新登錄表，--cleanup 再移除已合併又乾淨的 worktree 與分支；changelog <版本> 發版時把 changelog.d/*.md 片段合併成 CHANGELOG 的版本段落。配合 /desk 工作桌使用。
 ---
 
 # /desk:card
@@ -9,6 +9,7 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
 
 - `new`、`archive`、`changelog` 與 `overlap`：直接執行 `card.py <args>`，把輸出原樣給使用者。
   - `overlap <目標>`：唯讀，列出這張卡的實作計畫跟登錄表上其他進行中的卡（已歸檔段、卡片檔不存在、沒填計畫的不算）同檔的檔案，每個同檔一行「同檔預警：<檔> 也在「<卡名>」的實作計畫（<slug>）」，沒有印「同檔預警：無」。有同檔時建議「先合哪張」或「改成疊放（`new` 時 base 指向另一張的分支）」，不要自己改 base 或順序。
+  - `new` 帶 `--trivial`（放哪個位置都行，可以同時給 base）開「瑣事卡」：只改註解、CHANGELOG、沒被測試引用的說明文字時用。腳本在「## 規格」第一行寫「類型：瑣事（…）」、預填一條驗收情境、關卡直接設 `spec：待確認規格（瑣事）`；規格怎麼寫見下面「產生規格」的瑣事卡段。
   - `new` 之後提醒：接著用 `/desk:card spec <slug>` 產生規格。`new` 不建 `changelog.d/<slug>.md`（空片段會讓發版合併報錯），條目由實作時寫。橫切重構（改名、搬檔、改六段結構）的卡要等其他卡合併、或其他卡等它合併，見 `docs/WORKFLOW.md` 的「開卡順序」。
   - `archive` 之後**不要**替使用者刪 worktree 或分支；只印出指令由使用者自己跑。例外：發版時，`/desk:release` 請求括號裡列的、使用者在 `/desk:release` 的確認題選了照做的那幾張卡，照那份 skill 的時機跑 `card.py archive <slug>… --cleanup`（一次給多張；有一張找不到就整批不做）。它只用 `git worktree remove`、`git branch -d`，主 worktree、沒併入主 repo 目前分支、有未提交改動、有被 git 忽略的本機設定或資料（`.env*`、`*.local.*` 等）或 git 拒絕的都保留，原因與自己刪的指令寫進登錄表「## 提醒」；其他被忽略的檔會隨 worktree 一起刪，可重建的（`node_modules`、`__pycache__` 等）以外列在輸出與提醒；squash／rebase 合併的（內容已在主 repo、分支不是祖先）照樣移除乾淨的 worktree，分支因為 `branch -d` 認不出而保留、寫進提醒；輸出（每張一行「清理 <slug>：…」）原樣給使用者，保留的項目不要自己再加 `--force`／`-D` 去刪。發版請求沒列到的卡、有 `release：` 關卡的卡不帶 `--cleanup`。
     - 歸檔回顧（有 `card.retro` 時）：`card.py archive` 在複製完 `.task` 檔後、清理前會執行該指令並印出輸出。回顧輸出若有「候選 pitfalls」時，對話用 AskUserQuestion 提最多 3 條（格式「類別：怎麼避免」，可複選）；使用者勾選後才追加到 `review.pitfalls`（或專案 `review-pitfalls.md`）檔尾「## 追加」段（檔案不存在或沒有該段就建立），沒勾選就只留在 `retro.md`，不主動修改 pitfalls。
@@ -40,6 +41,7 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
    - History 加一行：`- YYYY-MM-DD：規格前審：候選 m、採用 n、<丟棄原因一句>`（全數採用時寫全數採用）。
    - 指令執行失敗（找不到指令、非 0、超時）就跳過前審照常寫規格，History 記一行：`- YYYY-MM-DD：規格前審：略過（<原因>）`。
    - desk 不執行也不檢查這條指令。
+2c. **瑣事卡（步驟 1 印出 `trivial: yes` 時）**：跳過 2b 規格前審與 4 釐清問題，也不問步驟 3 的取代題（預填的那條不算已有規格）；步驟 5 照做但精簡：目標一句、非目標可省、驗收情境保留預填那條（要補可補）、實作計畫照列要改的檔、History 照記；關卡維持 `spec：待確認規格（瑣事）`，不改成 AC 範圍那句。確認規格、完成檢查、CI 與審查的風險判斷都跟一般卡相同。
 3. **已有規格時**：`filled AC` 不是 none，就先用 AskUserQuestion 問「取代／只補缺漏／取消」，照答案做。
 4. **釐清問題**：只問「答案會改變驗收情境」的事，能從卡片或程式讀到的不要問。
    - 用 AskUserQuestion，一次最多 4 題，總共 3–5 題；每題 2–4 個具體選項，推薦的放第一個並標「(Recommended)」。

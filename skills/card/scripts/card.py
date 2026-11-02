@@ -7,6 +7,7 @@
 
 用法：
   card.py new <分支> <卡名> [base]             從主 repo 建 worktree（資料夾名取分支最後一段）、DESK 卡、登錄表列
+                                               --trivial（任何位置）：瑣事卡，規格段標「類型：瑣事」、預填一條驗收情境、關卡設 spec：待確認規格（瑣事）
   card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
   card.py gate <slug|任務名|main> <關卡內容>       改 CARD／DESK 區塊的「關卡」
@@ -225,6 +226,27 @@ def spec_section(text):
     return m.group(1) if m else ''
 
 
+TRIVIAL_FLAG = '--trivial'
+TRIVIAL_LINE = '- 類型：瑣事（只改註解、CHANGELOG、沒被測試引用的說明文字；規格一句、免前審、不問釐清題，測試、CI 與審查風險照舊）'
+TRIVIAL_AC = '| AC-1 | 改動只有文字或註解 | 跑完成檢查與 CI | 全過，沒有測試斷言被改壞 | 完成檢查與 CI |'
+TRIVIAL_GATE = 'spec：待確認規格（瑣事）'
+
+
+def is_trivial(text):
+    """瑣事卡：「## 規格」段裡有「- 類型：瑣事」那行才算；卡名、History 等其他段有「瑣事」不算。"""
+    return re.search(r'^- 類型：瑣事', spec_section(text), re.M) is not None
+
+
+def trivial_card(text):
+    """把開好的卡改成瑣事卡：「## 規格」標題下插類型行、模板的 AC-1 列換成預填的那條。模板沒有規格段或 AC-1 列就回 None。"""
+    head = re.search(r'^## 規格[ \t]*\n', text, re.M)
+    if not head:
+        return None
+    marked = text[:head.end()] + '\n' + TRIVIAL_LINE + text[head.end():]
+    filled, n = re.subn(r'^\|\s*AC-1\s*\|.*$', lambda _: TRIVIAL_AC, marked, count=1, flags=re.M)
+    return filled if n else None
+
+
 def filled_ac(text):
     """有內容（「則」欄不是空白也不是 <…> 佔位）的驗收情境。"""
     out = []
@@ -358,12 +380,18 @@ NAME_SLOT = '<任務名>'
 LEGACY_NAME_SLOT = '<案名>'  # 0.24.0 以前模板的卡名佔位：自訂模板（card.template）可能還寫著它
 
 
-def cmd_new(branch, name, base=None):
+def cmd_new(branch, name, base=None, trivial=False):
     need_registry()
     if not MAIN:
         fail('沒有設定主 repo：在 dispatch.json 加上 "card": { "main": "~/path/to/repo" }')
     if not os.path.isfile(TPL):
         fail(f'找不到卡片模板：{TPL}')
+    content = read(TPL).replace(NAME_SLOT, name).replace(LEGACY_NAME_SLOT, name)
+    if trivial:
+        # 建 worktree 之前就檢查，模板不合用時什麼都不動。
+        content = trivial_card(content)
+        if content is None:
+            fail(f'卡片模板沒有「## 規格」段或 AC-1 列，開不了瑣事卡：{TPL}')
     slug = branch.rsplit('/', 1)[-1]
     wt = os.path.join(WT_ROOT, slug)
     if os.path.exists(wt):
@@ -379,7 +407,10 @@ def cmd_new(branch, name, base=None):
     os.makedirs(os.path.join(wt, '.desk'), exist_ok=True)
     os.makedirs(os.path.join(wt, '.task'), exist_ok=True)
     card = os.path.join(wt, '.desk', 'CARD.md')
-    write(card, read(TPL).replace(NAME_SLOT, name).replace(LEGACY_NAME_SLOT, name))
+    write(card, content)
+    if trivial:
+        # 預填的驗收情境會讓面板認成規格已填好，所以開卡就設 spec 關卡，確認前不派工。
+        set_gate(card, TRIVIAL_GATE)
     exclude = git('-C', MAIN, 'rev-parse', '--git-path', 'info/exclude').stdout.strip()
     exclude = exclude if os.path.isabs(exclude) else os.path.join(MAIN, exclude)
     current = read(exclude) if os.path.isfile(exclude) else ''
@@ -393,6 +424,8 @@ def cmd_new(branch, name, base=None):
     check = cfg('check').replace('{slug}', slug)
     print(f'  建議完成檢查：{check}' if check else f'  完成檢查：{CMD} spec 會一起補上')
     print(f'  下一步：{CMD} spec {slug} 產生規格，確認後 /desk refresh')
+    if trivial:
+        print('  瑣事卡：規格一句、免前審')
 
 
 def cmd_card(arg):
@@ -409,11 +442,14 @@ def cmd_card(arg):
     print(f'gate: {field(body, "關卡")}')
     print(f'check: {check}')
     print(f'spec: {"yes" if has_spec(text) else "no"}; filled AC: {", ".join(filled_ac(text)) or "none"}')
+    trivial = is_trivial(text)
+    if trivial:
+        print('trivial: yes')
     print(f'user: {USER}')
     # 建議的完成檢查只對 worktree 有意義（{slug} 是 worktree 資料夾名）。
     if cfg('check') and WT_ROOT and os.path.dirname(root.rstrip('/')) == WT_ROOT.rstrip('/'):
         print(f'suggested check: {cfg("check").replace("{slug}", os.path.basename(root))}')
-    if cfg('specPreflight'):
+    if cfg('specPreflight') and not trivial:
         print(f'spec preflight: {cfg("specPreflight")}')
     for rule in SPEC_RULES:
         print(f'rule: {rule}')
@@ -1076,8 +1112,9 @@ def main(argv):
     if not argv:
         fail(__doc__, 2)
     cmd, args = argv[0], argv[1:]
-    if cmd == 'new' and len(args) >= 2:
-        cmd_new(args[0], args[1], args[2] if len(args) > 2 else None)
+    if cmd == 'new' and len([a for a in args if a != TRIVIAL_FLAG]) >= 2:
+        pos = [a for a in args if a != TRIVIAL_FLAG]
+        cmd_new(pos[0], pos[1], pos[2] if len(pos) > 2 else None, TRIVIAL_FLAG in args)
     elif cmd == 'card' and args:
         cmd_card(args[0])
     elif cmd == 'spec-init' and args:
