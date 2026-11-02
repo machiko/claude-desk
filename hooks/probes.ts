@@ -61,9 +61,25 @@ const MAX_STAT_FILES = 50
 
 export type CommitTimes = { at: number; changedAt: number }
 
+let cachedHome: string | undefined
+
+export function clearProbeCaches() {
+  remotes.clear()
+  tags.clear()
+  prs.clear()
+  risks.clear()
+  merges.clear()
+  mergeMisses.clear()
+  projects.clear()
+  commitTimes.clear()
+  cachedHome = undefined
+}
+
 export async function home($: any): Promise<string> {
+  if (cachedHome !== undefined) return cachedHome
   const h = (await $.env.get('HOME').catch(() => null)) || (await $.env.get('USERPROFILE').catch(() => null)) || ''
-  return String(h).replace(/\\/g, '/')
+  cachedHome = String(h).replace(/\\/g, '/')
+  return cachedHome
 }
 
 export async function optionPath($: any, options: PluginOptions, key: string, fallback: string): Promise<string> {
@@ -399,7 +415,8 @@ export async function lastLine($: any, id: string | undefined): Promise<string> 
 }
 
 /** 全域 dispatch.json 疊上目前專案的 dispatch.json；都讀不到就是預設值。 */
-export async function loadSettings($: any, options: PluginOptions): Promise<DispatchSettings> {
+export async function loadSettings($: any, options: PluginOptions, preloaded?: DispatchSettings): Promise<DispatchSettings> {
+  if (preloaded) return preloaded
   const paths = await deskPaths($, options)
   const read = (path: string | null) => path ? $.fs.read(path).catch(() => null) as Promise<string | null> : Promise.resolve(null)
   const [own, project] = await Promise.all([read(paths.settings), read(paths.projectSettings)])
@@ -407,9 +424,10 @@ export async function loadSettings($: any, options: PluginOptions): Promise<Disp
 }
 
 /** 主工作區的容器：docker compose ps；Docker 沒開或讀不到就記錯誤，不擋其他東西。 */
-export async function containers($: any, options: PluginOptions): Promise<ContainerSummary> {
+export async function containers($: any, options: PluginOptions, preloadedSettings?: DispatchSettings): Promise<ContainerSummary> {
   // dispatch.json 的 composeDir 優先（跟著專案），再來是 plugin 選項；都沒有就不看容器（面板不顯示容器列，檢查也不先確認容器）。
-  const own = (await loadSettings($, options)).composeDir
+  const settings = preloadedSettings ?? await loadSettings($, options)
+  const own = settings.composeDir
   if (!own && !String(options.composeDir ?? '').trim()) return { total: 0, running: 0, down: [], unhealthy: [] }
   const dir = own ? expandHome(own, await home($)) : await optionPath($, options, 'composeDir', '')
   const r = await $.process.run(['docker', 'compose', 'ps', '-a', '--format', 'json'], { cwd: dir, timeoutMs: 10_000 }).catch(() => null)
@@ -433,9 +451,9 @@ export async function versions($: any, cases: Case[]): Promise<Snapshot['version
  * 這個對話的模型（/model 顯示的那個）與最近一次請求的 effort；派工與同步用的模型與 effort；kinds 只列跟派工不同的種類。
  * 有 projects 覆寫的任務另外列在 byRoot（每種派工實際會用的），確認字照它寫；都用 modelFor 算，跟實際派工同一套規則。
  */
-export async function models($: any, options: PluginOptions, turnModel: { model?: string; effort?: string }, roots: readonly string[] = []): Promise<Snapshot['models']> {
+export async function models($: any, options: PluginOptions, turnModel: { model?: string; effort?: string }, roots: readonly string[] = [], preloadedSettings?: DispatchSettings): Promise<Snapshot['models']> {
   const session = turnModel.model || String((await $.session.model().catch(() => '')) ?? '')
-  const settings = await loadSettings($, options)
+  const settings = preloadedSettings ?? await loadSettings($, options)
   const sync = modelFor(settings, '', 'sync')
   const pick = (root: string, kind: ModelKind) => { const m = modelFor(settings, root, kind); return { model: m.model, effort: m.effort } }
   const kinds = MODEL_KINDS.map(kind => ({ kind, ...pick('', kind) })).filter(k => k.model !== settings.model || k.effort !== settings.effort)

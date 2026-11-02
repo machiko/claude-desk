@@ -6,7 +6,7 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, saysNone } from './card'
 import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText } from './model'
-import { archiveReview, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
+import { archiveReview, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
@@ -23,6 +23,11 @@ import type { ChainRun, ChainStep } from './chain'
 import { TUTORIAL_RELEASE, tutorialPaths } from './tutorial'
 import type { TutorialState } from './tutorial'
 import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, resumeTutorial, tutorialAct, tutorialStart, tutorialEnd } from './tutorial-run'
+export { tutorial } from './tutorial-run'
+import { checkQueue, checking, isQueued, verifyPending, runVerify, resetCheckingState } from './verify-runner'
+export { checkQueue, verifyPending, runVerify } from './verify-runner'
+import { slots, launchKinds, launchingCount, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState } from './dispatch-runner'
+export { dispatch, launchingCount, busyRefused, confirmedIdle } from './dispatch-runner'
 import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, registryError, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
 import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
@@ -75,7 +80,10 @@ let forcePr = false
 /** 登錄表與每張卡片的路徑（上一輪讀到的）：對話改到它們就馬上重讀。 */
 let knownPaths: string[] = []
 /** 上一輪重新整理讀到的背景 agent 清單；派工時即時問不到 claude agents 就用它算名額。 */
-let lastAgents: readonly RawAgent[] | null = null
+export let lastAgents: readonly RawAgent[] | null = null
+export let optionsRef: PluginOptions | undefined
+const cardParseCache = new Map<string, { raw: string; steps: string[]; history: any[] }>()
+const reviewTextCache = new Map<string, { raw: string; top: any[]; preflight: string | undefined }>()
 
 const refreshMs = (options: PluginOptions) => {
   const n = Number(options.refreshSeconds)
@@ -144,12 +152,34 @@ export async function refresh($: any, options: PluginOptions) {
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
       const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
-      const steps = deploySteps(card)
-      const history = historyEntries(card)
+      let steps: string[] = []
+      let history: any[] = []
+      if (card !== null) {
+        const cached = cardParseCache.get(row.statusPath)
+        if (cached && cached.raw === card) {
+          steps = cached.steps
+          history = cached.history
+        } else {
+          steps = deploySteps(card)
+          history = historyEntries(card)
+          cardParseCache.set(row.statusPath, { raw: card, steps, history })
+        }
+      }
       // 審查檔只讀一次：CRITICAL、HIGH 前幾條與第一行的前置結果。
       const reviewText = parseVerdict(base.gate) || run ? await $.fs.read(`${base.root}/${REVIEW_FILE}`).catch(() => null) : null
-      const top = reviewTop(reviewText)
-      const preflight = preflightLine(reviewText)
+      let top: any[] = []
+      let preflight: string | undefined
+      if (reviewText !== null) {
+        const cached = reviewTextCache.get(base.root)
+        if (cached && cached.raw === reviewText) {
+          top = cached.top
+          preflight = cached.preflight
+        } else {
+          top = reviewTop(reviewText)
+          preflight = preflightLine(reviewText)
+          reviewTextCache.set(base.root, { raw: reviewText, top, preflight })
+        }
+      }
       const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
@@ -178,7 +208,7 @@ export async function refresh($: any, options: PluginOptions) {
     const notice = noticeOf(check, deskVersions.desk)
     const versionState = isUpdating() ? 'updating' as const : versionStateOf(check, deskVersions.desk)
     // 教學模式：示範任務接在後面當「全部任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
-    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel, cases.map(c => c.root)), containers: await containers($, options), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
+    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel, cases.map(c => c.root), settings ?? undefined), containers: await containers($, options, settings ?? undefined), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
     // 選取的任務已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
     if (!error && rows.length) {
@@ -405,13 +435,13 @@ async function recheck($: any, key: string, run: ChainRun, last: JobRecord | und
 
 let soonTimer: Timer
 /** 流程動作後兩秒再看一次，讓剛派出去的工作或剛跑完的檢查盡快反映。 */
-function refreshSoon($: any, options: PluginOptions) {
+export function refreshSoon($: any, options: PluginOptions) {
   soonTimer?.cancel()
   soonTimer = $.clock.after(2000, () => { soonTimer = undefined; void refresh($, options) })
 }
 
 /** 有東西在跑才轉；沒有就停，不浪費重繪。 */
-async function spin($: any, wanted: boolean) {
+export async function spin($: any, wanted: boolean) {
   const busy = wanted || Object.keys(await read($, verifyingAtom)).length > 0 || Object.keys(await read($, launchingAtom)).length > 0
   if (busy && !spinTimer) spinTimer = $.clock.every(SPIN_MS, async () => { await update($, tick, n => (n + 1) % 1000) })
   if (!busy && spinTimer) { spinTimer.cancel(); spinTimer = undefined }
@@ -477,165 +507,7 @@ async function togglePane($: any) {
   else await openPane($)
 }
 
-/** 按下時再問一次背景 agent 清單的上限：查不到就照快照，不讓按鈕卡太久。 */
-const PRESS_AGENTS_MS = 10_000
 
-/**
- * 面板上的檢查、確認規格、上線確認、歸檔按下時才看最新狀態：按鈕可能是 Agent 開始前畫的，
- * 那件現在執行中或等批准就不動 worktree 與卡片、也不待確認，toast 說明。自動流程的檢查不經過這裡。
- */
-async function busyRefused($: any, c: Case, doing: string, live = true): Promise<boolean> {
-  if (!(await busyNow($, c, live))) return false
-  $.ui.toast(`${c.name}：${WORD.busyRefused}${doing}`)
-  return true
-}
-
-/**
- * 那件現在是不是執行中或等批准：先看最新快照；live 再問一次 claude agents（約 0.7 秒）。
- * 要按兩次的動作第一次只看快照，免得查詢拖過確認時限；真的要做的那一次才 live。
- */
-async function busyNow($: any, c: Case, live: boolean): Promise<boolean> {
-  const latest = (await read($, snapshot))?.cases.find(x => x.statusPath === c.statusPath) ?? c
-  if (isBusy(latest)) return true
-  return live && await startedSince($, latest)
-}
-
-/** 按兩次確認的動作：第一次只看快照就待確認，第二次（真的要做）才即時查 Agent。 */
-async function confirmedIdle($: any, c: Case, key: string, doing: string): Promise<boolean> {
-  if (await busyRefused($, c, doing, false)) return false
-  return await confirmed($, `${c.statusPath}\n${key}`) && !(await busyRefused($, c, doing))
-}
-
-/** 快照之後才開始跑的 Agent：下一輪重新整理前快照還不知道，按下時直接問 claude agents。 */
-async function startedSince($: any, c: Case): Promise<boolean> {
-  if (tutorial || c.demo) return false
-  const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: PRESS_AGENTS_MS }).catch(() => null)
-  if (!out || out.exitCode !== 0) return false
-  const agent = agentsByRoot(supersede(rawAgents(out.stdout), lastLaunches(await loadJobs($))).list)[c.root]
-  return !!agent && isBusy({ ...c, agent })
-}
-
-/** 完成檢查：只跑核准過的指令（面板按兩次 v／g 或確認規格時核准）；結果記在 $.store，重開也在。 */
-/** 排隊等著跑的檢查（同一時間只跑一個：測試共用主工作區的容器與資料庫，同時跑會互相干擾）。 */
-const checkQueue: { statusPath: string; auto: boolean }[] = []
-/**
- * 正在跑檢查的那一件。判斷「有沒有人在跑」與佔位之間不能有 await：同一輪重新整理裡兩件的實作一起結束時，
- * 流程會連著叫兩次 runVerify，讀 verifyingAtom 再寫回會兩件都以為沒人在跑。
- */
-let checking: string | null = null
-const isQueued = (statusPath: string) => checkQueue.some(q => q.statusPath === statusPath)
-/** 這件的完成檢查正在跑或在檢查隊伍裡：派工隊伍先跳過它，不跟檢查搶 worktree。 */
-export const verifyPending = (statusPath: string): boolean => checking === statusPath || isQueued(statusPath)
-/** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，流程派審查的那一刻六段不退回實作。 */
-let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
-
-/** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒核准、已經在跑或在排）是 false。 */
-async function runVerify($: any, c: Case, auto = false, fromQueue = false): Promise<boolean> {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
-  if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return false }
-  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return false }
-  if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return false }
-  // 沒核准的不跑也不問：面板按兩次 v 才核准（第一次在檢查列列出全文）。
-  if (!isApproved(await trustedChecks($), c)) { if (!auto) $.ui.toast(unapprovedText(c)); return false }
-  // 讀核准紀錄之後再看一次：這段時間它可能已經被排進隊伍或開始跑了。
-  if (checking === c.statusPath || (!fromQueue && isQueued(c.statusPath))) return false
-  // 已經有別的檢查在跑：排隊，跑完一個再接下一個。
-  if (checking !== null) {
-    checkQueue.push({ statusPath: c.statusPath, auto })
-    await update($, queueAtom, () => checkQueue.map(q => q.statusPath))
-    await restage($, c.statusPath)
-    if (!auto) $.ui.toast(`${c.name}：已排隊，前面還有 ${checkQueue.length} 件`)
-    return true
-  }
-  checking = c.statusPath
-  try {
-    const ran = await executeVerify($, c, auto)
-    // 你按 v 跑完的：流程停在檢查段就接著走。
-    if (ran && !auto) await resumeAtCheck($, c)
-  }
-  catch (error) {
-    // 記錄出錯的那段自己也出錯（例如狀態層一直拒寫）：至少讓你看到，不變成沒人接的 rejection。
-    await verifyBroke($, c, auto, error).catch(again => $.ui.toast(`${c.name}：檢查中斷，原因也記不下來（${errorText(again)}）`, { timeoutMs: 10_000 }))
-  }
-  // 不管跑成怎樣都放掉位子、接下一件：出錯也不能讓排隊的任務永遠等下去。
-  finally { checking = null; void nextInQueue($) }
-  return true
-}
-
-/** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試執行中」、寫進動態；流程停下並寫明原因，不再自動重跑。 */
-async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
-  const reason = `檢查中斷：${errorText(error)}`
-  $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
-  const now = await $.clock.now()
-  await feedPush($, [{ at: now, text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
-  await tellPanel($, now, reason, { name: c.name, skip: auto || tutorial })
-  await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
-  await restage($, c.statusPath)
-  await spin($, false)
-}
-
-/** 佔到位子之後真正跑檢查：容器沒起來就不跑；跑完記結果、更新六段。回傳有沒有跑完、記下結果。 */
-async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
-  // 檢查要用的容器沒在跑：不執行，也不記成「未通過」，直接說要先啟動哪個。
-  const box = await containers($, optionsRef!)
-  const missing = missingServices(c.verify, box, (await loadSettings($, optionsRef!)).checkServices)
-  if (missing.length) {
-    const reason = `容器 ${missing.join('、')} 未啟動，請先在主工作區執行 docker compose up -d ${missing.join(' ')}`
-    $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
-    const now = await $.clock.now()
-    await feedPush($, [{ at: now, text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
-    await tellPanel($, now, `檢查未執行：${reason}`, { name: c.name, skip: auto || tutorial })
-    if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
-    await update($, snapshot, s => s ? { ...s, containers: box } : s)
-    await restage($, c.statusPath)
-    return false
-  }
-  const startedAt = await $.clock.now()
-  await update($, verifyingAtom, v => ({ ...v, [c.statusPath]: startedAt }))
-  await restage($, c.statusPath)
-  await spin($, true)
-  const result = await verifyResult($, c)
-  await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
-  await $.store.set(VERIFIES_KEY, all).catch(() => {})
-  const outcome = result.ok ? '檢查通過' : `檢查未通過（exit ${result.exitCode}）`
-  await feedPush($, [{ at: result.at, text: `${c.name} ${outcome}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
-  await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
-  $.ui.toast(`${c.name}：${result.ok ? '檢查通過' : '檢查未通過'}`, { timeoutMs: 6000 })
-  // 你按 v 的檢查沒過送一次通知（每按一次 v 送一則，同一句不去重）；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
-  if (!result.ok && !auto) notify($, `${c.name}：${outcome}`, true)
-  await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
-  await spin($, false)
-  if (auto) refreshSoon($, optionsRef!)
-  return true
-}
-
-/**
- * 流程停在檢查段（指令未核准、容器沒啟動、檢查中斷），你排除後按 v 跑完了：解除暫停，
- * 讓流程把剛跑完的結果當成這次實作的檢查往下走（通過派審查、沒過派修正，輪數照算）。別的對話開的流程不動。
- */
-async function resumeAtCheck($: any, c: Case) {
-  // 已經合併：流程不再往下走，檢查結果記下就好，流程與派工紀錄都不動。
-  if (isMerged(c)) return
-  const key = normalizeRoot(c.root)
-  const run = (await loadChains($))[key]
-  if (!run?.stopped || !run.heldAtCheck || run.owner !== (await me($))) return
-  await saveChain($, key, r => {
-    if (!r) return r
-    const { stopped: _s, heldAtCheck: _h, ...rest } = r
-    return rest
-  })
-  // 停下時流程已把那次實作記成處理過（指令未核准的那種）：改回未處理，流程才會接手。
-  const all = await loadJobs($)
-  const last = all[key]?.last
-  if (last?.handled) {
-    const { handled: _, ...open } = last
-    await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: open } })
-  }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 流程繼續：檢查跑完了，接著自動往下走`, tone: 'suggestion', card: c.statusPath }])
-  refreshSoon($, optionsRef!)
-}
 
 /**
  * 檢查開始、排隊、沒跑成，或剛派出 Agent 時重算那件的六段（`patch` 先套上新的 agent、state）：
@@ -648,152 +520,7 @@ export async function restage($: any, statusPath: string, patch: (c: Case) => Ca
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => x.statusPath === statusPath ? again(patch(x)) : x) } : s)
 }
 
-/** 接著跑排隊中的下一件；用快照裡最新的卡片內容。 */
-async function nextInQueue($: any) {
-  if (checking !== null) return
-  const next = checkQueue.shift()
-  await update($, queueAtom, () => checkQueue.map(q => q.statusPath))
-  if (!next) return
-  const c = (await read($, snapshot))?.cases.find(x => x.statusPath === next.statusPath)
-  if (!c) { void nextInQueue($); return }
-  // 排隊期間這件的 Agent 開始跑了（派工不看隊伍）：不跟它搶 worktree，當成沒接手、換下一件。
-  const took = await busyRefused($, c, '檢查') ? false : await runVerify($, c, next.auto, true).catch(error => {
-    $.ui.toast(`${c.name}：排隊的檢查沒跑成（${errorText(error)}）`, { timeoutMs: 10_000 })
-    return false
-  })
-  // 輪到它卻沒接手（排隊期間卡片的檢查改了或清掉、還沒授權、按了取消）：這件不跑了，六段不再寫「排隊中」，換下一件，後面的不用一直等。
-  if (!took) { await restage($, next.statusPath); void nextInQueue($) }
-}
-export let optionsRef: PluginOptions | undefined
 
-/**
- * 這個對話佔了名額、還沒派完的派工（卡片路徑）：通過名額判斷就同步佔位，派完（成功、失敗或拋錯）才放掉。
- * 「啟動中」佔位要等幾個 await 之後才寫，只看它的話，同時派好幾件會都看到有空位。
- */
-const slots = new Set<string>()
-const LAUNCHING = '上一次派工仍在啟動'
-
-/** 這個對話正在啟動中的派工有幾件。 */
-export const launchingCount = (): number => slots.size
-
-/** 現在在跑的工作桌 Agent（整台機器）：即時問 claude agents，問不到用上一輪的清單，也沒有就當 0（不擋派工）。 */
-async function runningDeskNow($: any): Promise<number> {
-  const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: PRESS_AGENTS_MS }).catch(() => null)
-  const list = out && out.exitCode === 0 ? rawAgents(out.stdout) : lastAgents
-  return list ? runningDeskAgents(list) : 0
-}
-
-/** 這件有派工還在啟動（已佔名額或已寫「啟動中」佔位）。 */
-async function starting($: any, statusPath: string): Promise<boolean> {
-  return statusPath in (await read($, launchingAtom)) || slots.has(statusPath)
-}
-
-/** 這件有派工還在啟動，這次不派：從隊伍取出的寫動態說原因（隊伍裡已經拿掉，不默默不見），其他的跳提示。 */
-async function refuseStarting($: any, c: Case, kind: DispatchKind, opts: QueueOpts & { fromQueue?: number }) {
-  if (opts.fromQueue !== undefined) await notSent($, c, { statusPath: c.statusPath, kind, opts }, LAUNCHING, await $.clock.now(), await me($))
-  else $.ui.toast(`${c.name}：${LAUNCHING}`)
-}
-
-const alreadyQueued = (c: Case) => `${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`
-
-/**
- * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
- * 從啟動後的 agents 清單用名字對回完整 session id 才算成功；審查與（設了同步模型的）同步開新 session，不改任務的 session。
- * 同時在跑的工作桌 Agent 已達上限（maxAgents）就排進派工隊伍，有空位再依序派出。
- * `fromQueue`：從派工隊伍取出來派的，值是它原本在隊伍的位置；名額被搶走就放回那裡。
- * 回傳有沒有接手：派出或排進隊伍是 true；被拒、按了取消、啟動失敗、名額被搶走放回隊伍是 false。
- */
-export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: QueueOpts & { fromQueue?: number } = {}): Promise<boolean> {
-  const text = opts.text ?? ''
-  const fromQueue = opts.fromQueue !== undefined
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
-  const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
-  if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return false }
-  if (await starting($, c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
-  if (!fromQueue && isAgentQueued(c.statusPath)) { if (!opts.auto) $.ui.toast(alreadyQueued(c)); return false }
-  // 派實作要先核准完成檢查（面板第二次按 g 就核准）；從隊伍派出的排隊前已核准過，排隊期間檢查改了的在隊伍那邊就擋下。
-  if (kind === 'continue' && !opts.auto && !fromQueue && !isApproved(await trustedChecks($), c)) { $.ui.toast(unapprovedText(c)); return false }
-  const settings = await loadSettings($, options)
-  const { model, effort, fresh } = modelFor(settings, c.root, kind)
-  const jobs = await loadJobs($)
-  const rootKey = normalizeRoot(c.root)
-  const own: RootJobs = jobs[rootKey] ?? {}
-  // worktree 有不是上一個 Agent 留下的未提交改動（別的對話在改）：不派，免得把它的東西清掉。
-  // 同步不改程式、推送只推已 commit 的，不擋；自動流程在派之前已經看過。
-  if (kind !== 'sync' && kind !== 'publish' && !opts.auto && !tutorial) {
-    const foreign = markRefusal(await worktreeMark($, c.root), own)
-    if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return false }
-  }
-  const now = await $.clock.now()
-  // 同時在跑的工作桌 Agent 已達上限（教學與 maxAgents 0 不限）：排進隊伍；隊伍裡已經有人在等時也排，先來先派。
-  // 名額＝在跑的（整台機器）＋這個對話已佔的。問完在跑的之後，到佔位或排進隊伍之間不能有 await：同時派好幾件才不會都看到有空位。
-  const { fromQueue: at, ...queued } = opts
-  const full = !tutorial && settings.maxAgents > 0 && ((!fromQueue && hasAgentQueue()) || await runningDeskNow($) + slots.size >= settings.maxAgents)
-  // 同一件同時派了兩次：開頭檢查時先到的還沒佔位，到這裡才擋得下後到的。
-  if (slots.has(c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
-  if (full) {
-    if (fromQueue) { await requeue($, c, kind, queued, at!); return false }
-    if (await enqueueDispatch($, c, kind, queued, settings.maxAgents)) return true
-    if (!opts.auto) $.ui.toast(alreadyQueued(c))
-    return false
-  }
-  slots.add(c.statusPath)
-  // 佔位之後的準備（審查要讀 git 與流程紀錄）也在 try 裡：拋錯時一樣放掉名額、說派工失敗。
-  try {
-    const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
-    const name = launchName(now, launchSeq++)
-    let review: ReviewOpts | undefined
-    const probed = kind === 'review' ? (await gitProbe($, c.root)).git : undefined
-    if (kind === 'review') {
-      const run = (await loadChains($))[rootKey]
-      const round = opts.auto ? run?.round ?? 0 : 0
-      // 舊紀錄存的是分支名稱，拿來 diff 會是空的：當作沒有基準，整條分支重審。
-      const recorded = opts.security ? run?.securityHead : run?.reviewHead
-      const base = recorded && recorded !== c.git?.branch ? recorded : undefined
-      const paths = await deskPaths($, options)
-      const pitfalls = pitfallsFor(settings, paths.pitfalls, await home($))
-      const template = settings.review.template || `${$.plugin.root}/templates/review.md`
-      const recheck = !!opts.auto && !!run?.recheck && !opts.security
-      const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target
-      review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
-    }
-    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name)
-    const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
-    launchKinds = { ...launchKinds, [c.statusPath]: doing }
-    await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
-    await spin($, true)
-    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp: settings.mcp })
-    const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
-    // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。
-    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
-    // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。
-    if (kind === 'review' && probed) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: probed.head, securityBranch: probed.branch } : { reviewHead: probed.head, reviewBranch: probed.branch }) } : r)
-    // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。
-    const tried = c.git?.head
-    if (kind === 'catchup' && opts.auto && tried) await saveChain($, rootKey, r => r ? { ...r, catchupHead: tried } : r)
-    const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), last: record }
-    await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
-    const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
-    await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
-    const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
-    const sent = `派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`
-    await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}${sent}`, tone: 'suggestion', card: c.statusPath }])
-    await tellPanel($, now, sent, { name: c.name, skip: opts.auto || tutorial })
-    $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
-    return true
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
-    await tellPanel($, now, `${KIND_LABEL[kind]}失敗：${message}`, { name: c.name, skip: opts.auto || tutorial })
-    $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
-    return false
-  } finally {
-    slots.delete(c.statusPath)
-    launchKinds = Object.fromEntries(Object.entries(launchKinds).filter(([k]) => k !== c.statusPath))
-    await update($, launchingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-    await spin($, false)
-  }
-}
 
 const notified = new Set<string>()
 /** 系統通知：同一句只送一次（流程暫停、等你這類每次重新整理都會重算的事）；repeat 是你每做一次就該通知一次的（按 v 檢查沒過）。 */
@@ -819,6 +546,9 @@ export const register: Register = (on, options) => {
   optionsRef = options
   on('session.start', async ($, e, next) => {
     active = false
+    clearProbeCaches()
+    cardParseCache.clear()
+    reviewTextCache.clear()
     setTutorial(null)
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined
@@ -827,9 +557,8 @@ export const register: Register = (on, options) => {
     await update($, launchingAtom, () => ({}))
     // 新對話（含 /clear）：重附卡片全文，之前送出的決策不帶著鎖進來。
     await resetPromptSync($)
-    checkQueue.length = 0
-    checking = null
-    launchKinds = {}
+    resetCheckingState()
+    resetDispatchState()
     lastAgents = null
     await update($, queueAtom, () => [])
     await clearAgentQueue($)
