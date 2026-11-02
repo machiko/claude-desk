@@ -679,7 +679,7 @@ export const register: Register = (on, options) => {
     const shownFor = await read($, showAllAtom)
     const view: PaneView = { ...base, showAll: typeof shownFor === 'string' && shownFor === focusKey }
     const act: PaneActions = {
-      // 點已經在現在卡的那件不動作；取消選取只走「更多動作」的 deselect。
+      // 點已經在現在卡的那件不動作；取消選取走區段標題列或「更多動作」的 deselect。
       select: path => void (async () => {
         if ((await read($, selected)) === path) return
         await update($, selected, () => path); await update($, contentOffset, () => 0); await collapseMoreIfMoved($)

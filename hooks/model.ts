@@ -389,6 +389,25 @@ export function liveCases(cases: readonly Case[]): Case[] {
   return cases.some(c => !c.demo) ? cases.filter(c => !c.demo) : [...cases]
 }
 
+/** 需要人的狀態：摘要列的「等你 +N」與面板的「另有 n 件等你」都算這幾種。 */
+export const NEEDS_YOU: ReadonlySet<CaseState> = new Set<CaseState>(['ask', 'reply', 'approve', 'gate', 'failed'])
+
+/** 全部任務標題列的狀態計數依序列這幾種（同 STATE 的 weight）；等回覆、等批准併進等你的 ●。 */
+const TALLIED: CaseState[] = ['ask', 'gate', 'failed', 'running', 'ready', 'idle']
+const TALLY_AS: Partial<Record<CaseState, CaseState>> = { reply: 'ask', approve: 'ask' }
+
+/** 各狀態幾件（示範任務不算），件數 0 的不列。 */
+export function stateCounts(cases: readonly Case[]): { state: CaseState; count: number }[] {
+  const n = counts(liveCases(cases))
+  const total = (s: CaseState) => n[s] + (Object.keys(TALLY_AS) as CaseState[]).filter(k => TALLY_AS[k] === s).reduce((sum, k) => sum + n[k], 0)
+  return TALLIED.map(state => ({ state, count: total(state) })).filter(t => t.count > 0)
+}
+
+/** 現在卡以外還有幾件需要人（示範任務不算）。 */
+export function waitingBesides(cases: readonly Case[], focus: Case | null): number {
+  return liveCases(cases).filter(c => NEEDS_YOU.has(c.state) && c !== focus).length
+}
+
 /** 現在該看的那一件：排序後第一件需要人或可做的；全部閒置就 null。 */
 export function focusCase(cases: readonly Case[]): Case | null {
   const first = sorted(liveCases(cases))[0]

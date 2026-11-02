@@ -43,6 +43,11 @@ export const WORD = {
   nowAuto: '現在 · 自動挑選',
   all: '任務',
   list: '全部任務',
+  /** 現在卡上方區段標題後接：現在卡以外還有幾件需要人。 */
+  othersWaiting: (n: number) => `另有 ${n} 件等你`,
+  /** 選了任務時區段標題後接「<任務名> · 」這句。 */
+  pickedNote: '之後每則對話都附上它的卡',
+  deselect: '✕ 取消選取',
   history: '歷程',
   empty: '尚無任務：用 /desk:card new <分支> <任務名> 開第一張卡；第一次用可以輸入 /desk tutorial 看教學。',
   loading: '讀取任務中…',
