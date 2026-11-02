@@ -132,6 +132,17 @@ test('test_stage_labels_read_test_and_acceptance', async ($, on) => {
   await clock.settle()
 })
 
+/** 六段圖示在字前 AC-4：現在卡寬度 < 30 時六段列只畫字形，沒有段名與空白，跟改之前相同。 */
+test('test_narrow_now_card_draws_stages_as_bare_glyphs', async ($, on) => {
+  const { data, clock } = fixture(on)
+  threeStages(data, clock)
+  const ui = await mount($, clock, 28)
+  await pick(ui, CARD_A)
+  const row = await ui.find({ type: 'Text', text: /^[●◉◎◆✕○·]{6}$/ })
+  expect(String(row?.text)).toBe('●●◆○○○')
+  await ui.unmount()
+})
+
 /** AC-2 */
 test('test_v_and_w_buttons_and_help_use_new_names', async ($, on) => {
   const { data, clock } = fixture(on)
