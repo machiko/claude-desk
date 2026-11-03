@@ -2,6 +2,15 @@
 
 ## 未發布
 
+## 0.48.0
+
+- 新增 面板「全部任務」標題列的狀態計數（例如「● 2 ◆ 1 ▶ 1 ○ 3」），0 件的不列、示範任務不算；同一列放不下時計數接在區名後、六段欄名另起一列
+- 新增 現在卡上方標題列的「另有 n 件等你」，一眼看出現在卡以外還有幾件要你處理
+- 新增 選了任務時標題列寫出選了哪件、附上「✕ 取消選取」按鈕（只用點的）；寬版放不下時先省掉提示字、再只留按鈕
+- 新增 推送 Agent 開 PR 的做法依 origin 決定：GitHub 用 `gh pr create`、Bitbucket 用 MCP 的 `bb_get` 查重複再 `bb_post`（這一種派工自動載入 MCP）、認不出的平台只 push 並把網址寫進「等你」；專案 `dispatch.json` 新增 `pr.open` 可覆寫成任何指令（GitLab 的 `glab mr create` 等）。之前提示詞寫死「Bitbucket 開不了 PR」，Bitbucket 專案按「⇡ 開 PR」永遠只留網址
+- 調整 進度表有任務名會被截掉時，六段縮成連續六個圖示、不列欄名，名字完整顯示
+- 修復 `/desk:card archive --cleanup` 在 worktree 含 submodule 時清不掉：git 不加 `--force` 一律拒絕移除含 submodule 的 worktree，分支也因為還被佔用刪不掉。現在腳本自己確認乾淨（沒有未提交改動、沒有被忽略的本機設定；每個 submodule 內部也看，包括 `.gitmodules` 設 `ignore = dirty` 藏起來的改動、submodule 裡被忽略的本機設定、submodule 裡任何 ref（HEAD、本機分支、tag）或 reflog 指著的、遠端分支上沒有的 commit，以及 submodule 裡的 stash；deinit 過、git 目錄還在卻沒 checkout 的 submodule 一律保留）後，只對這一種拒絕改加 `--force` 再試一次，輸出與登錄表提醒註明「含 submodule，以 --force 移除」；其他拒絕原因照舊保留
+
 ## 0.47.0
 
 - 重構 拆解 hooks/register.tsx 單體架構，抽離完成檢查排程（verify-runner.ts）與背景 Agent 派工管理（dispatch-runner.ts），降低模組複雜度
