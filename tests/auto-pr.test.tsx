@@ -163,7 +163,10 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on — keeps the
 
   expect(data.launches).toHaveLength(1)
   expect(p.split('\n')[0]).toContain('推送：push feature/b 並對 release/v1.4 開 PR')
-  expect(p).toContain('沒有 gh 或平台開不了 PR（例如 Bitbucket）時，push 完把開 PR 的網址寫進 等你')
+  // origin 是 GitHub：用 gh 開，沒有 gh 才留網址；GitHub 不需要 MCP，照全域設定不載
+  expect(p).toContain('開 PR 用 gh：先 `gh pr list --head feature/b --state open`')
+  expect(p).toContain('沒有 gh 或 gh 沒登入時，push 完把開 PR 的網址寫進 等你')
+  expect(data.launches[0].argv).toContain('--strict-mcp-config')
   expect(p).toContain('等你 原有的題目保留，要加的用「；」接在後面，不覆寫')
   expect(data.toasts).toContain('Beta：審查通過，自動派 Agent 開 PR')
   expect(data.files[CARD_B]).toContain(`- 等你：${ASK}`)
@@ -205,7 +208,7 @@ test('test_review_pass_only_pushes_when_pr_is_already_open', async ($, on) => {
   expect(data.launches).toHaveLength(2)
   const p = h.promptOf(1)
   expect(p.split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開，不開新 PR）')
-  expect(p).not.toContain('開 PR，PR 網址寫進歷程')
+  expect(p).not.toContain('開 PR 用')
   expect(log.has('Beta 審查通過，自動派 Agent push 到 PR #12')).toBe(true)
   expect(shown).not.toContain(flat('Beta 審查通過，自動派 Agent push 到 PR #12'))
   expect(data.toasts).toContain('Beta：審查通過，自動派 Agent push 到 PR #12')
@@ -305,7 +308,7 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full — a PR opened while que
 
   expect(data.launches).toHaveLength(1)
   expect(h.promptOf().split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開，不開新 PR）')
-  expect(h.promptOf()).not.toContain('開 PR，PR 網址寫進歷程')
+  expect(h.promptOf()).not.toContain('開 PR 用')
 })
 
 test('test_auto_pr_waits_in_queue_when_agents_are_full — dropped when nothing is left to push', async ($, on) => {

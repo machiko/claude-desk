@@ -21,7 +21,7 @@
 | 2 實作 | 寫程式 | 你按 `g` | Agent（`claude --bg`） | 交給下一段 | Agent 執行中 |
 | 3 檢查 | 完成檢查 exit 0 | 自動 | 機器 | 機器（exit code） | desk 執行過且通過、之後沒有新 commit |
 | 4 審查 | 新對話做 code review，自己重新執行檢查 | 自動 | Claude 新對話 | 數字：CRITICAL＋HIGH＝0，影響行為的 MEDIUM 也修完 | 卡片 `review：CRITICAL n、HIGH n…` |
-| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次）；專案設了 `autoPr` 時審查過關後自動派（高風險照舊等你） | 推送 Agent push、開 PR；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態）；fetch 基準分支後用 `git merge-tree` 試合併，有衝突標 ✕「與 main 有衝突」 |
+| 5 合併 | push、開 PR、CI、按合併 | 你按「⇡ 開 PR」／「⇡ push」（按兩次）；專案設了 `autoPr` 時審查過關後自動派（高風險照舊等你） | 推送 Agent push、開 PR（依 origin：GitHub `gh pr create`、Bitbucket MCP `bb_post`、其他只 push 留網址，或專案 `pr.open` 指定指令）；CI | 你按合併 | Bitbucket（MCP `bb_get`）或 GitHub（`gh pr list`）唯讀讀 PR 與 CI；都讀不到時看 git：審查過後分支 HEAD 經由 merge commit 併進基準分支就算合併（squash、rebase、fast-forward 合併看不出來，要靠 PR 狀態）；fetch 基準分支後用 `git merge-tree` 試合併，有衝突標 ✕「與 main 有衝突」 |
 | 6 上線 | 打 tag、部署、部署後步驟 | 你按「⚑ 發版」交給對話 | 對話照發版步驟做、你的部署流程 | 你按 `u` 確認上線 | commit 在 `v*` tag 裡＝待確認；按 `u` 清掉 `release：` 關卡＝完成 |
 
 發版線（`release/*` 分支本身）只看「檢查」與「上線」兩段。
@@ -72,7 +72,7 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 - 在主對話直接開發（不按 `g` 派 Agent）也照六段走：`/desk:flow` 說明每段對話要做什麼、面板怎麼看得到、哪些要回面板按（`t`、`v`、`w`、`u`、歸檔）。
 - 告一段落時 `/desk:card done <slug> <狀態一句>` 寫回卡片：狀態改成那句、History 記分支與 HEAD；下一步平常寫「到面板按 v 執行完成檢查」，面板第二列會說「按 v 執行完成檢查，通過後按 w 派審查」（沒有背景流程時 v 只跑檢查，審查要自己按 w）；審查已過關、審查檔之後有新 commit 寫「等自動重新檢查與審查；沒動靜就到面板按 v」（開流程的對話開著面板時會自己重跑，沒動靜就按 v），之後沒有新 commit（或沒有審查檔）寫「到面板照「輪到你」開 PR 或合併」（結論仍算數，面板停在合併段）；規格沒確認會拒絕，也不會把檢查或審查標成通過。要對話自動記得寫回，把 `/desk:flow` 末尾那一行規則貼進專案的 `CLAUDE.md`。
 - 在這個對話裡改卡片、跑 `/desk:card`、`git commit` 或打 `!` 指令，面板會馬上重讀。
-- 在面板選一件任務，之後的對話都以它為主（你打的每則都附上它的卡）；要取消選取，按 `m` 展開更多動作、點「✕ 取消選取」。
+- 在面板選一件任務，之後的對話都以它為主（你打的每則都附上它的卡）；要取消選取，點「現在 · 你選的」那列的「✕ 取消選取」，或按 `m` 展開更多動作、點「✕ 取消選取」。
 - 忘了寫：分支最近一次 commit 改到的程式比卡片新時，現在卡會提示；回到面板按 `s` 兩次同步（新對話只看卡片、`git log`、`git status`）。
 - 卡片更新前先別按 `g`：繼續接的是 desk 記錄的對話，不是你另開的那個。
 - 別在 Agent 的 worktree 裡同時改程式：worktree 有不是上一個 Agent 留下的未提交改動時，`g`、`y`、`w` 都拒絕並說原因，自動流程也停下；commit 或還原後再派（`s` 同步不受影響）。Agent 被 `claude stop` 停掉（或面板按 `k`）不算做完：流程暫停，看過 worktree 後按 `g` 重開。desk 自己停掉做完的 Agent（`stopDone`）不算這種：它已經記成做完，流程照常往下走。

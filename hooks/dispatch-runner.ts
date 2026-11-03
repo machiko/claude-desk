@@ -6,7 +6,7 @@ import { DEMO_ONLY } from './card-actions'
 import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
-import { loadSettings, deskPaths, diffBase, gitProbe, home, worktreeMark } from './probes'
+import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
 import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, JOBS_KEY } from './desk-io'
 import { hasAgentQueue, isAgentQueued, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
 import { startSim } from './tutorial-run'
@@ -163,7 +163,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     launchKinds = { ...launchKinds, [c.statusPath]: doing }
     await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
     await spin($, true)
-    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp: settings.mcp })
+    // Bitbucket 的推送 Agent 要用 MCP 的 bb_post 開 PR：這一種派工就算沒設 mcp 也載入；專案有 pr.open 覆寫就照全域設定。
+    const mcp = settings.mcp || (kind === 'publish' && !settings.prOpen && (await originRemote($, c.root))?.host === 'bitbucket')
+    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp })
     const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。
     if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))

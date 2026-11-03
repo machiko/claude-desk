@@ -39,7 +39,7 @@ Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張�
 - Claude Code：以 2.1.302 開發與測試。mod API 仍是 early access，Claude Code 改版可能讓 desk 需要跟著更新。
 - macOS 或 Linux（開檔案用 `open`／`xdg-open`）；Windows 沒有測試過。
 - `git`、`python3`（`/desk:card` 用）。
-- 選用：讀 PR 與 CI——GitHub 的 repo 用 [`gh`](https://cli.github.com/)（要先 `gh auth login`，只執行 `gh pr list`）、Bitbucket 的 repo 用 Bitbucket MCP 伺服器（只呼叫 `bb_get`）；都沒有時合併改看 git。`docker compose`（完成檢查前確認容器）。
+- 選用：讀 PR 與 CI——GitHub 的 repo 用 [`gh`](https://cli.github.com/)（要先 `gh auth login`，desk 自己只執行 `gh pr list`）、Bitbucket 的 repo 用 Bitbucket MCP 伺服器（desk 自己只呼叫 `bb_get`）；都沒有時合併改看 git。合併段派出的推送 Agent 開 PR 也看 origin：GitHub 用 `gh pr create`、Bitbucket 用 MCP 的 `bb_post`（這一種派工會載入 MCP）、其他平台只 push 並把開 PR 的網址寫進「等你」，或在專案 `dispatch.json` 設 `pr.open` 指定指令。`docker compose`（完成檢查前確認容器）。
 
 ## 安裝
 
@@ -110,7 +110,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 | 鍵 | 作用 |
 |---|---|
-| 1–9 | 選任務：清單列出全部任務，數字固定不因選取而換號，選中的那件以 `▸` 開頭並反白，現在卡標題寫「現在 · 你選的」。選了的那件是對話的主角：之後你打的每則都附上它的卡，摘要列標「已選」；點現在卡的任務名不會有動作，要取消選取就按 `m` 展開更多動作、點「✕ 取消選取」 |
+| 1–9 | 選任務：清單列出全部任務，數字固定不因選取而換號，選中的那件以 `▸` 開頭並反白，現在卡標題寫「現在 · 你選的」。選了的那件是對話的主角：之後你打的每則都附上它的卡，摘要列標「已選」；點現在卡的任務名不會有動作，要取消選取，點「現在 · 你選的」那列的「✕ 取消選取」，或按 `m` 展開更多動作、點「✕ 取消選取」 |
 | a b c d、f | 選決策選項、填入輸入框；送出後那題鎖住，等對話寫回卡片 |
 | g／w／s | 繼續／審查／同步（**按兩次確認**，確認文字寫出模型與 effort）；同步平常收在 `m` 更多動作，卡片落後分支時才出現在 footer |
 | y | 回覆停下來問的 Agent |
@@ -147,6 +147,10 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - **只列能做的動作**：實作段只有 `g`、檢查段只有 `v`、審查段只有 `w`、上線段只有 `u`；已經過了的段落不再出現它的鍵。`m` 展開全部動作。
 - **header／content／footer**：header 與 footer 常駐，只有中間捲動（滾輪、↑ ↓ PageUp PageDown）。寬 100 欄以上時現在卡與進度表左右並排。
 - **六段圖示**：● 已過、◉ 進行中、◆ 等你、✕ 卡住、○ 未到、· 不適用；上線確認後六個 ● 轉綠、狀態是 ✓「已上線」。
+- **狀態計數**：「全部任務」標題列右邊列各狀態幾件（例如「● 2 ◆ 1 ▶ 1 ○ 3」），依等你、關卡、失敗、進行中、待辦、閒置排序，0 件的不列；等回覆、等批准併進等你的 ●，教學的示範任務不算。標題列同一列放不下時（任務名長，或寬版並排時清單那欄只有 49–64 格），計數改接在「全部任務」後面、六段欄名另起一列。
+- **還有幾件等你**：現在卡上方的「現在 · 自動挑選」後面寫「另有 n 件等你」（現在卡以外的等你、等回覆、等批准、關卡、失敗）；只有現在卡在等你時不寫。
+- **你選的那件**：按數字鍵選了任務時，區段標題寫「現在 · 你選的」＋「<任務名> · 之後每則對話都附上它的卡」與「✕ 取消選取」按鈕（只用點的；「更多動作」裡也有一顆）。放不下時由寬到窄退讓、不截字：先省掉提示字只留任務名與按鈕，再只留按鈕（寬版並排時現在卡那欄只有 46–61 格）。
+- **任務名太長**：進度表有任務名在欄位版會被截掉時，不列六段的欄名，每列六段縮成連續六個圖示，讓名字完整顯示。
 - **卡片可能過期**：分支最近一次 commit 改到的程式（只改卡片的 commit 不算）比卡片新、又沒有 Agent 在跑時，現在卡提示「按 s 同步」，footer 也才列出「↻ 同步」（這一段沒有別的該按的鍵時它帶頭）。先寫卡、測試跑完才 commit 的不算過期。
 - **提醒**：登錄表「## 提醒」段 `- YYYY-MM-DD 事項` 到期前三天出現；`- 事項` 不寫日期時一直列在面板。面板上收成一列（多件寫「提醒 n 件 · 第一條」），按 `m` 展開全文（最多 4 列，其餘寫「還有 k 件」）。打勾 `[x]`、劃掉 `~~…~~`、縮排子項目與日期格式不對的行不算提醒。
 - **檢查沒過時列失敗摘要**：完成檢查沒過時現在卡列出幾支失敗、哪幾支與原因，原始輸出尾巴改成按 `x` 展開才看。
@@ -158,7 +162,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 - 卡片：只有按 `u` 上線確認時清掉 `release：` 關卡並記一行 History（接著跑 `/desk:card archive` 那支腳本歸檔，同 ⌫ 歸檔）；寫入前重讀，關卡已不是 release 就不動。其他欄位都是 Agent 或 `/desk:card` 寫的。
 - 審查存底：每次審查結束，把審查檔複製一份到 `reviewsDir`。
-- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。背景 Agent 預設不載入 MCP server（`--strict-mcp-config`）：每個 MCP 都是一支常駐程序，一件任務就會多出好幾支，派工一多記憶體就被吃光；Agent 要用 MCP 時在 `dispatch.json` 設 `"mcp": true`。做完的 Agent 由 desk 在下一次重新整理時 `claude stop` 收掉（對話保留，之後派工照常 `--resume`），不再閒置到 daemon 回收；全域 `dispatch.json` 設 `"stopDone": false` 關掉。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步、審查與合併段自動派的解衝突 Agent（把基準分支 merge 進來、不 rebase）不 push、不開 PR。專案設了 `autoPr` 時，審查過關（含只動文件、免審查過關）後自動派同一種推送 Agent，高風險改動照舊等你看；desk 自己不跑 git push 或 gh。
+- 派工：用 `claude --bg` 在任務根目錄開背景 Agent，權限照你的 Claude Code 設定。背景 Agent 預設不載入 MCP server（`--strict-mcp-config`）：每個 MCP 都是一支常駐程序，一件任務就會多出好幾支，派工一多記憶體就被吃光；Agent 要用 MCP 時在 `dispatch.json` 設 `"mcp": true`。做完的 Agent 由 desk 在下一次重新整理時 `claude stop` 收掉（對話保留，之後派工照常 `--resume`），不再閒置到 daemon 回收；全域 `dispatch.json` 設 `"stopDone": false` 關掉。提示詞允許實作的 Agent 與合併段的推送 Agent（「⇡ 開 PR」「⇡ push」）push 這件任務自己的分支、開 PR，但不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器；同步、審查與合併段自動派的解衝突 Agent（把基準分支 merge 進來、不 rebase）不 push、不開 PR。專案設了 `autoPr` 時，審查過關（含只動文件、免審查過關）後自動派同一種推送 Agent，高風險改動照舊等你看；desk 自己不跑 git push 或 gh。推送 Agent 怎麼開 PR依 origin：GitHub 用 `gh pr create`（先 `gh pr list` 查有沒有開著的）、Bitbucket 用 MCP 的 `bb_get` 查重複再 `bb_post`（origin 是 Bitbucket 時推送這一種派工就算沒設 `mcp` 也載入 MCP，做完照 `stopDone` 收掉）、認不出的平台只 push 並把開 PR 網址寫進「等你」；專案 `dispatch.json` 的 `pr.open` 可覆寫成任何指令（例如 GitLab 的 `glab mr create`）。
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push；更新成功後自動執行 `/reload-plugins`，不重新啟動 Claude Code。desk 自己發版後，工作桌會在回合結束自動跑一次（同一版只跑一次，失敗只回報不重試）。
 - desk 自己不跑 `git push`、不開或合併 PR、不會部署；push、開 PR 交給它派的 Agent，合併由你按。合併段會 `git fetch origin <基準分支>`（只更新遠端追蹤分支）並用 `git merge-tree` 試合併，不動工作區與 HEAD。
 
@@ -166,7 +170,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 
 - 介面、提示詞與卡片欄位都是繁體中文。
 - 預設的發版慣例：發版線是 `release/*` 分支、上線看 `v*` tag。用 main 直接發版也可以，只是「開發中版本」那一欄不會出現。
-- PR 狀態只讀 GitHub 與 Bitbucket；其他平台（或沒裝 `gh`）的合併靠 git 判斷，只認得 merge commit，squash、rebase、fast-forward 合併看不出來，要自己在卡片寫回。
+- PR 狀態只讀 GitHub 與 Bitbucket；其他平台（或沒裝 `gh`）的合併靠 git 判斷，只認得 merge commit，squash、rebase、fast-forward 合併看不出來，要自己在卡片寫回。其他平台要讓推送 Agent 開 PR，在專案 `dispatch.json` 設 `pr.open`，沒設就只 push、留網址給你開。
 - 背景 Agent 的權限照你的 Claude Code 設定；desk 只在提示詞裡限制 push 的範圍（只推自己的分支、不合併）與不碰正式環境，不是沙盒。
 - 背景 Agent 停在權限提示時，面板只會標「等批准」並告訴你到終端機跑 `claude agents` 批准；Claude Code 沒有給面板代為批准的介面。
 
@@ -214,6 +218,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
   "maxAgents": 3,
   "mcp": false,
   "autoPr": true,
+  "pr": { "open": "glab mr create --source-branch {branch} --target-branch {target}" },
   "rules": ["測試只能用 make test，不要自己起資料庫"],
   "review": {
     "high": "實際的 bug、漏做權限檢查、漏寫稽核紀錄、測試沒測到需求",
@@ -247,6 +252,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `maxAgents` | 同時在跑的工作桌背景 Agent 上限（預設 3，`0`＝不限）；整台機器一起算（別的專案、別的對話派的也算），停在提問或等批准的不算。超過的派工（含自動流程）排隊，面板寫第幾位、有空位依序派出，`k` 取消排隊；隊伍只在這個對話，重新載入就清空 |
 | `stopDone` | 做完（done／failed）、程序還活著的工作桌 Agent 在下一次重新整理時 `claude stop` 收掉，每個只試一次，停不掉才在「最近」寫一筆；停在提問的不停。預設開，只有 `false` 關掉；放全域 |
 | `autoPr` | `true` 時審查過關（含只動文件、免審查過關）後自動派推送 Agent：還沒有 PR 就 push 並開 PR，PR 已開就只 push（已是最新就不派）。高風險改動、被拒絕過的 PR、流程暫停或別的對話開的流程都不自動開；不合併 PR、不打 tag。預設關，只認 `true`；建議寫在專案的 `dispatch.json`（例如每次過關都開 PR 的專案開、常先不 push 的專案不開） |
+| `pr.open` | 推送 Agent 開 PR 的覆寫指令，`{branch}`、`{target}` 換成分支與目標分支（去掉 `origin/`），給 GitLab、自架等 desk 認不出的平台；有填就不看 origin。空白＝依 origin：GitHub 用 `gh pr create`、Bitbucket 用 MCP 的 `bb_post`（推送這一種派工會載入 MCP）、其他只 push 並把網址寫進「等你」 |
 | `rules`、`projects.<根目錄>.rules` | 每次派工都附上的專案規則 |
 | `review.high`／`security`／`categories` | 審查分級說明、資安審查範圍、類別範例 |
 | `review.template` | 審查契約檔（預設內附的 [templates/review.md](templates/review.md)） |

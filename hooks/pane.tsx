@@ -2,7 +2,7 @@
 // 只有 content（現在卡、全部任務進度表、歷程、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
-import { displayWidth, elapsedText, fit, focusCase, hhmm, issueOf, modelLabel, pad, sorted, summary, ago } from './model'
+import { displayWidth, elapsedText, fit, focusCase, hhmm, issueOf, modelLabel, pad, sorted, stateCounts, summary, waitingBesides, ago } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
 import { paneReminders, reminderWhen } from './extras'
@@ -52,7 +52,7 @@ export type PaneView = {
 }
 export type PaneActions = {
   select: (statusPath: string) => void
-  /** 回到工作桌自己挑的那件（「更多動作」裡，有選取時才出現）。 */
+  /** 回到工作桌自己挑的那件（現在卡上方的區段標題列與「更多動作」裡，有選取時才出現）。 */
   deselect: () => void
   pick: (c: Case, index: number, key: string) => void
   fill: (c: Case) => void
@@ -101,6 +101,8 @@ const GUTTER = 3
 /** 進度表每段一欄：段名兩個字（4 格）＋1 格間隔；圖示放在段名下方中間（第 2 格）。 */
 const STAGE_COL = 5
 const NAME_MIN = 12
+/** 一串版（六段縮成連續圖示）每列除了任務名以外佔的格數：數字鍵、狀態圖示、間隔、六個圖示。 */
+const STRIP_FIXED = 3 + 2 + 2 + STAGES.length
 
 /** 現在卡上的那一件：選取的優先，否則工作桌自己挑。 */
 export function focusOf(view: Pick<PaneView, 's' | 'selected'>): Case | null {
@@ -120,8 +122,11 @@ export function stageStrip(c: Case): { text: string; status: string }[] {
   return c.pipeline.stages.map(s => ({ text: STAGE_GLYPH[s.status], status: s.status }))
 }
 
-/** 進度表的欄寬：數字鍵「1: 」＋狀態圖示＋任務名（各列同寬）＋六段（每段 3 格）＋時間靠右。 */
-export function gridLayout(names: string[], ages: string[], width: number): { nameWidth: number; ageWidth: number; lead: number } {
+/**
+ * 進度表的欄寬：數字鍵「1: 」＋狀態圖示＋任務名（各列同寬）＋六段（每段 3 格）＋時間靠右。
+ * compact：任務名在欄位版會被截、六段縮成一串就放得下，改走一串版（不列段名），名字完整。
+ */
+export function gridLayout(names: string[], ages: string[], width: number): { nameWidth: number; ageWidth: number; lead: number; compact: boolean } {
   const ageWidth = Math.max(0, ...ages.map(displayWidth))
   const fixed = 3 + 2 + 2 + STAGES.length * STAGE_COL
   const longest = Math.max(4, ...names.map(displayWidth))
@@ -129,7 +134,8 @@ export function gridLayout(names: string[], ages: string[], width: number): { na
   const keepAge = ageWidth > 0 && width - fixed - ageWidth - 1 >= Math.min(NAME_MIN, longest)
   const room = width - fixed - (keepAge ? ageWidth + 1 : 0)
   const nameWidth = Math.max(4, Math.min(longest, room))
-  return { nameWidth, ageWidth: keepAge ? ageWidth : 0, lead: 3 + 2 + nameWidth + 2 }
+  const compact = longest > nameWidth && longest <= width - STRIP_FIXED
+  return { nameWidth, ageWidth: keepAge ? ageWidth : 0, lead: 3 + 2 + nameWidth + 2, compact }
 }
 
 /** 重置時間：今天只寫時分，明天寫「明天」，7 天內寫星期，更遠寫日期；short 只留哪一天（今天、明天、週三、1/12）。 */
@@ -193,17 +199,30 @@ function line(ui: any, parts: Part[], key?: string) {
   return <Text key={key} wrap="truncate-end">{parts.map((p, i) => <Text key={`p${i}`} color={p.color} bold={p.bold}>{p.text}</Text>)}</Text>
 }
 
-/** 區名＋細線到行尾。 */
-function section(ui: any, label: string, width: number, right = '') {
+/** 區名＋細線到行尾。右邊的字是 Part[] 時，細線剩不到 2 格就整段拿掉，不截字。 */
+function section(ui: any, label: string, width: number, right: string | Part[] = '') {
   const { Box, Text } = ui
-  const used = displayWidth(label) + 1 + (right ? displayWidth(right) + 1 : 0)
+  const parts: Part[] = typeof right === 'string' ? (right ? [{ text: right, color: COLOR.faint }] : []) : right
+  const rightWidth = partsWidth(parts)
+  const fits = typeof right === 'string' || width - displayWidth(label) - 2 - rightWidth >= 2
+  const shown = parts.length && fits ? parts : []
+  const used = displayWidth(label) + 1 + (shown.length ? rightWidth + 1 : 0)
   return (
     <Box flexDirection="row">
       <Text color={COLOR.dim} bold>{label}</Text>
       <Text color={COLOR.faint}>{' ' + '─'.repeat(Math.max(2, width - used))}</Text>
-      {right ? <Text color={COLOR.faint}>{' ' + right}</Text> : null}
+      {shown.length ? <Text color={COLOR.faint}>{' '}</Text> : null}
+      {shown.map((p, i) => <Text key={`r${i}`} color={p.color} bold={p.bold}>{p.text}</Text>)}
     </Box>
   )
+}
+
+/** 全部任務標題列的狀態計數：「● 2 ◆ 1 ▶ 1 ○ 3」，各段用該狀態的顏色。 */
+function tallyParts(cases: readonly Case[]): Part[] {
+  return stateCounts(cases).flatMap((t, i) => [
+    ...(i ? [{ text: ' ', color: COLOR.faint }] : []),
+    { text: `${STATE[t.state].glyph} ${t.count}`, color: STATE[t.state].color },
+  ])
 }
 
 /** 只有區名：緊接在細線下的那一區不再畫第二條線。 */
@@ -326,20 +345,31 @@ function ageText(c: Case, now: number): string {
 function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: PaneActions, focus: Case | null): any[] {
   const { Box, Text, Button } = ui
   if (!cases.length) return [section(ui, WORD.list, width)]
-  const narrow = width < NARROW
+  const tight = width < NARROW
   const ages = cases.map(c => ageText(c, view.now))
   const isPickedRow = (c: Case) => !c.demo && view.selected === c.statusPath
   // 名稱欄寬把「▸ 」算進去，選中那件的名字不會被標記擠掉。
   const g = gridLayout(cases.map(c => (isPickedRow(c) ? `▸ ${c.name}` : c.name)), ages, width)
+  // 太窄，或有任務名在欄位版會被截：六段縮成一串、不列段名。
+  const narrow = tight || g.compact
+  const tally = tallyParts(cases)
   const heads = (cases.find(c => c.pipeline)?.pipeline?.stages ?? STAGES).map(st => st.label)
   const rows: any[] = []
   // 教學模式的背景是示範任務：標題寫明只能看。
   const title = cases.some(c => c.demo) ? `${WORD.list}（示範任務只能看）` : WORD.list
-  if (narrow) rows.push(section(ui, title, width))
+  if (narrow) rows.push(section(ui, title, width, tally))
   else {
     const letters = heads.map(h => pad(h, STAGE_COL)).join('').trimEnd()
-    if (g.lead >= displayWidth(title) + 1) rows.push(<Box flexDirection="row"><Text color={COLOR.dim} bold>{pad(title, g.lead)}</Text><Text color={COLOR.faint}>{letters}</Text></Box>)
-    else { rows.push(section(ui, title, width)); rows.push(<Text color={COLOR.faint}>{' '.repeat(g.lead) + letters}</Text>) }
+    // 計數靠右，放在段名後面剩下的寬度（任務名越長越少），至少隔 2 格。
+    const free = width - g.lead - displayWidth(letters) - partsWidth(tally)
+    if (g.lead >= displayWidth(title) + 1 && (!tally.length || free >= 2)) {
+      const right = tally.length ? [<Text key="gap">{' '.repeat(free)}</Text>, ...tally.map((p, i) => <Text key={`t${i}`} color={p.color}>{p.text}</Text>)] : []
+      rows.push(<Box flexDirection="row"><Text color={COLOR.dim} bold>{pad(title, g.lead)}</Text><Text color={COLOR.faint}>{letters}</Text>{right}</Box>)
+    } else {
+      // 區名放不進任務名欄，或同一列放不下計數（寬版並排時清單那欄只有 49–64 格）：區名＋計數一列，段名另起一列。
+      rows.push(section(ui, title, width, tally))
+      rows.push(<Text color={COLOR.faint}>{' '.repeat(g.lead) + letters}</Text>)
+    }
   }
   // 數字鍵只給真的任務；示範任務（教學背景）只是畫面，不能選。
   const real = cases.filter(c => !c.demo)
@@ -351,13 +381,14 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
     const strip = stageStrip(c)
     const isPicked = isPickedRow(c)
     const mark = isPicked ? MARK_WIDTH : 0
-    const nameRoom = (narrow ? Math.max(4, width - 3 - 2 - 2 - 6) : g.nameWidth) - mark
+    const nameRoom = (narrow ? Math.max(4, width - STRIP_FIXED) : g.nameWidth) - mark
     const name = narrow ? fit(c.name, Math.max(2, nameRoom)) : pad(fit(c.name, Math.max(2, nameRoom)), Math.max(2, nameRoom))
     const cells = strip.length
       ? strip.map((p, j) => <Text key={`s${j}`} color={c.state === 'done' ? COLOR.good : STAGE_COLOR[p.status as keyof typeof STAGE_COLOR]}>{narrow ? p.text : (j === strip.length - 1 ? ` ${p.text}` : pad(` ${p.text}`, STAGE_COL))}</Text>)
       : [<Text key="label" color={meta.color}>{narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)}</Text>]
-    const age = !narrow && g.ageWidth ? ages[i]! : ''
     const used = 3 + 2 + mark + (narrow ? displayWidth(name) : Math.max(2, nameRoom)) + 2 + (strip.length ? (narrow ? strip.length : (STAGES.length - 1) * STAGE_COL + 2) : displayWidth(narrow ? meta.label : pad(meta.label, STAGES.length * STAGE_COL - 2)))
+    // 一串版（不是太窄）：這一列還放得下時間才放。
+    const age = !narrow && g.ageWidth ? ages[i]! : g.compact && !tight && width - used - 1 >= displayWidth(ages[i]!) ? ages[i]! : ''
     const isRunningAge = c.state === 'running' && !!c.agent?.startedAt
     const parts = [
       ...(isPicked ? [<Text key="mark" color={COLOR.text} bold>{'▸ '}</Text>] : []),
@@ -375,7 +406,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
     )
     // 現在卡那件的那句話已經在現在卡上，清單只留一列。
     const note = c === focus ? '' : summary(c)
-    if (!narrow && note && (c.state === 'ask' || c.state === 'reply' || c.state === 'approve' || c.state === 'gate' || c.state === 'failed')) rows.push(<Box paddingLeft={5}><Text color={COLOR.dim} wrap="truncate-end">{fit(note, width - 5)}</Text></Box>)
+    if (!tight && note && (c.state === 'ask' || c.state === 'reply' || c.state === 'approve' || c.state === 'gate' || c.state === 'failed')) rows.push(<Box paddingLeft={5}><Text color={COLOR.dim} wrap="truncate-end">{fit(note, width - 5)}</Text></Box>)
   })
   return rows
 }
@@ -413,7 +444,7 @@ function historyRows(ui: any, view: PaneView, focus: Case | null, width: number)
 }
 
 const HELP: [string, string][] = [
-  ['1–9', '選任務（數字依清單固定，選了不會換號；取消選取在「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
+  ['1–9', '選任務（數字依清單固定，選了不會換號；取消選取在「現在 · 你選的」那列或「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／驗收／同步（按兩次確認；同步平常收在 m，卡片落後分支時才出現）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）；派工排隊中是取消排隊（按一次）'], ['l', 'Agent 輸出'],
   ['v', '執行測試；指令還沒核准（或改過）時按兩次，第一次列出全文'], ['u', '上線確認（清 release 關卡，按兩次）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文（含完整歷程）'], ['h', '隱藏摘要列（說明開著時）'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '收起面板'], ['ctrl+x tab', '回輸入框'],
@@ -431,6 +462,46 @@ function helpRows(ui: any, view: PaneView, act: PaneActions, width: number): any
   ]
 }
 
+/** 「✕ 取消選取」按鈕佔的寬度（含左邊間隔）。 */
+const DESELECT_WIDTH = displayWidth(WORD.deselect) + 2
+
+/**
+ * 現在卡上方的區段標題：說出現在卡是誰挑的。自動挑選時後接「另有 n 件等你」（現在卡以外需要人的件數）；
+ * 你選的時後接「<任務名> · 之後每則對話都附上它的卡」與「✕ 取消選取」（只用點的）。
+ * 放不下時由寬到窄退讓、不截字：省掉提示字只留任務名與按鈕 → 只留按鈕（寬版並排時現在卡那欄只有 46–61 格）→ 連按鈕都放不下才只剩區名。
+ */
+function nowTitle(ui: any, view: PaneView, focus: Case | null, width: number, act: PaneActions) {
+  const { Box, Text, Button } = ui
+  const isPicked = !!view.selected && focus?.statusPath === view.selected
+  const head = isPicked ? WORD.nowPicked : WORD.nowAuto
+  const room = width - displayWidth(head) - 2
+  if (isPicked && focus) {
+    const full = `${focus.name} · ${WORD.pickedNote}`
+    // 區名之後：「  <字>」＋「  ✕ 取消選取」要放得進剩下的寬度（room 已扣掉區名後的 2 格）。
+    const fits = (n: string) => (n ? 2 + displayWidth(n) : 0) + DESELECT_WIDTH <= room + 2
+    const note = fits(full) ? full : fits(focus.name) ? focus.name : ''
+    if (!fits(note)) return label(ui, head)
+    return (
+      <Box flexDirection="row">
+        <Text color={COLOR.dim} bold>{head}</Text>
+        {note ? <Text color={COLOR.text}>{`  ${note}`}</Text> : null}
+        <Text>{'  '}</Text>
+        <Button key="deselect-title" plain dimColor label={WORD.deselect} onPress={act.deselect} />
+      </Box>
+    )
+  }
+  const n = waitingBesides(view.s.cases, focus)
+  const more = n ? WORD.othersWaiting(n) : ''
+  if (!more || displayWidth(more) > room) return label(ui, head)
+  return (
+    <Box flexDirection="row">
+      <Text color={COLOR.dim} bold>{head}</Text>
+      <Text>{'  '}</Text>
+      <Text color={COLOR.attention}>{more}</Text>
+    </Box>
+  )
+}
+
 /** content：現在卡、全部任務進度表、歷程、說明。寬時現在卡與進度表左右並排，逐列併起來。 */
 function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): any[] {
   const { Box, Text } = ui
@@ -439,12 +510,10 @@ function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): 
   const focus = focusOf(view)
   const list = sorted(s.cases)
   const wide = view.columns >= WIDE
-  // 區段標題說出現在卡是誰挑的。
-  const nowLabel = view.selected && focus?.statusPath === view.selected ? WORD.nowPicked : WORD.nowAuto
   const tail = [...historyRows(ui, view, focus, width), ...helpRows(ui, view, act, width)]
   if (!wide) {
     return [
-      label(ui, nowLabel),
+      nowTitle(ui, view, focus, width, act),
       ...(focus ? nowCardRows(ui, view, focus, width, act) : []),
       <Text> </Text>,
       ...gridRows(ui, view, list, width, act, focus),
@@ -453,7 +522,7 @@ function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): 
   }
   const listWidth = Math.min(64, Math.floor(width * 0.5))
   const nowWidth = width - listWidth - GUTTER
-  const left = [label(ui, nowLabel), ...(focus ? nowCardRows(ui, view, focus, nowWidth, act) : [])]
+  const left = [nowTitle(ui, view, focus, nowWidth, act), ...(focus ? nowCardRows(ui, view, focus, nowWidth, act) : [])]
   const right = gridRows(ui, view, list, listWidth, act, focus)
   const zipped = Array.from({ length: Math.max(left.length, right.length) }, (_, i) => (
     <Box flexDirection="row">
@@ -510,8 +579,8 @@ function footerRows(ui: any, view: PaneView, act: PaneActions, width: number, fo
   // 重新整理平常自動做（定時、回合結束、對話改了卡片），按鈕收進「更多動作」，把位置留給這一段的鍵。
   const globals: Action[] = [
     ...(view.showAll ? [{ key: 'refresh', hotkey: 'r', label: `↻ ${WORD.refresh}`, isDim: true, onPress: act.refresh, width: 0 }] : []),
-    // 取消選取不綁快捷鍵：只在「更多動作」展開、而且你選了任務時出現。
-    ...(view.showAll && view.selected ? [{ key: 'deselect', label: '✕ 取消選取', isDim: true, onPress: act.deselect, width: 0 }] : []),
+    // 取消選取不綁快捷鍵：這裡只在「更多動作」展開、而且你選了任務時出現（區段標題列上另有一顆）。
+    ...(view.showAll && view.selected ? [{ key: 'deselect', label: WORD.deselect, isDim: true, onPress: act.deselect, width: 0 }] : []),
     { key: 'expand', hotkey: 'x', label: view.isExpanded ? '▴ 收合' : '▾ 展開', isDim: true, onPress: act.expand, width: 0 },
     { key: 'more', hotkey: 'm', label: view.showAll ? '▴ 精簡動作' : '⋯ 更多動作', isDim: true, onPress: act.more, width: 0 },
     { key: 'help', hotkey: 'i', label: view.isHelp ? '▴ 收起說明' : '? 說明', isDim: true, onPress: act.help, width: 0 },
