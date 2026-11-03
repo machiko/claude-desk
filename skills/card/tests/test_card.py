@@ -853,6 +853,63 @@ class CardScriptTest(unittest.TestCase):
         self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
         self.assertEqual(git_out('rev-parse', 'HEAD', cwd=sub), head)
 
+    def commit_in_submodule_branch(self, wt):
+        """在 worktree 的 submodule 開本機分支 work 並 commit 一次（不推）：回傳 (submodule 路徑, 那個 commit)。"""
+        sub = os.path.join(wt, 'knowledge')
+        git('config', 'user.email', 't@example.com', cwd=sub)
+        git('config', 'user.name', 't', cwd=sub)
+        git('checkout', '-q', '-b', 'work', cwd=sub)
+        write(os.path.join(sub, 'notes.txt'), 'only here\n')
+        git('add', 'notes.txt', cwd=sub)
+        git('commit', '-q', '-m', 'local only', cwd=sub)
+        return sub, git_out('rev-parse', 'HEAD', cwd=sub)
+
+    def test_archive_cleanup_keeps_worktree_when_submodule_branch_is_not_pushed(self):
+        """submodule 的本機分支有沒推的 commit，HEAD 回到已推的 commit（git submodule update 之後就是這樣）：HEAD 雖在遠端，
+        移除仍會讓分支上的 commit 消失，不升級到 --force。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        sub, commit = self.commit_in_submodule_branch(wt)
+        git('checkout', '-q', '--detach', 'HEAD~1', cwd=sub)
+        self.assertEqual(git_out('status', '--porcelain', '--ignore-submodules=none', cwd=wt), '')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
+        self.assertEqual(git_out('rev-parse', 'work', cwd=sub), commit)
+
+    def test_archive_cleanup_keeps_worktree_when_submodule_has_stash(self):
+        """submodule 裡 git stash 存起來的改動：工作目錄是乾淨的，但 stash 只存在這個 worktree 的 submodule git 目錄，不升級到 --force。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        sub = os.path.join(wt, 'knowledge')
+        git('config', 'user.email', 't@example.com', cwd=sub)
+        git('config', 'user.name', 't', cwd=sub)
+        write(os.path.join(sub, 'lib.txt'), 'stashed\n')
+        git('stash', '-q', cwd=sub)
+        stash = git_out('rev-parse', 'refs/stash', cwd=sub)
+        self.assertEqual(git_out('status', '--porcelain', '--ignore-submodules=none', cwd=wt), '')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有 stash')
+        self.assertEqual(git_out('rev-parse', 'refs/stash', cwd=sub), stash)
+
+    def test_archive_cleanup_keeps_worktree_when_deinited_submodule_git_dir_remains(self):
+        """submodule 在本機分支 commit 後 deinit：工作目錄清掉、git 目錄還在 worktree 的 modules/ 下，--force 會連它一起刪；
+        submodule foreach 列不到它、確認不了 commit 推了沒，不升級到 --force。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        _, commit = self.commit_in_submodule_branch(wt)
+        git('submodule', 'deinit', '-q', '-f', 'knowledge', cwd=wt)
+        self.assertEqual(git_out('status', '--porcelain', '--ignore-submodules=none', cwd=wt), '')
+        gitdir = git_out('rev-parse', '--absolute-git-dir', cwd=wt)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, 'submodule 的 git 目錄沒有 checkout（knowledge）')
+        self.assertEqual(git_out('--git-dir', os.path.join(gitdir, 'modules', 'knowledge'), 'cat-file', '-t', commit, cwd=self.t), 'commit')
+
     def test_archive_cleanup_keeps_worktree_and_branch_when_dirty_or_unmerged(self):
         """AC-2：Beta 已合併但有未提交的改動、Gamma 乾淨但沒併入 main：兩張都歸檔，worktree 與分支都保留，提醒寫原因與自己刪的指令。"""
         beta = self.open_case('feature/beta', 'Beta', merged=True)

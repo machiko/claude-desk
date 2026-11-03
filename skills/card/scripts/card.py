@@ -807,14 +807,26 @@ def changed_files(root):
     return [l for l in git('-C', root, 'status', '--porcelain', '--ignore-submodules=none').stdout.splitlines() if l.strip()]
 
 
+def module_git_dirs(gitdir):
+    """gitdir/modules 底下每個 submodule 的 git 目錄（名字可以含 /，巢狀的在 <名>/modules/<名>）。"""
+    found = []
+    for top, dirs, files in os.walk(os.path.join(gitdir, 'modules')):
+        if 'HEAD' in files and 'objects' in dirs:
+            found.append(os.path.realpath(top))
+            dirs[:] = ['modules'] if 'modules' in dirs else []
+    return found
+
+
 def submodule_reason(root):
-    """--force 會連 submodule 裡的東西一起刪，也跳過 git 自己的乾淨檢查，所以先逐一（遞迴）看 worktree 裡已 checkout 的 submodule：
-    沒有未提交的改動、沒有被忽略的本機設定或資料，HEAD 也在它的遠端分支上（worktree 裡 submodule 的 commit 只存在這個 worktree 的
-    git 目錄，沒推上去的話移除後就找不到）。回傳 (保留原因, 一起刪掉的被忽略項目)；保留原因是空字串代表可以 --force。"""
+    """--force 會刪掉這個 worktree 的 git 目錄，連同底下 modules/ 裡每個 submodule 的 git 目錄（worktree 裡 submodule 的 commit、
+    分支與 stash 只存在那裡），也跳過 git 自己的乾淨檢查。所以先逐一（遞迴）看已 checkout 的 submodule：沒有未提交的改動、
+    沒有被忽略的本機設定或資料、HEAD 與本機分支都在它的遠端分支上、沒有 stash；modules/ 底下還有沒 checkout 的（deinit 過）
+    就確認不了，一律保留。回傳 (保留原因, 一起刪掉的被忽略項目)；保留原因是空字串代表可以 --force。"""
     r = git('-C', root, 'submodule', '--quiet', 'foreach', '--recursive', 'echo "$displaypath"')
-    if r.returncode != 0:
-        return '讀不到 submodule（git submodule foreach 失敗）', []
-    other = []
+    gitdir = git('-C', root, 'rev-parse', '--absolute-git-dir')
+    if r.returncode != 0 or gitdir.returncode != 0:
+        return '讀不到 submodule（git submodule foreach 或 rev-parse 失敗）', []
+    other, seen = [], set()
     for sub in (l for l in r.stdout.splitlines() if l.strip()):
         path = os.path.join(root, sub)
         dirty = changed_files(path)
@@ -826,9 +838,17 @@ def submodule_reason(root):
         local, rest = ignored
         if local:
             return f'submodule {sub} 有被 git 忽略的本機設定或資料（{shown([f"{sub}/{x}" for x in local])}）', []
-        if not git('-C', path, 'branch', '-r', '--contains', 'HEAD').stdout.strip():
-            return f'submodule {sub} 有沒推上去的 commit（HEAD 不在它的遠端分支上）', []
+        unpushed = git('-C', path, 'rev-list', '-n1', 'HEAD', '--branches', '--not', '--remotes')
+        if unpushed.returncode != 0 or unpushed.stdout.strip():
+            return f'submodule {sub} 有沒推上去的 commit（HEAD 或本機分支不在它的遠端分支上）', []
+        if git('-C', path, 'rev-parse', '-q', '--verify', 'refs/stash').returncode == 0:
+            return f'submodule {sub} 有 stash（git stash list）', []
+        seen.add(os.path.realpath(git('-C', path, 'rev-parse', '--absolute-git-dir').stdout.strip()))
         other.extend(f'{sub}/{x}' for x in rest)
+    base = os.path.join(gitdir.stdout.strip(), 'modules')
+    hidden = [os.path.relpath(d, os.path.realpath(base)) for d in module_git_dirs(gitdir.stdout.strip()) if d not in seen]
+    if hidden:
+        return f'submodule 的 git 目錄沒有 checkout（{shown(hidden)}），確認不了裡面的 commit 推上去了沒', []
     return '', other
 
 
