@@ -850,7 +850,7 @@ class CardScriptTest(unittest.TestCase):
 
         r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
 
-        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有遠端分支上沒有的 commit')
         self.assertEqual(git_out('rev-parse', 'HEAD', cwd=sub), head)
 
     def commit_in_submodule_branch(self, wt):
@@ -875,7 +875,7 @@ class CardScriptTest(unittest.TestCase):
 
         r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
 
-        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有遠端分支上沒有的 commit')
         self.assertEqual(git_out('rev-parse', 'work', cwd=sub), commit)
 
     def test_archive_cleanup_keeps_worktree_when_submodule_tag_points_at_unpushed_commit(self):
@@ -891,8 +891,30 @@ class CardScriptTest(unittest.TestCase):
 
         r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
 
-        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有遠端分支上沒有的 commit')
         self.assertEqual(git_out('rev-parse', 'v-local^{commit}', cwd=sub), commit)
+
+    def test_archive_cleanup_keeps_worktree_when_submodule_commit_is_only_in_reflog(self):
+        """submodule 是 detached HEAD 時直接 commit、沒把指標記進主 repo，再跑 git submodule update：HEAD 靜默切回記錄的 commit，
+        那個 commit 沒有任何 ref 指著、只剩 HEAD reflog。--force 會連物件一起刪，不升級到 --force（reflog 也查）。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        sub = os.path.join(wt, 'knowledge')
+        git('config', 'user.email', 't@example.com', cwd=sub)
+        git('config', 'user.name', 't', cwd=sub)
+        write(os.path.join(sub, 'notes.txt'), 'only here\n')
+        git('add', 'notes.txt', cwd=sub)
+        git('commit', '-q', '-m', 'local only', cwd=sub)
+        commit = git_out('rev-parse', 'HEAD', cwd=sub)
+        git('-c', 'protocol.file.allow=always', 'submodule', 'update', '-q', cwd=wt)
+        self.assertNotEqual(git_out('rev-parse', 'HEAD', cwd=sub), commit)
+        self.assertEqual(git_out('for-each-ref', '--points-at', commit, cwd=sub), '')
+        self.assertEqual(git_out('status', '--porcelain', '--ignore-submodules=none', cwd=wt), '')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有遠端分支上沒有的 commit')
+        self.assertEqual(subprocess.run(['git', 'cat-file', '-e', f'{commit}^{{commit}}'], cwd=sub).returncode, 0)
 
     def test_archive_cleanup_still_forces_when_submodule_tag_points_at_pushed_commit(self):
         """submodule 裡的 tag 指著已經在遠端分支上的 commit：沒有東西會跟著 --force 消失，照常移除。"""
