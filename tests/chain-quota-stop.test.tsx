@@ -628,3 +628,115 @@ test('test_auto_chain_dispatches_when_quota_unknown_or_threshold_invalid — res
   expect(String(data.launches[0].argv.at(-1))).toContain('程式碼審查')
   expect((data.store.chains as any)[BETA].stopped).toBeUndefined()
 })
+
+/** 擋在派驗收前：流程暫停、記下被擋的是驗收（共用的前置）。 */
+async function heldBeforeReview($: any, data: any, clock: any, h: ReturnType<typeof helpers>) {
+  betaImplemented(data, clock)
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 下一步：依審核修正', '- 下一步：等驗收')
+  quota(data, 75)
+  await h.refresh()
+  await h.step()
+  expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0 })
+  await h.refresh()
+}
+const pressG = async (ui: any, clock: any) => {
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+}
+
+/** AC-4（複審 HIGH）：擋在派驗收前、名額滿時按 g 接續：排進隊伍（跟手動派一樣說第幾位），空出名額時額度仍不足也照派，不被額度煞車移出。 */
+test('test_manual_dispatch_ignores_quota_threshold — g resume that waits in the queue is still sent while quota is low', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const h = helpers($, data, clock)
+  await heldBeforeReview($, data, clock, h)
+
+  data.agents = FULL()
+  const ui = await $.ui.mount(PANE(160))
+  await pressG(ui, clock)
+  await ui.unmount()
+  expect(data.launches).toHaveLength(0)
+  expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
+
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  await h.refresh()
+
+  expect(data.launches).toHaveLength(1)
+  expect(String(data.launches[0].argv.at(-1))).toContain('程式碼審查')
+  expect((data.store.chains as any)[BETA].stopped).toBeUndefined()
+  expect(log.list.some(e => e.text.startsWith('Beta 排隊的驗收沒有派出'))).toBe(false)
+})
+
+/** AC-4（複審 HIGH）：流程是別的對話開的（例如關掉後在新對話按 g）：接續時流程改成這個對話的，驗收做完有 HIGH 照常派修正。 */
+test('test_manual_dispatch_ignores_quota_threshold — g resume takes over a chain opened by another conversation', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  await heldBeforeReview($, data, clock, h)
+  data.store.chains = { [BETA]: { ...(data.store.chains as any)[BETA], owner: 'other-session' } }
+  await h.refresh()
+
+  const ui = await $.ui.mount(PANE(160))
+  await pressG(ui, clock)
+  await ui.unmount()
+  expect(data.launches).toHaveLength(1)
+  expect((data.store.chains as any)[BETA].owner).toBe(ME)
+
+  // 驗收做完：有 HIGH，這個對話的流程派修正第 1 輪
+  quota(data, 10)
+  setGate(data, CARD_B, 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  data.files[`${BETA}/.task/REVIEW.md`] = '- [HIGH][稽核] a.php:1 — 漏寫稽核紀錄'
+  data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
+  await h.refresh()
+  await h.step()
+
+  expect(data.launches).toHaveLength(2)
+  expect(String(data.launches[1].argv.at(-1)).startsWith('修正第 1／2 輪')).toBe(true)
+})
+
+/** AC-4（複審 HIGH）：擋下後你手動派的 Agent 還在跑：/desk go 跟手動派工一樣拒絕（Agent 仍在執行），不在同一個 worktree 再派驗收。 */
+test('test_manual_dispatch_ignores_quota_threshold — /desk go resume is refused while an agent runs', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  await heldBeforeReview($, data, clock, h)
+  data.agents = [busy('desk-rp-0', BETA)]
+  await h.refresh()
+
+  const go = await $.command.run({ command: 'desk', args: 'go Beta' } as any)
+  await clock.settle()
+
+  expect(data.launches).toHaveLength(0)
+  expect(String((go as any)?.text)).toContain('Beta：目前無法驗收（')
+  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0 })
+})
+
+/** 複審 MEDIUM：排隊中的自動驗收被額度擋下：記下被擋的是驗收（輪數照流程），按 g 直接派驗收、不派實作。 */
+test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — queued review records the step g resumes', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  betaImplemented(data, clock)
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 下一步：依審核修正', '- 下一步：等驗收')
+  data.agents = FULL()
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.step()
+  expect(log.has('Beta 自動派驗收排隊中（第 1 位）')).toBe(true)
+
+  quota(data, 75)
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  await h.refresh()
+  expect(data.launches).toHaveLength(0)
+  const chain = (data.store.chains as any)[BETA]
+  expect(chain.stopped).toBe(REASON)
+  expect(chain.resume).toEqual({ dispatch: 'review', round: 0 })
+
+  data.agents = []
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  await pressG(ui, clock)
+  await ui.unmount()
+  expect(data.launches).toHaveLength(1)
+  const prompt = String(data.launches[0].argv.at(-1))
+  expect(prompt).toContain('程式碼審查')
+  expect(prompt).not.toContain(QUOTA_NOTHING_TO_FIX)
+})

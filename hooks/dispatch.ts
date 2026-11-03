@@ -314,7 +314,7 @@ export function afterSpecRefusal(c: Case): string {
 }
 
 /** 排隊等派的一筆：手動（g、w、s、y、⇡）或自動流程排的；opts 照原本派工的參數。 */
-export type QueueOpts = { text?: string; fix?: FixReason; auto?: boolean; security?: boolean }
+export type QueueOpts = { text?: string; fix?: FixReason; auto?: boolean; security?: boolean; /** 你按 g（或 /desk go）接續被額度煞車擋下的那步：照自動流程接續原本那輪，但算你手動派的，排隊時不看額度。 */ resumed?: boolean }
 export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOpts; at: number }
 
 export const NO_PUSH_NEEDED = '已不需要推送（PR 已開且分支已是最新，或不在合併段）'

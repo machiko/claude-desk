@@ -645,7 +645,8 @@ export const register: Register = (on, options) => {
         return { text: `${c.name}：回覆派送中。` }
       }
       const kind = KIND_ARG[m[1]!]!
-      if (kind === 'continue' && await resumeQuotaHeld($, options, c)) return { text: `${c.name}：額度煞車後接續，直接派審查。` }
+      const resumed = kind === 'continue' ? await resumeQuotaHeld($, options, c) : null
+      if (resumed !== null) return { text: resumed }
       void dispatch($, options, c, kind)
       return { text: `${c.name}：${KIND_LABEL[kind]}派送中。` }
     }
@@ -727,7 +728,7 @@ export const register: Register = (on, options) => {
         // 第二次按 g 就核准這張卡的完成檢查（沒核准時第一次已在檢查列列出全文）。
         if (kind === 'continue') await trustCheck($, c)
         // 額度煞車擋在派審查前：g 直接派那次審查，不多派實作。
-        if (kind === 'continue' && await resumeQuotaHeld($, options, c)) return
+        if (kind === 'continue' && (await resumeQuotaHeld($, options, c)) !== null) return
         await dispatch($, options, c, kind)
       })(),
       stop: c => void (async () => { if (await confirmed($, `${c.statusPath}\nstop`)) await stopAgent($, c) })(),

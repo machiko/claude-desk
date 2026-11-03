@@ -47,9 +47,9 @@ export async function enqueueDispatch($: any, c: Case, kind: DispatchKind, opts:
   await restage($, c.statusPath)
   const at = queuePosition(c.statusPath)
   const label = labelOf(kind, opts)
-  const text = opts.auto ? `${c.name} 自動派${label}排隊中（第 ${at} 位）` : `${c.name} 派${label}排隊中（第 ${at} 位）：同時執行的 Agent 已達上限 ${max} 個`
+  const text = opts.auto && !opts.resumed ? `${c.name} 自動派${label}排隊中（第 ${at} 位）` : `${c.name} 派${label}排隊中（第 ${at} 位）：同時執行的 Agent 已達上限 ${max} 個`
   await feedPush($, [{ at: now, text, tone: 'suggestion', card: c.statusPath }])
-  if (!opts.auto) $.ui.toast(`${c.name}：同時執行的 Agent 已達上限 ${max} 個，已排隊（第 ${at} 位）`, { timeoutMs: 6000 })
+  if (!opts.auto || opts.resumed) $.ui.toast(`${c.name}：同時執行的 Agent 已達上限 ${max} 個，已排隊（第 ${at} 位）`, { timeoutMs: 6000 })
   return true
 }
 
@@ -154,7 +154,8 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     const why = !c ? '任務已不在登錄表' : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
     if (why) { await drop($, entry, c, why, s.at, mine); continue }
     // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開，改寫要推請按哪個鈕（跟過關時直接派被擋的說法一樣）。
-    if (low && entry.opts.auto) { await drop($, entry, c, queuedHold(entry, c, s, settings.chainQuotaStop), s.at, mine, true, queuedResume(entry, chains[normalizeRoot(c.root)])); continue }
+    // 你按 g 接續的那筆（resumed）是手動派的：不看額度。
+    if (low && entry.opts.auto && !entry.opts.resumed) { await drop($, entry, c, queuedHold(entry, c, s, settings.chainQuotaStop), s.at, mine, true, queuedResume(entry, chains[normalizeRoot(c.root)])); continue }
     if (verifyPending(entry.statusPath)) continue
     const foreign = await foreignChanges($, c!, entry)
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }
