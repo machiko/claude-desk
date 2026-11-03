@@ -1,7 +1,7 @@
 // 現在卡：一列一個元素（content 會捲動，列數要算得出來），操作按鈕另外列成清單交給常駐的 footer 排。
 import type { Case, Verify } from '../types'
 import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
-import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary } from './model'
+import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary, quotaHeld } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, dispatchable, mergedUnshipped, normalizeRoot } from './dispatch'
 import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
@@ -360,7 +360,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
     const approving = k === 'continue' && !checkApproved(view, c) ? '核准檢查並' : ''
     // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
     const hint = k === 'sync' && cardBehind(c, view.now)
-    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${approving}${KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
+    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${approving}${k === 'continue' && quotaHeld(c.chain) ? '接續' : KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${k === 'continue' && quotaHeld(c.chain) ? '接續' : KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
   }
   if (!ctx.agentQueued && canStop(c) && can('stop')) {
     const armed = isArmed(view.armed, `${c.statusPath}\nstop`, view.now)

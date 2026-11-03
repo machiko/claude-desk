@@ -7,21 +7,46 @@ import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
 import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
-import { errorLine, reasonLine, slugOf } from './model'
-import { baseRefs, deskPaths, lastLine, loadSettings, originRemote } from './probes'
+import { errorLine, quotaHeld, reasonLine, slugOf } from './model'
+import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
 import { afterSpecRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, replyRefusal } from './dispatch'
 import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
 import type { AutoPrPlan } from './auto-pr'
-import { feedPush, loadJobs, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
+import { feedPush, loadChains, loadJobs, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
+import { markRefusal } from './worktree-mark'
+import { isAgentQueued } from './agent-queue'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
 import { trustCheck } from './approve-check'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 
 export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
+
+/**
+ * 額度煞車擋在派審查（或資安審查）前、你按 g 重開：直接派那次審查接續原本那輪，不多派一個實作 Agent。
+ * 擋在派修正前的不走這裡（照舊按 g 派修正）；沒有記到被擋的那步（舊紀錄）也不走。
+ * 回傳 true 代表這次 g 已處理（派出、排隊，或因 worktree 有別人的改動而拒絕並說原因）。
+ */
+export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): Promise<boolean> {
+  const key = normalizeRoot(c.root)
+  const run = (await loadChains($))[key]
+  const resume = run?.resume
+  if (!quotaHeld(c.chain) || !run?.stopped || !resume || resume.dispatch !== 'review') return false
+  const foreign = tutorial ? '' : markRefusal(await worktreeMark($, c.root), (await loadJobs($))[key])
+  if (foreign) { $.ui.toast(`${c.name}：目前無法驗收（${foreign}）`, { timeoutMs: 10_000 }); return true }
+  const reason = run.stopped
+  const now = await $.clock.now()
+  await saveChain($, key, r => { if (!r) return r; const { stopped: _s, resume: _r, ...rest } = r; return { ...rest, round: resume.round } })
+  const what = resume.security ? '資安審查' : '驗收'
+  await feedPush($, [{ at: now, text: `${c.name} 額度煞車後按 g 重開：直接派${what}，不多派實作`, tone: 'suggestion', card: c.statusPath }])
+  const sent = await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, ...(resume.security ? { security: true } : {}) })
+  // 沒派出也沒排進隊伍（啟動中、同時派了兩次）：流程照原本的原因停著，下次 g 再來。
+  if (!sent && !isAgentQueued(c.statusPath)) await saveChain($, key, r => r ? paused(r, reason, false, resume) : r)
+  return true
+}
 const picksAtom = atom({ plugin: 'desk', key: 'picks' } as const, {})
 const snapshotAtom = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 

@@ -39,7 +39,7 @@ import { WORD } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
 import { lastLaunches, noteCardAsks, stopEnded, stopSuperseded } from './stale-agents'
 import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAgentQueue, isAgentQueued, notSent, queuePosition, readAgentQueue, requeue } from './agent-queue'
-import { DEMO_ONLY, archiveCase, autoPublish, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, stopAgent } from './card-actions'
+import { DEMO_ONLY, archiveCase, autoPublish, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, resumeQuotaHeld, stopAgent } from './card-actions'
 import { autoPrApplies, autoPrPlan, passWords } from './auto-pr'
 import type { AutoPrPlan } from './auto-pr'
 
@@ -375,7 +375,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const medium = planned.kind === 'dispatch' || planned.kind === 'stop' ? planned.medium : undefined
     const withMedium = (r: ChainRun): ChainRun => { const { mediumFix: _, ...rest } = r; return medium ? { ...rest, mediumFix: medium } : rest }
     if (step.kind === 'stop') {
-      await saveChain($, key, r => r ? paused(withMedium(r), step.reason, step.atCheck) : r)
+      await saveChain($, key, r => r ? paused(withMedium(r), step.reason, step.atCheck, step.resume) : r)
       await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error', card: c.statusPath }])
       $.ui.toast(`${c.name}：流程已暫停，${step.reason}`, { timeoutMs: 10_000 })
       notify($, `${c.name}：流程已暫停，${step.reason}`)
@@ -645,6 +645,7 @@ export const register: Register = (on, options) => {
         return { text: `${c.name}：回覆派送中。` }
       }
       const kind = KIND_ARG[m[1]!]!
+      if (kind === 'continue' && await resumeQuotaHeld($, options, c)) return { text: `${c.name}：額度煞車後接續，直接派審查。` }
       void dispatch($, options, c, kind)
       return { text: `${c.name}：${KIND_LABEL[kind]}派送中。` }
     }
@@ -725,6 +726,8 @@ export const register: Register = (on, options) => {
         if (!(await confirmed($, `${c.statusPath}\n${kind}`))) return
         // 第二次按 g 就核准這張卡的完成檢查（沒核准時第一次已在檢查列列出全文）。
         if (kind === 'continue') await trustCheck($, c)
+        // 額度煞車擋在派審查前：g 直接派那次審查，不多派實作。
+        if (kind === 'continue' && await resumeQuotaHeld($, options, c)) return
         await dispatch($, options, c, kind)
       })(),
       stop: c => void (async () => { if (await confirmed($, `${c.statusPath}\nstop`)) await stopAgent($, c) })(),

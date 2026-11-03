@@ -124,13 +124,13 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   const ctx = { quotaHold: REASON }
   const verdict = (high: number) => ({ critical: 0, high, medium: 0, low: 0 })
   // 審查
-  expect(nextStep(run, 'continue', true, null, true, ctx)).toEqual({ kind: 'stop', reason: REASON })
+  expect(nextStep(run, 'continue', true, null, true, ctx)).toEqual({ kind: 'stop', reason: REASON, resume: { dispatch: 'review', round: 0 } })
   // 檢查沒過的修正
-  expect(nextStep(run, 'continue', false, null, true, ctx)).toEqual({ kind: 'stop', reason: REASON })
+  expect(nextStep(run, 'continue', false, null, true, ctx)).toEqual({ kind: 'stop', reason: REASON, resume: { dispatch: 'continue', round: 1, reason: 'check' } })
   // 審查的修正
-  expect(nextStep(run, 'review', null, verdict(1), true, ctx)).toEqual({ kind: 'stop', reason: REASON })
+  expect(nextStep(run, 'review', null, verdict(1), true, ctx)).toEqual({ kind: 'stop', reason: REASON, resume: { dispatch: 'continue', round: 1, reason: 'review' } })
   // 高風險的資安審查
-  expect(nextStep(run, 'review', null, verdict(0), true, { ...ctx, risk: { level: 'high', reasons: ['認證'] } })).toEqual({ kind: 'stop', reason: REASON })
+  expect(nextStep(run, 'review', null, verdict(0), true, { ...ctx, risk: { level: 'high', reasons: ['認證'] } })).toEqual({ kind: 'stop', reason: REASON, resume: { dispatch: 'review', round: 0, security: true } })
   // 本機檢查、過關照舊
   expect(nextStep(run, 'continue', null, null, true, ctx)).toEqual({ kind: 'verify' })
   expect(nextStep(run, 'review', null, verdict(0), true, ctx)).toEqual({ kind: 'pass' })
@@ -475,9 +475,10 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   expect(data.launches).toHaveLength(0)
 })
 
-/** 審查 MEDIUM：擋在派驗收前、按 g 重開：派出的不是「修正」，提示說程式不用改、跑完成檢查寫回卡片，也不帶寫給人看的「按 g 重開」。 */
-test('test_manual_dispatch_ignores_quota_threshold — g after a hold before review sends nothing to fix', async ($, on) => {
+/** 審查 MEDIUM（D-04）：擋在派驗收前、按 g 重開：直接派驗收接續原本那輪（不多派實作 Agent），動態寫明；流程不再是暫停、輪數不變。 */
+test('test_manual_dispatch_ignores_quota_threshold — g after a hold before review dispatches the review itself', async ($, on) => {
   const { data, clock } = fixture(on)
+  const log = feedLog(on)
   betaImplemented(data, clock)
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 下一步：依審核修正', '- 下一步：等驗收')
   quota(data, 75)
@@ -485,6 +486,37 @@ test('test_manual_dispatch_ignores_quota_threshold — g after a hold before rev
   await h.refresh()
   await h.step()
   expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0 })
+
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  // 擋下時 g 寫「接續」，不寫「繼續」
+  expect(String((await ui.find({ key: `case-${CARD_B}-continue` }))?.props?.label)).toContain('接續')
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  await ui.unmount()
+
+  expect(data.launches).toHaveLength(1)
+  const prompt = String(data.launches[0].argv.at(-1))
+  expect(prompt).toContain('程式碼審查')
+  expect(prompt).not.toContain(QUOTA_NOTHING_TO_FIX)
+  expect(log.has('Beta 額度煞車後按 g 重開：直接派驗收，不多派實作')).toBe(true)
+  const chain = (data.store.chains as any)[BETA]
+  expect(chain.stopped).toBeUndefined()
+  expect(chain.resume).toBeUndefined()
+  expect(chain.round).toBe(0)
+})
+
+/** 審查 MEDIUM（D-04）：擋在派資安審查前、按 g 重開：直接派資安審查，不重做程式碼審查、不派實作。 */
+test('test_manual_dispatch_ignores_quota_threshold — g after a hold before the security review dispatches it directly', async ($, on) => {
+  const { data, clock } = fixture(on)
+  betaSecurityPending(data, clock)
+  quota(data, 75)
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.step()
+  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0, security: true })
 
   await h.refresh()
   const ui = await $.ui.mount(PANE(160))
@@ -494,9 +526,18 @@ test('test_manual_dispatch_ignores_quota_threshold — g after a hold before rev
 
   expect(data.launches).toHaveLength(1)
   const prompt = String(data.launches[0].argv.at(-1))
-  expect(prompt.startsWith(QUOTA_NOTHING_TO_FIX)).toBe(true)
-  expect(prompt).not.toContain('按 g 重開')
-  expect(prompt).not.toMatch(/^修正/)
+  expect(prompt).toContain('資安審查')
+  expect(prompt).not.toContain('這是新的對話，不接續 Agent、不參考 Agent 的結論。\n程式碼審查')
+  expect((data.store.chains as any)[BETA].stopped).toBeUndefined()
+})
+
+/** 審查 MEDIUM（D-04）：擋在派修正前（檢查沒過、審查有 HIGH）：記下那步是修正，按 g 照舊派修正（走原本的路）。 */
+test('test_manual_dispatch_ignores_quota_threshold — a hold before a fix round records the fix step', () => {
+  const run = { owner: ME, startedAt: 0, round: 0 }
+  const afterCheck = nextStep(run, 'continue', false, null, true, { quotaHold: REASON })
+  expect(afterCheck).toEqual({ kind: 'stop', reason: REASON, resume: { dispatch: 'continue', round: 1, reason: 'check' } })
+  const afterReview = nextStep(run, 'review', null, { critical: 0, high: 1, medium: 0, low: 0 }, true, { quotaHold: REASON })
+  expect(afterReview).toEqual({ kind: 'stop', reason: REASON, resume: { dispatch: 'continue', round: 1, reason: 'review' } })
 })
 
 /** 審查 MEDIUM：隊伍裡自動排的推送輪到時額度不足：移出不派，流程仍是過關（不暫停），動態寫原因與要推按哪個鈕。 */
