@@ -48,7 +48,7 @@ export type ChainRun = {
 export type ChainStep =
   | { kind: 'verify' }
   | { kind: 'dispatch'; dispatch: DispatchKind; round: number; reason?: string; security?: boolean; /** 這輪修正要修的 MEDIUM 數；沒有要修的不帶。 */ medium?: number }
-  | { kind: 'stop'; reason: string; atCheck?: boolean }
+  | { kind: 'stop'; reason: string; atCheck?: boolean; /** 額度煞車擋下的修正本來要修的 MEDIUM 數：停下時照記，按 g 才修得到。 */ medium?: number }
   | { kind: 'pass'; skipped?: boolean; needsHuman?: string }
   | null
 
@@ -84,8 +84,9 @@ export function seenHeads(run: ChainRun | undefined, branch: string | undefined)
 /**
  * `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。
  * `mediumFix`：剛結束的審查，審查檔裡要修的 MEDIUM 數（沒標「不修」「等你決定」的）。
+ * `quotaHold`：5 小時額度低於門檻的暫停原因（model.ts 的 quotaHold）；非空時要派 Agent 的那步改成停下，跑檢查與過關照舊。
  */
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; mediumFix?: number }
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; mediumFix?: number; quotaHold?: string }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -93,6 +94,13 @@ export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: b
  * 解衝突有 commit 時由「審查通過後有新 commit」的重新檢查接手，沒 commit 時面板寫原因。
  */
 export function nextStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext = {}): ChainStep {
+  const step = plannedStep(run, finished, check, verdict, trusted, ctx)
+  // 額度煞車：只擋派 Agent（花額度）；本機檢查、過關、其他停下照舊。
+  if (step?.kind !== 'dispatch' || !ctx.quotaHold) return step
+  return { kind: 'stop', reason: ctx.quotaHold, ...(step.medium ? { medium: step.medium } : {}) }
+}
+
+function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext): ChainStep {
   if (!run || run.stopped || run.passed || !finished || finished === 'publish' || finished === 'catchup') return null
   // 被停掉的 Agent 做的事不完整：不能當成做完往下走（同步不在流程裡，照舊不動）。
   if (ctx.stopped && finished !== 'sync') return { kind: 'stop', reason: AGENT_STOPPED }

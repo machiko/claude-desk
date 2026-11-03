@@ -9,6 +9,7 @@ import type { DispatchKind, QueueEntry, QueueOpts, RawAgent } from './dispatch'
 import { paused } from './chain'
 import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
 import { loadSettings, worktreeMark } from './probes'
+import { quotaHold, quotaLow } from './model'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, notify, restage, verifyPending } from './register'
 
@@ -122,7 +123,10 @@ function queuedOpts(c: Case, entry: QueueEntry): QueueEntry['opts'] {
  */
 export async function drainAgentQueue($: any, options: PluginOptions, s: Snapshot, list: readonly RawAgent[] | null): Promise<boolean> {
   if (!agentQueue.length) return false
-  const max = (await loadSettings($, options)).maxAgents
+  const settings = await loadSettings($, options)
+  const max = settings.maxAgents
+  // 額度煞車：自動流程排的（含自動推送）輪到時額度低於門檻就不派；你手動排的不看額度。
+  const hold = quotaHold(s.limits, settings.chainQuotaStop, s.at)
   const chains = await loadChains($)
   const mine = await me($)
   const trusted = await trustedChecks($)
@@ -133,6 +137,8 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     const c = s.cases.find(x => x.statusPath === entry.statusPath)
     const why = !c ? '任務已不在登錄表' : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
     if (why) { await drop($, entry, c, why, s.at, mine); continue }
+    // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開。
+    if (hold && entry.opts.auto) { await drop($, entry, c, entry.kind === 'publish' ? `${quotaLow(s.limits, settings.chainQuotaStop)}，沒有自動派推送` : hold, s.at, mine, true); continue }
     if (verifyPending(entry.statusPath)) continue
     const foreign = await foreignChanges($, c!, entry)
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }

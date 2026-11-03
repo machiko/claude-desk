@@ -69,9 +69,12 @@ export type DispatchSettings = {
   mcp: boolean
   /** 做完的背景 Agent 由工作桌在下一次重新整理時 `claude stop` 收掉：不停的話每支各佔幾百 MB，閒置到 daemon 回收。預設開，只有 JSON 的 false 關掉。 */
   stopDone: boolean
+  /** 自動流程的額度煞車：5 小時額度剩餘百分比低於這個值時，自動流程不派下一個 Agent、暫停寫原因。0＝關（`"off"`／`false`）；不合法用預設。 */
+  chainQuotaStop: number
 }
 
 export const DEFAULT_MAX_AGENTS = 3
+export const DEFAULT_CHAIN_QUOTA_STOP = 30
 
 export const DEFAULT_USER = '使用者'
 export const DEFAULT_REVIEW: ReviewWords = {
@@ -94,7 +97,7 @@ export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sy
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true, chainQuotaStop: DEFAULT_CHAIN_QUOTA_STOP }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -128,8 +131,15 @@ export function parseSettings(text: string | null): DispatchSettings {
     out.mcp = d?.mcp === true
     // 反過來：預設開，只認明確的 false 關掉。
     out.stopDone = d?.stopDone !== false
+    out.chainQuotaStop = parseQuotaStop(d?.chainQuotaStop)
   } catch { /* 壞掉的設定檔當作沒有。 */ }
   return out
+}
+
+/** chainQuotaStop：整數 1–100 照用；`"off"`（不分大小寫）或 false 關掉（0）；其他（沒寫、非數字、小數、超出範圍）用預設。 */
+function parseQuotaStop(v: unknown): number {
+  if (v === false || (typeof v === 'string' && v.trim().toLowerCase() === 'off')) return 0
+  return Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100 ? v as number : DEFAULT_CHAIN_QUOTA_STOP
 }
 
 /** kinds 只收 MODEL_KINDS 的鍵、值是物件的；欄位不是字串或是空白就當沒寫。其他的（sync、不認得的鍵、型別錯的值）略過。 */

@@ -1,6 +1,7 @@
 // 合併段的衝突：分支跟基準分支試合併有衝突時，自動派 Agent 把基準分支合併進來、解衝突；不自動派時說原因。
 // 純函式：試合併輸出的解析、不自動派的原因、面板文字。偵測（fetch＋merge-tree）在 probes.ts，派工在 register.tsx。
 import type { Case } from '../types'
+import { quotaLowOf } from './model'
 
 /**
  * `git merge-tree --write-tree --name-only --no-messages <基準> HEAD` 的結果：exit 0 沒衝突（空清單），
@@ -24,7 +25,8 @@ export function catchupHold(c: Pick<Case, 'manual' | 'chain' | 'conflict'>): str
   const chain = c.chain
   if (!chain) return '沒有自動流程'
   if (chain.foreign) return '流程是別的對話開的'
-  if (chain.stopped) return '流程已暫停'
+  // 額度煞車擋下的：合併段沒有 g 可按，括號只寫額度原因。
+  if (chain.stopped) return quotaLowOf(chain.stopped) || '流程已暫停'
   // 沒有流程紀錄、只是卡片上有審查結論（自審）的，或流程還沒過關的：不是自動流程走到合併段的。
   if (!chain.passed) return '沒有自動流程'
   if (chain.needsHuman) return '高風險改動'

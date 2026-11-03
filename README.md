@@ -155,7 +155,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - **提醒**：登錄表「## 提醒」段 `- YYYY-MM-DD 事項` 到期前三天出現；`- 事項` 不寫日期時一直列在面板。面板上收成一列（多件寫「提醒 n 件 · 第一條」），按 `m` 展開全文（最多 4 列，其餘寫「還有 k 件」）。打勾 `[x]`、劃掉 `~~…~~`、縮排子項目與日期格式不對的行不算提醒。
 - **檢查沒過時列失敗摘要**：完成檢查沒過時現在卡列出幾支失敗、哪幾支與原因，原始輸出尾巴改成按 `x` 展開才看。
 - **審查前置結果**：審查過後現在卡多一列「前置」：審查前置指令（`review.preflight`）的結果，成功寫候選幾條、採用幾條，失敗寫原因；審查檔第一行沒有這行（沒設前置指令、沒裝工具）就不顯示。
-- **通知**：等你、流程暫停、可開 PR、自動開 PR、按 `v` 的檢查未通過會送一次通知（走 Claude Code 的通知管道；自動流程的檢查沒過直接派修正，修到上限停下時送「流程已暫停」）。
+- **通知**：等你、流程暫停（含額度煞車：5 小時額度低於 `chainQuotaStop` 時自動流程停在派下一個 Agent 前）、可開 PR、自動開 PR、按 `v` 的檢查未通過會送一次通知（走 Claude Code 的通知管道；自動流程的檢查沒過直接派修正，修到上限停下時送「流程已暫停」）。
 - **新版本**：每 24 小時查一次 GitHub 上有沒有新的 desk（時間記在本機，重開也算），有就在面板與摘要列顯示「有新版本 x.y.z」；只提示、不安裝，查不到就不出聲。專案 `dispatch.json` 設 `"updateCheck": "off"` 關掉。
 
 ## desk 會寫什麼
@@ -203,7 +203,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 
 專案只用 repo 資料夾名區分：放在不同位置、但資料夾同名的兩個 repo 會共用同一個專案資料夾，這種情況請在其中一邊用 `registryPath` 等選項指定別的路徑。
 
-不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`、`mcp`、`stopDone`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card`、`autoPr` 放專案。
+不在 git repo 裡開 `/desk` 會提示到專案裡開；repo 還沒有登錄表就顯示要建在哪裡，並提供「＋ 建立空的登錄表」（`n`，已經有就不覆寫），不會列出別的專案的任務。共用的設定（`model`、`effort`、`kinds`、`sync`、`user`、`maxAgents`、`mcp`、`stopDone`、`chainQuotaStop`）放全域，`rules`、`review`、`risk`、`checkServices`、`composeDir`、`card`、`autoPr` 放專案。
 
 `dispatch.json`（每一項都可以省略）：
 
@@ -216,6 +216,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
   "projects": { "~/code/shop-worktrees/order-export": { "effort": "xhigh", "rules": ["只改 api/ 底下"] } },
   "user": "Alex",
   "maxAgents": 3,
+  "chainQuotaStop": 30,
   "mcp": false,
   "autoPr": true,
   "pr": { "open": "glab mr create --source-branch {branch} --target-branch {target}" },
@@ -250,6 +251,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `kinds.<種類>` | 依派工種類各設 `model`／`effort`，可設 `continue`（繼續、修正輪與自動解衝突）、`reply`（回覆）、`review`（審查與資安審查）、`publish`（推送）；只寫其中一個的，另一個沿用任務覆寫或全域。優先順序：種類 > 任務覆寫 > 全域；同步仍用 `sync`。面板狀態列在「派工」後列出跟派工不同的種類 |
 | `user` | 寫進提示詞與卡片的人名（預設「使用者」） |
 | `maxAgents` | 同時在跑的工作桌背景 Agent 上限（預設 3，`0`＝不限）；整台機器一起算（別的專案、別的對話派的也算），停在提問或等批准的不算。超過的派工（含自動流程）排隊，面板寫第幾位、有空位依序派出，`k` 取消排隊；隊伍只在這個對話，重新載入就清空 |
+| `chainQuotaStop` | 自動流程的額度煞車：5 小時額度剩餘低於這個百分比（剛好等於不停）時，自動流程要派下一個 Agent（修正、審查、資安審查、解衝突、`autoPr` 推送，含排隊中的）前停下，不派、流程暫停，動態、提示與通知寫「5 小時額度剩 25%，低於門檻 30%，22:30 重置後按 g 重開」；本機的完成檢查與免審查過關照跑，你手動按 `g`／`w`／`s`／`y` 或 `/desk go` 不看額度，正在跑的 Agent 不停，重置後不會自己重開。預設 30，整數 1–100 照用，`"off"` 或 `false` 關掉，其他值用預設；讀不到額度時不擋。放全域 |
 | `stopDone` | 做完（done／failed）、程序還活著的工作桌 Agent 在下一次重新整理時 `claude stop` 收掉，每個只試一次，停不掉才在「最近」寫一筆；停在提問的不停。預設開，只有 `false` 關掉；放全域 |
 | `autoPr` | `true` 時審查過關（含只動文件、免審查過關）後自動派推送 Agent：還沒有 PR 就 push 並開 PR，PR 已開就只 push（已是最新就不派）。高風險改動、被拒絕過的 PR、流程暫停或別的對話開的流程都不自動開；不合併 PR、不打 tag。預設關，只認 `true`；建議寫在專案的 `dispatch.json`（例如每次過關都開 PR 的專案開、常先不 push 的專案不開） |
 | `pr.open` | 推送 Agent 開 PR 的覆寫指令，`{branch}`、`{target}` 換成分支與目標分支（去掉 `origin/`），給 GitLab、自架等 desk 認不出的平台；有填就不看 origin。空白＝依 origin：GitHub 用 `gh pr create`、Bitbucket 用 MCP 的 `bb_post`（推送這一種派工會載入 MCP）、其他只 push 並把網址寫進「等你」 |
