@@ -1,7 +1,7 @@
 // 合併段的衝突：分支跟基準分支試合併有衝突時，自動派 Agent 把基準分支合併進來、解衝突；不自動派時說原因。
 // 純函式：試合併輸出的解析、不自動派的原因、面板文字。偵測（fetch＋merge-tree）在 probes.ts，派工在 register.tsx。
 import type { Case } from '../types'
-import { quotaLowOf } from './model'
+import { quotaLowOf } from './quota-words'
 
 /**
  * `git merge-tree --write-tree --name-only --no-messages <基準> HEAD` 的結果：exit 0 沒衝突（空清單），

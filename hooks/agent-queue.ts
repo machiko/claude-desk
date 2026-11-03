@@ -137,8 +137,8 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     const c = s.cases.find(x => x.statusPath === entry.statusPath)
     const why = !c ? '任務已不在登錄表' : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
     if (why) { await drop($, entry, c, why, s.at, mine); continue }
-    // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開。
-    if (hold && entry.opts.auto) { await drop($, entry, c, entry.kind === 'publish' ? `${quotaLow(s.limits, settings.chainQuotaStop)}，沒有自動派推送` : hold, s.at, mine, true); continue }
+    // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開，改寫要推請按哪個鈕（跟過關時直接派被擋的說法一樣）。
+    if (hold && entry.opts.auto) { await drop($, entry, c, entry.kind === 'publish' ? `${quotaLow(s.limits, settings.chainQuotaStop)}，要推請按 ${c?.pr?.state === 'OPEN' ? '⇡ push' : '⇡ 開 PR'}` : hold, s.at, mine, true); continue }
     if (verifyPending(entry.statusPath)) continue
     const foreign = await foreignChanges($, c!, entry)
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }

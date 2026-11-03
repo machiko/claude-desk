@@ -351,9 +351,12 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     if (!planned) continue
     // 接手：先把擁有者寫進流程紀錄（輪數照舊），再照這個對話自己的流程往下走；流程在這之間被別人改過就不接。
     if (foreignRun) {
-      if (planned.kind !== 'dispatch' || planned.reason !== 'review' || !planned.medium) continue
+      // 額度煞車把帶 MEDIUM 的審查修正改成停下（stop 帶 medium）：一樣接手，接著照停下處理（暫停、寫原因、記 MEDIUM 數），
+      // 不然額度恢復後下一次重新整理就會自己接手派修正。
+      const fixesMedium = planned.kind === 'dispatch' ? planned.reason === 'review' && !!planned.medium : planned.kind === 'stop' && !!hold && !!planned.medium
+      if (!fixesMedium || !planned.medium) continue
       if (!(await takeOver($, key, run, mine))) continue
-      await feedPush($, [{ at: s.at, text: `${c.name} 接手別的對話開的流程：審查只剩 MEDIUM ${planned.medium} 條要修，自動派修正`, tone: 'suggestion', card: c.statusPath }])
+      await feedPush($, [{ at: s.at, text: `${c.name} 接手別的對話開的流程：審查只剩 MEDIUM ${planned.medium} 條要修，${planned.kind === 'dispatch' ? '自動派修正' : '額度不足，流程暫停'}`, tone: 'suggestion', card: c.statusPath }])
     }
     acted = true
     // 被停掉的審查沒寫完：不歸檔、不算判過。

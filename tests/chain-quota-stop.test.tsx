@@ -3,6 +3,7 @@ import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGIS
 import { DEFAULT_CHAIN_QUOTA_STOP, parseSettings } from '../hooks/dispatch'
 import { nextStep } from '../hooks/chain'
 import { quotaHold, resetText } from '../hooks/model'
+import { QUOTA_NOTHING_TO_FIX } from '../hooks/prompts/fix'
 
 // 自動流程額度煞車：5 小時額度剩餘低於門檻（dispatch.json 的 chainQuotaStop，預設 30%）時，自動流程不派下一個 Agent、暫停寫原因；手動派工照派。
 const SETTINGS = '/home/u/.claude/handoffs/dispatch.json'
@@ -360,4 +361,173 @@ test('test_local_check_and_docs_only_pass_run_even_when_quota_is_low', async ($,
   expect(chain.stopped).toBeUndefined()
   expect(log.has('Beta 只動文件、檢查通過，免審查，可開 PR')).toBe(true)
   expect(log.list.some(e => e.text.includes('低於門檻'))).toBe(false)
+})
+
+/** 高風險改動：程式碼審查已寫好過關結論、要派資安審查時被額度擋下。 */
+function betaSecurityPending(data: any, clock: any) {
+  data.agents = []
+  data.gh = []
+  data.files[REGISTRY] = registry([['Beta', CARD_B]])
+  setGate(data, CARD_B, 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可合併')
+  data.files[`${BETA}/.task/REVIEW.md`] = '（無）'
+  data.git[BETA] = { branch: 'feature/b', head: 'c2', files: ['app/Http/Middleware/Admin.php'], remote: 'git@github.com:acme/shop.git' }
+  data.store.trustedVerify = { [CARD_B]: 'npm test' }
+  data.store.verifies = { [CARD_B]: ok('c2') }
+  data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b' } }
+  data.store.jobs = { [BETA]: lastJob('review') }
+  startsAgents(data, clock)
+}
+
+/** AC-1（審查 HIGH）：要派資安審查時被擋下：不派、不算過關（沒有高風險確認可略過），六段停在審查段寫原因，「輪到你」寫同一句、可按 g，沒有開 PR。 */
+test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_threshold — security review is held at the review stage', async ($, on) => {
+  const { data, clock } = fixture(on)
+  betaSecurityPending(data, clock)
+  quota(data, 75)
+  const h = helpers($, data, clock)
+
+  await h.refresh()
+  await h.step()
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  const shown = await h.screen(ui)
+  const gKey = await ui.find({ key: `case-${CARD_B}-continue` })
+  await ui.unmount()
+
+  expect(data.launches).toHaveLength(0)
+  const chain = (data.store.chains as any)[BETA]
+  expect(chain.stopped).toBe(REASON)
+  expect(chain.passed).toBeUndefined()
+  expect(shown).toContain(flat(`輪到你 ${REASON}`))
+  expect(shown).toContain(flat('✕ 驗收'))
+  expect(shown).not.toContain('開PR')
+  expect(gKey).toBeTruthy()
+})
+
+/** AC-1（審查 HIGH）：審查過關後有新 commit、重新檢查通過、要派重新審查時被擋下：「輪到你」寫同一句（不是按 w 重新驗收）。 */
+test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_threshold — re-review after a new commit', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  data.agents = []
+  data.files[REGISTRY] = registry([['Alpha', CARD_A]])
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  setGate(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過')
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h2', files: ['src/a.ts'] }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.store.chains = { [ALPHA]: { owner: ME, startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha' } }
+  data.store.jobs = { [ALPHA]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: ME, handled: true } } }
+  startsAgents(data, clock)
+  quota(data, 75)
+  const h = helpers($, data, clock)
+
+  await h.refresh()
+  for (let i = 0; i < 3; i++) await h.step()
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  const shown = await h.screen(ui)
+  await ui.unmount()
+
+  expect(h.checks()).toBe(1)
+  expect(data.launches).toHaveLength(0)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe(REASON)
+  expect(log.has(`Alpha 流程已暫停：${REASON}`)).toBe(true)
+  expect(shown).toContain(flat(`輪到你 ${REASON}`))
+  expect(shown).not.toContain(flat('重新驗收'))
+})
+
+/** AC-1（審查 HIGH）：別的對話開的流程審查只剩要修的 MEDIUM、額度不足：這個對話接手並暫停（記 MEDIUM 數、寫原因）；額度恢復後不自己派修正。 */
+test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_threshold — taking over a foreign chain pauses it', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const notified = capture(on)
+  data.agents = []
+  data.files[REGISTRY] = registry([['Alpha', CARD_A]])
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  setGate(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；空字串沒處理')
+  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理'
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1', files: ['src/a.ts'] }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.store.verifies = { [CARD_A]: { ...ok('h1'), command: 'node test.mjs' } }
+  data.store.chains = { [ALPHA]: { owner: 'other-session', startedAt: 0, round: 1, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
+  data.store.jobs = { [ALPHA]: { ...lastJob('review'), last: { ...lastJob('review').last, owner: 'other-session' } } }
+  startsAgents(data, clock)
+  quota(data, 75)
+  const h = helpers($, data, clock)
+
+  await h.refresh()
+  await h.step()
+  const ui = await $.ui.mount(PANE(160))
+  const shown = await h.screen(ui)
+  await ui.unmount()
+
+  expect(data.launches).toHaveLength(0)
+  const chain = (data.store.chains as any)[ALPHA]
+  expect(chain.owner).toBe(ME)
+  expect(chain.stopped).toBe(REASON)
+  expect(chain.mediumFix).toBe(1)
+  expect(log.has('Alpha 接手別的對話開的流程：審查只剩 MEDIUM 1 條要修，額度不足，流程暫停')).toBe(true)
+  expect(notified).toContain(`Alpha：流程已暫停，${REASON}`)
+  expect(shown).toContain(flat(`輪到你 ${REASON}`))
+  expect(shown).not.toContain('開PR')
+
+  // 額度恢復：不自己接著派修正（要你按 g 重開）
+  quota(data, 10)
+  for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
+  expect(data.launches).toHaveLength(0)
+})
+
+/** 審查 MEDIUM：擋在派驗收前、按 g 重開：派出的不是「修正」，提示說程式不用改、跑完成檢查寫回卡片，也不帶寫給人看的「按 g 重開」。 */
+test('test_manual_dispatch_ignores_quota_threshold — g after a hold before review sends nothing to fix', async ($, on) => {
+  const { data, clock } = fixture(on)
+  betaImplemented(data, clock)
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 下一步：依審核修正', '- 下一步：等驗收')
+  quota(data, 75)
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.step()
+  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  await ui.unmount()
+
+  expect(data.launches).toHaveLength(1)
+  const prompt = String(data.launches[0].argv.at(-1))
+  expect(prompt.startsWith(QUOTA_NOTHING_TO_FIX)).toBe(true)
+  expect(prompt).not.toContain('按 g 重開')
+  expect(prompt).not.toMatch(/^修正/)
+})
+
+/** 審查 MEDIUM：隊伍裡自動排的推送輪到時額度不足：移出不派，流程仍是過關（不暫停），動態寫原因與要推按哪個鈕。 */
+test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — queued auto push leaves the chain passed', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  data.gh = []
+  data.files[REGISTRY] = registry([['Beta', CARD_B]])
+  setGate(data, CARD_B, 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可合併')
+  data.git[BETA] = { branch: 'feature/b', head: 'c2', remote: 'git@github.com:acme/shop.git', upstream: false }
+  data.store.trustedVerify = { [CARD_B]: 'npm test' }
+  data.store.verifies = { [CARD_B]: ok('c2') }
+  data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b' } }
+  data.store.jobs = { [BETA]: lastJob('review') }
+  data.files[PROJECT_SETTINGS] = JSON.stringify({ autoPr: true })
+  data.agents = FULL()
+  startsAgents(data, clock)
+  const h = helpers($, data, clock)
+
+  await h.refresh()
+  await h.step()
+  expect(log.has('Beta 自動派推送排隊中（第 1 位）')).toBe(true)
+  expect(data.launches).toHaveLength(0)
+
+  quota(data, 75)
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  await h.refresh()
+
+  expect(data.launches).toHaveLength(0)
+  const chain = (data.store.chains as any)[BETA]
+  expect(chain.passed).toBe(true)
+  expect(chain.stopped).toBeUndefined()
+  expect(log.has('Beta 排隊的推送沒有派出：5 小時額度剩 25%，低於門檻 30%，要推請按 ⇡ 開 PR')).toBe(true)
 })

@@ -6,6 +6,8 @@ import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, s
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
 import { isDeskLaunch } from './dispatch'
+import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
+import type { Limit } from './quota-words'
 import type { JobRecord } from './dispatch'
 
 /** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
@@ -212,9 +214,8 @@ export function resetText(iso: string | undefined, now: number, short = false): 
   return `${day ? `${day} ` : ''}${hhmm(t)} 重置`
 }
 
-export const LIMIT_NAME: Record<string, string> = { five_hour: '5 小時', seven_day: '本週' }
-
-export type Limit = { kind: string; remaining: number; resetsAt?: string }
+export { LIMIT_NAME, QUOTA_RESTART, QUOTA_RESTART_CATCHUP, isQuotaHold, quotaHeld, quotaLowOf } from './quota-words'
+export type { Limit } from './quota-words'
 
 /**
  * 5 小時額度剩餘（四捨五入，跟面板 header 一樣）低於門檻時的說明「5 小時額度剩 25%，低於門檻 30%」；否則空字串。
@@ -226,14 +227,6 @@ export function quotaLow(limits: readonly Limit[] | undefined, threshold: number
   const left = Math.max(0, Math.min(100, Math.round(five.remaining)))
   return left < threshold ? `${LIMIT_NAME.five_hour}額度剩 ${left}%，低於門檻 ${threshold}%` : ''
 }
-
-/** 額度煞車的暫停原因結尾；面板「輪到你」認這個結尾，照原句顯示（不再接「看審查檔後按 g 再修一輪」）。 */
-export const QUOTA_RESTART = '後按 g 重開'
-/** 合併段的解衝突被擋下時的結尾：合併段沒有 g 可按，叫你在對話處理。 */
-export const QUOTA_RESTART_CATCHUP = '後在對話合併基準分支、解衝突'
-export const isQuotaHold = (why: string | undefined): boolean => !!why && why.startsWith(`${LIMIT_NAME.five_hour}額度剩 `) && (why.endsWith(QUOTA_RESTART) || why.endsWith(QUOTA_RESTART_CATCHUP))
-/** 額度煞車原因的前半「5 小時額度剩 25%，低於門檻 30%」（不含重置時間與按 g）；不是額度煞車回空字串。 */
-export const quotaLowOf = (why: string | undefined): string => isQuotaHold(why) ? why!.split('，').slice(0, 2).join('，') : ''
 
 /**
  * 自動流程的額度煞車：額度低於門檻（quotaLow）時的暫停原因，接著寫重置時間（面板 header 同一種寫法）與接下來要做什麼
@@ -388,7 +381,8 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
   // 排隊中的修正才不會被當成「Agent 仍在執行」丟掉。
   if (verdict) {
     if (running) return 'running'
-    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 ? 'failed' : 'ready'
+    // 額度煞車擋在過關前（例如要派資安審查、重新審查時）：卡片上的結論沒擋，但流程還沒走完，算 failed（按 g 重開）。
+    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 || quotaHeld(c.chain) ? 'failed' : 'ready'
     return blocking(verdict) > 0 ? 'running' : 'ready'
   }
   if (parseGate(c.gate)) return 'gate'
