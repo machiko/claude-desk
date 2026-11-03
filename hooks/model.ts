@@ -229,16 +229,21 @@ export function quotaLow(limits: readonly Limit[] | undefined, threshold: number
 
 /** 額度煞車的暫停原因結尾；面板「輪到你」認這個結尾，照原句顯示（不再接「看審查檔後按 g 再修一輪」）。 */
 export const QUOTA_RESTART = '後按 g 重開'
-export const isQuotaHold = (why: string | undefined): boolean => !!why && why.startsWith(`${LIMIT_NAME.five_hour}額度剩 `) && why.endsWith(QUOTA_RESTART)
+/** 合併段的解衝突被擋下時的結尾：合併段沒有 g 可按，叫你在對話處理。 */
+export const QUOTA_RESTART_CATCHUP = '後在對話合併基準分支、解衝突'
+export const isQuotaHold = (why: string | undefined): boolean => !!why && why.startsWith(`${LIMIT_NAME.five_hour}額度剩 `) && (why.endsWith(QUOTA_RESTART) || why.endsWith(QUOTA_RESTART_CATCHUP))
 /** 額度煞車原因的前半「5 小時額度剩 25%，低於門檻 30%」（不含重置時間與按 g）；不是額度煞車回空字串。 */
 export const quotaLowOf = (why: string | undefined): string => isQuotaHold(why) ? why!.split('，').slice(0, 2).join('，') : ''
 
-/** 自動流程的額度煞車：額度低於門檻（quotaLow）時的暫停原因，接著寫重置時間（面板 header 同一種寫法）與按 g 重開；否則空字串。 */
-export function quotaHold(limits: readonly Limit[] | undefined, threshold: number, now: number): string {
+/**
+ * 自動流程的額度煞車：額度低於門檻（quotaLow）時的暫停原因，接著寫重置時間（面板 header 同一種寫法）與接下來要做什麼
+ * （預設按 g 重開；解衝突被擋下時傳 QUOTA_RESTART_CATCHUP，叫你在對話處理）；否則空字串。
+ */
+export function quotaHold(limits: readonly Limit[] | undefined, threshold: number, now: number, restart: string = QUOTA_RESTART): string {
   const low = quotaLow(limits, threshold)
   if (!low) return ''
   const five = limits!.find(l => l.kind === 'five_hour')!
-  return `${low}，${resetText(five.resetsAt, now) || '重置'}${QUOTA_RESTART}`
+  return `${low}，${resetText(five.resetsAt, now) || '重置'}${restart}`
 }
 
 export function rawAgents(json: string): any[] {

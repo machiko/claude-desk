@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { parseRegistry, saysNone } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText, quotaHold, quotaLow } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText, quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
 import { archiveReview, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
@@ -416,8 +416,9 @@ async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRu
   if (!conflict || run.owner !== mine || !run.passed || c.chain?.stale || catchupHold(c) || !saysNone(c.ask) || !c.git) return false
   if (agentBusy || c.agent?.asks || c.statusPath in (await read($, verifyingAtom)) || verifyPending(c.statusPath) || isAgentQueued(c.statusPath) || await starting($, c.statusPath)) return false
   if (tutorial || (await worktreeMark($, c.root)).files) return false
-  // 額度煞車：額度低於門檻不派解衝突，流程停下寫原因（停過之後 catchupHold 回額度原因，不會再來；合併段沒有 g，「輪到你」叫你在對話解衝突）。
-  const hold = quotaHold(limits, (await loadSettings($, options)).chainQuotaStop, at)
+  // 額度煞車：額度低於門檻不派解衝突，流程停下寫原因（停過之後 catchupHold 回額度原因，不會再來）。合併段沒有 g 可按，
+  // 原因句的結尾改成叫你在對話合併基準分支、解衝突，「輪到你」也照這句。
+  const hold = quotaHold(limits, (await loadSettings($, options)).chainQuotaStop, at, QUOTA_RESTART_CATCHUP)
   if (hold) {
     await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, hold) : r)
     await feedPush($, [{ at, text: `${c.name} 流程已暫停：${hold}`, tone: 'error', card: c.statusPath }])

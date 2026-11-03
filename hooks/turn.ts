@@ -1,7 +1,7 @@
 // 輪到誰、該做什麼：依六段與任務狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case, SentRecord } from '../types'
-import { agentWaits, approvalWait, approveText, isQuotaHold, slugOf } from './model'
+import { agentWaits, approvalWait, approveText, isQuotaHold, QUOTA_RESTART, slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
@@ -159,8 +159,8 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
   // Agent 被停掉：原因本身就說了要做什麼，不是修一輪。
   if (c.state === 'failed' && c.chain?.stopped === AGENT_STOPPED) return { who: 'you', text: AGENT_STOPPED, key: 'g' }
-  // 額度煞車：原因已寫了額度、重置時間與按 g 重開，照原句。
-  if (c.state === 'failed' && isQuotaHold(c.chain?.stopped)) return { who: 'you', text: c.chain!.stopped!, key: 'g' }
+  // 額度煞車：原因已寫了額度、重置時間與接下來要做什麼，照原句；只有「按 g 重開」那種才標 g（解衝突被擋的叫你在對話處理）。
+  if (c.state === 'failed' && isQuotaHold(c.chain?.stopped)) return { who: 'you', text: c.chain!.stopped!, ...(c.chain!.stopped!.endsWith(QUOTA_RESTART) ? { key: 'g' as const } : {}) }
   if (c.state === 'failed') return c.chain?.stopped
     ? { who: 'you', text: `流程已暫停（${c.chain.stopped}）：看審查檔（e）後按 g 再修一輪`, key: 'g' }
     : { who: 'you', text: '測試未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', key: 'g' }

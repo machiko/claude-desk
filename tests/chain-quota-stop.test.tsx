@@ -14,6 +14,8 @@ const ME = 'fixture-session'
 const RESETS_AT = new Date(NOW + 2.5 * 3_600_000).toISOString()
 /** 預設門檻、剩 25% 時的原因句（重置時間跟面板 header 同一種寫法）。 */
 const REASON = `5 小時額度剩 25%，低於門檻 30%，${resetText(RESETS_AT, NOW)}後按 g 重開`
+/** 解衝突被擋下：合併段沒有 g 可按，結尾改成叫你在對話處理。 */
+const CATCHUP_REASON = `5 小時額度剩 25%，低於門檻 30%，${resetText(RESETS_AT, NOW)}後在對話合併基準分支、解衝突`
 
 const busy = (name: string, cwd: string) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 })
 const FULL = () => [busy('desk-m0-0', '/home/u/other/one'), busy('desk-m0-1', '/home/u/other/two'), busy('desk-m0-2', '/home/u/other/three')]
@@ -186,8 +188,8 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   await ui.unmount()
 
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
-  expect(log.list.filter(e => e.text === `Beta 流程已暫停：${REASON}`)).toHaveLength(1)
+  expect((data.store.chains as any)[BETA].stopped).toBe(CATCHUP_REASON)
+  expect(log.list.filter(e => e.text === `Beta 流程已暫停：${CATCHUP_REASON}`)).toHaveLength(1)
   // 合併段沒有 g 可按：「輪到你」照既有說法叫你在對話解衝突，括號寫額度原因
   expect(shown).toContain(flat('輪到你 與 main 有衝突：在對話把 main 合併進來、解衝突並 commit（5 小時額度剩 25%，低於門檻 30%）'))
 })
