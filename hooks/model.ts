@@ -219,11 +219,14 @@ export type { Limit } from './quota-words'
 
 /**
  * 5 小時額度剩餘（四捨五入，跟面板 header 一樣）低於門檻時的說明「5 小時額度剩 25%，低於門檻 30%」；否則空字串。
- * 剛好等於門檻不算；門檻 0（關掉）、沒有 five_hour 那條（讀不到額度）都回空字串，不當成額度不足。
+ * 剛好等於門檻不算；門檻 0（關掉）、沒有 five_hour 那條（讀不到額度）、重置時間已過（舊資料）都回空字串，不當成額度不足。
  */
-export function quotaLow(limits: readonly Limit[] | undefined, threshold: number): string {
+export function quotaLow(limits: readonly Limit[] | undefined, threshold: number, now: number): string {
   const five = threshold > 0 ? (limits ?? []).find(l => l.kind === 'five_hour') : undefined
   if (!five || !Number.isFinite(five.remaining)) return ''
+  // 重置時間已經過了：那是重置前的舊用量，等於讀不到現在的額度，不擋。
+  const resets = five.resetsAt ? Date.parse(five.resetsAt) : NaN
+  if (Number.isFinite(resets) && resets <= now) return ''
   const left = Math.max(0, Math.min(100, Math.round(five.remaining)))
   return left < threshold ? `${LIMIT_NAME.five_hour}額度剩 ${left}%，低於門檻 ${threshold}%` : ''
 }
@@ -233,7 +236,7 @@ export function quotaLow(limits: readonly Limit[] | undefined, threshold: number
  * （預設按 g 重開；解衝突被擋下時傳 QUOTA_RESTART_CATCHUP，叫你在對話處理）；否則空字串。
  */
 export function quotaHold(limits: readonly Limit[] | undefined, threshold: number, now: number, restart: string = QUOTA_RESTART): string {
-  const low = quotaLow(limits, threshold)
+  const low = quotaLow(limits, threshold, now)
   if (!low) return ''
   const five = limits!.find(l => l.kind === 'five_hour')!
   return `${low}，${resetText(five.resetsAt, now) || '重置'}${restart}`

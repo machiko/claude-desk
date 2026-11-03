@@ -388,7 +388,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       const pr = auto ? await prProbe($, options, c.root, c.git!.branch, s.at, true) : undefined
       const prPlan: AutoPrPlan | undefined = auto ? autoPrPlan({ ...c, pr }) : undefined
       // 額度煞車：要派推送前額度低於門檻就不派（流程照樣是過關），動態與提示寫原因。
-      const low = prPlan && prPlan.kind !== 'skip' ? quotaLow(s.limits, (settings ?? await loadSettings($, options)).chainQuotaStop) : ''
+      const low = prPlan && prPlan.kind !== 'skip' ? quotaLow(s.limits, (settings ?? await loadSettings($, options)).chainQuotaStop, s.at) : ''
       const plan: AutoPrPlan | undefined = low && prPlan ? { kind: 'skip', why: `${low}，沒有自動派推送；要推請按 ${prPlan.kind === 'open' ? '⇡ 開 PR' : '⇡ push'}` } : prPlan
       const words = passWords(c.name, plan, step.skipped)
       const text = step.needsHuman ? `${c.name} ${step.needsHuman}` : words.feed
@@ -423,7 +423,10 @@ async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRu
   // 原因句的結尾改成叫你在對話合併基準分支、解衝突，「輪到你」也照這句。
   const hold = quotaHold(limits, (await loadSettings($, options)).chainQuotaStop, at, QUOTA_RESTART_CATCHUP)
   if (hold) {
-    await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, hold) : r)
+    // 快照是這輪重新整理開始時的：同一輪隊伍可能已經把這件停下了（排隊的解衝突被擋），那邊已經通知過，這裡只在真的停下時才說。
+    let stopped = false
+    await saveChain($, normalizeRoot(c.root), r => { if (!r || r.owner !== mine || r.stopped) return r; stopped = true; return paused(r, hold) })
+    if (!stopped) return true
     await feedPush($, [{ at, text: `${c.name} 流程已暫停：${hold}`, tone: 'error', card: c.statusPath }])
     $.ui.toast(`${c.name}：流程已暫停，${hold}`, { timeoutMs: 10_000 })
     notify($, `${c.name}：流程已暫停，${hold}`)

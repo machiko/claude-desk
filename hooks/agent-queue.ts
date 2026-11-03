@@ -9,7 +9,7 @@ import type { DispatchKind, QueueEntry, QueueOpts, RawAgent } from './dispatch'
 import { paused } from './chain'
 import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
 import { loadSettings, worktreeMark } from './probes'
-import { quotaHold, quotaLow } from './model'
+import { QUOTA_RESTART_CATCHUP, quotaHold, quotaLow } from './model'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, notify, restage, verifyPending } from './register'
 
@@ -118,6 +118,14 @@ function queuedOpts(c: Case, entry: QueueEntry): QueueEntry['opts'] {
 }
 
 /**
+ * 排隊的自動項目被額度煞車擋下的原因：推送寫要推請按哪個鈕（不暫停流程）；解衝突照直接派被擋時的結尾（合併段沒有 g，在對話處理）；其他按 g 重開。
+ */
+function queuedHold(entry: QueueEntry, c: Case | undefined, s: Snapshot, threshold: number): string {
+  if (entry.kind === 'publish') return `${quotaLow(s.limits, threshold, s.at)}，要推請按 ${c?.pr?.state === 'OPEN' ? '⇡ push' : '⇡ 開 PR'}`
+  return quotaHold(s.limits, threshold, s.at, entry.kind === 'catchup' ? QUOTA_RESTART_CATCHUP : undefined)
+}
+
+/**
  * 有空位就照順序派出排隊的：用這一輪重新整理的清單與快照算名額，每派出一件就重算，直到滿或隊伍空。
  * 輪到的那件現在不能派就移出並說原因；完成檢查正在跑或在檢查隊伍裡就先跳過、留在原位。回傳有沒有派出任何一件。
  */
@@ -126,7 +134,7 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
   const settings = await loadSettings($, options)
   const max = settings.maxAgents
   // 額度煞車：自動流程排的（含自動推送）輪到時額度低於門檻就不派；你手動排的不看額度。
-  const hold = quotaHold(s.limits, settings.chainQuotaStop, s.at)
+  const low = quotaLow(s.limits, settings.chainQuotaStop, s.at)
   const chains = await loadChains($)
   const mine = await me($)
   const trusted = await trustedChecks($)
@@ -138,7 +146,7 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     const why = !c ? '任務已不在登錄表' : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
     if (why) { await drop($, entry, c, why, s.at, mine); continue }
     // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開，改寫要推請按哪個鈕（跟過關時直接派被擋的說法一樣）。
-    if (hold && entry.opts.auto) { await drop($, entry, c, entry.kind === 'publish' ? `${quotaLow(s.limits, settings.chainQuotaStop)}，要推請按 ${c?.pr?.state === 'OPEN' ? '⇡ push' : '⇡ 開 PR'}` : hold, s.at, mine, true); continue }
+    if (low && entry.opts.auto) { await drop($, entry, c, queuedHold(entry, c, s, settings.chainQuotaStop), s.at, mine, true); continue }
     if (verifyPending(entry.statusPath)) continue
     const foreign = await foreignChanges($, c!, entry)
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }

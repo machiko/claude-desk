@@ -531,3 +531,59 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — que
   expect(chain.stopped).toBeUndefined()
   expect(log.has('Beta 排隊的推送沒有派出：5 小時額度剩 25%，低於門檻 30%，要推請按 ⇡ 開 PR')).toBe(true)
 })
+
+/**
+ * AC-3 × AC-1（審查 HIGH）：名額滿時自動解衝突排進隊伍，排隊期間額度跌到 25%，空出名額：移出不派，
+ * 流程停在解衝突的原因句（在對話合併基準分支、解衝突，不叫你按 g）；動態、toast、系統通知各一次。
+ */
+test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — queued conflict agent says it once', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const notified = capture(on)
+  data.gh = [{ number: 12, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }]
+  data.files[REGISTRY] = registry([['Beta', CARD_B]])
+  data.files[CARD_B] = '<!-- DESK -->\n- 狀態：Beta 過關\n- 驗證：`npm test`\n- 等你：無\n- 下一步：合併\n- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1；可合併\n<!-- /DESK -->'
+  data.git[BETA] = { branch: 'feature/b', head: 'h1', remote: 'git@github.com:acme/shop.git', releases: '', conflicts: ['src/a.ts', 'src/b.ts'] }
+  data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/b', judgedHead: 'h1', judgedBranch: 'feature/b' } }
+  data.store.verifies = { [CARD_B]: ok('h1') }
+  data.store.jobs = { [BETA]: lastJob('review', { handled: true }) }
+  data.store.trustedVerify = { [CARD_B]: 'npm test' }
+  data.agents = FULL()
+  startsAgents(data, clock)
+  const h = helpers($, data, clock)
+
+  for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
+  expect(log.has('Beta 自動派解衝突排隊中（第 1 位）')).toBe(true)
+  expect(data.launches).toHaveLength(0)
+
+  quota(data, 75)
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  for (let i = 0; i < 3; i++) { await h.refresh(); await h.step() }
+
+  expect(data.launches).toHaveLength(0)
+  expect((data.store.chains as any)[BETA].stopped).toBe(CATCHUP_REASON)
+  expect(log.list.filter(e => e.text.includes(CATCHUP_REASON))).toHaveLength(1)
+  expect(log.has(`Beta 排隊的解衝突沒有派出：${CATCHUP_REASON}`)).toBe(true)
+  expect(data.toasts.filter((t: string) => t.includes('流程已暫停'))).toEqual([`Beta：流程已暫停，${CATCHUP_REASON}`])
+  expect(notified.filter(t => t.includes('流程已暫停'))).toEqual([`Beta：流程已暫停，${CATCHUP_REASON}`])
+  expect([...log.list.map(e => e.text), ...data.toasts, ...notified].some(t => t.includes('按 g 重開'))).toBe(false)
+})
+
+/** AC-5（審查 MEDIUM）：5 小時額度的重置時間已經過了（usage 還是重置前的用量）：當成讀不到現在的額度，照常派審查。 */
+test('test_auto_chain_dispatches_when_quota_unknown_or_threshold_invalid — reset time already passed', async ($, on) => {
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW - 3_600_000).toISOString() }], 30, NOW)).toBe('')
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW).toISOString() }], 30, NOW)).toBe('')
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW + 60_000).toISOString() }], 30, NOW)).not.toBe('')
+
+  const { data, clock } = fixture(on)
+  betaImplemented(data, clock)
+  data.usage = { ...data.usage, rateLimits: [{ kind: 'five_hour', percentUsed: 75, resetsAt: new Date(NOW - 3_600_000).toISOString() }] }
+  const h = helpers($, data, clock)
+
+  await h.refresh()
+  await h.step()
+
+  expect(data.launches).toHaveLength(1)
+  expect(String(data.launches[0].argv.at(-1))).toContain('程式碼審查')
+  expect((data.store.chains as any)[BETA].stopped).toBeUndefined()
+})
