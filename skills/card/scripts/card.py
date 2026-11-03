@@ -820,7 +820,8 @@ def module_git_dirs(gitdir):
 def submodule_reason(root):
     """--force 會刪掉這個 worktree 的 git 目錄，連同底下 modules/ 裡每個 submodule 的 git 目錄（worktree 裡 submodule 的 commit、
     分支與 stash 只存在那裡），也跳過 git 自己的乾淨檢查。所以先逐一（遞迴）看已 checkout 的 submodule：沒有未提交的改動、
-    沒有被忽略的本機設定或資料、HEAD 與本機分支都在它的遠端分支上、沒有 stash；modules/ 底下還有沒 checkout 的（deinit 過）
+    沒有被忽略的本機設定或資料、沒有 stash、所有 ref（HEAD、本機分支、tag）指的 commit 都在它的遠端分支上（不逐一列舉要查哪些
+    ref，免得再漏一種；代價是上游有不在任何分支上的 tag 時會多保留）；modules/ 底下還有沒 checkout 的（deinit 過）
     就確認不了，一律保留。回傳 (保留原因, 一起刪掉的被忽略項目)；保留原因是空字串代表可以 --force。"""
     r = git('-C', root, 'submodule', '--quiet', 'foreach', '--recursive', 'echo "$displaypath"')
     gitdir = git('-C', root, 'rev-parse', '--absolute-git-dir')
@@ -838,11 +839,11 @@ def submodule_reason(root):
         local, rest = ignored
         if local:
             return f'submodule {sub} 有被 git 忽略的本機設定或資料（{shown([f"{sub}/{x}" for x in local])}）', []
-        unpushed = git('-C', path, 'rev-list', '-n1', 'HEAD', '--branches', '--not', '--remotes')
-        if unpushed.returncode != 0 or unpushed.stdout.strip():
-            return f'submodule {sub} 有沒推上去的 commit（HEAD 或本機分支不在它的遠端分支上）', []
         if git('-C', path, 'rev-parse', '-q', '--verify', 'refs/stash').returncode == 0:
             return f'submodule {sub} 有 stash（git stash list）', []
+        unpushed = git('-C', path, 'rev-list', '-n1', '--all', '--not', '--remotes')
+        if unpushed.returncode != 0 or unpushed.stdout.strip():
+            return f'submodule {sub} 有沒推上去的 commit（HEAD、本機分支或 tag 不在它的遠端分支上）', []
         seen.add(os.path.realpath(git('-C', path, 'rev-parse', '--absolute-git-dir').stdout.strip()))
         other.extend(f'{sub}/{x}' for x in rest)
     base = os.path.join(gitdir.stdout.strip(), 'modules')

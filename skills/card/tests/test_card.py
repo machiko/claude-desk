@@ -878,6 +878,35 @@ class CardScriptTest(unittest.TestCase):
         self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
         self.assertEqual(git_out('rev-parse', 'work', cwd=sub), commit)
 
+    def test_archive_cleanup_keeps_worktree_when_submodule_tag_points_at_unpushed_commit(self):
+        """submodule 裡對沒推的 commit 打了本機 tag，分支刪掉、HEAD 切回已推的 commit：commit 只剩 tag 指著，
+        仍只存在這個 worktree 的 submodule git 目錄，不升級到 --force（查所有 ref，不逐一列舉）。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        sub, commit = self.commit_in_submodule_branch(wt)
+        git('tag', 'v-local', cwd=sub)
+        git('checkout', '-q', '--detach', 'HEAD~1', cwd=sub)
+        git('branch', '-q', '-D', 'work', cwd=sub)
+        self.assertEqual(git_out('status', '--porcelain', '--ignore-submodules=none', cwd=wt), '')
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assert_kept_with_submodule(r, wt, 'submodule knowledge 有沒推上去的 commit')
+        self.assertEqual(git_out('rev-parse', 'v-local^{commit}', cwd=sub), commit)
+
+    def test_archive_cleanup_still_forces_when_submodule_tag_points_at_pushed_commit(self):
+        """submodule 裡的 tag 指著已經在遠端分支上的 commit：沒有東西會跟著 --force 消失，照常移除。"""
+        self.add_submodule()
+        wt = self.open_case_with_submodule(merged=True)
+        sub = os.path.join(wt, 'knowledge')
+        git('tag', 'v-pushed', cwd=sub)
+
+        r = self.run_card('archive', 'beta', '--cleanup', cwd=self.main)
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(wt))
+        self.assertIn('含 submodule，以 --force 移除（已先確認乾淨）', r.stdout)
+
     def test_archive_cleanup_keeps_worktree_when_submodule_has_stash(self):
         """submodule 裡 git stash 存起來的改動：工作目錄是乾淨的，但 stash 只存在這個 worktree 的 submodule git 目錄，不升級到 --force。"""
         self.add_submodule()
