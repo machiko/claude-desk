@@ -18,6 +18,7 @@ import type { AutoPrPlan } from './auto-pr'
 import { feedPush, loadChains, loadJobs, me, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
 import { markRefusal } from './worktree-mark'
 import { isAgentQueued } from './agent-queue'
+import { alreadyQueued } from './dispatch-runner'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
 import { trustCheck } from './approve-check'
@@ -47,12 +48,18 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
     $.ui.toast(text, { timeoutMs: 10_000 })
     return text
   }
+  // 同一件已經有一筆排著（例如被擋下後名額滿、你按了 s 或 w）：跟手動派工一樣只說已在隊伍，流程紀錄不動（額度暫停與記下的那步留著）。
+  if (isAgentQueued(c.statusPath)) {
+    const text = alreadyQueued(c)
+    $.ui.toast(text)
+    return text
+  }
   const reason = run.stopped
   const mine = await me($)
   await saveChain($, key, r => { if (!r) return r; const { stopped: _s, resume: _r, ...rest } = r; return { ...rest, owner: mine, round: resume.round } })
   const sent = await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, resumed: true, ...(resume.security ? { security: true } : {}) })
-  // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗）：流程照原本的原因停著，下次 g 再來。
-  if (!sent && !isAgentQueued(c.statusPath)) {
+  // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗；排進隊伍 dispatch 回 true）：流程照原本的原因停著，下次 g 再來。
+  if (!sent) {
     await saveChain($, key, r => r ? paused(r, reason, false, resume) : r)
     return `${c.name}：${what}沒有派出，流程照原本的原因停著`
   }

@@ -740,3 +740,32 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — que
   expect(prompt).toContain('程式碼審查')
   expect(prompt).not.toContain(QUOTA_NOTHING_TO_FIX)
 })
+
+/** AC-4（複審 MEDIUM）：擋下後名額滿、你派的同步已排著：/desk go 跟手動派工一樣只回「已在派工隊伍」，額度暫停與記下的那步都留著，空出名額派的是同步。 */
+test('test_manual_dispatch_ignores_quota_threshold — /desk go resume while the card is already queued keeps the hold', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  await heldBeforeReview($, data, clock, h)
+  data.agents = FULL()
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'sync Beta' } as any)
+  await clock.settle()
+  expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
+
+  const go = await $.command.run({ command: 'desk', args: 'go Beta' } as any)
+  await clock.settle()
+
+  expect(String((go as any)?.text)).toBe('Beta：已在派工隊伍（第 1 位），k 取消排隊')
+  expect(data.launches).toHaveLength(0)
+  const chain = (data.store.chains as any)[BETA]
+  expect(chain.stopped).toBe(REASON)
+  expect(chain.resume).toEqual({ dispatch: 'review', round: 0 })
+  expect(chain.owner).toBe(ME)
+
+  // 空出名額：派出的是排著的同步，不是驗收；流程仍停在額度原因
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(String(data.launches[0].argv.at(-1))).not.toContain('程式碼審查')
+  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+})
