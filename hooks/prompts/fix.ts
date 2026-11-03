@@ -4,6 +4,7 @@ import { AGENT_STOPPED } from '../chain'
 import type { FixReason } from '../dispatch'
 import { parseVerdict, toFix } from '../pipeline'
 import { REVIEW_FILE, SECURITY_FILE } from './review'
+import { isQuotaHold } from '../quota-words'
 
 /** 要改規格才能修的 MEDIUM：不改，交給你決定。修正提示共用。 */
 const MEDIUM_DECIDE = `要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。`
@@ -28,9 +29,22 @@ export function manualFixHead(c: Case, ci: boolean): string {
   if (ci) return `修正：PR #${c.pr!.id} 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。`
   const stopped = c.chain?.stopped
   if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
+  // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
+  if (isQuotaHold(stopped)) return quotaRestartHead(c)
   if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_DECIDE}），commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
   // 審查結論還要修（CRITICAL＋HIGH，加上流程這輪要修的 MEDIUM）：檢查是過的，依審查檔修。
   const verdict = parseVerdict(c.gate)
   if (verdict && toFix(c, verdict) > 0) return `修正：${reviewFixStep(REVIEW_FILE)}`
   return `修正：完成檢查 \`${c.verify}\` 未通過。先自己跑一次看失敗原因，修到完成檢查綠，commit 後寫回卡片。`
+}
+
+/** 額度煞車擋在派驗收前、沒有東西要修時，按 g 重開派出去的開頭：不改程式，跑完成檢查、寫回卡片就結束，流程接著自動檢查與驗收。 */
+export const QUOTA_NOTHING_TO_FIX = '接續：流程先前因額度不足停在派驗收前，程式不用改。先看 git status 與卡片歷程，有沒 commit 的改動就收尾 commit；跑一次完成檢查確認綠，狀態寫一句、下一步寫等驗收後結束（不要自己派審查）。'
+
+/** 按 g 重開被額度煞車擋下的流程：審查結論還要修就依審查檔修；停在檢查段（檢查沒過）就修到綠；其他（擋在派驗收、資安審查前）沒有東西要修。 */
+function quotaRestartHead(c: Case): string {
+  const verdict = parseVerdict(c.gate)
+  if (verdict && toFix(c, verdict) > 0) return `修正：${reviewFixStep(REVIEW_FILE)}`
+  if (c.pipeline?.current !== 'review') return `修正：完成檢查 \`${c.verify}\` 未通過。先自己跑一次看失敗原因，修到完成檢查綠，commit 後寫回卡片。`
+  return QUOTA_NOTHING_TO_FIX
 }

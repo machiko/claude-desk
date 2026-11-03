@@ -7,23 +7,65 @@ import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
 import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
-import { errorLine, reasonLine, slugOf } from './model'
-import { baseRefs, deskPaths, lastLine, loadSettings, originRemote } from './probes'
-import { afterSpecRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, replyRefusal } from './dispatch'
+import { errorLine, quotaHeld, reasonLine, slugOf } from './model'
+import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
+import { afterSpecRefusal, dispatchRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, replyRefusal } from './dispatch'
 import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, paused } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
 import type { AutoPrPlan } from './auto-pr'
-import { feedPush, loadJobs, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
+import { feedPush, loadChains, loadJobs, me, missingRegistry, openWith, saveChain, tellPanel } from './desk-io'
+import { markRefusal } from './worktree-mark'
+import { isAgentQueued } from './agent-queue'
+import { alreadyQueued } from './dispatch-runner'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
 import { trustCheck } from './approve-check'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 
 export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
+
 const picksAtom = atom({ plugin: 'desk', key: 'picks' } as const, {})
 const snapshotAtom = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
+
+/**
+ * 額度煞車擋在派審查（或資安審查）前、你按 g（或 /desk go）重開：直接派那次審查接續原本那輪，不多派一個實作 Agent。
+ * 擋在派修正前的不走這裡（照舊按 g 派修正）；沒有記到被擋的那步（舊紀錄）也不走，回 null。
+ * 這是你手動派的：先過手動派審查的拒絕檢查（Agent 在跑、已經合併、規格還擋著、手動任務）與 worktree 檢查；
+ * 流程改成這個對話的（別的對話開的也一樣，跟手動按 g 開新的一輪相同）；排隊時不看額度（resumed）。
+ * 回傳給 /desk go 的一句話（派出、排隊、拒絕或沒派出）。
+ */
+export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): Promise<string | null> {
+  const key = normalizeRoot(c.root)
+  const run = (await loadChains($))[key]
+  const resume = run?.resume
+  if (!quotaHeld(c.chain) || !run?.stopped || !resume || resume.dispatch !== 'review') return null
+  const what = resume.security ? '資安審查' : '驗收'
+  const refusal = dispatchRefusal(c, 'review') || (tutorial ? '' : markRefusal(await worktreeMark($, c.root), (await loadJobs($))[key]))
+  if (refusal) {
+    const text = `${c.name}：目前無法${what}（${refusal}）`
+    $.ui.toast(text, { timeoutMs: 10_000 })
+    return text
+  }
+  // 同一件已經有一筆排著（例如被擋下後名額滿、你按了 s 或 w）：跟手動派工一樣只說已在隊伍，流程紀錄不動（額度暫停與記下的那步留著）。
+  if (isAgentQueued(c.statusPath)) {
+    const text = alreadyQueued(c)
+    $.ui.toast(text)
+    return text
+  }
+  const reason = run.stopped
+  const mine = await me($)
+  await saveChain($, key, r => { if (!r) return r; const { stopped: _s, resume: _r, ...rest } = r; return { ...rest, owner: mine, round: resume.round } })
+  const sent = await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, resumed: true, ...(resume.security ? { security: true } : {}) })
+  // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗；排進隊伍 dispatch 回 true）：流程照原本的原因停著，下次 g 再來。
+  if (!sent) {
+    await saveChain($, key, r => r ? paused(r, reason, false, resume) : r)
+    return `${c.name}：${what}沒有派出，流程照原本的原因停著`
+  }
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 額度煞車後按 g 重開：直接派${what}，不多派實作`, tone: 'suggestion', card: c.statusPath }])
+  return isAgentQueued(c.statusPath) ? `${c.name}：額度煞車後接續，${what}排隊中。` : `${c.name}：額度煞車後接續，已派${what}。`
+}
 
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 export async function reply($: any, options: PluginOptions, c: Case, text?: string) {

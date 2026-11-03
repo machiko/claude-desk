@@ -6,6 +6,8 @@ import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, s
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
 import { isDeskLaunch } from './dispatch'
+import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
+import type { Limit } from './quota-words'
 import type { JobRecord } from './dispatch'
 
 /** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
@@ -196,6 +198,50 @@ export const hhmm = (t: number) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+/** 重置時間：今天只寫時分，明天寫「明天」，7 天內寫星期，更遠寫日期；short 只留哪一天（今天、明天、週三、1/12）。 */
+const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
+const DAY_MS = 86_400_000
+const WEEK_DAYS = 7
+export function resetText(iso: string | undefined, now: number, short = false): string {
+  const t = iso ? Date.parse(iso) : NaN
+  if (!Number.isFinite(t)) return ''
+  const d = new Date(t)
+  const n = new Date(now)
+  // 比日曆日：兩邊都取當地午夜再相減（四捨五入吸收日光節約的一小時）。
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()) / DAY_MS)
+  const day = days <= 0 ? '' : days === 1 ? '明天' : days < WEEK_DAYS ? `週${WEEKDAY[d.getDay()]}` : `${d.getMonth() + 1}/${d.getDate()}`
+  if (short) return day || '今天'
+  return `${day ? `${day} ` : ''}${hhmm(t)} 重置`
+}
+
+export { LIMIT_NAME, QUOTA_RESTART, QUOTA_RESTART_CATCHUP, isQuotaHold, quotaHeld, quotaLowOf } from './quota-words'
+export type { Limit } from './quota-words'
+
+/**
+ * 5 小時額度剩餘（四捨五入，跟面板 header 一樣）低於門檻時的說明「5 小時額度剩 25%，低於門檻 30%」；否則空字串。
+ * 剛好等於門檻不算；門檻 0（關掉）、沒有 five_hour 那條（讀不到額度）、重置時間已過（舊資料）都回空字串，不當成額度不足。
+ */
+export function quotaLow(limits: readonly Limit[] | undefined, threshold: number, now: number): string {
+  const five = threshold > 0 ? (limits ?? []).find(l => l.kind === 'five_hour') : undefined
+  if (!five || !Number.isFinite(five.remaining)) return ''
+  // 重置時間已經過了：那是重置前的舊用量，等於讀不到現在的額度，不擋。
+  const resets = five.resetsAt ? Date.parse(five.resetsAt) : NaN
+  if (Number.isFinite(resets) && resets <= now) return ''
+  const left = Math.max(0, Math.min(100, Math.round(five.remaining)))
+  return left < threshold ? `${LIMIT_NAME.five_hour}額度剩 ${left}%，低於門檻 ${threshold}%` : ''
+}
+
+/**
+ * 自動流程的額度煞車：額度低於門檻（quotaLow）時的暫停原因，接著寫重置時間（面板 header 同一種寫法）與接下來要做什麼
+ * （預設按 g 重開；解衝突被擋下時傳 QUOTA_RESTART_CATCHUP，叫你在對話處理）；否則空字串。
+ */
+export function quotaHold(limits: readonly Limit[] | undefined, threshold: number, now: number, restart: string = QUOTA_RESTART): string {
+  const low = quotaLow(limits, threshold, now)
+  if (!low) return ''
+  const five = limits!.find(l => l.kind === 'five_hour')!
+  return `${low}，${resetText(five.resetsAt, now) || '重置'}${restart}`
+}
+
 export function rawAgents(json: string): any[] {
   try { const v = JSON.parse(json.replace(/^\uFEFF/, '')); return Array.isArray(v) ? v : Array.isArray(v?.agents) ? v.agents : [] } catch { return [] }
 }
@@ -338,7 +384,8 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
   // 排隊中的修正才不會被當成「Agent 仍在執行」丟掉。
   if (verdict) {
     if (running) return 'running'
-    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 ? 'failed' : 'ready'
+    // 額度煞車擋在過關前（例如要派資安審查、重新審查時）：卡片上的結論沒擋，但流程還沒走完，算 failed（按 g 重開）。
+    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 || quotaHeld(c.chain) ? 'failed' : 'ready'
     return blocking(verdict) > 0 ? 'running' : 'ready'
   }
   if (parseGate(c.gate)) return 'gate'

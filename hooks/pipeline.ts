@@ -3,6 +3,7 @@
 import type { Case, ChainInfo, PrInfo, ReviewVerdict, Stage, StageId, StageStatus, Pipeline, Verify } from '../types'
 import { ARCHIVE_WORD, SHIPPED_WORD, parseGate, saysNone } from './card'
 import { CATCHUP_ACTIVE, conflictNote } from './catchup'
+import { quotaHeld } from './quota-words'
 
 export const STAGES: readonly { id: StageId; label: string }[] = [
   { id: 'spec', label: '規格' },
@@ -108,7 +109,8 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   const busy = coding || c.agent?.waitsFor === 'permission'
 
   // 流程還要修 MEDIUM 時不算審查過了：不跳到合併段、不出現開 PR。
-  const reviewed = (verdict && toFix(c, verdict) === 0) || (c.chain?.passed && !stale)
+  // 額度煞車擋在過關前（例如程式碼審查過了、要派資安審查）：卡片上的結論沒擋也不算過，停在審查段寫原因。
+  const reviewed = !quotaHeld(c.chain) && ((verdict && toFix(c, verdict) === 0) || (c.chain?.passed && !stale))
   // 按 u 確認上線後關卡清成無、PR 資訊過一小時也不顯示，靠確認時寫進卡片的狀態與下一步認得它已上線。
   const confirmed = !!c.tag && (c.status.includes(`${c.tag} ${SHIPPED_WORD}`) || c.next.startsWith(ARCHIVE_WORD))
   // tag 只在走到上線段後才算數：從打了 tag 的 main 剛開的分支，HEAD 也被 tag 包含。發版線沒有審查與合併段，照算。

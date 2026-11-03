@@ -95,7 +95,8 @@ async function refuseStarting($: any, c: Case, kind: DispatchKind, opts: QueueOp
   else $.ui.toast(`${c.name}：${LAUNCHING}`)
 }
 
-const alreadyQueued = (c: Case) => `${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`
+/** 同一件已經排著時，手動派工回的那句（額度煞車後的接續也用）。 */
+export const alreadyQueued = (c: Case) => `${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`
 
 /**
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，

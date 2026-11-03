@@ -7,8 +7,10 @@ import type { Case, Snapshot } from '../types'
 import { KIND_LABEL, markRefusal, normalizeRoot, pushRequest, queueRefusal, runningDeskAgents } from './dispatch'
 import type { DispatchKind, QueueEntry, QueueOpts, RawAgent } from './dispatch'
 import { paused } from './chain'
+import type { ChainRun, QuotaResume } from './chain'
 import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
 import { loadSettings, worktreeMark } from './probes'
+import { QUOTA_RESTART_CATCHUP, quotaHold, quotaLow } from './model'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, notify, restage, verifyPending } from './register'
 
@@ -45,9 +47,9 @@ export async function enqueueDispatch($: any, c: Case, kind: DispatchKind, opts:
   await restage($, c.statusPath)
   const at = queuePosition(c.statusPath)
   const label = labelOf(kind, opts)
-  const text = opts.auto ? `${c.name} 自動派${label}排隊中（第 ${at} 位）` : `${c.name} 派${label}排隊中（第 ${at} 位）：同時執行的 Agent 已達上限 ${max} 個`
+  const text = opts.auto && !opts.resumed ? `${c.name} 自動派${label}排隊中（第 ${at} 位）` : `${c.name} 派${label}排隊中（第 ${at} 位）：同時執行的 Agent 已達上限 ${max} 個`
   await feedPush($, [{ at: now, text, tone: 'suggestion', card: c.statusPath }])
-  if (!opts.auto) $.ui.toast(`${c.name}：同時執行的 Agent 已達上限 ${max} 個，已排隊（第 ${at} 位）`, { timeoutMs: 6000 })
+  if (!opts.auto || opts.resumed) $.ui.toast(`${c.name}：同時執行的 Agent 已達上限 ${max} 個，已排隊（第 ${at} 位）`, { timeoutMs: 6000 })
   return true
 }
 
@@ -62,14 +64,21 @@ export async function requeue($: any, c: Case, kind: DispatchKind, opts: QueueOp
  * 自動排的那筆沒派出：把流程停下寫原因。流程紀錄跨對話共用，只停這個對話的、還沒停的那輪；
  * 別的對話接手的流程不動，已經停下的不改原因（也不清掉停在檢查的標記）。回傳這次有沒有真的停下。
  */
-async function pauseOwnChain($: any, c: Case, mine: string, why: string): Promise<boolean> {
+async function pauseOwnChain($: any, c: Case, mine: string, why: string, resume?: QuotaResume): Promise<boolean> {
   let stopped = false
   await saveChain($, normalizeRoot(c.root), r => {
     if (!r || r.owner !== mine || r.stopped) return r
     stopped = true
-    return paused(r, why)
+    return paused(r, why, false, resume)
   })
   return stopped
+}
+
+/** 排隊的自動流程派工被額度擋下時記下那一步（按 g 直接派它）；推送、解衝突不在流程裡，不記。 */
+function queuedResume(entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined): QuotaResume | undefined {
+  if (entry.kind !== 'continue' && entry.kind !== 'review') return undefined
+  const fix = entry.opts.fix
+  return { dispatch: entry.kind, round: fix?.round ?? run?.round ?? 0, ...(entry.opts.security ? { security: true } : {}), ...(fix?.from ? { reason: fix.from } : {}) }
 }
 
 /** 自動排的這筆沒派出時要不要停下流程：推送是審查過關後才排的，沒派出流程仍是過關，合併段照舊可以按「⇡ 開 PR」。 */
@@ -79,19 +88,19 @@ const pausesChain = (entry: Pick<QueueEntry, 'kind' | 'opts'>) => !!entry.opts.a
  * 從隊伍取出卻沒派出（已不在隊伍裡）：寫動態說原因；自動排的（推送除外）另把流程停下寫同一個原因。
  * `alert`：要人處理的原因（worktree 被別的對話改了），流程真的停下時跟自動流程一樣跳提示並發系統通知。
  */
-export async function notSent($: any, c: Case | undefined, entry: Pick<QueueEntry, 'statusPath' | 'kind' | 'opts'>, why: string, now: number, mine: string, alert = false) {
+export async function notSent($: any, c: Case | undefined, entry: Pick<QueueEntry, 'statusPath' | 'kind' | 'opts'>, why: string, now: number, mine: string, alert = false, resume?: QuotaResume) {
   const name = c?.name ?? entry.statusPath
   await feedPush($, [{ at: now, text: `${name} 排隊的${labelOf(entry.kind, entry.opts)}沒有派出：${why}`, tone: 'warning', card: entry.statusPath }])
   if (!pausesChain(entry) || !c) return
-  if (!(await pauseOwnChain($, c, mine, why)) || !alert) return
+  if (!(await pauseOwnChain($, c, mine, why, resume)) || !alert) return
   $.ui.toast(`${name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
   notify($, `${name}：流程已暫停，${why}`)
 }
 
 /** 移出隊伍、說為什麼沒派（見 notSent），重算那件的六段。 */
-async function drop($: any, entry: QueueEntry, c: Case | undefined, why: string, now: number, mine: string, alert = false) {
+async function drop($: any, entry: QueueEntry, c: Case | undefined, why: string, now: number, mine: string, alert = false, resume?: QuotaResume) {
   await setQueue($, agentQueue.filter(e => e !== entry))
-  await notSent($, c, entry, why, now, mine, alert)
+  await notSent($, c, entry, why, now, mine, alert, resume)
   await restage($, entry.statusPath)
 }
 
@@ -117,12 +126,23 @@ function queuedOpts(c: Case, entry: QueueEntry): QueueEntry['opts'] {
 }
 
 /**
+ * 排隊的自動項目被額度煞車擋下的原因：推送寫要推請按哪個鈕（不暫停流程）；解衝突照直接派被擋時的結尾（合併段沒有 g，在對話處理）；其他按 g 重開。
+ */
+function queuedHold(entry: QueueEntry, c: Case | undefined, s: Snapshot, threshold: number): string {
+  if (entry.kind === 'publish') return `${quotaLow(s.limits, threshold, s.at)}，要推請按 ${c?.pr?.state === 'OPEN' ? '⇡ push' : '⇡ 開 PR'}`
+  return quotaHold(s.limits, threshold, s.at, entry.kind === 'catchup' ? QUOTA_RESTART_CATCHUP : undefined)
+}
+
+/**
  * 有空位就照順序派出排隊的：用這一輪重新整理的清單與快照算名額，每派出一件就重算，直到滿或隊伍空。
  * 輪到的那件現在不能派就移出並說原因；完成檢查正在跑或在檢查隊伍裡就先跳過、留在原位。回傳有沒有派出任何一件。
  */
 export async function drainAgentQueue($: any, options: PluginOptions, s: Snapshot, list: readonly RawAgent[] | null): Promise<boolean> {
   if (!agentQueue.length) return false
-  const max = (await loadSettings($, options)).maxAgents
+  const settings = await loadSettings($, options)
+  const max = settings.maxAgents
+  // 額度煞車：自動流程排的（含自動推送）輪到時額度低於門檻就不派；你手動排的不看額度。
+  const low = quotaLow(s.limits, settings.chainQuotaStop, s.at)
   const chains = await loadChains($)
   const mine = await me($)
   const trusted = await trustedChecks($)
@@ -133,6 +153,9 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     const c = s.cases.find(x => x.statusPath === entry.statusPath)
     const why = !c ? '任務已不在登錄表' : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
     if (why) { await drop($, entry, c, why, s.at, mine); continue }
+    // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開，改寫要推請按哪個鈕（跟過關時直接派被擋的說法一樣）。
+    // 你按 g 接續的那筆（resumed）是手動派的：不看額度。
+    if (low && entry.opts.auto && !entry.opts.resumed) { await drop($, entry, c, queuedHold(entry, c, s, settings.chainQuotaStop), s.at, mine, true, queuedResume(entry, chains[normalizeRoot(c.root)])); continue }
     if (verifyPending(entry.statusPath)) continue
     const foreign = await foreignChanges($, c!, entry)
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }

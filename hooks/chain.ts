@@ -44,11 +44,15 @@ export type ChainRun = {
   mediumFix?: number
   /** 最近一次自動派解衝突時的 HEAD：同一個 HEAD 只自動試一次。 */
   catchupHead?: string
+  /** 額度煞車擋下的那一步（派審查、資安審查或修正）：按 g 重開時直接派這一步，不多派實作。 */
+  resume?: QuotaResume
 }
+/** 額度煞車擋下時本來要派的那步：流程裡的派工只有實作（修正）與審查兩種。 */
+export type QuotaResume = { dispatch: 'continue' | 'review'; round: number; security?: boolean; reason?: string }
 export type ChainStep =
   | { kind: 'verify' }
   | { kind: 'dispatch'; dispatch: DispatchKind; round: number; reason?: string; security?: boolean; /** 這輪修正要修的 MEDIUM 數；沒有要修的不帶。 */ medium?: number }
-  | { kind: 'stop'; reason: string; atCheck?: boolean }
+  | { kind: 'stop'; reason: string; atCheck?: boolean; /** 額度煞車擋下的修正本來要修的 MEDIUM 數：停下時照記，按 g 才修得到。 */ medium?: number; /** 額度煞車擋下的那步，按 g 直接派它。 */ resume?: QuotaResume }
   | { kind: 'pass'; skipped?: boolean; needsHuman?: string }
   | null
 
@@ -56,9 +60,9 @@ export type ChainStep =
  * 流程暫停：寫下原因；只有停在檢查段的原因帶 heldAtCheck（按 v 跑完會接著走），
  * 其他原因（例如你手動停止了 Agent）把之前留下的 heldAtCheck 拿掉。
  */
-export function paused(run: ChainRun, reason: string, atCheck = false): ChainRun {
-  const { heldAtCheck: _, ...rest } = run
-  return { ...rest, stopped: reason, ...(atCheck ? { heldAtCheck: true } : {}) }
+export function paused(run: ChainRun, reason: string, atCheck = false, resume?: QuotaResume): ChainRun {
+  const { heldAtCheck: _, resume: __, ...rest } = run
+  return { ...rest, stopped: reason, ...(atCheck ? { heldAtCheck: true } : {}), ...(resume ? { resume } : {}) }
 }
 
 /**
@@ -84,8 +88,9 @@ export function seenHeads(run: ChainRun | undefined, branch: string | undefined)
 /**
  * `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。
  * `mediumFix`：剛結束的審查，審查檔裡要修的 MEDIUM 數（沒標「不修」「等你決定」的）。
+ * `quotaHold`：5 小時額度低於門檻的暫停原因（model.ts 的 quotaHold）；非空時要派 Agent 的那步改成停下，跑檢查與過關照舊。
  */
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; mediumFix?: number }
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; mediumFix?: number; quotaHold?: string }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -93,6 +98,15 @@ export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: b
  * 解衝突有 commit 時由「審查通過後有新 commit」的重新檢查接手，沒 commit 時面板寫原因。
  */
 export function nextStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext = {}): ChainStep {
+  const step = plannedStep(run, finished, check, verdict, trusted, ctx)
+  // 額度煞車：只擋派 Agent（花額度）；本機檢查、過關、其他停下照舊。
+  if (step?.kind !== 'dispatch' || !ctx.quotaHold) return step
+  // 記下被擋的那步：按 g 重開時直接派它（擋在派審查前的不用再派一個實作 Agent）。
+  const resume: QuotaResume = { dispatch: step.dispatch === 'review' ? 'review' : 'continue', round: step.round, ...(step.security ? { security: true } : {}), ...(step.reason ? { reason: step.reason } : {}) }
+  return { kind: 'stop', reason: ctx.quotaHold, ...(step.medium ? { medium: step.medium } : {}), resume }
+}
+
+function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext): ChainStep {
   if (!run || run.stopped || run.passed || !finished || finished === 'publish' || finished === 'catchup') return null
   // 被停掉的 Agent 做的事不完整：不能當成做完往下走（同步不在流程裡，照舊不動）。
   if (ctx.stopped && finished !== 'sync') return { kind: 'stop', reason: AGENT_STOPPED }

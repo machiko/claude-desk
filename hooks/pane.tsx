@@ -2,7 +2,8 @@
 // 只有 content（現在卡、全部任務進度表、歷程、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord } from '../types'
-import { displayWidth, elapsedText, fit, focusCase, hhmm, issueOf, modelLabel, pad, sorted, stateCounts, summary, waitingBesides, ago } from './model'
+import { LIMIT_NAME, displayWidth, elapsedText, fit, focusCase, hhmm, issueOf, modelLabel, pad, resetText, sorted, stateCounts, summary, waitingBesides, ago } from './model'
+export { resetText } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
 import { paneReminders, reminderWhen } from './extras'
@@ -138,26 +139,9 @@ export function gridLayout(names: string[], ages: string[], width: number): { na
   return { nameWidth, ageWidth: keepAge ? ageWidth : 0, lead: 3 + 2 + nameWidth + 2, compact }
 }
 
-/** 重置時間：今天只寫時分，明天寫「明天」，7 天內寫星期，更遠寫日期；short 只留哪一天（今天、明天、週三、1/12）。 */
-const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
-const DAY_MS = 86_400_000
-const WEEK_DAYS = 7
-export function resetText(iso: string | undefined, now: number, short = false): string {
-  const t = iso ? Date.parse(iso) : NaN
-  if (!Number.isFinite(t)) return ''
-  const d = new Date(t)
-  const n = new Date(now)
-  // 比日曆日：兩邊都取當地午夜再相減（四捨五入吸收日光節約的一小時）。
-  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()) / DAY_MS)
-  const day = days <= 0 ? '' : days === 1 ? '明天' : days < WEEK_DAYS ? `週${WEEKDAY[d.getDay()]}` : `${d.getMonth() + 1}/${d.getDate()}`
-  if (short) return day || '今天'
-  return `${day ? `${day} ` : ''}${hhmm(t)} 重置`
-}
-
 /** 剩餘量的顏色：40% 以下提醒、20% 以下警示。 */
 export const remainColor = (left: number) => left <= 20 ? COLOR.bad : left <= 40 ? COLOR.attention : COLOR.good
 
-const LIMIT_NAME: Record<string, string> = { five_hour: '5 小時', seven_day: '本週' }
 type Part = { text: string; color: string; bold?: boolean }
 const partsWidth = (parts: Part[]) => parts.reduce((n, p) => n + displayWidth(p.text), 0)
 
