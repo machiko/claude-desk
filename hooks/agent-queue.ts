@@ -65,13 +65,8 @@ export async function requeue($: any, c: Case, kind: DispatchKind, opts: QueueOp
  * 別的對話接手的流程不動，已經停下的不改原因（也不清掉停在檢查的標記）。回傳這次有沒有真的停下。
  */
 async function pauseOwnChain($: any, c: Case, mine: string, why: string, resume?: QuotaResume): Promise<boolean> {
-  let stopped = false
-  await saveChain($, normalizeRoot(c.root), r => {
-    if (!r || r.owner !== mine || r.stopped) return r
-    stopped = true
-    return paused(r, why, false, resume)
-  })
-  return stopped
+  // 看 saveChain 的回傳值：閉包在重套時會再跑，寫入被別的對話蓋掉、放棄時也不算停下。
+  return saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, why, false, resume))
 }
 
 /** 排隊的自動流程派工被額度擋下時記下那一步（按 g 直接派它）；推送、解衝突不在流程裡，不記。 */

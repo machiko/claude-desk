@@ -229,7 +229,7 @@ test('test_save_chain_rejects_a_write_based_on_a_stale_rev', async ($, on) => {
   expect(chains(data)[BETA].rev).toBe(seen + 3)
 })
 
-/** 別的對話在這個對話寫完流程紀錄之後，用它早先讀到的舊表整張寫回（改的是 Alpha），把 Beta 退回版本 2；times 次之後不再發生。 */
+/** 別的對話在這個對話寫完 Beta 的流程紀錄之後（Beta 版本超過 2），用它早先讀到的舊表整張寫回（改的是 Alpha），把 Beta 退回版本 2；times 次之後不再發生。 */
 function staleOverwrites(data: any, times: number) {
   let n = 0
   const stale = () => ({
@@ -237,11 +237,11 @@ function staleOverwrites(data: any, times: number) {
     [BETA]: { owner: ME, startedAt: 0, round: 0, rev: 2 },
   })
   data.storeAfterSet = (key: string, value: any) => {
-    if (key !== 'chains' || !value?.[BETA]?.stopped || n >= times) return
+    if (key !== 'chains' || !(value?.[BETA]?.rev > 2) || n >= times) return
     n++
     data.store.chains = stale()
   }
-  return { count: () => n }
+  return { count: () => n, stop: () => { times = n } }
 }
 
 /** AC-4：寫後重讀發現 Beta 被退回舊版本：在最新的表上重套一次；兩件的改動都在，Beta 的版本是重套後的。 */
@@ -262,27 +262,79 @@ test('test_a_whole_map_overwrite_by_another_session_is_detected_and_reapplied', 
   expect(chains(data)[BETA].rev).toBe(3)
 })
 
-/** AC-5：連續 3 次重套都被蓋掉：放棄，紀錄維持別的對話寫的；動態寫一筆警告，之後再重新整理也不重複寫。 */
+function capture(on: any) {
+  const notified: string[] = []
+  on('ui.notify', (_: any, e: any) => { notified.push(e.text); return { value: { isSent: true as const, channel: 'terminal_bell' as const } } })
+  return notified
+}
+
+/** AC-5：連續 3 次重套都被蓋掉：放棄，紀錄維持別的對話寫的；動態寫一筆警告，不發暫停的動態、toast 與通知。
+ * 那次派工改回未處理，之後每次重新整理都再試；一直被蓋掉，警告仍只有一筆。寫成功後清掉，之後再放棄會再寫一筆。 */
 test('test_three_overwrites_in_a_row_give_up_and_post_a_warning', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)
+  const notified = capture(on)
   betaImplemented(data, clock, { rev: 2 })
   data.store.chains = { ...chains(data), [ALPHA]: { owner: 'other-session', startedAt: 0, round: 0, rev: 4 } }
   quota(data, 75)
   const overwrites = staleOverwrites(data, Infinity)
   const h = helpers($, clock)
+  const warning = `Beta：${CHAIN_OVERWRITTEN}`
+  const warnings = () => log.list.filter(e => e.text === warning)
+  const paused = () => log.list.filter(e => e.text === `Beta 流程已暫停：${REASON}`)
 
   await h.refresh()
-  for (let i = 0; i < 3; i++) { await h.step(); await h.refresh() }
+  await h.step()
 
   expect(overwrites.count()).toBe(3)
   expect(chains(data)).toEqual({
     [ALPHA]: { owner: 'other-session', startedAt: 0, round: 1, rev: 5 },
     [BETA]: { owner: ME, startedAt: 0, round: 0, rev: 2 },
   })
-  const warning = `Beta：${CHAIN_OVERWRITTEN}`
   expect(CHAIN_OVERWRITTEN).toBe('流程紀錄寫入 3 次都被別的對話蓋掉，重新整理後再試')
-  expect(log.list.filter(e => e.text === warning)).toHaveLength(1)
-  expect(log.list.find(e => e.text === warning)?.tone).toBe('warning')
+  expect(warnings()).toHaveLength(1)
+  expect(warnings()[0]?.tone).toBe('warning')
+  expect(paused()).toHaveLength(0)
+  expect(data.toasts.some((t: string) => t.includes('流程已暫停'))).toBe(false)
+  expect(notified.some(t => t.includes('流程已暫停'))).toBe(false)
+  expect((data.store.jobs as any)[BETA].last.handled).toBeFalsy()
+
+  // 重新整理後再試：一直被蓋掉，每次都重套 3 次，警告仍只有一筆
+  for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
+  expect(overwrites.count()).toBe(9)
+  expect(warnings()).toHaveLength(1)
   expect(data.launches).toHaveLength(0)
+
+  // 別的對話不再蓋：下次重新整理寫進去，照常暫停並通知一次
+  overwrites.stop()
+  await h.refresh(); await h.step()
+  expect(chains(data)[BETA].stopped).toBe(REASON)
+  expect(chains(data)[BETA].rev).toBe(3)
+  expect(paused()).toHaveLength(1)
+
+  // 寫成功後清掉去重：之後同一件再放棄，會再寫一筆
+  data.store.chains = { ...chains(data), [BETA]: { owner: ME, startedAt: 0, round: 0, rev: 3 } }
+  data.store.jobs = { [BETA]: lastJob('continue', { fresh: false }) }
+  const again = staleOverwrites(data, Infinity)
+  await h.refresh(); await h.step()
+  expect(again.count()).toBe(3)
+  expect(warnings()).toHaveLength(2)
+  expect(paused()).toHaveLength(1)
+})
+
+/** AC-5：要派審查時寫輪數被蓋掉、放棄：不派 Agent，紀錄維持別的對話寫的。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — no agent is dispatched', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  betaImplemented(data, clock, { rev: 2 })
+  const overwrites = staleOverwrites(data, Infinity)
+  const h = helpers($, clock)
+
+  await h.refresh()
+  await h.step()
+
+  expect(overwrites.count()).toBe(3)
+  expect(data.launches).toHaveLength(0)
+  expect(chains(data)[BETA]).toEqual({ owner: ME, startedAt: 0, round: 0, rev: 2 })
+  expect(log.list.filter(e => e.text === `Beta：${CHAIN_OVERWRITTEN}`)).toHaveLength(1)
 })

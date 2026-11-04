@@ -78,7 +78,7 @@ export async function verifyBroke($: any, c: Case, auto: boolean, error: unknown
   await feedPush($, [{ at: now, text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, reason, { name: c.name, skip: auto || tutorial })
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
+  if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)) notify($, `${c.name}：流程已暫停，${reason}`)
   await restage($, c.statusPath)
   await spin($, false)
 }
@@ -94,7 +94,7 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
     const now = await $.clock.now()
     await feedPush($, [{ at: now, text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
     await tellPanel($, now, `檢查未執行：${reason}`, { name: c.name, skip: auto || tutorial })
-    if (auto) { await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r); notify($, `${c.name}：流程已暫停，${reason}`) }
+    if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)) notify($, `${c.name}：流程已暫停，${reason}`)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
     return false
@@ -129,11 +129,13 @@ export async function resumeAtCheck($: any, c: Case) {
   const key = normalizeRoot(c.root)
   const run = (await loadChains($))[key]
   if (!run?.stopped || !run.heldAtCheck || run.owner !== (await me($))) return
-  await saveChain($, key, r => {
+  // 寫入被別的對話蓋掉、放棄：流程沒解除暫停，不說「流程繼續」。
+  const resumed = await saveChain($, key, r => {
     if (!r) return r
     const { stopped: _s, heldAtCheck: _h, ...rest } = r
     return rest
   })
+  if (!resumed) return
   // 停下時流程已把那次實作記成處理過（指令未核准的那種）：改回未處理，流程才會接手。
   const all = await loadJobs($)
   const last = all[key]?.last
