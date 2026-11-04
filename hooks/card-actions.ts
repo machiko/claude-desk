@@ -133,32 +133,45 @@ export async function publishPush($: any, options: PluginOptions, c: Case) {
   if (sent && c.gitState?.changed) $.ui.toast(`${c.name}：有 ${c.gitState.changed} 檔未提交，只會 push 已 commit 的`)
 }
 
+/** 輸入框裡還沒送出的字；讀不到（沒有輸入框、讀取失敗）當成空的。 */
+async function promptDraft($: any): Promise<string> {
+  const box = await Promise.resolve().then(() => $.prompt.read()).catch(() => null)
+  return typeof box?.text === 'string' ? box.text : ''
+}
+
+/** 預填決策：輸入框有草稿就把決策另起一行接在後面（送出時 decisionName 照樣認得），空的就直接填入。 */
 export async function fillDecision($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const decisions = parseDecisions(c.ask)
   const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
-  if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按數字鍵）`); return }
+  if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按選項字母；多題時用點的）`); return }
   if (sentState(await readSent($), c) === 'waiting') { $.ui.toast(`${c.name}：決策已送出，等對話寫回卡片`); return }
   const answer = decisionAnswer(decisions, picks)
   if (tutorial) { await tutorialDecision($, c, answer); return }
   const text = decisionPrompt(c.name, answer)
-  const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
+  const draft = await promptDraft($)
+  const fill = draft.trim() ? { text: draft.endsWith('\n') ? text : `\n${text}`, mode: 'append' } : { text, mode: 'replace' }
+  const filled = await $.prompt.fill(fill).catch(() => ({ isFilled: false }))
   if (!filled.isFilled) { $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入${text}`); return }
-  $.ui.toast(`${c.name}：決策已填入，按 Esc 回到輸入框再按 Enter 送出；此任務的卡片會一併附上`, { timeoutMs: 6000 })
+  $.ui.toast(`${c.name}：決策已${draft.trim() ? '接在輸入框原本的字後面' : '填入'}，按 Esc 回到輸入框再按 Enter 送出；此任務的卡片會一併附上`, { timeoutMs: 6000 })
 }
 
 /**
  * 「⚑ 發版」：填一行 `/desk:release` 短請求（所有已合併待發版的卡與清理對象）進輸入框，你按 Enter 送給對話；
  * 對話載入 skills/release/SKILL.md，版號由對話提、你確認後照規則發版。面板不打 tag、不 push、不派工、不跑任何指令，也不自動送出。
+ * 輸入框有還沒送出的字就不填（發版請求要整行送出，接在草稿後面會變成一則混在一起的提示）。
  */
 export async function fillRelease($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  if ((await promptDraft($)).trim()) { $.ui.toast(RELEASE_DRAFT, { timeoutMs: 8000 }); return }
   const cases = ((await read($, snapshotAtom)) as Snapshot | null)?.cases.filter(canRelease) ?? []
   const text = releasePrompt(cases.length ? cases : [c])
   const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
   if (!filled.isFilled) { $.ui.toast(`輸入框無法預填，請直接輸入：${text}`, { timeoutMs: 10_000 }); return }
   $.ui.toast('發版請求已填入，按 Esc 回到輸入框再按 Enter 送出', { timeoutMs: 6000 })
 }
+
+const RELEASE_DRAFT = '輸入框有未送出的字，先送出或清掉再按發版'
 
 export async function openCard($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }

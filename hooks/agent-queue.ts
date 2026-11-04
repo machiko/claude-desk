@@ -165,14 +165,19 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
   return launched
 }
 
-/** 面板的「■ 取消排隊」：移出隊伍、寫動態；自動排的（推送除外）把流程停下。 */
+/** 取消自動流程排的派工：流程跟著停下，說清楚要按 g 重開。 */
+const CANCELLED_PAUSED = '已取消排隊，流程已暫停：按 g 重開'
+
+/** 面板的「■ 取消排隊」：移出隊伍、寫動態；自動排的（推送除外）把這個對話的流程停下，提示與動態說流程已暫停。 */
 export async function cancelQueued($: any, c: Case) {
   const entry = agentQueue.find(e => e.statusPath === c.statusPath)
   if (!entry) return
   await setQueue($, agentQueue.filter(e => e !== entry))
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 已取消排隊`, tone: 'suggestion', card: c.statusPath }])
-  if (pausesChain(entry)) await pauseOwnChain($, c, await me($), CANCELLED)
-  $.ui.toast(`${c.name}：已取消排隊`)
+  // 流程是別的對話的（pauseOwnChain 不動它）就不說暫停。
+  const paused = pausesChain(entry) && await pauseOwnChain($, c, await me($), CANCELLED)
+  const said = paused ? CANCELLED_PAUSED : '已取消排隊'
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${said}`, tone: 'suggestion', card: c.statusPath }])
+  $.ui.toast(`${c.name}：${said}`)
   await restage($, c.statusPath)
 }
 

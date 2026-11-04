@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, BAND, PANE, CARD_B, leaves, text } from './fixture'
+import { fixture, BAND, PANE, CARD_B, leaves, text, flat } from './fixture'
 import { displayWidth } from '../hooks/model'
 import { layoutBand } from '../hooks/band'
 import { demoSnapshot } from '../hooks/model'
@@ -60,12 +60,45 @@ test('plain /desk opens or focuses the panel (never closes it, never the bar); /
   const second = await $.command.run({ command: 'desk', args: '' } as any)
   expect(String(second.text).startsWith('已切到面板')).toBe(true)
   expect(opens.length).toBe(2)
-  expect(opens.every(o => o.focus === true && o.closeOnEscape === true)).toBe(true)
+  // Esc 只把鍵盤交回輸入框、面板留著：開面板不帶 closeOnEscape。
+  expect(opens.every(o => o.focus === true && o.closeOnEscape === undefined)).toBe(true)
   const third = await $.command.run({ command: 'desk', args: 'close' } as any)
   expect(third.text).toBe('工作桌已收起。')
   const band = await $.ui.mount(BAND(80))
   expect(await band.find({ key: 'pane' })).toBeDefined()
   await band.unmount()
+})
+
+/** AC-1 */
+test('Esc 只回輸入框，回覆與說明不再寫 Esc 收起', async ($, on) => {
+  const { data } = fixture(on)
+  // 開新對話由引擎發；測試裡補最底下的回答，並記下 /desk 指令的說明。
+  const registered: any[] = []
+  on('command.register', (_: any, e: any) => { registered.push(e); return { value: { command: e.name } } })
+  on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/home/u', surface: null, isInteractive: true } as any)
+  const first = await $.command.run({ command: 'desk', args: '' } as any)
+  const second = await $.command.run({ command: 'desk', args: '' } as any)
+  // 面板不隨 Esc 收起：開啟時不要求 closeOnEscape（mod API：不設時 Esc 交回鍵盤、面板留著）
+  expect(data.opens.length).toBe(2)
+  expect(data.opens.some(o => 'closeOnEscape' in o)).toBe(false)
+  expect(data.closes).toHaveLength(0)
+  // /desk 的回覆說 Esc 回輸入框，收起用 /desk close
+  expect(first.text).toBe('工作桌已開（Esc 回輸入框；收起用 /desk close）')
+  expect(second.text).toBe('已切到面板（Esc 回輸入框）')
+  // 指令說明
+  const desk = registered.find(x => x.name === 'desk')
+  expect(String(desk?.description)).toContain('Esc 回輸入框')
+  expect(String(desk?.description)).not.toContain('Esc 收起')
+  // 面板說明頁：Esc 回輸入框（面板留著），收起用 /desk close 或摘要列的 ⌗ desk
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: 'help' })
+  const shown = flat(text(await ui.drawn()))
+  expect(shown).toContain(flat('Esc 回輸入框（面板留著）'))
+  expect(shown).toContain(flat('/desk close 收起面板（或點摘要列的 ⌗ desk）'))
+  expect(shown).not.toContain(flat('收起面板 ctrl+x'))
+  expect(shown).not.toContain(flat('Esc 收起'))
+  await ui.unmount()
 })
 
 test('band: clicking the now card title keeps it selected', async ($, on) => {

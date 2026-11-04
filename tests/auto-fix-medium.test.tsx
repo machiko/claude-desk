@@ -304,7 +304,7 @@ test('test_no_medium_fix_is_sent_when_this_conversation_does_not_own_the_review'
   const gamma = await screen(ui)
   expect(gamma).toContain(flat('● 規格 ● 實作 ● 測試 ● 驗收 ◆ 合併'))
   expect(gamma).toContain(flat('◆ 驗收  CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0（自審）'))
-  expect(gamma).toContain(flat('按 ⇡ 開 PR 派 Agent push 並開 PR（驗收是自審，可按 w 派獨立驗收）'))
+  expect(gamma).toContain(flat('按兩次 n 開 PR 派 Agent push 並開 PR（驗收是自審，可按 w 派獨立驗收）'))
   expect(await ui.find({ key: `case-${CARD_C}-open-pr` })).toBeTruthy()
   await ui.unmount()
 })

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, result, text, flat, feedLog } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, result, text, flat, feedLog, pressHotkey } from './fixture'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { needsPr, needsPush, stageActions } from '../hooks/turn'
@@ -196,7 +196,7 @@ test('push buttons: no push when in sync, running, merged, or open-PR already co
 })
 
 /** AC-5 */
-test('push buttons: push and open-PR have no hotkeys; demo cases get no push', async ($, on) => {
+test('push buttons: push and open-PR are on n; demo cases get no push', async ($, on) => {
   const { data } = fixture(on)
   onlyBeta(data, { ahead: 1 })
   judgedAt(data, 'c2')
@@ -210,9 +210,9 @@ test('push buttons: push and open-PR have no hotkeys; demo cases get no push', a
   const demo = mergeCase({ demo: true, gitState: { ahead: 1, behind: 0, changed: 0, untracked: 0, upstream: true }, pr: { id: 12, state: 'OPEN', ci: 'pass' } as any })
 
   expect(labelOf(push)).toBe('⇡ push')
-  expect(push?.props?.hotkey).toBeUndefined()
+  expect(push?.props?.hotkey).toBe('n')
   expect(labelOf(openPr)).toBe('⇡ 開 PR')
-  expect(openPr?.props?.hotkey).toBeUndefined()
+  expect(openPr?.props?.hotkey).toBe('n')
   expect(needsPush(demo)).toBe(false)
   expect(stageActions(demo).has('push')).toBe(false)
   expect(needsPush({ ...demo, demo: false })).toBe(true)
@@ -238,8 +238,8 @@ test('push buttons: open-PR dispatches a publish agent', async ($, on) => {
   const p = promptOf(data)
   await ui.unmount()
 
-  expect(before).toContain(flat('▶ 輪到你  按 ⇡ 開 PR 派 Agent push 並開 PR'))
-  expect(armed).toContain('再按一次確認派 Agent 開 PR')
+  expect(before).toContain(flat('▶ 輪到你  按兩次 n 開 PR 派 Agent push 並開 PR'))
+  expect(armed).toContain('再按 n 確認派 Agent 開 PR')
   expect(afterOne).toBe(0)
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].argv).not.toContain('--resume')
@@ -379,4 +379,49 @@ test('push buttons: open-PR on a Bitbucket origin uses bb_post and loads MCP for
   expect(p).not.toContain('gh pr create')
   expect(p).not.toContain('開不了 PR')
   expect(data.launches[0].argv).not.toContain('--strict-mcp-config')
+})
+
+/** AC-4：合併段該開 PR：按 n 第一次只把按鈕變成待確認，三秒內再按 n 才派 Agent；輪到你那句與按鈕看得到 n。 */
+test('按 n 兩次才派 Agent 開 PR，輪到你與按鈕看得到 n', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, { upstream: false }, [])
+  judgedAt(data, 'c2')
+  startsAgents(data, clock)
+  const calls = recordExec(data)
+  const ui = await mount($)
+  expect(await screen(ui)).toContain(flat('▶ 輪到你  按兩次 n 開 PR'))
+  expect((await ui.find({ key: `${PREFIX}open-pr` }))?.props?.hotkey).toBe('n')
+  await pressHotkey(ui, 'n')
+  await clock.settle()
+  expect(labelOf(await ui.find({ key: `${PREFIX}open-pr` }))).toContain('再按 n 確認派 Agent 開 PR')
+  expect(data.launches).toHaveLength(0)
+  await clock.advance(1000)
+  await pressHotkey(ui, 'n')
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(promptOf(data).split('\n')[0]).toContain('push feature/b 並對')
+  expect(wroteRemote(calls)).toBe(false)
+  await ui.unmount()
+})
+
+/** AC-4：PR 開著有新 commit 該 push：一樣按兩次 n 才派；過了三秒再按只重新待確認。 */
+test('按 n 兩次才派 Agent push，超過三秒只重新待確認', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, { ahead: 1 })
+  judgedAt(data, 'c2')
+  startsAgents(data, clock)
+  const ui = await mount($)
+  expect(await screen(ui)).toContain(flat('按兩次 n 派 Agent push'))
+  await pressHotkey(ui, 'n')
+  await clock.settle()
+  await clock.advance(4000)
+  await clock.settle()
+  await pressHotkey(ui, 'n')
+  await clock.settle()
+  expect(data.launches).toHaveLength(0)
+  expect(labelOf(await ui.find({ key: `${PREFIX}push` }))).toContain('再按 n 確認派 Agent push')
+  await pressHotkey(ui, 'n')
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  await ui.unmount()
 })

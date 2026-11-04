@@ -204,9 +204,9 @@ export function releaseCleanup(cases: readonly Pick<Case, 'name' | 'root' | 'git
   return [...parts, ...gated.map(c => `「${c.name}」有 release 關卡，部署後按 u`)].join('；')
 }
 
-/** 送出的提示是不是某件任務的決策（以「「任務名」決策：」開頭）：回傳任務名，不是就 null。 */
+/** 送出的提示是不是某件任務的決策（某一行以「「任務名」決策：」開頭；填入時輸入框有草稿，決策接在草稿下一行）：回傳任務名，不是就 null。 */
 export function decisionName(text: string): string | null {
-  const m = String(text ?? '').match(/^\s*「(.+?)」決策：/)
+  const m = String(text ?? '').match(/^[ \t]*「(.+?)」決策：/m)
   return m ? m[1]! : null
 }
 

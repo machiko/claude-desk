@@ -181,3 +181,36 @@ test('test_panel_actions_wait_for_a_typed_prompt', async ($, on) => {
   expect(lastContext(data)).toMatch(line('Beta', '已歸檔（worktree 與分支保留）'))
   await ui.unmount()
 })
+
+/** AC-2：輸入框有一行還沒送出的字時按 f：草稿保留、決策另起一行接在後面；送出後照樣認得、鎖題並附卡。空的照舊直接填入。 */
+test('有草稿時填入決策不蓋掉草稿且仍認得決策', async ($, on) => {
+  const { data } = fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `case-${CARD_A}-opt0A` })
+  data.draft = '順便看一下 CI'
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  // 草稿不蓋掉：接在後面、另起一行
+  expect(data.fills).toEqual([{ text: '\n「Alpha」決策：A', mode: 'append' }])
+  expect(data.toasts.at(-1)).toContain('決策已接在輸入框原本的字後面')
+  // 送出的是草稿＋決策兩行：工作桌仍認得是 Alpha 的決策，鎖住那題並附上它的卡片
+  await $.prompt.submit({ text: `${data.draft}${data.fills[0].text}` } as any)
+  const context = lastContext(data)
+  expect(context).toContain('卡片「等你」的決策')
+  expect(context).toContain('- 等你：要 push 嗎')
+  expect(await ui.find({ key: `case-${CARD_A}-opt0A` })).toBeUndefined()
+  expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
+  await ui.unmount()
+
+  // 輸入框是空的：照舊整段填入（replace）
+  data.fills = []
+  data.draft = ''
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 等你：無', '- 等你：先做哪個？A) 匯入 B) 匯出')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const again = await $.ui.mount(PANE(80))
+  await again.press({ key: `row-${CARD_B}` })
+  await again.press({ key: `case-${CARD_B}-opt0B` })
+  await again.press({ key: `case-${CARD_B}-fill` })
+  expect(data.fills).toEqual([{ text: '「Beta」決策：B', mode: 'replace' }])
+  await again.unmount()
+})
