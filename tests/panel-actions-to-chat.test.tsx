@@ -181,3 +181,99 @@ test('test_panel_actions_wait_for_a_typed_prompt', async ($, on) => {
   expect(lastContext(data)).toMatch(line('Beta', '已歸檔（worktree 與分支保留）'))
   await ui.unmount()
 })
+
+/** AC-2：輸入框有一行還沒送出的字時按 f：草稿保留、決策另起一行接在後面；送出後照樣認得、鎖題並附卡。空的照舊直接填入。 */
+test('有草稿時填入決策不蓋掉草稿且仍認得決策', async ($, on) => {
+  const { data } = fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `case-${CARD_A}-opt0A` })
+  data.draft = '順便看一下 CI'
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  // 草稿不蓋掉：接在後面、另起一行
+  expect(data.fills).toEqual([{ text: '\n「Alpha」決策：A', mode: 'append' }])
+  expect(data.toasts.at(-1)).toContain('決策已接在輸入框原本的字後面')
+  // 送出的是草稿＋決策兩行：工作桌仍認得是 Alpha 的決策，鎖住那題並附上它的卡片
+  expect(data.draft).toBe('順便看一下 CI\n「Alpha」決策：A')
+  await $.prompt.submit({ text: data.draft } as any)
+  const context = lastContext(data)
+  expect(context).toContain('卡片「等你」的決策')
+  expect(context).toContain('- 等你：要 push 嗎')
+  expect(await ui.find({ key: `case-${CARD_A}-opt0A` })).toBeUndefined()
+  expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
+  await ui.unmount()
+
+  // 輸入框是空的：照舊整段填入（replace）
+  data.fills = []
+  data.draft = ''
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 等你：無', '- 等你：先做哪個？A) 匯入 B) 匯出')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const again = await $.ui.mount(PANE(80))
+  await again.press({ key: `row-${CARD_B}` })
+  await again.press({ key: `case-${CARD_B}-opt0B` })
+  await again.press({ key: `case-${CARD_B}-fill` })
+  expect(data.fills).toEqual([{ text: '「Beta」決策：B', mode: 'replace' }])
+  await again.unmount()
+})
+
+/** 審查 HIGH：填入決策還沒送出就改選再按 f（或多按一次 f）：輸入框只留這件最新的一行決策，草稿其他字保留。 */
+test('改選後再按 f 只留一行新決策', async ($, on) => {
+  const { data } = fixture(on)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  // 有草稿：第一次接在後面，改選後換掉那一行
+  data.draft = '順便看一下 CI'
+  await ui.press({ key: `case-${CARD_A}-opt0A` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  expect(data.draft).toBe('順便看一下 CI\n「Alpha」決策：A')
+  await ui.press({ key: `case-${CARD_A}-opt0B` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  expect(data.fills.at(-1)).toEqual({ text: '順便看一下 CI\n「Alpha」決策：B', mode: 'replace' })
+  expect(data.draft).toBe('順便看一下 CI\n「Alpha」決策：B')
+  expect(data.toasts.at(-1)).toContain('決策已換成新的選擇')
+  // 多按一次 f：還是只有一行
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  expect(data.draft).toBe('順便看一下 CI\n「Alpha」決策：B')
+
+  // 沒有別的字：第一次直接填入，改選後整段換成新的
+  data.draft = ''
+  await ui.press({ key: `case-${CARD_A}-opt0A` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  await ui.press({ key: `case-${CARD_A}-opt0B` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  expect(data.draft).toBe('「Alpha」決策：B')
+
+  // 送出的只有 B
+  await $.prompt.submit({ text: data.draft } as any)
+  expect(data.submitted.at(-1).text).not.toContain('決策：A')
+  await ui.unmount()
+})
+
+/** 審查 MEDIUM：兩件任務先後按 f，決策接在同一則：兩件都記成已送出、鎖題，也都附上決策與卡片。 */
+test('兩件的決策接在同一則都認得', async ($, on) => {
+  const { data } = fixture(on)
+  data.agents = []
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 等你：無', '- 等你：先做哪個？A) 匯入 B) 匯出')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  await focus(ui, CARD_A)
+  await ui.press({ key: `case-${CARD_A}-opt0A` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  await focus(ui, CARD_B)
+  await ui.press({ key: `case-${CARD_B}-opt0B` })
+  await ui.press({ key: `case-${CARD_B}-fill` })
+  expect(data.draft).toBe('「Alpha」決策：A\n「Beta」決策：B')
+
+  await $.prompt.submit({ text: data.draft } as any)
+  const context = lastContext(data)
+  expect(context).toContain('任務「Alpha」卡片「等你」的決策')
+  expect(context).toContain('任務「Beta」卡片「等你」的決策')
+  expect(context).toContain('- 等你：先做哪個？A) 匯入 B) 匯出')
+  // 兩件都鎖住：沒有選項、沒有 f
+  for (const card of [CARD_A, CARD_B]) {
+    await focus(ui, card)
+    expect(await ui.find({ key: `case-${card}-opt0A` })).toBeUndefined()
+    expect(await ui.find({ key: `case-${card}-fill` })).toBeUndefined()
+  }
+  await ui.unmount()
+})

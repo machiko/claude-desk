@@ -444,3 +444,31 @@ test('test_queued_review_fix_refused_when_chain_moved_to_other_conversation', as
   expect(await screen(ui)).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：流程已不是這個對話的'))
   await ui.unmount()
 })
+
+/** AC-5：自動流程排的驗收（Alpha）與你手動按 g 排的繼續（Beta）都在派工隊伍；各按一次 k：自動那件說流程已暫停、按 g 重開，手動那件只說已取消排隊。 */
+test('取消自動流程排的派工說明流程暫停', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueTwoAutoReviews(data, clock, h)
+  const ui = await $.ui.mount(PANE(160))
+  await h.pressG(ui, CARD_B)
+  expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 3 位）')
+
+  await ui.press({ key: `row-${CARD_A}` })
+  await ui.press({ key: `${A}unqueue` }); await clock.settle()
+  await ui.press({ key: `row-${CARD_B}` })
+  await ui.press({ key: `case-${CARD_B}-unqueue` }); await clock.settle()
+
+  // 自動排的：提示與動態都說流程已暫停、按 g 重開；流程真的停下
+  expect(data.toasts).toContain('Alpha：已取消排隊，流程已暫停：按 g 重開')
+  expect(log.has('Alpha 已取消排隊，流程已暫停：按 g 重開')).toBe(true)
+  expect((data.store.chains as any)[ALPHA].stopped).toBeTruthy()
+  // 手動排的：只說已取消排隊
+  expect(data.toasts).toContain('Beta：已取消排隊')
+  expect(log.has('Beta 已取消排隊')).toBe(true)
+  expect(data.toasts.some((t: string) => t.startsWith('Beta：') && t.includes('流程已暫停'))).toBe(false)
+  expect(log.list.some(e => e.text.startsWith('Beta') && e.text.includes('流程已暫停'))).toBe(false)
+  await ui.unmount()
+})

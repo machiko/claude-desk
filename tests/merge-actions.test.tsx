@@ -102,7 +102,7 @@ test('merge actions: a high-risk case offers open-PR as the lead and dispatches 
 
   expect(labelOf(before)).toBe('⇡ 開 PR')
   expect(isLead(before)).toBe(true)
-  expect(labelOf(armed)).toContain('看過審查檔了？再按一次確認派 Agent 開 PR')
+  expect(labelOf(armed)).toContain('看過審查檔了？再按 n 確認派 Agent 開 PR')
   expect(launchesAfterFirst).toBe(0)
   expect(launchesAfterLate).toBe(0)
   expect(data.launches).toHaveLength(1)
@@ -127,7 +127,7 @@ test('merge actions: a high-risk case says to read the review file and press ope
   const openPr = await find(ui, 'open-pr')
   await ui.unmount()
 
-  expect(shown).toContain(flat('▶ 輪到你  高風險改動：看過審查檔（e）後按兩次 ⇡ 開 PR 派 Agent push 並開 PR'))
+  expect(shown).toContain(flat('▶ 輪到你  高風險改動：看過審查檔（e）後按兩次 n 開 PR 派 Agent push 並開 PR'))
   expect(labelOf(reviewFile)).toBe('↗ 審查檔')
   expect(isLead(reviewFile)).toBe(false)
   expect(reviewFile?.props?.dimColor).toBe(true)
@@ -280,9 +280,9 @@ test('merge actions: a normal case confirms without the review-file reminder and
   await clock.settle()
   await ui.unmount()
 
-  expect(shown).toContain(flat('▶ 輪到你  按 ⇡ 開 PR 派 Agent push 並開 PR'))
-  expect(shown).not.toContain(flat('按兩次'))
-  expect(labelOf(armed)).toContain('再按一次確認派 Agent 開 PR')
+  expect(shown).toContain(flat('▶ 輪到你  按兩次 n 開 PR 派 Agent push 並開 PR'))
+  expect(shown).not.toContain(flat('看過審查檔'))
+  expect(labelOf(armed)).toContain('再按 n 確認派 Agent 開 PR')
   expect(labelOf(armed)).not.toContain('看過審查檔')
   expect(launchesAfterFirst).toBe(0)
   expect(data.launches).toHaveLength(1)

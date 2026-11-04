@@ -19,9 +19,13 @@ import type { ActionId, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
 import type { PaneActions, PaneView } from './pane'
 
-/** 列上的動作鍵；決策選項若撞到這些字母就只能用點的。 */
-export const RESERVED = new Set(['f', 'v', 'o', 'r', 'x', 'h', 'g', 's', 'w', 'y', 'k', 'l', 'n', 'e', 'p', 'i', 'u', 'm', 't'])
-/** 有單鍵的派工；推送（publish）走「⇡ 開 PR」「⇡ push」兩顆按鈕，不在這裡。 */
+/** 列上的動作鍵；決策選項若撞到這些字母就只能用點的。新加帶單鍵的動作按鈕，字母要加進來（tests/stage-actions.test.tsx 守門）。 */
+export const RESERVED = new Set(['f', 'v', 'o', 'r', 'x', 'h', 'g', 's', 'w', 'y', 'k', 'l', 'n', 'e', 'p', 'i', 'u', 'm', 't', 'q', 'z'])
+/** 推送（開 PR／push，按兩次）、發版（按一次，只填輸入框）、歸檔（按兩次）的單鍵。 */
+export const PUBLISH_KEY = 'n'
+export const RELEASE_KEY = 'z'
+export const ARCHIVE_KEY = 'q'
+/** 有單鍵的派工；推送（publish）走「⇡ 開 PR」「⇡ push」兩顆按鈕（單鍵 n），不在這裡。 */
 type KeyedKind = Exclude<DispatchKind, 'publish' | 'catchup'>
 const isKeyed = (k: DispatchKind): k is KeyedKind => k !== 'publish' && k !== 'catchup'
 const DISPATCH_HOTKEY: Record<KeyedKind, string> = { continue: 'g', sync: 's', review: 'w', reply: 'y' }
@@ -369,13 +373,14 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (c.agent?.id && can('logs')) out.push(button({ key: prefix + 'logs', hotkey: 'l', isDim: true, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : '≡ 輸出', onPress: () => act.logs(c) }))
   if ((c.reviewTop?.length || riskyNoPr(c)) && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
-  // 發版：只填輸入框、不寫遠端，按一次就好；沒有快捷鍵（「▶ 輪到你」不帶鍵，它就帶頭）。
-  if (!view.s.tutorial && canRelease(c) && can('release')) out.push(button({ key: prefix + 'release', isLead: !leadKey, isDim: !!leadKey, label: '⚑ 發版', onPress: () => act.release(c) }))
-  // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次確認才派，沒有快捷鍵（寫遠端的事不配單鍵）。高風險改動的第一次按改提醒先看過審查檔。
+  // 發版：只填輸入框、不寫遠端，按一次就好（z）。「▶ 輪到你」帶 z 時它帶頭。
+  if (!view.s.tutorial && canRelease(c) && can('release')) out.push(button({ key: prefix + 'release', hotkey: RELEASE_KEY, isLead: !leadKey || leadKey === RELEASE_KEY, isDim: !!leadKey && leadKey !== RELEASE_KEY, label: '⚑ 發版', onPress: () => act.release(c) }))
+  // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次 n 確認才派（寫遠端）。高風險改動的第一次按改提醒先看過審查檔。
   const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
     const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
-    const ask = id === 'open-pr' && needsPrConfirm(c) ? '看過審查檔了？再按一次' : '再按一次'
-    out.push(button({ key: prefix + id, isBoxed: armed, isLead: armed || !leadKey, isDim: !armed && !!leadKey, label: armed ? `${ask}確認派 Agent ${doing}（${modelText(view, 'publish', c)}）` : `⇡ ${doing}`, onPress }))
+    const ask = id === 'open-pr' && needsPrConfirm(c) ? `看過審查檔了？再按 ${PUBLISH_KEY}` : `再按 ${PUBLISH_KEY}`
+    const lead = !leadKey || leadKey === PUBLISH_KEY
+    out.push(button({ key: prefix + id, hotkey: PUBLISH_KEY, isBoxed: armed, isLead: armed || lead, isDim: !armed && !lead, label: armed ? `${ask} 確認派 Agent ${doing}（${modelText(view, 'publish', c)}）` : `⇡ ${doing}`, onPress }))
   }
   if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
   if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
@@ -399,7 +404,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (!view.s.tutorial && busy && canArchive(idle) && can('archive')) locked('archive', '⌫ 歸檔')
   else if (!view.s.tutorial && canArchive(c) && can('archive')) {
     const armed = isArmed(view.armed, `${c.statusPath}\narchive`, view.now)
-    out.push(button({ key: prefix + 'archive', isBoxed: armed, isLead: armed, isDim: !armed, label: armed ? '再按一次確認歸檔' : '⌫ 歸檔', onPress: () => act.archive(c) }))
+    out.push(button({ key: prefix + 'archive', hotkey: ARCHIVE_KEY, isBoxed: armed, isLead: armed || leadKey === ARCHIVE_KEY, isDim: !armed && leadKey !== ARCHIVE_KEY, label: armed ? `再按 ${ARCHIVE_KEY} 確認歸檔` : '⌫ 歸檔', onPress: () => act.archive(c) }))
   }
   const lesson = view.s.tutorial ? tutorialStep(c) : null
   if (lesson && can('tutorial')) out.push(button({ key: prefix + 'tutorial', hotkey: 't', isLead: leadKey === 't', isBoxed: leadKey === 't', isDim: leadKey !== 't', label: TUTORIAL_STEP_LABEL[lesson], onPress: () => act.tutorial(c) }))

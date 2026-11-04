@@ -27,7 +27,7 @@ test('each stage says whose turn it is and what to press, in plain words', () =>
   expect(turnOf(mk({ ask: '要 push 嗎？A) 要 B) 等' }))).toMatchObject({ who: 'you', key: 'f' })
   expect(turnOf(mk({}), { verifying: true }).who).toBe('ai')
   expect(turnOf(mk({ gate: 'release：v0.2.0' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線；確認後歸檔', key: 'u' })
-  expect(turnOf(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '輸入 /desk:card archive age-group 歸檔' })
+  expect(turnOf(mk({ next: '可歸檔' }, { tag: 'v0.2.0' }))).toEqual({ who: 'you', text: '按兩次 q 歸檔（或輸入 /desk:card archive age-group）', key: 'q' })
   expect(turnOf(mk({}, { state: 'running', agent: { id: 'x', name: 'desk-1', state: 'working', status: 'busy' } })).who).toBe('ai')
 })
 
@@ -74,7 +74,7 @@ test('agent push: an open PR with new commits asks to push, not to merge', () =>
   const inSync = mk({ gate }, { pr: pass, gitState: git(0) })
 
   for (const c of [ahead, pending]) {
-    expect(turnOf(c)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併' })
+    expect(turnOf(c)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按兩次 n 派 Agent push，CI 過了再合併', key: 'n' })
     expect(stageActions(c).has('push')).toBe(true)
   }
   expect(turnOf(inSync)).toEqual({ who: 'you', text: '合併 PR #1（p 在瀏覽器開啟）；合併後打 tag 發版', key: 'p' })
@@ -199,9 +199,9 @@ test('turn: merge stage asks to dispatch publish', () => {
 
   expect(noPr.pipeline?.current).toBe('merge')
   // 沒有快捷鍵：按鈕是「⇡ 開 PR」「⇡ push」，句子說按哪一顆、誰去做
-  expect(turnOf(noPr)).toEqual({ who: 'you', text: '按 ⇡ 開 PR 派 Agent push 並開 PR' })
+  expect(turnOf(noPr)).toEqual({ who: 'you', text: '按兩次 n 開 PR 派 Agent push 並開 PR', key: 'n' })
   expect(stageActions(noPr).has('open-pr')).toBe(true)
-  expect(turnOf(ahead)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併' })
+  expect(turnOf(ahead)).toEqual({ who: 'you', text: 'PR 開著又有新 commit：按兩次 n 派 Agent push，CI 過了再合併', key: 'n' })
   expect(stageActions(ahead).has('push')).toBe(true)
   // 推送 Agent 在跑：說它在做什麼，六段不退回實作
   expect(running.pipeline?.current).toBe('merge')
@@ -247,8 +247,8 @@ test('merge and ship turns say what comes after', async ($, on) => {
   expect(turnOf(merging)).toEqual({ who: 'you', text: '合併 PR #12（p 在瀏覽器開啟）；合併後打 tag 發版', key: 'p' })
   const merged = { pr: { id: 12, state: 'MERGED' as const, ci: 'pass' as const } }
   expect(mk({ gate }, merged).pipeline?.current).toBe('ship')
-  expect(turnOf(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後部署並按 u 確認上線' })
-  expect(turnOf(mk({ gate }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後歸檔' })
+  expect(turnOf(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '按 z 發版填入對話（Enter 送出）；打了 tag 之後部署並按 u 確認上線', key: 'z' })
+  expect(turnOf(mk({ gate }, merged))).toEqual({ who: 'you', text: '按 z 發版填入對話（Enter 送出）；打了 tag 之後歸檔', key: 'z' })
   expect(turnOf(mk({ gate: 'release：v1' }, { ...merged, tag: 'v1' }))).toEqual({ who: 'you', text: '部署 v1 後按 u 確認上線；確認後歸檔', key: 'u' })
 
   // 面板上的部署步驟列：「全部做完後：」接的是「▶ 輪到你」同一句。
@@ -276,8 +276,8 @@ test('ship turn says archive once the tag exists without a release gate', () => 
 
   expect(shipTurn(tagged)).toEqual({ who: 'you', text: 'v0.29.0 已打；輸入 /desk:card archive age-group 歸檔' })
   expect(shipTurn(tagged).text).not.toContain('打 tag 發版')
-  expect(shipTurn(mk({ gate }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後歸檔' })
-  expect(shipTurn(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '按 ⚑ 發版填入對話（Enter 送出）；打了 tag 之後部署並按 u 確認上線' })
+  expect(shipTurn(mk({ gate }, merged))).toEqual({ who: 'you', text: '按 z 發版填入對話（Enter 送出）；打了 tag 之後歸檔', key: 'z' })
+  expect(shipTurn(mk({ gate: 'release：待打 tag' }, merged))).toEqual({ who: 'you', text: '按 z 發版填入對話（Enter 送出）；打了 tag 之後部署並按 u 確認上線', key: 'z' })
   expect(shipTurn(mk({ gate: 'release：v0.29.0' }, { ...merged, tag: 'v0.29.0' }))).toEqual({ who: 'you', text: '部署 v0.29.0 後按 u 確認上線；確認後歸檔', key: 'u' })
 })
 
@@ -287,7 +287,7 @@ test('turn: a passed review with only recorded MEDIUM goes straight to open PR o
   const noPr = mk({ gate })
   expect(noPr.pipeline?.current).toBe('merge')
   expect(noPr.pipeline?.note).toBe('可開 PR')
-  expect(turnOf(noPr)).toEqual({ who: 'you', text: '按 ⇡ 開 PR 派 Agent push 並開 PR' })
+  expect(turnOf(noPr)).toEqual({ who: 'you', text: '按兩次 n 開 PR 派 Agent push 並開 PR', key: 'n' })
   expect(ids(noPr)).toEqual(['open', 'open-pr'])
   expect(stageActions(noPr).has('fill')).toBe(false)
 

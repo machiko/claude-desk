@@ -204,10 +204,27 @@ export function releaseCleanup(cases: readonly Pick<Case, 'name' | 'root' | 'git
   return [...parts, ...gated.map(c => `「${c.name}」有 release 關卡，部署後按 u`)].join('；')
 }
 
-/** 送出的提示是不是某件任務的決策（以「「任務名」決策：」開頭）：回傳任務名，不是就 null。 */
-export function decisionName(text: string): string | null {
-  const m = String(text ?? '').match(/^\s*「(.+?)」決策：/)
-  return m ? m[1]! : null
+const DECISION_LINE = /^[ \t]*「(.+?)」決策：/
+
+/**
+ * 送出的提示裡是哪幾件任務的決策：每一行以「「任務名」決策：」開頭的都算（填入時輸入框有草稿，決策接在草稿後面；
+ * 兩件先後按 f 就是兩行）。依出現順序、不重複；沒有就是空陣列。
+ */
+export function decisionNames(text: string): string[] {
+  const names = String(text ?? '').split(/\r?\n/).map(line => line.match(DECISION_LINE)?.[1]).filter((n): n is string => !!n)
+  return [...new Set(names)]
+}
+
+/**
+ * 把一件任務的決策放進輸入框的草稿：草稿裡已有這件的決策行（還沒送出又改選、或多按了一次 f）就換成新的那一行、只留一行；
+ * 沒有就另起一行接在後面。其他字（含別件任務的決策）原樣保留。
+ */
+export function withDecision(draft: string, name: string, line: string): string {
+  const lines = draft.split(/\r?\n/)
+  const isMine = (l: string) => l.match(DECISION_LINE)?.[1] === name
+  const at = lines.findIndex(isMine)
+  if (at < 0) return draft.endsWith('\n') ? `${draft}${line}` : `${draft}\n${line}`
+  return lines.flatMap((l, i) => i === at ? [line] : isMine(l) ? [] : [l]).join('\n')
 }
 
 /** 任務根目錄：卡片所在資料夾；資料夾名以 `.` 開頭（.desk、.console）就再上一層。 */
