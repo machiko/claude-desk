@@ -11,7 +11,7 @@ test('after implementation: check, then review when green, fix when red, stop af
   expect(nextStep(run(), 'continue', null, null, false, { changed: true })).toEqual({ kind: 'stop', reason: CHECK_CHANGED, atCheck: true })
   expect(nextStep(run(), 'continue', true, null, true)).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
   expect(nextStep(run(0), 'continue', false, null, true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'check' })
-  expect(nextStep(run(2), 'continue', false, null, true)).toEqual({ kind: 'stop', reason: '修了 2 輪檢查仍未通過' })
+  expect(nextStep(run(2), 'continue', false, null, true)).toEqual({ kind: 'stop', reason: '修了 2 輪測試仍未通過' })
 })
 
 test('after review: CRITICAL and HIGH are fixed, MEDIUM passes, no counts stops', () => {
@@ -36,7 +36,7 @@ test('risk: docs-only skips review; high risk adds one security review, then han
   expect(nextStep(run(), 'continue', true, null, true, { risk: low })).toEqual({ kind: 'pass', skipped: true })
   expect(nextStep(run(), 'continue', true, null, true, { risk: high })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
   expect(nextStep(run(), 'review', null, v(0, 0), true, { risk: high })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0, security: true })
-  expect(nextStep(run(), 'review', null, v(0, 0), true, { risk: high, lastWasSecurity: true })).toEqual({ kind: 'pass', needsHuman: '高風險改動（資料範圍、migration），審查已過，請你看過再開 PR' })
+  expect(nextStep(run(), 'review', null, v(0, 0), true, { risk: high, lastWasSecurity: true })).toEqual({ kind: 'pass', needsHuman: '高風險改動（資料範圍、migration），驗收已過，請你看過再開 PR' })
   expect(nextStep(run(), 'review', null, v(1, 0), true, { risk: high, lastWasSecurity: true })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
 })
 

@@ -175,7 +175,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   const room = Math.max(10, width - INDENT - KV_LABEL)
   // 第二次按 t、v、g 就會核准這條指令，或流程正停在它沒核准：列出全文，不用去掉前綴的短版。
   const approval = checkApprovalLine(approvalKey(view, c), heldReason(c), checkApproved(view, c), c.verify)
-  const result = running ? <Text color={COLOR.running}>執行中</Text>
+  const result = running ? <Text color={COLOR.running}>測試中</Text>
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
     : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}${count}`}</Text>
     : <Text color={COLOR.faint}>{v && v.command === c.verify ? '有新 commit，需重新執行' : '尚未執行'}</Text>
@@ -242,11 +242,11 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   const latest = isWorking ? c.agent?.last ?? '' : ''
   rows.push(...turnRows(ui, turn, width, view.tick, elapsed))
   if (latest) rows.push(...(view.isExpanded ? wrapText(`└ 最新：${latest}`, width - INDENT) : [fit(`└ 最新：${latest}`, width - INDENT)]).map(line => <Box paddingLeft={INDENT}><Text color={COLOR.dim} wrap="truncate-end">{line}</Text></Box>))
-  // 完成的任務：六段全部轉綠，後面接「✓ 完成 <tag>」。六段的備註（例如「可繼續實作」）由上一列的話取代。
+  // 完成的任務：六段全部轉綠，後面接「✓ 已上線 <tag>」。六段的備註（例如「可繼續實作」）由上一列的話取代。
   const isDone = c.state === 'done'
   // 執行中：進行中那段在 ◉／◎ 間交替，跟著 tick 動。
   const pulse = (p: { text: string; status: string }) => c.state === 'running' && p.status === 'active' ? p.text.replace(ACTIVE_PULSE[0]!, ACTIVE_PULSE[view.tick % ACTIVE_PULSE.length]!) : p.text
-  if (c.pipeline) rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end">{stageParts(c.pipeline, width < 30).map((p, i) => <Text key={`st${i}`} color={isDone ? COLOR.good : STAGE_COLOR[p.status]}>{(i && width >= 30 ? ' ' : '') + pulse(p)}</Text>)}{isDone ? <Text color={COLOR.good} bold>{`   ✓ 完成${c.tag ? ` ${c.tag}` : ''}`}</Text> : null}</Text></Box>)
+  if (c.pipeline) rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end">{stageParts(c.pipeline, width < 30).map((p, i) => <Text key={`st${i}`} color={isDone ? COLOR.good : STAGE_COLOR[p.status]}>{(i && width >= 30 ? ' ' : '') + pulse(p)}</Text>)}{isDone ? <Text color={COLOR.good} bold>{`   ✓ 已上線${c.tag ? ` ${c.tag}` : ''}`}</Text> : null}</Text></Box>)
   // 沒有 PR 可看、git 判斷已合併（只在審查過後才算）
   const gitMerged = !c.pr && !!c.mergedInto && c.pipeline?.stages.find(s => s.id === 'merge')?.status === 'done'
   if (c.pr) {
@@ -270,7 +270,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
   const ship = shipTurn(c, view.s.tutorial)
   const toShip = !!c.tag && parseGate(c.gate)?.kind === 'release' && !isDone
-  const waitAgent = isBusy(c) && (isDone || !!c.tag) ? `Agent 執行中，完成後再${toShip ? '確認上線' : '歸檔'}` : ''
+  const waitAgent = isBusy(c) && (isDone || !!c.tag) ? `Agent 處理中，完成後再${toShip ? '確認上線' : '歸檔'}` : ''
   const afterDeploy = waitAgent || (isDone ? archive : ship.text)
   // 上線段那句是「要做的事；做完之後」兩段：下一步列兩段都列出來，不收成「還有 1 項」。
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
@@ -322,7 +322,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
 
   rows.push(...verifyRows(ui, c, view.verifies[c.statusPath], c.statusPath in view.verifying, view, view.queue.indexOf(c.statusPath), width))
   if (c.manual) rows.push(<Box paddingLeft={INDENT}><Text color={COLOR.faint}>手動任務：工作桌只追蹤，不派工</Text></Box>)
-  if (!c.manual && !c.verify && c.hasCard) rows.push(...wrappedRows(ui, '卡片尚缺完成檢查：請先寫一條「修正前失敗、修正後通過」的指令，才能派實作', width, COLOR.attention))
+  if (!c.manual && !c.verify && c.hasCard) rows.push(...wrappedRows(ui, '卡片還沒有測試指令：請先寫一條「修正前失敗、修正後通過」的指令，才能派實作', width, COLOR.attention))
   return rows
 }
 
@@ -357,7 +357,7 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   else for (const k of dispatchable(c).filter(isKeyed).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
     const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
     // 檢查還沒核准：第二次按 g 同時核准它（第一次已在檢查列列出全文）。
-    const approving = k === 'continue' && !checkApproved(view, c) ? '核准檢查並' : ''
+    const approving = k === 'continue' && !checkApproved(view, c) ? '核准測試並' : ''
     // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
     const hint = k === 'sync' && cardBehind(c, view.now)
     out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${approving}${k === 'continue' && quotaHeld(c.chain) ? '接續' : KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${k === 'continue' && quotaHeld(c.chain) ? '接續' : KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, result, text, flat } from './fixture'
 declare const console: { log: (...args: unknown[]) => void }
-import { setFields, tutorialPaths, TUTORIAL_TAG } from '../hooks/tutorial'
+import { cardAfter, cardAfterDecision, cardText, setFields, tutorialPaths, TUTORIAL_INTRO, TUTORIAL_TAG } from '../hooks/tutorial'
 
 const P = tutorialPaths('/home/u')
 const KEY = (what: string) => `case-${P.card}-${what}`
@@ -53,7 +53,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(data.processCalls.some((c: any) => c.argv[0] === 'sh' && c.argv[2] === 'python3 -m unittest -q')).toBe(true)
   expect(data.files[`${P.wt}/.task/REVIEW.md`]).toContain('複審')
   expect(data.files[`${P.wt}/discount.py`]).toContain('ValueError')
-  expect(data.files[P.card]).toContain('等你：審查建議（不改也能合併）')
+  expect(data.files[P.card]).toContain('等你：驗收建議（不改也能合併）')
 
   // 5 合併：先決定 MEDIUM（寫回卡片，不送主對話），再按 t 本機合併
   await turn(ui, '按選項字母 → f 寫回卡片')
@@ -61,7 +61,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   await ui.press({ key: KEY('fill') })
   expect(data.fills.length).toBe(0)
   expect(data.files[P.card]).toContain('- 等你：無')
-  expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：審查 MEDIUM → A/)
+  expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：驗收 MEDIUM → A/)
   await turn(ui, '按 t 合併到 release/v1.0')
   // 「⇡ 開 PR」按兩次也不派真的 Agent，只提示照教學按 t
   const sim = data.launches.length
@@ -134,7 +134,7 @@ test('choosing C in the tutorial commits the change and the chain goes back to c
   await ui.press({ key: `case-${P.card}-opt0C` })
   await ui.press({ key: KEY('fill') })
   expect(data.files[`${P.wt}/discount.py`]).toContain('GOLD_RATE = 0.9')
-  expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：審查 MEDIUM → C/)
+  expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：驗收 MEDIUM → C/)
   const checks = () => data.processCalls.filter((c: any) => c.argv[0] === 'sh' && c.argv[2] === 'python3 -m unittest -q').length
   const before = checks()
   // fixture 不執行 git：commit 的效果由 HEAD 前進代表
@@ -146,7 +146,7 @@ test('choosing C in the tutorial commits the change and the chain goes back to c
   for (let i = 0; i < 12 && !String(data.files[P.card]).includes('MEDIUM 0、LOW 0；過'); i++) await step()
   expect(checks()).toBeGreaterThan(before)
   expect(data.files[`${P.wt}/.task/REVIEW.md`]).toContain('重新審查')
-  expect(data.files[P.card]).toContain('重新審查通過')
+  expect(data.files[P.card]).toContain('重新驗收通過')
   for (let i = 0; i < 4 && !flat(text(await ui.drawn())).includes(flat('按 t 合併到 release/v1.0')); i++) await step()
   expect(flat(text(await ui.drawn())).includes(flat('按 t 合併到 release/v1.0'))).toBe(true)
   expect(data.launches.length).toBe(0)
@@ -215,4 +215,28 @@ test('while the scripted agent works, a refresh still sees it busy and runs no c
   expect(data.processCalls.some((c: any) => c.argv[0] === 'sh' && c.argv[2] === 'python3 -m unittest -q')).toBe(false)
   expect(String(text(await ui.drawn())).replace(/\s+/g, '')).toContain('Agent在寫程式')
   await ui.unmount()
+})
+
+/** 六段說法（AC-5）：教學卡片寫回的狀態與下一步用「測試」「驗收」，審查檔本文不動。 */
+test('the tutorial card writes back test and acceptance words', () => {
+  const day = '2030-01-05'
+  const base = cardText(day)
+  const field = (text: string, name: string) => text.match(new RegExp(`^- ${name}：(.*)$`, 'm'))?.[1]
+  const built = cardAfter(base, 'build', day)
+  expect(field(built, '下一步')).toBe('等測試與驗收')
+  const fixed = cardAfter(built, 'fix', day)
+  expect(field(fixed, '下一步')).toBe('等重新驗收')
+  expect(field(fixed, '狀態')).toBe('已修正驗收的 HIGH：負數金額丟出 ValueError')
+  expect(field(cardAfter(fixed, 'review-2', day), '狀態')).toBe('重新驗收通過：三條驗收情境都做到')
+  const changed = cardAfterDecision(cardAfter(fixed, 'review-2', day), 'C', day, '使用者')
+  expect(field(changed, '下一步')).toBe('等重新測試與驗收')
+  expect(field(cardAfterDecision(cardAfter(fixed, 'review-2', day), 'A', day, '使用者'), '狀態')).toBe('驗收通過，可開 PR')
+  const old = /完成檢查|重新檢查|複審|審查通過|審查建議|審查發現|教學審查/
+  for (const text of [built, fixed, cardAfter(fixed, 'review-1', day), cardAfter(fixed, 'review-2', day), cardAfter(fixed, 'review-3', day), changed]) {
+    // 只看寫回時改動或新增的列（卡片範本本身不在這次範圍）
+    const added = text.split('\n').filter(l => !base.split('\n').includes(l)).join('\n')
+    expect(added).not.toMatch(old)
+  }
+  expect(TUTORIAL_INTRO).toContain('自動修正後重新驗收')
+  expect(TUTORIAL_INTRO).not.toMatch(old)
 })

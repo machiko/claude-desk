@@ -3,8 +3,12 @@ import { fixture, feedLog, PANE, BAND, CARD_A, CARD_B, CARD_C, REGISTRY, result,
 import { buildCase, displayWidth } from '../hooks/model'
 import { STAGES, pipeline, stageLabel } from '../hooks/pipeline'
 import { turnOf } from '../hooks/turn'
-import { dispatchRefusal } from '../hooks/dispatch'
+import { dispatchRefusal, idleNext, reviewNext } from '../hooks/dispatch'
 import { TUTORIAL_INTRO } from '../hooks/tutorial'
+import { passWords } from '../hooks/auto-pr'
+import { nextStep } from '../hooks/chain'
+import { summary } from '../hooks/model'
+import { STATE, WORD } from '../hooks/theme'
 import type { Case, Verify } from '../types'
 
 const ALPHA = '/home/u/wt/alpha'
@@ -17,7 +21,9 @@ const screen = async (ui: any) => text(await ui.drawn())
 /** 段名後面接六段字形：畫面上出現這種寫法就是舊段名還在。 */
 const OLD_STAGE = /(檢查|審查)\s*[●◉◆✕○·]/
 /** 「輪到你」與按鍵提示不再用的舊說法。 */
-const OLD_HINT = /執行完成檢查|派審查|派獨立審查|自動審查|重新審查/
+const OLD_HINT = /執行完成檢查|派審查|派獨立審查|自動審查|重新審查|檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完)|完成檢查|審查(?:通過|結論|有要修)|重新檢查|複審|免審查|資安審查|進行中|仍在執行/
+/** 測試結果、驗收結果的動態與通知不再用的舊說法。 */
+const OLD_RESULT = /檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完)|完成檢查|審查(?:通過|結論|有要修)|重新(?:檢查|審查)|免審查|資安審查/
 
 /**
  * 三件：Alpha 在測試段（驗收過後又有新 commit，完成檢查還沒在新的 HEAD 跑），Beta 在驗收段（測試通過、待驗收），
@@ -184,7 +190,7 @@ test('test_v_and_w_buttons_and_help_use_new_names', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await $.command.run({ command: 'desk', args: 'review Beta' } as any)
   await clock.settle()
-  expect(data.toasts).toContain('Beta：目前無法驗收（Agent 仍在執行）')
+  expect(data.toasts).toContain('Beta：目前無法驗收（Agent 處理中）')
 
   // 說明頁
   await ui.press({ key: 'help' })
@@ -204,7 +210,7 @@ test('test_v_and_w_buttons_and_help_use_new_names', async ($, on) => {
   await pick(locked, CARD_C)
   // 執行中只列停止、輸出與開卡片；m 展開全部才看得到鎖住的動作
   await locked.press({ key: 'more' })
-  expect(await locked.find({ type: 'Text', text: '▶ 測試（執行中，完成後可用）' })).toBeDefined()
+  expect(await locked.find({ type: 'Text', text: '▶ 測試（處理中，完成後可用）' })).toBeDefined()
   await locked.unmount()
   await clock.advance(2500)
   await clock.settle()
@@ -271,4 +277,151 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
   expect(intro.find(l => l.startsWith('  4 '))).toMatch(/^ {2}4 驗收：自動派驗收/)
   expect(TUTORIAL_INTRO).not.toMatch(/ {2}[34] (檢查|審查)：/)
   expect(TUTORIAL_INTRO).not.toMatch(OLD_HINT)
+})
+
+/** 測試結果的動態與通知用新詞（AC-1）：手動按 v 與自動流程記下結果都說「測試」。 */
+test('測試結果的動態與通知用新詞', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const sent: string[] = []
+  on('ui.notify', (_: any, e: any) => { sent.push(e.text); return { value: { isSent: true as const, channel: 'terminal_bell' as const } } })
+  threeStages(data, clock)
+  const run = data.run
+  const sh = (code: number) => { data.run = async (e: any) => e.argv[0] === 'sh' ? result(code, code ? 'FAILED\n' : 'ok\n') : run(e) }
+  const verify = async (name: string) => {
+    const out = await $.command.run({ command: 'desk', args: `verify ${name}` } as any)
+    await clock.settle()
+    return String((out as any).text)
+  }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // 沒過：動態、toast、系統通知都寫「測試未通過」
+  sh(1)
+  expect(await verify('Alpha')).toBe('Alpha：測試已開始。')
+  expect(log.has('Alpha 測試未通過（exit 1）')).toBe(true)
+  expect(data.toasts).toContain('Alpha：測試未通過')
+  expect(sent).toContain('Alpha：測試未通過（exit 1）')
+
+  // 通過
+  sh(0)
+  await verify('Beta')
+  expect(log.has('Beta 測試通過')).toBe(true)
+  expect(data.toasts).toContain('Beta：測試通過')
+
+  // 在跑的時候再按、排隊：說「測試」
+  let release: (() => void) | null = null
+  data.run = (e: any) => e.argv[0] === 'sh' ? new Promise(resolve => { release = () => resolve(result(0, 'ok\n')) }) : run(e)
+  void $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
+  await clock.settle()
+  await $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
+  expect(data.toasts).toContain('Alpha：測試在跑')
+  release!()
+  await clock.settle()
+
+  // 指令還沒核准：不跑，說「測試指令」
+  data.store.trustedVerify = {}
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  expect(await verify('Gamma')).toBe('Gamma：測試指令還沒經你核准，這次沒派工也沒跑測試；到面板按兩次 v（或 g）核准：npm test')
+
+  // 從頭到尾：動態、toast、通知都沒有舊說法
+  for (const said of [...log.list.map(e => e.text), ...data.toasts, ...sent]) expect(said).not.toMatch(OLD_RESULT)
+  await clock.advance(2500)
+  await clock.settle()
+})
+
+/** 驗收結果的動態與通知用新詞（AC-2）：過關、只動文件免驗收、結論缺分級、自動開 PR、驗收後的新 commit。 */
+test('驗收結果的動態與通知用新詞', async ($, on) => {
+  // 過關的動態與通知
+  expect(passWords('Beta', undefined)).toEqual({ feed: 'Beta 驗收通過，可開 PR', say: 'Beta：驗收通過，可以開 PR' })
+  expect(passWords('Beta', undefined, true)).toEqual({ feed: 'Beta 只動文件、測試通過，免驗收，可開 PR', say: 'Beta：只動文件，免驗收，可以開 PR' })
+  expect(passWords('Beta', { kind: 'open' })).toEqual({ feed: 'Beta 驗收通過，自動派 Agent 開 PR', say: 'Beta：驗收通過，自動派 Agent 開 PR' })
+  // 驗收結論缺分級：流程停下的原因
+  expect(nextStep({ owner: 'me', startedAt: 1, round: 0 }, 'review', null, null, true)).toEqual({ kind: 'stop', reason: '驗收結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' })
+  // 清單摘要：過關、還沒開 PR
+  const passed = caseOf(PASSED, {}, ok('b1'))
+  expect(summary({ ...passed, state: 'ready' })).toBe('驗收通過，可開 PR')
+
+  // 驗收過關後又有新 commit：流程自動重新測試與驗收
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h2' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.store.chains = { [ALPHA]: { owner: 'fixture-session', startedAt: 0, round: 2, passed: true, reviewHead: 'h1', judgedHead: 'h1' } }
+  data.store.jobs = { [ALPHA]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.agents = []
+  data.launch = async (e: any) => {
+    data.agents = [{ id: 'a0000001', kind: 'background', cwd: ALPHA, name: e.argv[3], sessionId: 'a0000001-0000-4000-8000-000000000000', state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, 'a0000001')
+  }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  for (let i = 0; i < 3; i++) { await clock.advance(2500); await clock.settle() }
+  expect(log.has('Alpha 驗收通過後有新 commit，自動重新測試與驗收')).toBe(true)
+  for (const said of [...log.list.map(e => e.text), ...data.toasts]) expect(said).not.toMatch(OLD_RESULT)
+})
+
+/** done 的新舊下一步都不派 Agent（AC-3）：/desk:card done 寫的新句子與舊卡的寫法都叫你按 v，按 g 不會派出空的 Agent。 */
+test('done 的新舊下一步都不派 Agent', () => {
+  const pairs: [string, string][] = [
+    ['到面板按 v 執行測試', '到面板按 v 執行完成檢查'],
+    ['等自動重新測試與驗收；沒動靜就到面板按 v', '等自動重新檢查與審查；沒動靜就到面板按 v'],
+  ]
+  for (const [now, old] of pairs) {
+    for (const next of [now, old]) {
+      const c = caseOf('- 關卡：無', {}, undefined, next)
+      expect(reviewNext(next)).toBe(false)
+      expect(idleNext(next)).toBe('下一步只剩等測試／驗收／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事')
+      expect(dispatchRefusal(c, 'continue')).not.toBe('')
+      expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', key: 'v' })
+    }
+  }
+})
+
+/** 狀態詞只有處理中與已上線（AC-4）：Agent 在做事一律「處理中」、測試在跑「測試中」、六段全過「已上線」；CI 與容器的「執行中」不變。 */
+test('狀態詞只有處理中與已上線', async ($, on) => {
+  expect(STATE.running.label).toBe('處理中')
+  expect(WORD.busyLocked).toBe('（處理中，完成後可用）')
+  expect(WORD.busyRefused).toBe('Agent 處理中，完成後再')
+  expect(dispatchRefusal(caseOf('- 關卡：無', { state: 'running' }), 'continue')).toBe('Agent 處理中')
+  expect(stageLabel(caseOf('- 關卡：無', {}, ok('b1')).pipeline!)).not.toMatch(/執行中|進行中/)
+  const done = caseOf(PASSED, {}, ok('b1'))
+  expect(stageLabel({ ...done.pipeline!, current: null, note: '' })).toBe('已上線')
+
+  const { data, clock } = fixture(on)
+  threeStages(data, clock)
+  let release: (() => void) | null = null
+  data.run = () => new Promise(resolve => { release = () => resolve(result(0, 'all green\n')) })
+  // Gamma 的 Agent 在跑（卡片停在關卡）
+  data.files[CARD_C] = data.files[CARD_C]!.replace(PASSED, '- 關卡：spec：待確認規格（AC-1～AC-2）')
+  data.agents = [{ id: 'bbbbbbbb', kind: 'background', cwd: GAMMA, state: 'working', status: 'busy', name: 'desk-gamma-0', sessionId: SID, startedAt: clock.now() }]
+  data.store.jobs = { [GAMMA]: { sessionId: SID, last: { launchName: 'desk-gamma-0', nativeId: 'bbbbbbbb', sessionId: SID, kind: 'continue', startedAt: clock.now(), fresh: false } } }
+  const ui = await mount($, clock, 100)
+  const gamma = await pick(ui, CARD_C)
+  // 標題徽章、輪到誰、清單都寫「處理中」
+  expect(gamma).toContain('處理中')
+  expect(gamma).not.toMatch(/進行中|仍在執行|Agent 執行中/)
+  await ui.press({ key: 'more' })
+  expect(await ui.find({ type: 'Text', text: '▶ 測試（處理中，完成後可用）' })).toBeDefined()
+
+  // 測試在跑：結果列寫「測試中」
+  const alpha = await pick(ui, CARD_A)
+  expect(alpha).not.toContain('進行中')
+  await ui.press({ key: `case-${CARD_A}-verify` })
+  await clock.settle()
+  expect(await screen(ui)).toMatch(/▎ 測試 +測試中/)
+  release!()
+  await clock.settle()
+
+  // 說明頁圖例
+  await ui.press({ key: 'help' })
+  const help = await screen(ui)
+  expect(help).toContain('已過／處理中／等你／卡住／未到／不適用')
+  expect(help).not.toContain('進行中')
+  await ui.press({ key: 'help' })
+  await ui.unmount()
+  await clock.advance(2500)
+  await clock.settle()
 })

@@ -152,7 +152,7 @@ test('a running or queued check shows the check stage active', async ($, on) => 
   expect(beta.card).toBe('● 規格 ● 實作 ◉ 測試 ○ 驗收 ○ 合併 ○ 上線')
   expect(beta.row).toBe(glyphsOf(beta.card))
   // 註記：在跑的寫測試執行中、排隊的寫排隊中；上一次在同一個 HEAD 通過過也一樣退回檢查段
-  expect(stageLabel(pipeline(betaCase(), undefined, true))).toBe('測試・測試執行中')
+  expect(stageLabel(pipeline(betaCase(), undefined, true))).toBe('測試・測試中')
   expect(stageLabel(pipeline(betaCase(), undefined, false, true))).toBe('測試・排隊中')
   expect(stageLabel(pipeline(betaCase(), passedAt('b1'), false, true))).toBe('測試・排隊中')
   await ui.unmount()
@@ -285,7 +285,7 @@ test('two cases chained together show their own stages at every step', async ($,
     { label: '兩件都過關', alpha: S('● 實作 ● 測試 ● 驗收 ◆ 合併 ○ 上線'), alphaRow: '●●●●◆○', beta: S('● 實作 ● 測試 ● 驗收 ◆ 合併 ○ 上線'), betaRow: '●●●●◆○' },
   ])
   expect(data.launches.length).toBe(4)
-  expect(data.toasts.filter(t => t.includes('審查通過')).length).toBe(2)
+  expect(data.toasts.filter(t => t.includes('驗收通過')).length).toBe(2)
   await ui.unmount()
 })
 
@@ -315,7 +315,7 @@ test('a check that breaks midway still lets the queued case run', async ($, on) 
   expect(alpha.card).not.toContain('◉ 測試')
   // 「最近」只放現在這件：換回 Alpha 才看得到它的檢查中斷
   await focus(ui, CARD_A)
-  expect(JSON.stringify(await ui.drawn())).toContain('Alpha 檢查中斷')
+  expect(JSON.stringify(await ui.drawn())).toContain('Alpha 測試中斷')
   // Alpha 停下等人處理，不會被流程一再重跑
   expect(stats.cwds.filter(c => c === ALPHA).length).toBe(1)
   await ui.unmount()
@@ -404,7 +404,7 @@ test('a check whose error report also fails still lets the queued case run', asy
 
   expect(refuse).toEqual([])
   expect(stats.cwds).toEqual([ALPHA, BETA])
-  expect(data.toasts.some(t => t.startsWith('Alpha：檢查中斷'))).toBe(true)
-  expect(data.toasts.some(t => t.startsWith('Alpha：檢查中斷，原因也記不下來（'))).toBe(true)
+  expect(data.toasts.some(t => t.startsWith('Alpha：測試中斷'))).toBe(true)
+  expect(data.toasts.some(t => t.startsWith('Alpha：測試中斷，原因也記不下來（'))).toBe(true)
   await drain(clock)
 })

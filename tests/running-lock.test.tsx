@@ -5,7 +5,7 @@ const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
 const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
 const LAUNCH = 'desk-beta-0'
-const LOCKED = '（執行中，完成後可用）'
+const LOCKED = '（處理中，完成後可用）'
 const GITHUB = 'git@github.com:acme/shop.git'
 const MERGED_PR = { number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }
 const PASS = { command: 'npm test', at: NOW - 60_000, ok: true, exitCode: 0, tail: ['all green'], truncated: false, head: 'b1' }
@@ -16,7 +16,7 @@ const APPROVING = { ...RUNNING, state: 'blocked', status: 'waiting', waitingFor:
 
 /** 會搶 worktree／卡片的四個動作：鍵、原本的標籤、處理端擋下時 toast 寫的動作；有確認的要按兩次。 */
 const LOCKABLE = {
-  verify: { label: '▶ 測試', doing: '檢查', presses: 1 },
+  verify: { label: '▶ 測試', doing: '測試', presses: 1 },
   'spec-ok': { label: '✓ 確認規格', doing: '確認規格', presses: 2 },
   ship: { label: '✓ 上線確認', doing: '確認上線', presses: 2 },
   archive: { label: '⌫ 歸檔', doing: '歸檔', presses: 2 },
@@ -151,7 +151,7 @@ test('test_stale_buttons_pressed_after_agent_started_are_refused_with_toast', as
     for (const id of stage.ids) {
       for (let i = 0; i < LOCKABLE[id].presses; i++) await ui.press({ key: PREFIX + id })
       await clock.settle()
-      expect(data.toasts).toContain(`Beta：Agent 仍在執行，完成後再${LOCKABLE[id].doing}`)
+      expect(data.toasts).toContain(`Beta：Agent 處理中，完成後再${LOCKABLE[id].doing}`)
     }
     expect(data.processCalls).toHaveLength(0)
     expect(data.files[CARD_B]).toBe(card)
@@ -194,7 +194,7 @@ test('test_running_case_keeps_stop_logs_open_and_other_cases_unlocked', async ($
   await clock.settle()
   expect(data.stops).toEqual(['bbbbbbbb'])
   expect(data.files[CARD_B]).toBe(card)
-  expect(data.toasts.some((t: string) => t.includes('Agent 仍在執行'))).toBe(false)
+  expect(data.toasts.some((t: string) => t.includes('Agent 處理中'))).toBe(false)
 
   // 另一件閒置的任務：檢查照常執行（換件後「更多動作」收回，重新展開）
   await ui.press({ key: `row-${CARD_A}` })
@@ -272,7 +272,7 @@ test('test_queued_or_approved_check_does_not_run_once_agent_started', async ($, 
   data.agents = [RUNNING]
   finishAlpha()
   await clock.settle()
-  expect(data.toasts).toContain('Beta：Agent 仍在執行，完成後再檢查')
+  expect(data.toasts).toContain('Beta：Agent 處理中，完成後再測試')
   expect(data.processCalls.some((c: any) => c.argv.join(' ') === 'sh -c npm test')).toBe(false)
   expect(await screen(ui)).not.toContain(flat('排隊中'))
   await ui.unmount()
@@ -288,7 +288,7 @@ test('test_queued_or_approved_check_does_not_run_once_agent_started', async ($, 
   await again.press({ key: `${PREFIX}verify` })
   await clock.settle()
   expect(data.asks).toHaveLength(0)
-  expect(data.toasts).toContain('Beta：Agent 仍在執行，完成後再檢查')
+  expect(data.toasts).toContain('Beta：Agent 處理中，完成後再測試')
   expect(data.processCalls.some((c: any) => c.argv.join(' ') === 'sh -c npm test')).toBe(false)
   expect(data.store.trustedVerify).toBeUndefined()
   await again.unmount()
@@ -303,7 +303,7 @@ test('test_desk_verify_command_refuses_while_agent_runs', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const out = await $.command.run({ command: 'desk', args: 'verify Beta' } as any)
   await clock.settle()
-  expect(String((out as any).text)).toBe('Beta：Agent 仍在執行，完成後再檢查')
+  expect(String((out as any).text)).toBe('Beta：Agent 處理中，完成後再測試')
   expect(data.processCalls.some((c: any) => c.argv.join(' ') === 'sh -c npm test')).toBe(false)
   expect(data.asks).toHaveLength(0)
 })
@@ -345,9 +345,9 @@ test('test_next_step_rows_do_not_ask_for_u_while_agent_runs', async ($, on) => {
   const { data, clock } = fixture(on)
   const base = data.files[CARD_B]!
   const cases = [
-    { stage: 'ship', steps: false, says: 'Agent 執行中，完成後再確認上線' },
-    { stage: 'ship', steps: true, says: '全部做完後：Agent 執行中，完成後再確認上線' },
-    { stage: 'done', steps: false, says: 'Agent 執行中，完成後再歸檔' },
+    { stage: 'ship', steps: false, says: 'Agent 處理中，完成後再確認上線' },
+    { stage: 'ship', steps: true, says: '全部做完後：Agent 處理中，完成後再確認上線' },
+    { stage: 'done', steps: false, says: 'Agent 處理中，完成後再歸檔' },
   ]
   for (const k of cases) {
     onlyBeta(data, base)

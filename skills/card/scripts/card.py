@@ -15,9 +15,9 @@
                                                實作計畫跟其他進行中的卡同檔時，輸出結尾印 overlap 的預警行、History 也記一筆（不擋確認）
   card.py overlap <slug|任務名|main>            實作計畫跟登錄表上其他進行中的卡（已歸檔段、卡片檔不存在、沒填計畫的不算）同檔時，
                                                每個同檔印一行「同檔預警：<檔> 也在「<卡名>」的實作計畫（<slug>）」；沒有就印「同檔預警：無」
-  card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句；下一步依關卡三選一：審查已過關、審查檔之後有新 commit 寫
-                                               「等自動重新檢查與審查；沒動靜就到面板按 v」，審查已過關但之後沒有新 commit（或沒有審查檔）寫
-                                               「到面板照「輪到你」開 PR 或合併」，其他寫「到面板按 v 執行完成檢查」；
+  card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句；下一步依關卡三選一：驗收已過關、審查檔之後有新 commit 寫
+                                               「等自動重新測試與驗收；沒動靜就到面板按 v」，驗收已過關但之後沒有新 commit（或沒有審查檔）寫
+                                               「到面板照「輪到你」開 PR 或合併」，其他寫「到面板按 v 執行測試」；
                                                History 記分支與 HEAD（有未提交的檔就註明幾個）；規格還沒確認就拒絕
   card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
                                                可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
@@ -563,10 +563,10 @@ def cmd_overlap(arg):
         print(line)
 
 
-DONE_NEXT = '到面板按 v 執行完成檢查'
-# 審查已過關後又有新 commit：開流程的對話開著面板時會自動重新檢查與審查；card.py 看不到是哪個對話開著面板，所以帶「沒動靜就按 v」。
-DONE_NEXT_RECHECK = '等自動重新檢查與審查；沒動靜就到面板按 v'
-# 審查已過關、之後沒有新 commit（或沒有審查檔）：結論仍算數，面板停在合併段，不會重新檢查、也沒有 v。
+DONE_NEXT = '到面板按 v 執行測試'
+# 驗收已過關後又有新 commit：開流程的對話開著面板時會自動重新測試與驗收；card.py 看不到是哪個對話開著面板，所以帶「沒動靜就按 v」。
+DONE_NEXT_RECHECK = '等自動重新測試與驗收；沒動靜就到面板按 v'
+# 驗收已過關、之後沒有新 commit（或沒有審查檔）：結論仍算數，面板停在合併段，不會重新測試、也沒有 v。
 DONE_NEXT_MERGE = '到面板照「輪到你」開 PR 或合併'
 REVIEW_FILE = os.path.join('.task', 'REVIEW.md')
 
@@ -599,7 +599,7 @@ STATUS_CODES = re.compile(r'(?<![0-9A-Za-z])(?:(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-
 
 
 def cmd_done(arg, status):
-    """主對話告一段落時寫回卡片：狀態改成那句；下一步審查已過關時，審查後有新 commit 寫等自動重新檢查與審查（沒動靜就按 v），
+    """主對話告一段落時寫回卡片：狀態改成那句；下一步驗收已過關時，驗收後有新 commit 寫等自動重新測試與驗收（沒動靜就按 v），
     沒有新 commit 寫照面板開 PR 或合併，其他寫去面板按 v；
     History 記分支與 HEAD；等你、關卡、檢查不動。"""
     status = ' '.join(status.split())
@@ -625,7 +625,7 @@ def cmd_done(arg, status):
     print(f'  狀態：{status}')
     print(f'  下一步：{next_step}')
     if dirty:
-        print(f'  注意：有 {len(dirty)} 個檔未提交，完成檢查與審查只看 commit 過的內容')
+        print(f'  注意：有 {len(dirty)} 個檔未提交，測試與驗收只看 commit 過的內容')
 
 
 DEPLOY_STEP = re.compile(r'^\s*(?:\d+[.)、]|[-*])\s+(.*\S)\s*$')

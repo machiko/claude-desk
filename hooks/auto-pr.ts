@@ -27,7 +27,7 @@ export function autoPrPlan(c: Pick<Case, 'pr' | 'gitState'>, needsHuman?: string
 
 /** 過關的動態（feed）與提示、系統通知（say）。沒有 plan（沒開 autoPr）時跟以前一字不差；skipped 是只動文件、免審查過關。 */
 export function passWords(name: string, plan: AutoPrPlan | undefined, skipped = false): { feed: string; say: string } {
-  const lead = skipped ? { feed: '只動文件、檢查通過，免審查', say: '只動文件，免審查' } : { feed: '審查通過', say: '審查通過' }
+  const lead = skipped ? { feed: '只動文件、測試通過，免驗收', say: '只動文件，免驗收' } : { feed: '驗收通過', say: '驗收通過' }
   const tail = !plan || (plan.kind === 'skip' && !plan.why) ? { feed: '，可開 PR', say: '，可以開 PR' }
     : plan.kind === 'open' ? '，自動派 Agent 開 PR'
     : plan.kind === 'push' ? `，自動派 Agent push 到 PR #${plan.pr}`

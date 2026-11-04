@@ -83,7 +83,7 @@ test('deploy steps end with the next ship action and point to archive only once 
   // (b) tag 已打、六段全綠：結尾才指向歸檔
   data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1', tag: 'v1.4.0' }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
-  expect(await ui.find({ type: 'Text', text: /✓ 完成 v1\.4\.0/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /✓ 已上線 v1\.4\.0/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '1. php artisan migrate' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '全部做完後：/desk:card archive alpha' })).toBeDefined()
   await ui.unmount()

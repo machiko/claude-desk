@@ -93,7 +93,7 @@ test('reply is refused with a reason when no agent is waiting', async ($, on) =>
   waiting(data)
   data.agents = [{ ...data.agents[0], state: 'working', status: 'busy' }]
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
-  await refused('reply Beta 好', 'Agent 仍在執行')
+  await refused('reply Beta 好', 'Agent 處理中')
 
   // Agent 已經結束、沒有在問
   data.agents = [{ ...data.agents[0], state: 'done', status: 'idle' }]

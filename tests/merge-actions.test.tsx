@@ -10,7 +10,7 @@ import type { Case, Verify } from '../types'
 const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'
-const RISK = '高風險改動（認證／中介層），審查已過，請你看過再開 PR'
+const RISK = '高風險改動（認證／中介層），驗收已過，請你看過再開 PR'
 const PUBLISH_HEAD = '推送：push feature/b 並對 release/v1.4 開 PR 用 gh：'
 
 /** 只留 Beta 一件：審查過關、還沒有 PR、沒有 Agent 在跑。 */

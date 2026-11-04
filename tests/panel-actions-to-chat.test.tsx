@@ -125,7 +125,7 @@ test('test_panel_verify_and_dispatch_attach_in_order_with_case_and_result', asyn
   await $.prompt.submit({ text: '現在狀況？' } as any)
 
   expect(data.launches.length).toBe(1)
-  expectInOrder(lastContext(data), [line('Alpha', '檢查通過'), line('Alpha', '派繼續')])
+  expectInOrder(lastContext(data), [line('Alpha', '測試通過'), line('Alpha', '派繼續')])
   await ui.unmount()
 })
 
@@ -146,7 +146,7 @@ test('test_attached_panel_actions_are_not_repeated', async ($, on) => {
   await ui.press({ key: `row-${CARD_C}` })
   await $.prompt.submit({ text: '第三則' } as any)
   const third = lastContext(data)
-  expect(third).toMatch(line('Alpha', '檢查通過'))
+  expect(third).toMatch(line('Alpha', '測試通過'))
   expect(third).not.toContain('已歸檔')
   // 有選取任務時也附：卡片之外再加這一段。
   expect(third).toContain('選了任務「Gamma」')

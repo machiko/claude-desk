@@ -45,7 +45,7 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   if (revOf(run) !== (c.chain?.rev ?? 0)) return chainChanged($, c)
   const resume = run?.resume
   if (!run?.stopped || !resume || resume.dispatch !== 'review') return null
-  const what = resume.security ? '資安審查' : '驗收'
+  const what = resume.security ? '資安驗收' : '驗收'
   const refusal = dispatchRefusal(c, 'review') || (tutorial ? '' : markRefusal(await worktreeMark($, c.root), (await loadJobs($))[key]))
   if (refusal) {
     const text = `${c.name}：目前無法${what}（${refusal}）`

@@ -56,7 +56,7 @@ test('continue → auto check → auto review → fix round 1 on HIGH → check 
   setGate('review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 1；可合併')
   await finish()
   expect(data.launches.length).toBe(4)
-  expect(data.toasts.some(t => t.includes('審查通過'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('驗收通過'))).toBe(true)
   expect((data.store.chains as any)['/home/u/wt/alpha'].passed).toBe(true)
 
   expect(data.mcpCalls.length > 0).toBe(true)
@@ -127,13 +127,15 @@ test('high risk: code review passes → security review → pass but waits for y
   await finish()
   expect(data.launches.length).toBe(5)
   expect(prompt(4).startsWith('資安審查')).toBe(true)
+  // 給人看的字樣：資安那一輪叫「資安驗收」（提示詞照舊）
+  expect(data.toasts).toContain('Alpha：資安驗收已派出')
   expect(data.launches[4].argv).not.toContain('--resume')
 
   // 資安也過了 → 過關但等你看
   setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；資安無虞')
   await finish()
   expect(data.launches.length).toBe(5)
-  expect(data.toasts.some(t => t.includes('高風險改動（認證／中介層），審查已過，請你看過再開 PR'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('高風險改動（認證／中介層），驗收已過，請你看過再開 PR'))).toBe(true)
   expect((data.store.chains as any)['/home/u/wt/alpha'].needsHuman).toContain('認證／中介層')
   expect(data.writes.some(w => w.endsWith('-security.md'))).toBe(true)
 })
@@ -155,7 +157,7 @@ test('docs-only change skips review after the check passes', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   for (let i = 0; i < 3; i++) { await clock.advance(2500); await clock.settle() }
   expect(data.launches.length).toBe(1)
-  expect(data.toasts.some(t => t.includes('只動文件，免審查'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('只動文件，免驗收'))).toBe(true)
   expect((data.store.chains as any)['/home/u/wt/alpha'].skippedReview).toBe(true)
 })
 

@@ -366,8 +366,8 @@ test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a pass is no
 
   expect(overwrites.count()).toBeGreaterThanOrEqual(3)
   expect(chains(data)[BETA].passed).toBeUndefined()
-  expect(log.list.some(e => e.text.includes('免審查'))).toBe(false)
-  expect(data.toasts.some((t: string) => t.includes('免審查'))).toBe(false)
+  expect(log.list.some(e => e.text.includes('免驗收'))).toBe(false)
+  expect(data.toasts.some((t: string) => t.includes('免驗收'))).toBe(false)
   expect(notified).toEqual([])
   expect(data.launches).toHaveLength(0)
   expect((data.store.jobs as any)[BETA].last.handled).toBeFalsy()
@@ -391,7 +391,7 @@ test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a review ver
   expect(overwrites.count()).toBe(3)
   expect(data.writes.some((w: string) => w.includes('/reviews/'))).toBe(false)
   expect(chains(data)[BETA]).toEqual({ owner: ME, startedAt: 0, round: 0, rev: 2 })
-  expect(log.list.some(e => e.text.includes('可開 PR') || e.text.includes('審查通過'))).toBe(false)
+  expect(log.list.some(e => e.text.includes('可開 PR') || e.text.includes('驗收通過'))).toBe(false)
   expect(data.launches).toHaveLength(0)
   expect((data.store.jobs as any)[BETA].last.handled).toBeFalsy()
 })
@@ -458,7 +458,7 @@ test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — an interrupt
   await h.refresh()
   for (let i = 0; i < 3; i++) await h.step()
 
-  expect(data.toasts.some((t: string) => t.startsWith('Beta：檢查中斷'))).toBe(true)
+  expect(data.toasts.some((t: string) => t.startsWith('Beta：測試中斷'))).toBe(true)
   expect(overwrites.count()).toBeGreaterThanOrEqual(3)
   expect(chains(data)[BETA].stopped).toBeUndefined()
   expect(notified.some(t => t.includes('流程已暫停'))).toBe(false)
@@ -501,7 +501,7 @@ test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a check run 
   await clock.settle()
   await h.step()
 
-  expect(log.has('Beta 檢查通過')).toBe(true)
+  expect(log.has('Beta 測試通過')).toBe(true)
   expect(overwrites.count()).toBe(3)
   expect(log.list.some(e => e.text.includes('流程繼續'))).toBe(false)
   expect((data.store.jobs as any)[BETA].last.handled).toBe(true)

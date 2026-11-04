@@ -8,8 +8,8 @@ import type { Risk } from './risk'
 export const MAX_FIX_ROUNDS = 2
 
 /** 實作做完、要自動執行的完成檢查不是你核准過的那條：不跑，停下來在檢查列列出全文，等你按兩次 v 核准。`_WHY` 是不帶按鍵說明的原因。 */
-export const CHECK_CHANGED_WHY = '完成檢查的指令改過、還沒經你核准'
-export const CHECK_UNAPPROVED_WHY = '完成檢查的指令還沒經你核准'
+export const CHECK_CHANGED_WHY = '測試指令改過、還沒經你核准'
+export const CHECK_UNAPPROVED_WHY = '測試指令還沒經你核准'
 const APPROVE_HINT = '：按兩次 v 核准並執行，流程接著走'
 export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
 export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
@@ -123,15 +123,15 @@ function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, c
   if (!run || run.stopped || run.passed || !finished || finished === 'publish' || finished === 'catchup') return null
   // 被停掉的 Agent 做的事不完整：不能當成做完往下走（同步不在流程裡，照舊不動）。
   if (ctx.stopped && finished !== 'sync') return { kind: 'stop', reason: AGENT_STOPPED }
-  const high = ctx.risk?.level === 'high' ? `高風險改動（${ctx.risk.reasons.join('、')}），審查已過，請你看過再開 PR` : undefined
+  const high = ctx.risk?.level === 'high' ? `高風險改動（${ctx.risk.reasons.join('、')}），驗收已過，請你看過再開 PR` : undefined
   if (finished === 'continue' || finished === 'reply') {
     if (check === null) return trusted ? { kind: 'verify' } : { kind: 'stop', reason: ctx.changed ? CHECK_CHANGED : CHECK_UNAPPROVED, atCheck: true }
     if (check && ctx.risk?.level === 'low') return { kind: 'pass', skipped: true }
     if (check) return { kind: 'dispatch', dispatch: 'review', round: run.round }
-    return run.round < MAX_FIX_ROUNDS ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'check' } : { kind: 'stop', reason: `修了 ${MAX_FIX_ROUNDS} 輪檢查仍未通過` }
+    return run.round < MAX_FIX_ROUNDS ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'check' } : { kind: 'stop', reason: `修了 ${MAX_FIX_ROUNDS} 輪測試仍未通過` }
   }
   if (finished === 'review') {
-    if (!verdict) return { kind: 'stop', reason: '審查結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' }
+    if (!verdict) return { kind: 'stop', reason: '驗收結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' }
     // 影響行為的 MEDIUM 只在還有修正輪數時跟 CRITICAL／HIGH 一起修；輪數用完只剩 MEDIUM 就過關，交給「等你」。
     const medium = run.round < MAX_FIX_ROUNDS ? ctx.mediumFix ?? 0 : 0
     if (blocking(verdict) + medium === 0) {

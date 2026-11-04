@@ -6,8 +6,8 @@ import { setFields } from '../hooks/tutorial'
 const BETA = '/home/u/wt/beta'
 const PLACEHOLDER = '`<完成檢查：修之前會紅、修好會綠的一條指令>`'
 const PROSE = '`待 spec 定，先不跑`'
-const MISSING_TURN = '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
-const REFUSED = 'Beta：目前無法繼續（卡片尚缺完成檢查，規格未通過）'
+const MISSING_TURN = '卡片還沒有測試指令：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
+const REFUSED = 'Beta：目前無法繼續（卡片還沒有測試指令，規格未通過）'
 const SPEC = '\n\n## 規格\n\n- 目標：匯出 CSV\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | 有訂單 | 按匯出 | 下載 CSV | `export` |\n\n### 實作計畫\n\n| 檔案 | 改什麼 |\n| --- | --- |\n| `a.ts` | 加匯出 |\n'
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh')
@@ -27,7 +27,7 @@ async function expectNoCheck($: any, data: any, clock: any) {
   await clock.settle()
   const ui = await $.ui.mount(PANE(100))
   const s = await screen(ui)
-  expect(s).toContain(flat('尚缺完成檢查'))
+  expect(s).toContain(flat('還沒有測試指令'))
   expect(s).toContain(flat(MISSING_TURN))
   expect(s).not.toContain(flat('按 g 派 Agent'))
   expect(await ui.find({ key: `case-${CARD_B}-verify` })).toBeUndefined()
@@ -42,7 +42,7 @@ async function expectNoCheck($: any, data: any, clock: any) {
   await $.command.run({ command: 'desk', args: 'verify Beta' } as any)
   await clock.settle(); await clock.advance(3000); await clock.settle()
   expect(sh(data)).toHaveLength(0)
-  expect(data.toasts.some((t: string) => t.includes('Beta：卡片尚缺完成檢查'))).toBe(true)
+  expect(data.toasts.some((t: string) => t.includes('Beta：卡片還沒有測試指令'))).toBe(true)
 }
 
 /** AC-1 */
@@ -68,7 +68,7 @@ test('placeholder check: a real command still dispatches and runs', async ($, on
   const ui = await $.ui.mount(PANE(100))
   const s = await screen(ui)
   expect(s).toContain(flat('按 g 派 Agent：依規格實作'))
-  expect(s).not.toContain(flat('尚缺完成檢查'))
+  expect(s).not.toContain(flat('還沒有測試指令'))
   await ui.unmount()
 
   // /desk verify 只跑核准過的

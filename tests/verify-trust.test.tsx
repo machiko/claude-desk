@@ -4,7 +4,7 @@ import { PREFIX, ROOT, alphaOnly, helpers, sh } from './alpha-chain'
 import { AGENT_STOPPED } from '../hooks/chain'
 
 // 完成檢查的核准：按兩次 g 開始一輪流程時就核准（第一次列出指令）；流程停在檢查段時說得出為什麼，排除後按 v 就接著走。
-const CHANGED = '完成檢查的指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
+const CHANGED = '測試指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
 const COMPOSE = { options: { composeDir: '/home/u/app' } }
 const IN_APP = 'docker compose exec -T app php artisan test'
 const svc = (Service: string, State = 'running') => JSON.stringify({ Service, State, Health: '' })
@@ -176,7 +176,7 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   breakNext = true
   await h.finish()
   expect(breakNext).toBe(false)
-  expect(chain().stopped).toContain('檢查中斷')
+  expect(chain().stopped).toContain('測試中斷')
   expect(data.launches.length).toBe(4)
   await h.verify()
   expect(chain().stopped).toBeUndefined()
@@ -227,12 +227,12 @@ test('chain paused at the check because containers are down or the check broke s
   data.git[ROOT]!.head = 'h2'
   breakNext = true
   await h.finish()
-  expect(chain().stopped).toContain('檢查中斷')
+  expect(chain().stopped).toContain('測試中斷')
   await h.refresh()
   await h.refresh()
   expect(aboutAlpha()).toHaveLength(2)
-  expect(aboutAlpha()[1]).toContain('Alpha：流程已暫停，檢查中斷')
-  for (const said of notified) expect(said).not.toContain('檢查未通過')
+  expect(aboutAlpha()[1]).toContain('Alpha：流程已暫停，測試中斷')
+  for (const said of notified) expect(said).not.toContain('測試未通過')
 })
 
 /** AC-5 */
@@ -337,7 +337,7 @@ test('a chain paused at the check by another conversation says where it resumes 
   data.store.chains = { [ROOT]: { owner: 'other-session', startedAt: 0, round: 0, stopped: CHANGED, heldAtCheck: true } }
   await h.refresh()
   shown = await screen()
-  expect(shown.s).toContain(flat(`▶ 輪到你  流程已暫停（完成檢查的指令改過、還沒經你核准）${ELSEWHERE}`))
+  expect(shown.s).toContain(flat(`▶ 輪到你  流程已暫停（測試指令改過、還沒經你核准）${ELSEWHERE}`))
   expect(shown.s).not.toContain(flat(`▶ 輪到你  ${CHANGED}`))
 })
 
@@ -357,7 +357,7 @@ test('a chain paused at the check whose check was then cleared asks for a check,
   const o = await ui.find({ key: `${PREFIX}open` })
   await ui.unmount()
 
-  expect(shown).toContain(flat('▶ 輪到你  卡片尚缺完成檢查：開卡片（o）'))
+  expect(shown).toContain(flat('▶ 輪到你  卡片還沒有測試指令：開卡片（o）'))
   expect(shown).not.toContain(flat('按兩次 v 核准'))
   expect(leaves(o, 'Text').some((t: any) => t.props?.bold)).toBe(true)
 })

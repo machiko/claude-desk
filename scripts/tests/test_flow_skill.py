@@ -8,7 +8,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKILL = os.path.join(ROOT, 'skills', 'flow', 'SKILL.md')
-STAGES = ('規格', '實作', '檢查', '審查', '合併', '上線')
+STAGES = ('規格', '實作', '測試', '驗收', '合併', '上線')
 
 
 def read(path):
@@ -32,6 +32,19 @@ class FlowSkillTest(unittest.TestCase):
         self.assertIn('/desk:card done', text)
         for key in ('t', 'v', 'u'):
             self.assertRegex(text, rf'按 `?{key}`?', key)
+
+    def test_flow_skill_names_stages_three_and_four_test_and_acceptance(self):
+        """AC-5：第 3、4 段寫「測試」「驗收」，done 的下一步用新詞；舊說法（完成檢查、派審查、重新檢查與審查）不再出現。"""
+        text = read(SKILL)
+
+        self.assertRegex(text, re.compile(r'^## 3 測試\n', re.M))
+        self.assertRegex(text, re.compile(r'^## 4 驗收\n', re.M))
+        self.assertIn('按 `w` 兩次派驗收', text)
+        self.assertIn('測試未通過（exit n）', text)
+        self.assertIn('到面板按 v 執行測試', text)
+        self.assertIn('等自動重新測試與驗收；沒動靜就到面板按 v', text)
+        for old in ('完成檢查', '派審查', '重新檢查與審查', '檢查未通過', '審查通過'):
+            self.assertNotIn(old, text, old)
 
     def test_flow_skill_says_how_to_pick_the_card_without_a_slug(self):
         """/desk:flow 沒帶 slug：用目前 worktree 的資料夾名；在主 repo 用 main（審查 MEDIUM-1）。"""

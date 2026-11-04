@@ -5,7 +5,7 @@ import { world } from './update-world'
 import type { World } from './update-world'
 
 const DAY = 24 * 60 * 60_000
-const UPDATED = 'desk 已更新版本：0.18.0 → 0.19.0，自動重新載入（對話進行中就等回合結束）'
+const UPDATED = 'desk 已更新版本：0.18.0 → 0.19.0，自動重新載入（對話正在回覆就等回合結束）'
 const RELOAD_FILLED = 'desk 沒能自動重新載入：已填入 /reload-plugins，按 Esc 回到輸入框再按 Enter 執行，新版才會生效'
 const RELOAD_TYPE = 'desk 沒能自動重新載入：請輸入 /reload-plugins，新版才會生效'
 

@@ -318,7 +318,7 @@ test('test_auto_pr_goes_first_and_conflict_agent_follows_when_review_passes_with
   expect(data.gitCalls.some(g => g.root === BETA && g.args[0] === 'merge-tree')).toBe(true)
   expect(data.launches.length).toBe(1)
   expect(promptOf(data, 0).split('\n')[0]).toContain('推送：push feature/b')
-  expect(log.has('Beta 審查通過，自動派 Agent 開 PR')).toBe(true)
+  expect(log.has('Beta 驗收通過，自動派 Agent 開 PR')).toBe(true)
   // 推送 Agent 在跑：不同時派解衝突
   await refresh($, clock, 2)
   expect(data.launches.length).toBe(1)

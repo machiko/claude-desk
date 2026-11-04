@@ -276,7 +276,7 @@ test('running the check on a merged case paused at the check does not claim the 
   await clock.settle(); await clock.advance(2500); await clock.settle()
 
   expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(1)
-  expect(feed.some(e => e.text.includes('檢查通過'))).toBe(true)
+  expect(feed.some(e => e.text.includes('測試通過'))).toBe(true)
   expect(feed.some(e => e.text.includes('流程繼續'))).toBe(false)
   expect(data.launches.length).toBe(0)
   expect((data.store.chains as any)[root]).toEqual(held)
