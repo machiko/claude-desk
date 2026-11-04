@@ -91,6 +91,8 @@ export function fixture(on: any) {
     /** store.set 寫這些 key 時拒絕（模擬寫入失敗）：key → 拒絕原因；沒列的照常寫進 store。 */
     storeDeny: {} as Record<string, string>,
     store: {} as Record<string, unknown>,
+    /** store.set 寫完之後呼叫：測試在這裡把 store 換成「別的對話用它早先讀到的舊表整張寫回」的樣子。 */
+    storeAfterSet: undefined as undefined | ((key: string, value: unknown) => unknown),
     /** session 根目錄；git common dir 依 repos 回答，沒列的就不是 git。 */
     root: SESSION_ROOT,
     repos: { [SESSION_ROOT]: `${SESSION_ROOT}/.git` } as Record<string, string>,
@@ -173,7 +175,7 @@ export function fixture(on: any) {
   on('session.id', () => ({ value: 'fixture-session' }))
   on('session.root', () => ({ value: data.root }))
   on('store.get', (_: any, e: any) => ({ value: data.store[e.key] ?? null }))
-  on('store.set', (_: any, e: any) => { if (data.storeDeny[e.key]) return { deny: data.storeDeny[e.key] }; data.store[e.key] = e.value; return { value: undefined } })
+  on('store.set', (_: any, e: any) => { if (data.storeDeny[e.key]) return { deny: data.storeDeny[e.key] }; data.store[e.key] = e.value; data.storeAfterSet?.(e.key, e.value); return { value: undefined } })
   on('ui.toast', (_: any, e: any) => { data.toasts.push(e.text); return { value: undefined } })
   on('ui.status', (_: any, e: any) => { data.status = e.text; return { value: undefined } })
   on('ui.open', (_: any, e: any) => {

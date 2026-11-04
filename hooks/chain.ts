@@ -17,8 +17,19 @@ export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
 export const AGENT_STOPPED = 'Agent 被停止，未完成；看過 worktree 後按 g 重開'
 /** 停在提問的那次派工，題目已在對話處理（卡片「等你」清掉）：審查要修的不自動派修正。 */
 export const ASK_HANDED_OVER = '提問已在對話處理，不自動派修正'
+/** 拿早先看到的流程紀錄（版本）做決定，寫入時版本已被別的對話改過：不寫，回這句。 */
+export const CHAIN_CHANGED = '流程紀錄已被別的對話改過，重新整理後再試'
+/** 寫完重讀，這件的版本被別的對話用舊表寫回蓋掉：最多重套這麼多次。 */
+export const MAX_SAVE_RETRIES = 3
+/** 連續 MAX_SAVE_RETRIES 次都被蓋掉：放棄，動態寫這句。 */
+export const CHAIN_OVERWRITTEN = `流程紀錄寫入 ${MAX_SAVE_RETRIES} 次都被別的對話蓋掉，重新整理後再試`
+
+/** 流程紀錄的版本號：舊紀錄沒有，視為 0。 */
+export const revOf = (run: Pick<ChainRun, 'rev'> | undefined): number => run?.rev ?? 0
 
 export type ChainRun = {
+  /** 版本號：每次寫回加 1（舊紀錄沒有，視為 0）；帶著早先看到的版本寫入時，版本不同就不寫。 */
+  rev?: number
   owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
   /** 上一次派審查時的 HEAD；修正後的複審只看這之後的 diff。 */
   reviewHead?: string

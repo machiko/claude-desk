@@ -11,6 +11,7 @@ import { confirmLaunch, launchArgs, parseLaunchToken } from './dispatch'
 import type { RootJobs } from './dispatch'
 import { stageLabel } from './pipeline'
 import { SUMMARY_SYSTEM, cleanSummary, summaryPrompt, textKey } from './digest-status'
+import { CHAIN_OVERWRITTEN, MAX_SAVE_RETRIES, revOf } from './chain'
 import type { ChainRun } from './chain'
 import { HANDOFFS, PROJECT_FILES } from './project'
 import { WORD } from './theme'
@@ -73,12 +74,39 @@ export async function loadChains($: any): Promise<Record<string, ChainRun>> {
   const v = (await $.store.get(CHAIN_KEY).catch(() => null)) as Record<string, ChainRun> | null
   return v && typeof v === 'object' ? v : {}
 }
-export async function saveChain($: any, key: string, change: (run: ChainRun | undefined) => ChainRun | undefined) {
-  const all = await loadChains($)
-  const next = change(all[key])
-  const out = { ...all }
-  if (next) out[key] = next; else delete out[key]
-  await $.store.set(CHAIN_KEY, out)
+/** saveChain 的選項：`basedOn` 是呼叫端做決定時看到的版本；`warn` 是放棄時寫動態要用的任務名、時間與卡片。 */
+export type SaveChainOpts = { basedOn?: number; warn?: { at: number; name: string; card: string } }
+/** 已經為「整張表被蓋掉、放棄寫入」寫過動態的流程紀錄：同一件事只寫一筆，下次寫成功才清掉。 */
+const overwriteWarned = new Set<string>()
+
+/**
+ * 改寫一件的流程紀錄，回傳有沒有真的寫回。
+ * 閉包回傳同一個參照（沒改內容）就不寫；帶 `basedOn` 而現在的版本不是它（別的對話改過）也不寫。
+ * 寫回時版本加 1；寫後重讀，這件的版本比剛寫的舊（別的對話用它早先讀到的舊表整張寫回）就在最新的表上重套，
+ * 最多 MAX_SAVE_RETRIES 次；都被蓋掉就放棄，有 `warn` 時動態寫一筆。
+ */
+export async function saveChain($: any, key: string, change: (run: ChainRun | undefined) => ChainRun | undefined, opts: SaveChainOpts = {}): Promise<boolean> {
+  for (let attempt = 0; attempt < MAX_SAVE_RETRIES; attempt++) {
+    const all = await loadChains($)
+    const cur = all[key]
+    if (opts.basedOn !== undefined && revOf(cur) !== opts.basedOn) return false
+    const next = change(cur)
+    if (next === cur) return false
+    const rev = revOf(cur) + 1
+    const { [key]: _, ...others } = all
+    await $.store.set(CHAIN_KEY, next ? { ...others, [key]: { ...next, rev } } : others)
+    const after = (await loadChains($))[key]
+    // 別的對話接著我們寫的再寫（版本更大）也算寫進去了；比剛寫的舊、或刪掉後又被舊表帶回來才算被蓋掉。
+    if (next ? revOf(after) >= rev : !after || revOf(after) > revOf(cur)) {
+      overwriteWarned.delete(key)
+      return true
+    }
+  }
+  if (opts.warn && !overwriteWarned.has(key)) {
+    overwriteWarned.add(key)
+    await feedPush($, [{ at: opts.warn.at, text: `${opts.warn.name}：${CHAIN_OVERWRITTEN}`, tone: 'warning', card: opts.warn.card }])
+  }
+  return false
 }
 export async function me($: any): Promise<string> { return String((await $.session.id().catch(() => '')) ?? '') }
 
