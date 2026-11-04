@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, CARD_C, PROJECT_DIR, REGISTRY, result, text, flat, feedLog } from './fixture'
+import { fixture, PANE, CARD_B, CARD_C, PROJECT_DIR, REGISTRY, result, text, flat, feedLog, pressHotkey } from './fixture'
 import { setFields, tutorialPaths, TUTORIAL_TAG } from '../hooks/tutorial'
 import { canArchive } from '../hooks/pipeline'
 import { stageActions } from '../hooks/turn'
@@ -46,18 +46,59 @@ async function mountBeta($: any) {
   return ui
 }
 
-test('a done case offers an archive button with no hotkey', async ($, on) => {
+test('a done case offers an archive button on q', async ($, on) => {
   const { data } = fixture(on)
   only(data)
   const ui = await mountBeta($)
   const button = await ui.find({ key: KEY })
   expect(button?.text).toBe('⌫ 歸檔')
-  expect(button?.props?.hotkey).toBeUndefined()
-  // 下一步列與輪到你仍寫指令
+  expect(button?.props?.hotkey).toBe('q')
+  // 輪到你寫按兩次 q（或指令）；下一步列照卡片寫指令
   expect(await screen(ui)).toContain(flat('▶ 輪到你'))
-  expect(await screen(ui)).toContain(flat('輸入 /desk:card archive beta 歸檔'))
+  expect(await screen(ui)).toContain(flat('按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
   expect(await screen(ui)).toContain(flat('已合併，可歸檔：/desk:card archive beta'))
   expect(archiveRuns(data)).toHaveLength(0)
+  await ui.unmount()
+})
+
+/** AC-4：可以歸檔的那件按 q：第一次只把按鈕變成待確認，三秒內再按 q 才歸檔；輪到你那句與按鈕看得到 q。 */
+test('按 q 兩次才歸檔，輪到你與按鈕看得到 q', async ($, on) => {
+  const { data, clock } = fixture(on)
+  only(data)
+  scriptOk(data)
+  const ui = await mountBeta($)
+  expect(await screen(ui)).toContain(flat('▶ 輪到你 按兩次 q 歸檔'))
+  expect((await ui.find({ key: KEY }))?.props?.hotkey).toBe('q')
+  // 第一次：只待確認，不跑腳本、不改檔
+  const before = JSON.stringify(data.files)
+  await pressHotkey(ui, 'q')
+  await clock.settle()
+  expect((await ui.find({ key: KEY }))?.text).toBe('再按 q 確認歸檔')
+  expect(archiveRuns(data)).toHaveLength(0)
+  expect(JSON.stringify(data.files)).toBe(before)
+  // 三秒內再按 q：歸檔
+  await clock.advance(1000)
+  await pressHotkey(ui, 'q')
+  await clock.settle()
+  expect(archiveRuns(data)).toHaveLength(1)
+  expect(archiveRuns(data)[0].argv.slice(2)).toEqual(['archive', 'beta'])
+  await ui.unmount()
+})
+
+/** AC-4：待確認過了三秒再按 q，只是重新待確認，不歸檔。 */
+test('q 待確認超過三秒再按只重新待確認', async ($, on) => {
+  const { data, clock } = fixture(on)
+  only(data)
+  scriptOk(data)
+  const ui = await mountBeta($)
+  await pressHotkey(ui, 'q')
+  await clock.settle()
+  await clock.advance(4000)
+  await clock.settle()
+  await pressHotkey(ui, 'q')
+  await clock.settle()
+  expect(archiveRuns(data)).toHaveLength(0)
+  expect((await ui.find({ key: KEY }))?.text).toBe('再按 q 確認歸檔')
   await ui.unmount()
 })
 
@@ -73,7 +114,7 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
   const before = JSON.stringify(data.files)
   await ui.press({ key: KEY })
   await clock.settle()
-  expect((await ui.find({ key: KEY }))?.text).toBe('再按一次確認歸檔')
+  expect((await ui.find({ key: KEY }))?.text).toBe('再按 q 確認歸檔')
   expect(JSON.stringify(data.files)).toBe(before)
   expect(archiveRuns(data)).toHaveLength(0)
 
@@ -99,7 +140,7 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
   expect(await ui.find({ key: `row-${CARD_B}` })).toBeUndefined()
   expect(await ui.find({ key: KEY })).toBeUndefined()
   expect(await screen(ui)).not.toContain(flat('✓ 已上線 v0.19.0'))
-  expect(await screen(ui)).not.toContain(flat('輸入 /desk:card archive beta 歸檔'))
+  expect(await screen(ui)).not.toContain(flat('按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
   // worktree 與分支仍在：沒有任何刪除的指令
   expect(all.some((e: any) => /worktree remove|branch -[dD]|rm -rf/.test(e.argv.join(' ')))).toBe(false)
   expect(data.files[CARD_B]).toBeDefined()
@@ -146,7 +187,7 @@ test('a failed archive shows the error and keeps the case', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   expect(await screen(ui)).toContain(flat('✓ 已上線 v0.19.0'))
-  expect(await screen(ui)).toContain(flat('輸入 /desk:card archive beta 歸檔'))
+  expect(await screen(ui)).toContain(flat('按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
   expect((await ui.find({ key: KEY }))?.text).toBe('⌫ 歸檔')
   await ui.unmount()
 })
@@ -164,7 +205,7 @@ test('no archive button before the case is done or on tutorial and sample cases'
   only(data, PASSED, {})
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   let ui = await $.ui.mount(PANE(80))
-  expect(await screen(ui)).toContain(flat('按 ⚑ 發版'))
+  expect(await screen(ui)).toContain(flat('按 z 發版'))
   await noArchive(ui)
   await ui.unmount()
 
@@ -237,7 +278,7 @@ async function expectArchivable(ui: any) {
   expect(await labelShown(ui, '等回覆')).toBe(false)
   const shown = await screen(ui)
   expect(shown).toContain(flat(`✓ 已上線 ${TAG}`))
-  expect(shown).toContain(flat('▶ 輪到你 輸入 /desk:card archive beta 歸檔'))
+  expect(shown).toContain(flat('▶ 輪到你 按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
   expect(shown).not.toContain(flat('Agent 等待你回覆'))
   expect((await ui.find({ key: KEY }))?.text).toBe('⌫ 歸檔')
   expect(await ui.find({ key: `case-${CARD_B}-reply` })).toBeUndefined()

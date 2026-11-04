@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseRegistry, parseCard, parseDecisions, pickByDigit, unpick, decisionAnswer, allPicked, parseGate, verifyCommand, looksLikeCommand, projectRoot, splitClauses, saysNone, filledAc, hasSpec } from '../hooks/card'
+import { parseRegistry, parseCard, parseDecisions, pickByDigit, unpick, decisionAnswer, allPicked, parseGate, verifyCommand, looksLikeCommand, projectRoot, splitClauses, saysNone, filledAc, hasSpec, decisionNames, withDecision } from '../hooks/card'
 import SPEC_CASES from './spec-cases.mjs'
 
 test('registry rows are any table line with a name and a backticked path; ~ expands', () => {
@@ -106,4 +106,19 @@ test('a placeholder or prose check field counts as no check', () => {
   expect(looksLikeCommand('<npm test>')).toBe(false)
   expect(looksLikeCommand('待 spec 定')).toBe(false)
   expect(looksLikeCommand('')).toBe(false)
+})
+
+test('decisionNames finds every task decision line in order, once each', () => {
+  expect(decisionNames('「Alpha」決策：A')).toEqual(['Alpha'])
+  expect(decisionNames('順便看一下 CI\n「Alpha」決策：A\n  「Beta」決策：B\n「Alpha」決策：B')).toEqual(['Alpha', 'Beta'])
+  expect(decisionNames('提到「Alpha」決策：A 不在行首')).toEqual([])
+  expect(decisionNames('')).toEqual([])
+})
+
+test('withDecision replaces this task line and keeps the rest of the draft', () => {
+  expect(withDecision('草稿', 'Alpha', '「Alpha」決策：A')).toBe('草稿\n「Alpha」決策：A')
+  expect(withDecision('草稿\n', 'Alpha', '「Alpha」決策：A')).toBe('草稿\n「Alpha」決策：A')
+  expect(withDecision('草稿\n「Alpha」決策：A\n「Beta」決策：B', 'Alpha', '「Alpha」決策：B')).toBe('草稿\n「Alpha」決策：B\n「Beta」決策：B')
+  // 重複的舊行只留一行（換成新的）
+  expect(withDecision('「Alpha」決策：A\n草稿\n「Alpha」決策：B', 'Alpha', '「Alpha」決策：C')).toBe('「Alpha」決策：C\n草稿')
 })

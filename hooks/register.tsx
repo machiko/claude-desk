@@ -526,7 +526,7 @@ export async function openPane($: any) {
   await update($, isPaneOpen, () => true)
   // 重新開啟面板一律從精簡動作開始。
   await update($, showAllAtom, () => null)
-  const opened = await $.ui.open({ id: PANE, title: 'desk', focus: true, closeOnEscape: true, rows: 18, columns: 72 })
+  const opened = await $.ui.open({ id: PANE, title: 'desk', focus: true, rows: 18, columns: 72 })
   if (opened && opened.isPlaced === false) $.ui.toast(`工作桌面板尚未顯示（${plain(String(opened.reason ?? ''))}）；輸入 /desk 開啟`)
 }
 
@@ -594,7 +594,7 @@ export const register: Register = (on, options) => {
     await clearAgentQueue($)
     // 載入計數：更新後 /reload-plugins 被拒時，看新版是不是其實已經載入了。
     await markLoaded($)
-    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 收起）；close 收起；refresh 重新整理；go|sync|review|reply <任務名> [回覆] 派工；verify|open <任務名> 執行測試／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範任務）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <任務名>|bar|update|tutorial [end]|off]' })
+    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 回輸入框）；close 收起；refresh 重新整理；go|sync|review|reply <任務名> [回覆] 派工；verify|open <任務名> 執行測試／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範任務）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <任務名>|bar|update|tutorial [end]|off]' })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
     const id = await $.session.id().catch(() => null)
     const list = ((await $.store.get(SESSIONS_KEY).catch(() => null)) as string[] | null) ?? []
@@ -661,10 +661,10 @@ export const register: Register = (on, options) => {
     if (arg === 'close') { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}); return { text: '工作桌已收起。' } }
     if (arg) return { text: '可用：/desk、close、refresh、go|sync|review <任務名>、reply <任務名> [回覆]、verify|open <任務名>、bar、update、tutorial [end]、off' }
     if (!(await read($, snapshot))) void refresh($, options)
-    // 從輸入框打 /desk 時鍵盤一定在輸入框：開著就把焦點移到面板，不關閉；收起用面板裡的 Esc 或 /desk close。
+    // 從輸入框打 /desk 時鍵盤一定在輸入框：開著就把焦點移到面板，不關閉。Esc 只把鍵盤交回輸入框、面板留著；收起用 /desk close 或摘要列的「⌗ desk」。
     const wasOpen = await read($, isPaneOpen)
     await openPane($)
-    return { text: wasOpen ? '已切到面板（Esc 收起）' : '工作桌已開（Esc 收起）' }
+    return { text: wasOpen ? '已切到面板（Esc 回輸入框）' : '工作桌已開（Esc 回輸入框；收起用 /desk close）' }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

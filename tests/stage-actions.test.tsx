@@ -1,9 +1,9 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, leaves, text, PANE, CARD_B, NOW, REGISTRY, flat } from './fixture'
+import { fixture, leaves, text, PANE, CARD_A, CARD_B, NOW, REGISTRY, flat } from './fixture'
 import { releasePrompt } from '../hooks/card'
 import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
-import { caseActions } from '../hooks/pane-card'
+import { caseActions, RESERVED } from '../hooks/pane-card'
 import type { Case } from '../types'
 
 const BETA = '/home/u/wt/beta'
@@ -211,5 +211,73 @@ test('test_release_decision_on_merged_card_is_answerable_from_pane', async ($, o
   await ui.press({ key: `${PREFIX}fill` })
   await clock.settle()
   expect(data.fills).toEqual([{ text: '「Beta」決策：A', mode: 'replace' }])
+  await ui.unmount()
+})
+
+// ── AC-6：動作單鍵與決策選項字母不打架 ──
+
+/** 一件 Beta：照工作桌的做法讀卡 → 疊上 extra → 算六段 → 決定狀態；v 是完成檢查的結果。 */
+function synth(fields: { next?: string; gate?: string; ask?: string }, extra: Partial<Case> = {}, v?: any): Case {
+  const card = `<!-- DESK -->\n- 狀態：ok\n- 檢查：\`npm test\`\n- 等你：${fields.ask ?? '無'}\n- 下一步：${fields.next ?? '實作匯入'}\n- 關卡：${fields.gate ?? '無'}\n<!-- /DESK -->`
+  const base = { ...buildCase({ name: 'Beta', statusPath: CARD_B }, card, 1, {}, undefined), git: { branch: 'feature/b', head: 'b1' }, ...extra } as Case
+  const piped = { ...base, pipeline: pipeline(base, v) }
+  return { ...piped, state: finalState(piped) } as Case
+}
+const REVIEWED = 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
+const CHECKED = { ...PASS, head: 'b1' }
+/** 涵蓋每一種帶單鍵的動作按鈕：實作、檢查、驗收、Agent 在跑、等你、規格、開 PR、push、發版、上線確認、歸檔、派工排隊。 */
+const SAMPLES: [Case, any?][] = [
+  [synth({})],
+  [synth({}, {}, { ...CHECKED, ok: false, exitCode: 1 })],
+  [synth({ next: '派驗收' }, {}, CHECKED)],
+  [synth({}, { agent: { id: 'aaaaaaaa', name: 'desk-beta-1', state: 'working', status: 'busy' } as any })],
+  [synth({ ask: '先做哪個？A) 匯入 B) 匯出' })],
+  [synth({ gate: 'spec：待確認規格' })],
+  [synth({ gate: REVIEWED }, { reviewTop: ['HIGH 稽核 hooks/a.ts:1 — 舊的發現'] }, CHECKED)],
+  [synth({ gate: REVIEWED }, { pr: { id: 12, state: 'OPEN', ci: 'pass', url: MERGED_PR.url } as any, gitState: { ahead: 1, behind: 0, changed: 0, untracked: 0, upstream: true } as any }, CHECKED)],
+  [mergedCase()],
+  [mergedCase({ tag: 'v0.19.0', gate: '- 關卡：release：v0.19.0 可上線' })],
+  [mergedCase({ tag: 'v0.19.0' })],
+  [synth({}), { agentQueue: [CARD_B] }],
+]
+const hotkeysOf = (c: Case, extra: any = {}) => {
+  const view = { s: { tutorial: false, cases: [c], models: {} }, picks: {}, verifying: {}, queue: [], launching: {}, armed: null, now: NOW, logsOpen: null, sent: {}, showAll: true, ...extra } as any
+  return caseActions(view, c, new Proxy({}, { get: () => () => {} }) as any).map(a => a.hotkey).filter((k): k is string => !!k)
+}
+
+/** AC-6 */
+test('所有動作單鍵都在保留清單', async ($, on) => {
+  // 現在卡的每一種動作按鈕（m 展開全部）
+  const actionKeys = new Set(SAMPLES.flatMap(([c, extra]) => hotkeysOf(c, extra)))
+  // 這次新加的三個鍵確實出現在按鈕上，守門才有意義
+  for (const k of ['n', 'q', 'z', 'f', 'g', 'v', 'w', 'k', 'l', 'e', 'p', 'u', 't', 'o']) expect([k, actionKeys.has(k)]).toEqual([k, true])
+
+  // 面板上的其他按鈕（footer 的重新整理、展開、更多、說明，說明頁的隱藏摘要列）：清單列的數字鍵與決策選項除外
+  const { data, clock } = fixture(on)
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '先做哪個？A) 一 B) 二 C) 三 D) 四')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: 'more' })
+  await ui.press({ key: 'help' })
+  const paneKeys = (await ui.findAll({ type: 'Button' }))
+    .filter((b: any) => b.props?.hotkey && !String(b.key).startsWith('row-') && !String(b.key).includes('-opt'))
+    .map((b: any) => String(b.props.hotkey))
+  await ui.unmount()
+
+  const outside = [...new Set([...actionKeys, ...paneKeys])].filter(k => !RESERVED.has(k))
+  expect(outside).toEqual([])
+})
+
+/** AC-6：一題決策的選項是 A／B／C／D：a、b、c、d 仍是選項的單鍵，新加的 n、q、z 不搶選項字母。 */
+test('四個選項的決策仍用 a b c d 回答', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '先做哪個？A) 一 B) 二 C) 三 D) 四')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  const ui = await $.ui.mount(PANE(160))
+  for (const [i, k] of ['A', 'B', 'C', 'D'].entries()) expect((await ui.find({ key: `case-${CARD_A}-opt0${k}` }))?.props?.hotkey).toBe(['a', 'b', 'c', 'd'][i])
+  for (const k of ['a', 'b', 'c', 'd']) expect(RESERVED.has(k)).toBe(false)
+  for (const k of ['n', 'q', 'z']) expect(RESERVED.has(k)).toBe(true)
   await ui.unmount()
 })

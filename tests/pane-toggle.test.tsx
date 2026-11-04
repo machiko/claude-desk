@@ -57,13 +57,13 @@ test('pane-toggle: no next button or n hotkey', async ($, on) => {
   const bindsN = async () => (await ui.findAll({ type: 'Button' })).some((b: any) => b.props?.hotkey === 'n')
   expect(await ui.find({ key: 'next' })).toBeUndefined()
   expect(await bindsN()).toBe(false)
-  // 展開更多動作、打開說明也一樣：沒有「→ 下一件」，說明不提 n，沒有任何按鈕綁 n（所以按 n 不做任何事）。
+  // 展開更多動作、打開說明也一樣：沒有「→ 下一件」，沒有任何按鈕綁 n（沒有要推送的任務時按 n 不做任何事）；說明的 n 是推送（⇡ 開 PR／⇡ push），不是下一件。
   await ui.press({ key: 'more' })
   await ui.press({ key: 'help' })
   expect(await ui.find({ key: 'next' })).toBeUndefined()
   expect(await bindsN()).toBe(false)
   expect(await ui.find({ type: 'Text', text: /下一件/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^n\s*$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '⇡ 開 PR／⇡ push：派 Agent 推送（按兩次確認）' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '停止 Agent（按兩次確認）' })).toBeDefined()
   await ui.unmount()
 })

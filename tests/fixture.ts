@@ -83,6 +83,8 @@ export function fixture(on: any) {
     askHeaders: [] as string[],
     /** false 模擬輸入框無法預填。 */
     fillable: true,
+    /** 輸入框裡還沒送出的字（$.prompt.read 讀到的）；預設空的。預填照 mode 改它（replace 換掉、append／insert 接在後面），送出後清空。 */
+    draft: '',
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
     /** `claude stop <id>` 停過的 id（依序）。 */
     stops: [] as string[],
@@ -202,8 +204,13 @@ export function fixture(on: any) {
     data.reloads.push({ toasts, ...(seen === undefined ? {} : { seen }) })
     return { text: 'Reloaded plugins' }
   })
-  on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
-  on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
+  on('prompt.read', () => ({ value: { text: data.draft, cursor: data.draft.length } }))
+  on('prompt.fill', (_: any, e: any) => {
+    data.fills.push({ text: e.text, mode: e.mode })
+    if (data.fillable) data.draft = e.mode === 'append' || e.mode === 'insert' ? `${data.draft}${e.text}` : e.text
+    return { isFilled: data.fillable }
+  })
+  on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); data.draft = ''; return { text: e.text, context: e.context } })
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [] }))
   return { data, clock }
 }
@@ -224,4 +231,15 @@ export function feedLog(on: any) {
   }
   on('state.set', (_: any, e: any, next: any) => { if (e?.plugin === 'desk' && e?.key === 'feed' && Array.isArray(e.value)) log.list = e.value; return next(e) })
   return log
+}
+
+/**
+ * 按單鍵：測試套件不送按鍵，照引擎的做法找畫面上綁這個鍵的那顆按鈕按下去；同一個鍵綁在兩顆以上（會撞鍵）就失敗。
+ * 回傳按下前那顆按鈕（看字樣用）。
+ */
+export async function pressHotkey(ui: any, key: string): Promise<any> {
+  const bound = (await ui.findAll({ type: 'Button' })).filter((b: any) => b.props?.hotkey === key)
+  if (bound.length !== 1) throw new Error(`單鍵 ${key} 綁在 ${bound.length} 顆按鈕上：${bound.map((b: any) => b.key).join('、')}`)
+  await ui.press({ key: bound[0].key })
+  return bound[0]
 }

@@ -107,16 +107,18 @@ const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped &&
 export function shipTurn(c: Case, tutorial = false): Turn {
   const release = parseGate(c.gate)?.kind === 'release'
   if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, key: 'u' }
-  if (c.tag) return { who: 'you', text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
+  if (c.tag) return { who: 'you', ...(!tutorial && canArchive(c) ? archiveTurn(c) : { text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }) }
   // 合併進發版線的卡：發版線打 tag 就是它的上線，沒有自己的發版鍵；不帶鍵。
   const line = tutorial ? null : shipsWith(c)
   if (line) return { who: 'you', text: `隨 ${line} 發版；${release ? '發版線打 tag 後部署並按 u 確認上線' : '發版線打 tag 後歸檔'}` }
   if (tutorial || !canRelease(c)) return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
-  // 不帶鍵：帶頭的是「⚑ 發版」（沒有快捷鍵）。
-  return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}` }
+  return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}`, key: 'z' }
 }
 
-export const RELEASE_TURN = '按 ⚑ 發版填入對話（Enter 送出）'
+export const RELEASE_TURN = '按 z 發版填入對話（Enter 送出）'
+
+/** 可以從面板歸檔：按兩次 q（⌫ 歸檔），或在對話輸入歸檔指令。 */
+const archiveTurn = (c: Case) => ({ text: `按兩次 q 歸檔（或輸入 ${CARD_CMD} archive ${slugOf(c)}）`, key: 'q' })
 
 /**
  * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關（register 會排 recheck），
@@ -154,7 +156,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
   if (isBusy(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
-  if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
+  if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', ...(!ctx.tutorial && canArchive(c) ? archiveTurn(c) : { text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }) }
   const hold = checkHold(c)
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
   // Agent 被停掉：原因本身就說了要做什麼，不是修一輪。
@@ -202,9 +204,9 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   }
 }
 
-export const PUBLISH_PR_TURN = '按 ⇡ 開 PR 派 Agent push 並開 PR'
-export const PUBLISH_PR_RISKY_TURN = '高風險改動：看過審查檔（e）後按兩次 ⇡ 開 PR 派 Agent push 並開 PR'
-export const PUBLISH_PUSH_TURN = 'PR 開著又有新 commit：按 ⇡ push 派 Agent 推上去，CI 過了再合併'
+export const PUBLISH_PR_TURN = '按兩次 n 開 PR 派 Agent push 並開 PR'
+export const PUBLISH_PR_RISKY_TURN = '高風險改動：看過審查檔（e）後按兩次 n 開 PR 派 Agent push 並開 PR'
+export const PUBLISH_PUSH_TURN = 'PR 開著又有新 commit：按兩次 n 派 Agent push，CI 過了再合併'
 
 function mergeTurn(c: Case): Turn {
   // 跟基準分支有衝突：先解衝突。這個對話的流程會自動派 Agent；不自動派的寫原因，在對話處理。
@@ -212,12 +214,12 @@ function mergeTurn(c: Case): Turn {
     const why = catchupHold(c)
     return why ? { who: 'you', text: catchupHandTurn(c.conflict.into, why) } : { who: 'ai', text: catchupAutoTurn(c.conflict.into) }
   }
-  // 不帶鍵：帶頭的是「⇡ 開 PR」（沒有快捷鍵），e 留在列上但變淡。
-  if (needsPrConfirm(c)) return { who: 'you', text: PUBLISH_PR_RISKY_TURN }
-  // push、開 PR 由 Agent 做：按鈕沒有快捷鍵，這句說按哪一顆。
-  if (needsPr(c)) return { who: 'you', text: PUBLISH_PR_TURN }
+  // 帶 n：帶頭的是「⇡ 開 PR」，e 留在列上但變淡。
+  if (needsPrConfirm(c)) return { who: 'you', text: PUBLISH_PR_RISKY_TURN, key: 'n' }
+  // push、開 PR 由 Agent 做（按兩次 n）。
+  if (needsPr(c)) return { who: 'you', text: PUBLISH_PR_TURN, key: 'n' }
   // PR 開著、分支又有新 commit：先 push，CI 才會跑在新 commit 上；這時叫你合併會合到舊的。
-  if (needsPush(c)) return { who: 'you', text: PUBLISH_PUSH_TURN }
+  if (needsPush(c)) return { who: 'you', text: PUBLISH_PUSH_TURN, key: 'n' }
   if (c.pr!.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 在跑' }
   if (c.pr!.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', key: 'p' }
   return { who: 'you', text: `合併 PR #${c.pr!.id}（p 在瀏覽器開啟）；合併後打 tag 發版`, key: 'p' }

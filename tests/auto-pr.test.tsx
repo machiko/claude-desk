@@ -406,7 +406,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — d
   expect(log.has('Beta 驗收通過，PR #9 已被拒絕，要重開請按 ⇡ 開 PR')).toBe(true)
   expect(shown).not.toContain(flat('PR #9 已被拒絕，要重開請按 ⇡ 開 PR'))
   expect(shown).toContain(flat('PR #9 → release/v1.4 已拒絕'))
-  expect(shown).toContain(flat('輪到你 按 ⇡ 開 PR 派 Agent push 並開 PR'))
+  expect(shown).toContain(flat('輪到你 按兩次 n 開 PR 派 Agent push 並開 PR'))
   expect(data.toasts).toContain('Beta：驗收通過，PR #9 已被拒絕，要重開請按 ⇡ 開 PR')
 })
 

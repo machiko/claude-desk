@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, leaves, PANE, CARD_A, CARD_B, CARD_C, REGISTRY } from './fixture'
+import { fixture, leaves, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, pressHotkey } from './fixture'
 import { buildCase } from '../hooks/model'
 import { canRelease, finalState, pipeline } from '../hooks/pipeline'
 import { stageActions, turnOf } from '../hooks/turn'
@@ -13,7 +13,7 @@ const KEY = `case-${CARD_B}-release`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
 const RELEASE_GATE = '- 關卡：release：待上線'
 const GITHUB = 'git@github.com:acme/shop.git'
-const LEAD = '按 ⚑ 發版填入對話（Enter 送出）'
+const LEAD = '按 z 發版填入對話（Enter 送出）'
 const AFTER_ARCHIVE = '打了 tag 之後歸檔'
 const AFTER_DEPLOY = '打了 tag 之後部署並按 u 確認上線'
 /** 「⚑ 發版」填的那行：`/desk:release` 接卡名與 PR，括號裡是清理對象；規則在 skills/release/SKILL.md，不在請求裡。 */
@@ -69,7 +69,7 @@ test('a merged untagged case leads with the release button', async ($, on) => {
   expect(await texts(ui, AFTER_ARCHIVE)).toBe(2)
   const button = await ui.find({ key: KEY })
   expect(button?.text).toBe('⚑ 發版')
-  expect(button?.props?.hotkey).toBeUndefined()
+  expect(button?.props?.hotkey).toBe('z')
   expect(isLead(button)).toBe(true)
   // 動作列上只有它帶頭
   for (const k of ['pr', 'open']) expect(isLead(await ui.find({ key: `case-${CARD_B}-${k}` }))).toBe(false)
@@ -123,7 +123,8 @@ test('test_release_request_lists_cleanup_of_released_cards_when_pressed', async 
   expect(data.submitted.length).toBe(0)
   await ui.unmount()
 
-  // 兩張都有 release 關卡：括號只寫一句，不列任何 slug 與分支
+  // 兩張都有 release 關卡：括號只寫一句，不列任何 slug 與分支（先清掉輸入框裡上一次的請求，不然照 AC-3 不填）
+  data.draft = ''
   data.files[CARD_B] = data.files[CARD_B]!.replace(PASSED, RELEASE_GATE)
   ui = await mountBeta($)
   await ui.press({ key: KEY })
@@ -131,6 +132,40 @@ test('test_release_request_lists_cleanup_of_released_cards_when_pressed', async 
   const last = data.fills[data.fills.length - 1].text
   expect(last).toBe(ASK('「Beta」PR #12、「Gamma」PR #13', '都有 release 關卡，不清理，部署後按 u'))
   for (const target of ['beta', 'gamma', 'feature/', '歸檔並移除 worktree 與分支']) expect(last).not.toContain(target)
+  await ui.unmount()
+})
+
+/** AC-3：輸入框有還沒送出的字時按發版：輸入框不變，提示先送出或清掉；空的照舊填入。 */
+test('有草稿時不填發版請求', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data)
+  data.draft = '幫我看一下 CI'
+  const ui = await mountBeta($)
+  await ui.press({ key: KEY })
+  await clock.settle()
+  expect(data.fills).toEqual([])
+  expect(data.toasts).toContain('輸入框有未送出的字，先送出或清掉再按發版')
+  expect(data.toasts.some(t => t.includes(FILLED))).toBe(false)
+  // 清掉草稿再按：照舊填入發版請求
+  data.draft = ''
+  await ui.press({ key: KEY })
+  await clock.settle()
+  expect(data.fills).toEqual([{ text: REQUEST, mode: 'replace' }])
+  await ui.unmount()
+})
+
+/** AC-4：可以發版的那件按 z：按一次就把發版請求填進輸入框（跟點按鈕一樣），不派工、不送出；輪到你那句看得到 z。 */
+test('按 z 一次就填入發版請求', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data)
+  const ui = await mountBeta($)
+  expect(await texts(ui, '按 z 發版填入對話（Enter 送出）')).toBe(2)
+  const pressed = await pressHotkey(ui, 'z')
+  await clock.settle()
+  expect(pressed.key).toBe(KEY)
+  expect(data.fills).toEqual([{ text: REQUEST, mode: 'replace' }])
+  expect(data.submitted).toHaveLength(0)
+  expect(data.launches).toHaveLength(0)
   await ui.unmount()
 })
 
