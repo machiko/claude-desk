@@ -205,30 +205,30 @@ export function appendTo(text: string, heading: string, line: string): string {
   return `${lines.join('\n')}\n`
 }
 
-/** 模擬的 Agent 或審查做完後，卡片長什麼樣。 */
+/** 模擬的 Agent 或驗收做完後，卡片長什麼樣。 */
 export type SimWork = 'build' | 'fix' | 'review-1' | 'review-2' | 'review-3' | 'sync'
 
 export function cardAfter(text: string, work: SimWork, date: string): string {
   switch (work) {
     case 'build':
-      return appendTo(setFields(text, { 狀態: '實作完成：discount() 與兩個測試，已 commit', 下一步: '等完成檢查與審查', 關卡: '無' }), '## History', `- ${date}：（教學 Agent）實作 AC-1、AC-2 並 commit`)
+      return appendTo(setFields(text, { 狀態: '實作完成：discount() 與兩個測試，已 commit', 下一步: '等測試與驗收', 關卡: '無' }), '## History', `- ${date}：（教學 Agent）實作 AC-1、AC-2 並 commit`)
     case 'fix':
-      return appendTo(setFields(text, { 狀態: '已修正審查的 HIGH：負數金額丟出 ValueError', 下一步: '等複審', 關卡: '無' }), '## History', `- ${date}：（教學 Agent）依審查補上 AC-3 與測試`)
+      return appendTo(setFields(text, { 狀態: '已修正驗收的 HIGH：負數金額丟出 ValueError', 下一步: '等重新驗收', 關卡: '無' }), '## History', `- ${date}：（教學 Agent）依驗收補上 AC-3 與測試`)
     case 'review-1':
-      return appendTo(setFields(text, { 狀態: '審查發現 AC-3 沒做到', 關卡: 'review：CRITICAL 0、HIGH 1、MEDIUM 1、LOW 0；AC-3 沒做到，需修正' }), '## History', `- ${date}：（教學審查）HIGH 1、MEDIUM 1`)
+      return appendTo(setFields(text, { 狀態: '驗收發現 AC-3 沒做到', 關卡: 'review：CRITICAL 0、HIGH 1、MEDIUM 1、LOW 0；AC-3 沒做到，需修正' }), '## History', `- ${date}：（教學驗收）HIGH 1、MEDIUM 1`)
     case 'review-2':
       return appendTo(setFields(text, {
-        狀態: '複審通過：三條驗收情境都做到',
-        等你: '審查建議（不改也能合併）：折扣 0.9 直接寫在程式裡，建議改成常數 GOLD_RATE：A) 不改，寫下理由 B) 另開一張卡再改 C) 現在改',
+        狀態: '重新驗收通過：三條驗收情境都做到',
+        等你: '驗收建議（不改也能合併）：折扣 0.9 直接寫在程式裡，建議改成常數 GOLD_RATE：A) 不改，寫下理由 B) 另開一張卡再改 C) 現在改',
         下一步: '決定 MEDIUM 後開 PR 合併',
         關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過',
-      }), '## History', `- ${date}：（教學審查）複審通過，MEDIUM 1 等你決定`)
+      }), '## History', `- ${date}：（教學驗收）重新驗收通過，MEDIUM 1 等你決定`)
     case 'review-3':
       return appendTo(setFields(text, {
-        狀態: '重新審查通過：GOLD_RATE 改好了，沒有新問題',
+        狀態: '重新驗收通過：GOLD_RATE 改好了，沒有新問題',
         下一步: '開 PR 合併',
         關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過',
-      }), '## History', `- ${date}：（教學審查）審查後有新 commit，重新審查通過`)
+      }), '## History', `- ${date}：（教學驗收）驗收後有新 commit，重新驗收通過`)
     case 'sync':
       return appendTo(text, '## History', `- ${date}：（教學同步）卡片與 git 一致`)
   }
@@ -238,9 +238,9 @@ export function cardAfter(text: string, work: SimWork, date: string): string {
 export function cardAfterDecision(text: string, answer: string, date: string, user: string): string {
   const n = (text.match(/^- D-\d+/gm) ?? []).length + 1
   const fields = answer === 'C'
-    ? { 等你: '無', 下一步: '等重新檢查與審查', 狀態: '已把 0.9 改成常數 GOLD_RATE 並 commit，等重新檢查與審查' }
-    : { 等你: '無', 下一步: '開 PR 並合併', 狀態: '審查通過，可開 PR' }
-  const withDecision = appendTo(setFields(text, fields), '## Decisions', `- D-${String(n).padStart(2, '0')} ${date} ${user}：審查 MEDIUM → ${answer}`)
+    ? { 等你: '無', 下一步: '等重新測試與驗收', 狀態: '已把 0.9 改成常數 GOLD_RATE 並 commit，等重新測試與驗收' }
+    : { 等你: '無', 下一步: '開 PR 並合併', 狀態: '驗收通過，可開 PR' }
+  const withDecision = appendTo(setFields(text, fields), '## Decisions', `- D-${String(n).padStart(2, '0')} ${date} ${user}：驗收 MEDIUM → ${answer}`)
   return appendTo(withDecision, '## History', answer === 'C' ? `- ${date}：決定現在改，0.9 改成常數 GOLD_RATE 並 commit` : `- ${date}：決定 MEDIUM 的處理方式`)
 }
 
@@ -280,8 +280,8 @@ export const TUTORIAL_INTRO = [
   '  1 規格：看過規格後按 t 確認',
   '  2 實作：確認規格後自動派 Agent（教學裡由腳本扮演，不花額度）',
   '  3 測試：自動執行測試（真的跑 python3 的測試）',
-  '  4 驗收：自動派驗收，對規格逐條驗收並做 code review；第一輪會挑出一條 HIGH，自動修正後複審',
-  '  5 合併：先回答審查建議（a、b 或 c → f；選 c 會改程式並 commit，接著自動退回測試段、重新驗收），再按 t 合併',
+  '  4 驗收：自動派驗收，對規格逐條驗收並做 code review；第一輪會挑出一條 HIGH，自動修正後重新驗收',
+  '  5 合併：先回答驗收建議（a、b 或 c → f；選 c 會改程式並 commit，接著自動退回測試段、重新驗收），再按 t 合併',
   '  6 上線：按 t 打 tag，再按兩次 u 確認上線',
   '結束後輸入 /desk tutorial end 清除沙盒、回到你的任務。',
 ].join('\n')

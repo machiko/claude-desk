@@ -163,7 +163,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   const chain = (data.store.chains as any)[BETA]
   expect(chain.passed).toBe(true)
   expect(chain.stopped).toBeUndefined()
-  expect(log.has('Beta 審查通過，5 小時額度剩 25%，低於門檻 30%，沒有自動派推送；要推請按 ⇡ 開 PR')).toBe(true)
+  expect(log.has('Beta 驗收通過，5 小時額度剩 25%，低於門檻 30%，沒有自動派推送；要推請按 ⇡ 開 PR')).toBe(true)
 })
 
 /** AC-1：合併段有衝突、要自動派解衝突、額度不足：不派，流程暫停寫原因。 */
@@ -359,7 +359,7 @@ test('test_local_check_and_docs_only_pass_run_even_when_quota_is_low', async ($,
   expect(chain.passed).toBe(true)
   expect(chain.skippedReview).toBe(true)
   expect(chain.stopped).toBeUndefined()
-  expect(log.has('Beta 只動文件、檢查通過，免審查，可開 PR')).toBe(true)
+  expect(log.has('Beta 只動文件、測試通過，免驗收，可開 PR')).toBe(true)
   expect(log.list.some(e => e.text.includes('低於門檻'))).toBe(false)
 })
 
@@ -464,7 +464,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   expect(chain.owner).toBe(ME)
   expect(chain.stopped).toBe(REASON)
   expect(chain.mediumFix).toBe(1)
-  expect(log.has('Alpha 接手別的對話開的流程：審查只剩 MEDIUM 1 條要修，額度不足，流程暫停')).toBe(true)
+  expect(log.has('Alpha 接手別的對話開的流程：驗收只剩 MEDIUM 1 條要修，額度不足，流程暫停')).toBe(true)
   expect(notified).toContain(`Alpha：流程已暫停，${REASON}`)
   expect(shown).toContain(flat(`輪到你 ${REASON}`))
   expect(shown).not.toContain('開PR')

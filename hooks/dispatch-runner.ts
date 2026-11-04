@@ -179,7 +179,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
-    const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安審查' : KIND_LABEL[kind]
+    const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安驗收' : KIND_LABEL[kind]
     const sent = `派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`
     await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}${sent}`, tone: 'suggestion', card: c.statusPath }])
     await tellPanel($, now, sent, { name: c.name, skip: opts.auto || tutorial })

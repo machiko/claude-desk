@@ -237,7 +237,7 @@ test('test_spec_ok_does_not_trust_a_placeholder_check', { timeoutMs: 15000 }, as
   expect(data.launches).toHaveLength(0)
   expect(data.asks).toHaveLength(0)
   expect(data.store.trustedVerify).toBeUndefined()
-  for (const name of ['Beta', 'Gamma']) expect(data.toasts).toContain(`${name}：規格已確認；沒有自動派實作（卡片尚缺完成檢查，規格未通過）`)
+  for (const name of ['Beta', 'Gamma']) expect(data.toasts).toContain(`${name}：規格已確認；沒有自動派實作（卡片還沒有測試指令，規格未通過）`)
   await ui.unmount()
 })
 
@@ -672,8 +672,8 @@ test('afterSpecRefusal blocks open decisions on top of the g rules', () => {
   expect(afterSpecRefusal(ready)).toBe('')
   expect(afterSpecRefusal({ ...ready, ask: '匯出要含稅嗎？A) 含 B) 不含', state: 'ask' })).toBe('卡片「等你」還有要你決定的事')
   expect(afterSpecRefusal({ ...ready, manual: true })).toBe('登錄表設為 manual，只追蹤不派工')
-  expect(afterSpecRefusal({ ...ready, state: 'running' })).toBe('Agent 仍在執行')
-  expect(afterSpecRefusal({ ...ready, verify: '' })).toBe('卡片尚缺完成檢查，規格未通過')
+  expect(afterSpecRefusal({ ...ready, state: 'running' })).toBe('Agent 處理中')
+  expect(afterSpecRefusal({ ...ready, verify: '' })).toBe('卡片還沒有測試指令，規格未通過')
 })
 
 test('specOkTarget reads the target of card.py spec-ok only', () => {

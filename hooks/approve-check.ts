@@ -13,7 +13,7 @@ export const isApproved = (trusted: Record<string, string>, c: Pick<Case, 'statu
 
 /** 對話指令（`/desk go`、`/desk verify`）遇到沒核准的檢查：不派、不跑、不彈框，說去面板按兩次。 */
 export const unapprovedText = (c: Pick<Case, 'name' | 'verify'>): string =>
-  `${c.name}：完成檢查的指令還沒經你核准，這次沒派工也沒跑檢查；到面板按兩次 v（或 g）核准：${c.verify}`
+  `${c.name}：測試指令還沒經你核准，這次沒派工也沒跑測試；到面板按兩次 v（或 g）核准：${c.verify}`
 
 /**
  * 核准檢查欄當時那條指令，記進同一份紀錄：確認規格（面板 t、對話 spec-ok、教學）與面板第二次按 v／g 都走這裡。

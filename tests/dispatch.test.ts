@@ -122,7 +122,7 @@ test('reply refusal names why: waiting agents can be answered, others say why no
   const asks = { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }
   expect(replyRefusal(mk('寫測試', asks))).toBe('')
   expect(replyRefusal({ ...mk('寫測試', asks), gate: 'spec：待確認規格' })).toBe('')
-  expect(replyRefusal(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }))).toBe('Agent 仍在執行')
+  expect(replyRefusal(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }))).toBe('Agent 處理中')
   expect(replyRefusal(mk('寫測試'))).toBe('Agent 沒有在等你回覆')
   expect(replyRefusal({ ...mk('寫測試', asks), manual: true })).toBe('登錄表設為 manual，只追蹤不派工')
   expect(replyRefusal({ ...mk('寫測試', asks), demo: true })).toBe('示範任務只能看')
@@ -555,14 +555,14 @@ test('dispatch: publish is only dispatchable at the merge stage', () => {
   expect(PUBLISH_ONLY_AT_MERGE).toBe('只有合併段還要 push 或開 PR 時才能推送')
   // Agent 在跑：說它在跑
   expect(dispatchable(running)).toEqual([])
-  expect(dispatchRefusal(running, 'publish')).toBe('Agent 仍在執行')
+  expect(dispatchRefusal(running, 'publish')).toBe('Agent 處理中')
   // 推送 Agent 在跑、卡片「等你」有內容（state 是 ask，不是 running）：一樣不能再派，說它在跑
   const busy = { name: 'desk-p', state: 'working', status: 'busy', kind: 'publish' as const }
   const ask = '審查 MEDIUM 1 條怎麼處理：A) 現在改 B) 之後再說'
   for (const c of [atMerge({ ask, state: 'ask', agent: busy }), atMerge({ ask, state: 'ask', agent: busy, pr: open, gitState: ahead(1) })]) {
     expect(c.pipeline!.current).toBe('merge')
     expect(dispatchable(c)).not.toContain('publish')
-    expect(dispatchRefusal(c, 'publish')).toBe('Agent 仍在執行')
+    expect(dispatchRefusal(c, 'publish')).toBe('Agent 處理中')
   }
   expect(dispatchRefusal({ ...noPr, manual: true }, 'publish')).toBe('登錄表設為 manual，只追蹤不派工')
 })

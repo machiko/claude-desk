@@ -2,6 +2,7 @@
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, expandHome, isPlaceholder, named, parseGate, saysNone } from './card'
+import { shownStopped } from './chain'
 import type { ChainRun } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 import { DONE_RULE, SPEC_RULE, cardRules, changelogRule, testRule } from './prompts/rules'
@@ -274,7 +275,7 @@ export const specGapReason = (c: Case) => `規格沒有驗收情境：先輸入 
 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 export const PUBLISH_ONLY_AT_MERGE = '只有合併段還要 push 或開 PR 時才能推送'
-const BUSY = 'Agent 仍在執行'
+const BUSY = 'Agent 處理中'
 const APPROVAL_WAIT = 'Agent 在等權限批准'
 
 /** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
@@ -298,7 +299,7 @@ export function dispatchRefusal(c: Case, kind: DispatchKind): string {
   if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
   if (specBlocks(c)) return specGapReason(c)
   if (parseGate(c.gate)?.kind === 'spec') return '規格還沒確認'
-  if (!c.verify) return '卡片尚缺完成檢查，規格未通過'
+  if (!c.verify) return '卡片還沒有測試指令，規格未通過'
   // 審查段（檢查已通過）：「輪到你」已經是按 w，不再叫你先按 v。
   if (kind === 'continue' && reviewNext(c.next) && c.pipeline?.current === 'review') return REVIEW_NEXT_AT_REVIEW
   return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
@@ -331,7 +332,7 @@ export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, 
   if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
   if (entry.kind === 'publish') return isMerged(c) ? '已經合併' : !needsPr(c) && !needsPush(c) ? NO_PUSH_NEEDED : ''
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
-  if (run.stopped) return `流程已暫停（${run.stopped}）`
+  if (run.stopped) return `流程已暫停（${shownStopped(run.stopped)}）`
   if (specBlocks(c)) return specGapReason(c)
   if (isMerged(c)) return '已經合併'
   return ''

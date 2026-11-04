@@ -171,7 +171,8 @@ test('test_running_now_card_animates_and_shows_elapsed_and_last_line', async ($,
   data.agents[0].startedAt = NOW
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(72))
-  const busyGlyph = async () => (await ui.find({ type: 'Text', text: /處理中/ }))?.text[0]
+  // 標題徽章也寫「處理中」（不轉）：只找輪到誰那一句的標籤（圖示＋處理中）。
+  const busyGlyph = async () => (await ui.find({ type: 'Text', text: /^\S 處理中\s+$/ }))?.text[0]
   const pulse = async () => text(await ui.drawn()).match(/([◉◎]) 實作/)?.[1]
   const glyph0 = await busyGlyph()
   const stage0 = await pulse()
@@ -189,7 +190,8 @@ test('test_running_now_card_animates_and_shows_elapsed_and_last_line', async ($,
   await clock.advance(4 * 60_000 + 12_000); await clock.settle()
   const again = await $.ui.mount(PANE(72))
   const rows = await cardRows(again)
-  const at = rows.findIndex(r => rowText(r).includes('處理中'))
+  // 標題徽章也寫「處理中」：找輪到誰那一句（圖示＋處理中開頭）。
+  const at = rows.findIndex(r => /^\s*\S 處理中 /.test(rowText(r)))
   expect(rowText(rows[at]!)).toContain('已執行 4 分 12 秒')
   // 下一列：淡色字的 Agent 最後一句。
   expect(rows[at + 1]).toEqual([{ text: '└ 最新：跑測試中', color: COLOR.dim }])

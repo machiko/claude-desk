@@ -380,7 +380,7 @@ test('test_queued_review_fix_launches_when_slot_frees', async ($, on) => {
   expect(String(data.launches[0].argv.at(-1))).toContain('修正第 1／2 輪')
   expect(data.store.chains[ALPHA].stopped).toBeUndefined()
   expect(data.toasts).toContain('Alpha：修正第 1 輪已派出')
-  expect(log.has('排隊的修正第 1 輪沒有派出：Agent 仍在執行')).toBe(false)
+  expect(log.has('排隊的修正第 1 輪沒有派出：Agent 處理中')).toBe(false)
   await ui.unmount()
 })
 
@@ -399,7 +399,7 @@ test('test_queued_auto_fix_still_refused_while_card_agent_runs', async ($, on) =
   expect(data.launches).toHaveLength(0)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_A}` })
-  expect(await screen(ui)).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：Agent 仍在執行'))
+  expect(await screen(ui)).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：Agent 處理中'))
   await ui.unmount()
 })
 
@@ -420,7 +420,7 @@ test('test_queued_auto_fix_refused_with_approval_reason_while_card_agent_waits_f
   await ui.press({ key: `row-${CARD_A}` })
   const shown = await screen(ui)
   expect(shown).toContain(flat('Alpha 排隊的修正第 1 輪沒有派出：Agent 在等權限批准'))
-  expect(shown).not.toContain(flat('沒有派出：Agent 仍在執行'))
+  expect(shown).not.toContain(flat('沒有派出：Agent 處理中'))
   await ui.unmount()
 })
 

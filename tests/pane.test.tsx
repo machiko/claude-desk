@@ -64,7 +64,7 @@ test('verify needs two presses once per command, runs in the case root, and reco
   expect(data.asks.length).toBe(0)
   expect(await ui.find({ type: 'Text', text: /✕ 未通過（結束碼 2）/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /boom/ })).toBeDefined()
-  expect(data.toasts.filter(t => t.includes('檢查')).length).toBe(2)
+  expect(data.toasts.filter(t => t.includes('測試')).length).toBe(2)
   await ui.unmount()
 })
 
@@ -202,7 +202,7 @@ test('continue launches claude --bg in the case root, confirms the session and s
   await clock.settle()
   expect(data.launches.length).toBe(0)
   // 檢查還沒核准：第二次按 g 同時核准它
-  expect((await ui.find({ key: `case-${CARD_A}-continue` }))?.text).toBe('再按 g 確認核准檢查並繼續（opus · high）')
+  expect((await ui.find({ key: `case-${CARD_A}-continue` }))?.text).toBe('再按 g 確認核准測試並繼續（opus · high）')
   await ui.press({ key: `case-${CARD_A}-continue` })
   await clock.settle()
   expect(data.launches.length).toBe(1)

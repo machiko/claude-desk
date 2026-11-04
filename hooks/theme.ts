@@ -19,7 +19,7 @@ export const STATE: Record<CaseState, { glyph: string; label: string; color: str
   approve: { glyph: '●', label: '等批准', color: COLOR.attention, weight: 1 },
   gate: { glyph: '◆', label: '關卡', color: COLOR.attention, weight: 2 },
   failed: { glyph: '✕', label: '失敗', color: COLOR.bad, weight: 3 },
-  running: { glyph: '▶', label: '進行中', color: COLOR.running, weight: 4 },
+  running: { glyph: '▶', label: '處理中', color: COLOR.running, weight: 4 },
   /** 圖示不用「▸」：清單上的「▸」只代表你選的那件。 */
   ready: { glyph: '▷', label: '待辦', color: COLOR.text, weight: 5 },
   /** 六段全部過了（已上線、上線已確認）：排在待辦之後，可歸檔。 */
@@ -64,7 +64,7 @@ export const WORD = {
   createRegistry: '建立空的登錄表',
   hide: '收起',
   /** 執行中鎖住的動作：標籤後面接這句，不能按。 */
-  busyLocked: '（執行中，完成後可用）',
-  /** 處理端擋下時的 toast：「<任務名>：Agent 仍在執行，完成後再<動作>」。 */
-  busyRefused: 'Agent 仍在執行，完成後再',
+  busyLocked: '（處理中，完成後可用）',
+  /** 處理端擋下時的 toast：「<任務名>：Agent 處理中，完成後再<動作>」。 */
+  busyRefused: 'Agent 處理中，完成後再',
 } as const

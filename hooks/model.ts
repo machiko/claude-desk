@@ -470,7 +470,7 @@ export function summary(c: Case): string {
   if (c.state === 'nocard') return '找不到卡片'
   if (c.state === 'failed' && c.chain?.stopped) return c.chain.stopped
   const verdict = standingVerdict(c)
-  if (verdict && toFix(c, verdict) === 0 && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : '審查通過，可開 PR'
+  if (verdict && toFix(c, verdict) === 0 && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : '驗收通過，可開 PR'
   if (c.state === 'idle') return c.statusShort || c.status || '閒置'
   return c.next
 }
@@ -493,7 +493,7 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
     else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent 已完成`, 'subtle')
     // 流程暫停、檢查沒過、檢查中斷、容器沒起都已寫了原因、跳了 toast；只剩審查結論擋下、流程沒停（手動審查）要在這裡說。
-    else if (c.state === 'failed' && p.state !== 'failed' && reviewBlocks(c)) push(`${c.name} 審查有要修的問題`, 'error')
+    else if (c.state === 'failed' && p.state !== 'failed' && reviewBlocks(c)) push(`${c.name} 驗收有要修的問題`, 'error')
   }
   return out
 }
@@ -554,7 +554,7 @@ export function demoSnapshot(now: number): Snapshot {
     `<!-- DESK -->\n- 狀態：${status}\n- 檢查：${verify}\n- 等你：${ask}\n- 下一步：${next}\n- 關卡：${gate}\n<!-- /DESK -->`
   const rows: [RegistryRow, string, number][] = [
     [{ name: '主工作區（release/v1.4）', statusPath: '/demo/main/.desk/CARD.md' }, card('release/v1.4 與 origin 同步；整套測試 312 綠', '`npm test`', 'CHANGELOG 日期要現在補還是發版時補？A) 現在 B) 發版時', '等後續功能合入'), now - 20 * 60_000],
-    [{ name: '訂單匯出 CSV', statusPath: '/demo/beta/.desk/CARD.md' }, card('依審查意見修正欄位順序與時區', '`npm test -- export`', '無', '依 .task/REVIEW.md 的意見修正'), now - 3 * 60_000],
+    [{ name: '訂單匯出 CSV', statusPath: '/demo/beta/.desk/CARD.md' }, card('依驗收意見修正欄位順序與時區', '`npm test -- export`', '無', '依 .task/REVIEW.md 的意見修正'), now - 3 * 60_000],
     [{ name: '會員登入改版', statusPath: '/demo/gamma/.desk/CARD.md' }, card('四項修補完成，commit 3f9a2c1，PR 先擱置', '`npm run test:e2e`', '無', '無'), now - 2 * 24 * 60 * 60_000],
     [{ name: '部署流程改版', statusPath: '/demo/delta/.desk/CARD.md' }, card('切換暫緩；已合併 release/v1.3', '`make ci-lint`', '無', '切換前先備份舊映像', 'review：合併取捨已完成，請確認 node:22 釘版'), now - 5 * 60 * 60_000],
   ]

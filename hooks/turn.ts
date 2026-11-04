@@ -61,7 +61,7 @@ const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKin
 
 const SELF_REVIEW = '（驗收是自審，可按 w 派獨立驗收）'
 /** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
-const MISSING_CHECK = '卡片尚缺完成檢查：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
+const MISSING_CHECK = '卡片還沒有測試指令：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 
 // 派工（dispatch.ts）也要用，放在 pipeline.ts；這裡照舊匯出。
 export { needsPr, needsPush }

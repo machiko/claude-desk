@@ -59,7 +59,7 @@ test('the pane next step follows the ship stage and offers archive only once the
   ui = await $.ui.mount(PANE(80))
   // 完成的任務不搶「現在」，點它的列看詳情
   await ui.press({ key: `row-${CARD_B}` })
-  expect(await ui.find({ type: 'Text', text: /✓ 完成 v0\.19\.0/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /✓ 已上線 v0\.19\.0/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '按兩次 q 歸檔（或輸入 /desk:card archive beta）' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '已合併，可歸檔：/desk:card archive beta' })).toBeDefined()
   await ui.unmount()
@@ -73,7 +73,7 @@ test('a tag containing an unreviewed, unmerged branch head does not mark the cas
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   const screen = JSON.stringify(await ui.drawn())
-  expect(screen).not.toContain('✓ 完成')
+  expect(screen).not.toContain('✓ 已上線')
   expect(screen).not.toContain('已上線')
   expect(screen).not.toContain('可歸檔')
   expect(screen).not.toContain('archive beta')
@@ -113,7 +113,7 @@ test('a case merged into a release line offers archive once that line is tagged'
   ui = await $.ui.mount(PANE(80))
   // 完成的任務不搶「現在」，點它的列看詳情
   await ui.press({ key: `row-${CARD_B}` })
-  expect(await ui.find({ type: 'Text', text: /✓ 完成 v26\.2\.7/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /✓ 已上線 v26\.2\.7/ })).toBeDefined()
   expect((await ui.find({ key: `case-${CARD_B}-archive` }))?.text).toBe('⌫ 歸檔')
   expect(await ui.find({ type: 'Text', text: /隨 release\/v26\.2\.7 發版/ })).toBeUndefined()
   await ui.unmount()

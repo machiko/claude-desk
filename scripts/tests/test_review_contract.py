@@ -59,8 +59,8 @@ class ReviewContractTest(unittest.TestCase):
         self.assertIn('都算進關卡的 MEDIUM', text)
 
     def test_workflow_docs_say_behavior_neutral_medium_is_recorded(self):
-        """AC-1：docs/WORKFLOW.md 自動流程段與 /desk:flow 審查段都寫明不影響行為的 MEDIUM 直接記錄、不問。"""
-        for path, heading in ((WORKFLOW, '自動流程'), (FLOW, '審查')):
+        """AC-1：docs/WORKFLOW.md 自動流程段與 /desk:flow 驗收段都寫明不影響行為的 MEDIUM 直接記錄、不問。"""
+        for path, heading in ((WORKFLOW, '自動流程'), (FLOW, '驗收')):
             part = section(read(path), heading)
             self.assertIn('記錄、不修', part, path)
             self.assertIn('等你', part, path)
@@ -80,7 +80,7 @@ class ReviewContractTest(unittest.TestCase):
         # 複審會確認上一輪沒加註記的 MEDIUM，記錄、不修的照舊不再提
         self.assertIn('沒加註記的 MEDIUM 修好沒', text)
         self.assertIn('「記錄、不修」的不要再提', text)
-        for path, heading in ((WORKFLOW, '自動流程'), (FLOW, '審查')):
+        for path, heading in ((WORKFLOW, '自動流程'), (FLOW, '驗收')):
             part = section(read(path), heading)
             self.assertRegex(part, r'可能影響行為的 MEDIUM[^\n]*自動派', path)
             self.assertIn('最多兩輪', part, path)

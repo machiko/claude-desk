@@ -158,7 +158,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
         else set('wait', '可繼續實作')
         break
       case 'check':
-        if (verifying || running === 'verify') set('active', '測試執行中')
+        if (verifying || running === 'verify') set('active', '測試中')
         else if (queued) set('active', '排隊中')
         else if (check === false) set('fail', c.chain?.stopped ?? '測試未通過')
         else if (held) set('fail', c.chain!.stopped!)
@@ -192,7 +192,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
   if (release) for (const id of ['spec', 'build', 'review', 'merge'] as StageId[]) status[id] = 'na'
   const stages: Stage[] = STAGES.map(s => ({ ...s, status: status[s.id] }))
   const effective = current && status[current] !== 'na' ? current : release ? (status.check === 'done' ? 'ship' : 'check') : null
-  if (release && effective === 'check' && !notes.check) notes.check = check === false ? '測試未通過' : verifying ? '測試執行中' : queued ? '排隊中' : '尚未執行測試'
+  if (release && effective === 'check' && !notes.check) notes.check = check === false ? '測試未通過' : verifying ? '測試中' : queued ? '排隊中' : '尚未執行測試'
   if (release && effective === 'check') status.check = check === false ? 'fail' : verifying || queued ? 'active' : 'wait'
   if (release && effective === 'ship') { status.ship = c.tag && gate?.kind !== 'release' ? 'done' : 'wait'; notes.ship = c.tag ? (gate?.kind === 'release' ? `${c.tag} 已打，待確認上線` : '') : '待打 tag' }
   const done = stages.every(s => status[s.id] === 'done' || status[s.id] === 'na')
@@ -206,7 +206,7 @@ export function stageParts(p: Pipeline, compact: boolean): { text: string; statu
 
 export function stageLabel(p: Pipeline): string {
   const s = p.stages.find(x => x.id === p.current)
-  return s ? `${s.label}${p.note ? `・${p.note}` : ''}` : '完成'
+  return s ? `${s.label}${p.note ? `・${p.note}` : ''}` : '已上線'
 }
 
 export type { PrInfo }

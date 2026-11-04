@@ -96,7 +96,7 @@ test('test_high_and_unmarked_medium_are_fixed_in_one_round_when_rounds_remain', 
   await h.finish()
   expect(data.launches).toHaveLength(2)
   expect(h.fixes()).toHaveLength(1)
-  expect(data.toasts).toContain('Alpha：審查通過，可以開 PR')
+  expect(data.toasts).toContain('Alpha：驗收通過，可以開 PR')
   expect((data.store.chains as any)[ALPHA].passed).toBe(true)
   expect((data.store.chains as any)[ALPHA].round).toBe(1)
 
@@ -188,7 +188,7 @@ test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_fu
   expect(queued).toContain(flat('● 規格 ● 實作 ● 測試 ◉ 驗收 ○ 合併 ○ 上線'))
   expect(queued).not.toContain('開PR')
   expect(await ui.find({ key: `case-${CARD_A}-open-pr` })).toBeFalsy()
-  expect(data.toasts.some((t: string) => t.includes('審查通過'))).toBe(false)
+  expect(data.toasts.some((t: string) => t.includes('驗收通過'))).toBe(false)
   expect((data.store.chains as any)[ALPHA].passed).toBeUndefined()
   // 重新整理、名額還是滿的：照舊排著
   await h.refresh()
@@ -207,8 +207,8 @@ test('test_medium_only_review_stays_at_review_until_fix_is_sent_when_queue_is_fu
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(ALPHA)
   expect(h.prompt(0).startsWith('修正第 1／2 輪：')).toBe(true)
-  expect(data.toasts.some((t: string) => t.includes('Agent 仍在執行'))).toBe(false)
-  expect(data.toasts.some((t: string) => t.includes('審查通過'))).toBe(false)
+  expect(data.toasts.some((t: string) => t.includes('Agent 處理中'))).toBe(false)
+  expect(data.toasts.some((t: string) => t.includes('驗收通過'))).toBe(false)
   await ui.unmount()
 })
 
@@ -232,7 +232,7 @@ test('test_leftover_medium_goes_to_you_when_fix_rounds_are_used_up', async ($, o
   expect(run.round).toBe(2)
   expect(run.passed).toBe(true)
   expect(run.stopped).toBeUndefined()
-  expect(data.toasts).toContain('Alpha：審查通過，可以開 PR')
+  expect(data.toasts).toContain('Alpha：驗收通過，可以開 PR')
   expect(data.toasts.some((t: string) => t.includes('流程已暫停'))).toBe(false)
   // 輪到你：按選項字母 → f 填入 → Enter 送出
   const ui = await $.ui.mount(PANE(160))

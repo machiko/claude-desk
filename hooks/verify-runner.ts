@@ -40,8 +40,8 @@ export function resetCheckingState() {
 /** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒核准、已經在跑或在排）是 false。 */
 export async function runVerify($: any, c: Case, auto = false, fromQueue = false): Promise<boolean> {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
-  if (!c.verify) { $.ui.toast(`${c.name}：卡片尚缺完成檢查`); return false }
-  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：檢查仍在執行`); return false }
+  if (!c.verify) { $.ui.toast(`${c.name}：卡片還沒有測試指令`); return false }
+  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：測試在跑`); return false }
   if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return false }
   // 沒核准的不跑也不問：面板按兩次 v 才核准（第一次在檢查列列出全文）。
   if (!isApproved(await trustedChecks($), c)) { if (!auto) $.ui.toast(unapprovedText(c)); return false }
@@ -63,16 +63,16 @@ export async function runVerify($: any, c: Case, auto = false, fromQueue = false
   }
   catch (error) {
     // 記錄出錯的那段自己也出錯（例如狀態層一直拒寫）：至少讓你看到，不變成沒人接的 rejection。
-    await verifyBroke($, c, auto, error).catch(again => $.ui.toast(`${c.name}：檢查中斷，原因也記不下來（${errorText(again)}）`, { timeoutMs: 10_000 }))
+    await verifyBroke($, c, auto, error).catch(again => $.ui.toast(`${c.name}：測試中斷，原因也記不下來（${errorText(again)}）`, { timeoutMs: 10_000 }))
   }
   // 不管跑成怎樣都放掉位子、接下一件：出錯也不能讓排隊的任務永遠等下去。
   finally { checking = null; void nextInQueue($) }
   return true
 }
 
-/** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試執行中」、寫進動態；流程停下並寫明原因，不再自動重跑。 */
+/** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試中」、寫進動態；流程停下並寫明原因，不再自動重跑。 */
 export async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
-  const reason = `檢查中斷：${errorText(error)}`
+  const reason = `測試中斷：${errorText(error)}`
   $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
   const now = await $.clock.now()
   await feedPush($, [{ at: now, text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
@@ -92,8 +92,8 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
     const reason = `容器 ${missing.join('、')} 未啟動，請先在主工作區執行 docker compose up -d ${missing.join(' ')}`
     $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
     const now = await $.clock.now()
-    await feedPush($, [{ at: now, text: `${c.name} 檢查未執行：${reason}`, tone: 'warning', card: c.statusPath }])
-    await tellPanel($, now, `檢查未執行：${reason}`, { name: c.name, skip: auto || tutorial })
+    await feedPush($, [{ at: now, text: `${c.name} 測試未執行：${reason}`, tone: 'warning', card: c.statusPath }])
+    await tellPanel($, now, `測試未執行：${reason}`, { name: c.name, skip: auto || tutorial })
     if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)) notify($, `${c.name}：流程已暫停，${reason}`)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
@@ -107,10 +107,10 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
-  const outcome = result.ok ? '檢查通過' : `檢查未通過（exit ${result.exitCode}）`
+  const outcome = result.ok ? '測試通過' : `測試未通過（exit ${result.exitCode}）`
   await feedPush($, [{ at: result.at, text: `${c.name} ${outcome}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
-  $.ui.toast(`${c.name}：${result.ok ? '檢查通過' : '檢查未通過'}`, { timeoutMs: 6000 })
+  $.ui.toast(`${c.name}：${result.ok ? '測試通過' : '測試未通過'}`, { timeoutMs: 6000 })
   // 你按 v 的檢查沒過送一次通知（每按一次 v 送一則，同一句不去重）；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
   if (!result.ok && !auto) notify($, `${c.name}：${outcome}`, true)
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
@@ -143,9 +143,12 @@ export async function resumeAtCheck($: any, c: Case) {
     const { handled: _, ...open } = last
     await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: open } })
   }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 流程繼續：檢查跑完了，接著自動往下走`, tone: 'suggestion', card: c.statusPath }])
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 流程繼續：測試跑完了，接著自動往下走`, tone: 'suggestion', card: c.statusPath }])
   refreshSoon($, optionsRef!)
 }
+
+/** 排隊的那件輪到時接手出錯（不是測試沒過）：toast 的那句。 */
+export const queuedBrokeText = (name: string, error: unknown) => `${name}：排隊的測試沒跑成（${errorText(error)}）`
 
 export async function nextInQueue($: any) {
   if (checking !== null) return
@@ -155,8 +158,8 @@ export async function nextInQueue($: any) {
   const c = (await read($, snapshot))?.cases.find(x => x.statusPath === next.statusPath)
   if (!c) { void nextInQueue($); return }
   // 排隊期間這件的 Agent 開始跑了（派工不看隊伍）：不跟它搶 worktree，當成沒接手、換下一件。
-  const took = await busyRefused($, c, '檢查') ? false : await runVerify($, c, next.auto, true).catch(error => {
-    $.ui.toast(`${c.name}：排隊的檢查沒跑成（${errorText(error)}）`, { timeoutMs: 10_000 })
+  const took = await busyRefused($, c, '測試') ? false : await runVerify($, c, next.auto, true).catch(error => {
+    $.ui.toast(queuedBrokeText(c.name, error), { timeoutMs: 10_000 })
     return false
   })
   // 輪到它卻沒接手（排隊期間卡片的檢查改了或清掉、還沒授權、按了取消）：這件不跑了，六段不再寫「排隊中」，換下一件，後面的不用一直等。

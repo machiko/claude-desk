@@ -15,7 +15,7 @@ import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, l
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
-import { MAX_FIX_ROUNDS, handedOver, judgedAt, nextStep, paused, revOf, seenHeads } from './chain'
+import { MAX_FIX_ROUNDS, handedOver, judgedAt, nextStep, paused, revOf, seenHeads, shownStopped } from './chain'
 import { isApproved, trustCheck, trustedChecks, unapprovedText } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -147,7 +147,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查。
       const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       const chain = run
-        ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: run.stopped, ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
+        ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: shownStopped(run.stopped), ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
@@ -323,7 +323,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     if (!merged && run && await autoCatchup($, options, c, run, mine, s.at, agentBusy, s.limits)) { acted = true; continue }
     if (!merged && run?.passed && c.chain?.stale && run.owner === mine && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !isAgentQueued(c.statusPath) && !(c.statusPath in (await read($, launchingAtom)))) {
       await recheck($, key, run, last, mine, s.at)
-      await feedPush($, [{ at: s.at, text: `${c.name} 審查通過後有新 commit，自動重新檢查與審查`, tone: 'suggestion', card: c.statusPath }])
+      await feedPush($, [{ at: s.at, text: `${c.name} 驗收通過後有新 commit，自動重新測試與驗收`, tone: 'suggestion', card: c.statusPath }])
       acted = true
       continue
     }
@@ -361,7 +361,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       const fixesMedium = planned.kind === 'dispatch' ? planned.reason === 'review' && !!planned.medium : planned.kind === 'stop' && !!hold && !!planned.medium
       if (!fixesMedium || !planned.medium) continue
       if (!(await takeOver($, key, run, mine))) continue
-      await feedPush($, [{ at: s.at, text: `${c.name} 接手別的對話開的流程：審查只剩 MEDIUM ${planned.medium} 條要修，${planned.kind === 'dispatch' ? '自動派修正' : '額度不足，流程暫停'}`, tone: 'suggestion', card: c.statusPath }])
+      await feedPush($, [{ at: s.at, text: `${c.name} 接手別的對話開的流程：驗收只剩 MEDIUM ${planned.medium} 條要修，${planned.kind === 'dispatch' ? '自動派修正' : '額度不足，流程暫停'}`, tone: 'suggestion', card: c.statusPath }])
     }
     // 寫入放棄（被別的對話蓋掉）不算有動作：不提早重新整理，等下一次重新整理再試，免得每兩秒重套一次。
     const actedBefore = acted
@@ -594,7 +594,7 @@ export const register: Register = (on, options) => {
     await clearAgentQueue($)
     // 載入計數：更新後 /reload-plugins 被拒時，看新版是不是其實已經載入了。
     await markLoaded($)
-    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 回輸入框）；close 收起；refresh 重新整理；go|sync|review|reply <任務名> [回覆] 派工；verify|open <任務名> 執行檢查／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範任務）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <任務名>|bar|update|tutorial [end]|off]' })
+    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 回輸入框）；close 收起；refresh 重新整理；go|sync|review|reply <任務名> [回覆] 派工；verify|open <任務名> 執行測試／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範任務）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <任務名>|bar|update|tutorial [end]|off]' })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
     const id = await $.session.id().catch(() => null)
     const list = ((await $.store.get(SESSIONS_KEY).catch(() => null)) as string[] | null) ?? []
@@ -641,9 +641,9 @@ export const register: Register = (on, options) => {
       if ((m[1] === 'verify' || KIND_ARG[m[1]!] === 'continue') && !isApproved(await trustedChecks($), c)) return { text: unapprovedText(c) }
       if (m[1] === 'verify') {
         // 跟面板的 v 同一個鎖：Agent 在跑就不在它的 worktree 上跑檢查。
-        if (await busyNow($, c, true)) return { text: `${c.name}：${WORD.busyRefused}檢查` }
+        if (await busyNow($, c, true)) return { text: `${c.name}：${WORD.busyRefused}測試` }
         void runVerify($, c)
-        return { text: `${c.name}：完成檢查已開始。` }
+        return { text: `${c.name}：測試已開始。` }
       }
       if (m[1] === 'open') { await openCard($, c); return { text: `${c.name}：已開啟 ${c.statusPath}` } }
       if (m[1] === 'reply') {
@@ -725,9 +725,9 @@ export const register: Register = (on, options) => {
       }),
       fill: c => void fillDecision($, c),
       verify: c => void (async () => {
-        if (isApproved(await trustedChecks($), c)) { if (!(await busyRefused($, c, '檢查'))) await runVerify($, c); return }
+        if (isApproved(await trustedChecks($), c)) { if (!(await busyRefused($, c, '測試'))) await runVerify($, c); return }
         // 還沒核准（或指令改過）：按兩次，第一次在檢查列列出全文，第二次核准並執行。
-        if (await confirmedIdle($, c, 'verify', '檢查') && await trustCheck($, c)) await runVerify($, c)
+        if (await confirmedIdle($, c, 'verify', '測試') && await trustCheck($, c)) await runVerify($, c)
       })(),
       open: c => void openCard($, c),
       dispatch: (c, kind) => void (async () => {

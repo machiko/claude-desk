@@ -33,7 +33,7 @@ export function setTutorial(next: TutorialState | null) { tutorial = next }
 export function cancelSim() { sim?.timer?.cancel(); sim = null }
 
 const SIM_SESSION = '00000000-0000-4000-8000-00000000d35c'
-const SIM_SAYS: Record<SimWork, string> = { build: '寫 discount() 與測試…', fix: '依審查補上負數檢查…', 'review-1': '審查 diff、對照規格…', 'review-2': '複審新的 diff…', 'review-3': '重新審查新的 commit…', sync: '讀卡片與 git…' }
+const SIM_SAYS: Record<SimWork, string> = { build: '寫 discount() 與測試…', fix: '依驗收補上負數檢查…', 'review-1': '驗收 diff、對照規格…', 'review-2': '重新驗收新的 diff…', 'review-3': '驗收新的 commit…', sync: '讀卡片與 git…' }
 const GIT_TUTOR = ['-c', 'user.name=desk tutorial', '-c', 'user.email=tutorial@example.invalid']
 
 /** 教學裡「正在工作」的那一個，給 refresh 當作 agents 清單。 */
@@ -125,7 +125,7 @@ export async function tutorialDecision($: any, c: Case, answer: string) {
   }
   await $.fs.write(c.statusPath, cardAfterDecision(text, answer, day, (await loadSettings($, optionsRef!)).user))
   $.ui.toast(answer === 'C'
-    ? '已改程式並 commit（實際使用時由主對話照你的決定改）。審查後有新 commit，流程會自動重新檢查、審查。'
+    ? '已改程式並 commit（實際使用時由主對話照你的決定改）。驗收後有新 commit，流程會自動重新測試與驗收。'
     : `已寫回卡片：${answer}。實際使用時這一步會填入輸入框，按 Enter 送給主對話。`, { timeoutMs: 8000 })
   await refresh($, optionsRef!)
 }
