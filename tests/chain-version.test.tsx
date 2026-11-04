@@ -338,3 +338,40 @@ test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — no agent is 
   expect(chains(data)[BETA]).toEqual({ owner: ME, startedAt: 0, round: 0, rev: 2 })
   expect(log.list.filter(e => e.text === `Beta：${CHAIN_OVERWRITTEN}`)).toHaveLength(1)
 })
+
+/** AC-6：同一件的兩個寫入同時進行、兩邊都讀到版本 4：這個對話停下流程（寫 stopped），別的對話接手（改 owner），它比較晚寫回、蓋掉這格。
+ * 這個對話重讀時看到同版但標記不是自己的，就在最新的紀錄上重套；最後兩邊的改動都在、版本 6，兩邊都算有存。 */
+test('test_two_concurrent_writes_to_the_same_record_keep_both_changes', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  betaImplemented(data, clock, { rev: 4 })
+  data.store.chains = { ...chains(data), [ALPHA]: { owner: 'other-session', startedAt: 0, round: 0, rev: 1 } }
+  quota(data, 75)
+  // 別的對話在這個對話寫回之前就讀到版本 4；這個對話第一次寫回後，它才把自己的改動寫回（版本也是 5、標記是它的）。
+  const seen = structuredClone(chains(data))
+  const theirStamp = 'other-session#1'
+  const sets: any[] = []
+  data.storeAfterSet = (key: string, value: any) => {
+    if (key !== 'chains') return
+    sets.push(value[BETA])
+    if (sets.length === 1) data.store.chains = { ...seen, [BETA]: { ...seen[BETA], owner: 'other-session', rev: 5, stamp: theirStamp } }
+  }
+  const h = helpers($, clock)
+
+  await h.refresh()
+  await h.step()
+
+  // 這個對話第一次寫成版本 5（被同版的別人蓋掉），重套成 6
+  expect(sets.map(v => v.rev)).toEqual([5, 6])
+  const final = chains(data)[BETA]
+  expect(final.stopped).toBe(REASON)
+  expect(final.owner).toBe('other-session')
+  expect(final.rev).toBe(6)
+  expect(final.stamp).not.toBe(theirStamp)
+  expect(chains(data)[ALPHA]).toEqual({ owner: 'other-session', startedAt: 0, round: 0, rev: 1 })
+  // 這個對話回有存：照常記暫停、沒有放棄的警告
+  expect(log.list.filter(e => e.text === `Beta 流程已暫停：${REASON}`)).toHaveLength(1)
+  expect(log.has(CHAIN_OVERWRITTEN)).toBe(false)
+  // 別的對話重讀時看到的版本（6）比它寫的（5）大：它的改動也算寫進去了
+  expect(final.rev).toBeGreaterThan(5)
+})

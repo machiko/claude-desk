@@ -78,12 +78,14 @@ export async function loadChains($: any): Promise<Record<string, ChainRun>> {
 export type SaveChainOpts = { basedOn?: number; warn?: { at: number; name: string; card: string } }
 /** 已經為「整張表被蓋掉、放棄寫入」寫過動態的流程紀錄：同一件事只寫一筆，下次寫成功才清掉。 */
 const overwriteWarned = new Set<string>()
+/** 寫入標記的流水號：同一個對話裡同時進行的兩次寫入也分得出來。 */
+let stampSeq = 0
 
 /**
  * 改寫一件的流程紀錄，回傳有沒有真的寫回。
  * 閉包回傳同一個參照（沒改內容）就不寫；帶 `basedOn` 而現在的版本不是它（別的對話改過）也不寫。
- * 寫回時版本加 1；寫後重讀，這件的版本比剛寫的舊（別的對話用它早先讀到的舊表整張寫回）就在最新的表上重套，
- * 最多 MAX_SAVE_RETRIES 次；都被蓋掉就放棄，有 `warn` 時動態寫一筆。
+ * 寫回時版本加 1、換一個寫入標記；寫後重讀，這件不是自己剛寫的就在最新的表上重套：版本比剛寫的舊（別的對話用它早先讀到的舊表整張寫回），
+ * 或版本相同但標記不是自己的（同時讀到同一版、對方比較晚寫回）。含第一次最多寫 MAX_SAVE_RETRIES 次；都被蓋掉就放棄，有 `warn` 時動態寫一筆。
  */
 export async function saveChain($: any, key: string, change: (run: ChainRun | undefined) => ChainRun | undefined, opts: SaveChainOpts = {}): Promise<boolean> {
   for (let attempt = 0; attempt < MAX_SAVE_RETRIES; attempt++) {
@@ -93,11 +95,13 @@ export async function saveChain($: any, key: string, change: (run: ChainRun | un
     const next = change(cur)
     if (next === cur) return false
     const rev = revOf(cur) + 1
+    const stamp = `${await me($)}#${++stampSeq}`
     const { [key]: _, ...others } = all
-    await $.store.set(CHAIN_KEY, next ? { ...others, [key]: { ...next, rev } } : others)
+    await $.store.set(CHAIN_KEY, next ? { ...others, [key]: { ...next, rev, stamp } } : others)
     const after = (await loadChains($))[key]
-    // 別的對話接著我們寫的再寫（版本更大）也算寫進去了；比剛寫的舊、或刪掉後又被舊表帶回來才算被蓋掉。
-    if (next ? revOf(after) >= rev : !after || revOf(after) > revOf(cur)) {
+    // 別的對話接著我們寫的再寫（版本更大）也算寫進去了；比剛寫的舊、同版但標記不是自己的、或刪掉後又被舊表帶回來才算被蓋掉。
+    const kept = next ? revOf(after) > rev || (revOf(after) === rev && after?.stamp === stamp) : !after || revOf(after) > revOf(cur)
+    if (kept) {
       overwriteWarned.delete(key)
       return true
     }

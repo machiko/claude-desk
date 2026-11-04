@@ -30,6 +30,8 @@ export const revOf = (run: Pick<ChainRun, 'rev'> | undefined): number => run?.re
 export type ChainRun = {
   /** 版本號：每次寫回加 1（舊紀錄沒有，視為 0）；帶著早先看到的版本寫入時，版本不同就不寫。 */
   rev?: number
+  /** 寫入標記：每次寫回換一個（session id 加流水號）；寫後重讀時版本相同但標記不是自己的，就是被同時寫入的另一邊蓋掉。 */
+  stamp?: string
   owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
   /** 上一次派審查時的 HEAD；修正後的複審只看這之後的 diff。 */
   reviewHead?: string
