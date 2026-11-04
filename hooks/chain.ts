@@ -13,6 +13,10 @@ export const CHECK_UNAPPROVED_WHY = '測試指令還沒經你核准'
 const APPROVE_HINT = '：按兩次 v 核准並執行，流程接著走'
 export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
 export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
+/** 換詞前存進流程紀錄（$.store 的 chain.stopped）的同兩句：資料格式，只拿來比對、不顯示。 */
+const LEGACY_HELD: Record<string, string> = { [`完成檢查的指令改過、還沒經你核准${APPROVE_HINT}`]: CHECK_CHANGED, [`完成檢查的指令還沒經你核准${APPROVE_HINT}`]: CHECK_UNAPPROVED }
+/** 流程紀錄的停下原因給畫面用：換詞前存的兩句換成新句，更新前就停在測試段的流程照樣認得（檢查列列出指令、輪到你說新詞）。 */
+export const shownStopped = (stopped: string): string => LEGACY_HELD[stopped] ?? stopped
 /** 流程裡的 Agent 被停掉（面板 k 或外面 `claude stop`）：不算做完，不跑檢查、不派審查或修正；它可能留下改到一半的東西，看過再重開。 */
 export const AGENT_STOPPED = 'Agent 被停止，未完成；看過 worktree 後按 g 重開'
 /** 停在提問的那次派工，題目已在對話處理（卡片「等你」清掉）：審查要修的不自動派修正。 */

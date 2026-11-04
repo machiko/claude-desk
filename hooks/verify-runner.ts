@@ -147,6 +147,9 @@ export async function resumeAtCheck($: any, c: Case) {
   refreshSoon($, optionsRef!)
 }
 
+/** 排隊的那件輪到時接手出錯（不是測試沒過）：toast 的那句。 */
+export const queuedBrokeText = (name: string, error: unknown) => `${name}：排隊的測試沒跑成（${errorText(error)}）`
+
 export async function nextInQueue($: any) {
   if (checking !== null) return
   const next = checkQueue.shift()
@@ -156,7 +159,7 @@ export async function nextInQueue($: any) {
   if (!c) { void nextInQueue($); return }
   // 排隊期間這件的 Agent 開始跑了（派工不看隊伍）：不跟它搶 worktree，當成沒接手、換下一件。
   const took = await busyRefused($, c, '測試') ? false : await runVerify($, c, next.auto, true).catch(error => {
-    $.ui.toast(`${c.name}：排隊的測試沒跑成（${errorText(error)}）`, { timeoutMs: 10_000 })
+    $.ui.toast(queuedBrokeText(c.name, error), { timeoutMs: 10_000 })
     return false
   })
   // 輪到它卻沒接手（排隊期間卡片的檢查改了或清掉、還沒授權、按了取消）：這件不跑了，六段不再寫「排隊中」，換下一件，後面的不用一直等。

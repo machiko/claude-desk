@@ -361,3 +361,39 @@ test('a chain paused at the check whose check was then cleared asks for a check,
   expect(shown).not.toContain(flat('按兩次 v 核准'))
   expect(leaves(o, 'Text').some((t: any) => t.props?.bold)).toBe(true)
 })
+
+/** 換詞前就停在測試段的流程（流程紀錄存的是舊句）：更新後照樣認得，檢查列列出指令、「輪到你」說新詞，舊句不外露。 */
+test('a chain paused at the check before the wording change still reads as held, in new words', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  const h = helpers($, data, clock)
+  const LEGACY_CHANGED = '完成檢查的指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
+  const LEGACY_UNAPPROVED = '完成檢查的指令還沒經你核准：按兩次 v 核准並執行，流程接著走'
+  const screen = async () => { const ui = await $.ui.mount(PANE(160)); const s = flat(text(await ui.drawn())); await ui.unmount(); return s }
+  data.store.jobs = { [ROOT]: handledJob }
+
+  // 這個對話開的：指令改過
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs --old' }
+  data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: LEGACY_CHANGED, heldAtCheck: true } }
+  await h.refresh()
+  let shown = await screen()
+  expect(shown).toContain(flat(`▶ 輪到你  ${CHANGED}`))
+  expect(shown).toContain(flat('改過的指令（按兩次 v 核准並執行）：node test.mjs'))
+  expect(shown).not.toContain('完成檢查')
+
+  // 這個對話開的：從沒核准過
+  data.store.trustedVerify = {}
+  data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: LEGACY_UNAPPROVED, heldAtCheck: true } }
+  await h.refresh()
+  shown = await screen()
+  expect(shown).toContain(flat('▶ 輪到你  測試指令還沒經你核准：按兩次 v 核准並執行，流程接著走'))
+  expect(shown).toContain(flat('還沒核准的指令（按兩次 v 核准並執行）：node test.mjs'))
+  expect(shown).not.toContain('完成檢查')
+
+  // 別的對話開的：括號裡是不帶按鍵說明的新句
+  data.store.chains = { [ROOT]: { owner: 'other-session', startedAt: 0, round: 0, stopped: LEGACY_CHANGED, heldAtCheck: true } }
+  await h.refresh()
+  shown = await screen()
+  expect(shown).toContain(flat('▶ 輪到你  流程已暫停（測試指令改過、還沒經你核准）：這個流程是別的對話開的'))
+  expect(shown).not.toContain('完成檢查')
+})

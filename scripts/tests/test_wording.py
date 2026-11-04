@@ -14,16 +14,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 HOOKS = os.path.join(ROOT, 'hooks')
 SKIP_DIRS = ('prompts',)  # 寫給 Agent 的提示詞，不是給人看的句子（規格非目標）
 OLD_WORDS = re.compile(
-    r'檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完)|完成檢查|派(?:獨立)?審查|審查(?:通過|結論|有要修)'
+    r'檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完|沒跑成)|完成檢查|派(?:獨立)?審查|審查(?:通過|結論|有要修)'
     r'|重新(?:檢查|審查)|複審|免審查|資安審查|進行中|仍在執行'
 )
 # (檔名, 那一行要符合的正規式, 原因)
 ALLOWED = (
     ('hooks/tutorial.ts', re.compile(r'^export const REVIEW_[123] = `# 程式碼審查'),
      '教學寫進審查檔（.task/REVIEW.md）的本文，跟真的審查檔同格式；審查檔不改名（D-01）'),
+    ('hooks/chain.ts', re.compile(r'^const LEGACY_HELD: '),
+     '換詞前存進流程紀錄（$.store 的 chain.stopped）的原因句，資料格式：只拿來比對換成新句、不顯示'),
 )
-# 正規式字面值前面可能接的字元或關鍵字（其餘的「/」是除號）
-REGEX_PREFIX = re.compile(r'(?:^|[(,=:\[!&|?{};+\-*%<>~^]|\breturn|\btypeof|\bcase|\bin|\bof)\s*$')
+# 正規式字面值前面可能接的字元或關鍵字（其餘的「/」是除號）；不含「<」：`</` 是 JSX 收尾標籤，不是正規式
+REGEX_PREFIX = re.compile(r'(?:^|[(,=:\[!&|?{};+\-*%>~^]|\breturn|\btypeof|\bcase|\bin|\bof)\s*$')
 
 
 def strip_code(text):
@@ -121,9 +123,11 @@ class WordingGuardTest(unittest.TestCase):
             "const a = '完成檢查已開始'",
             "const b = <Text>Agent 仍在執行</Text>",
             "const c = `${x ? `複審` : ''}資安審查`",
+            "const d = <Box><Text>好</Text><Text>檢查通過</Text></Box>",
+            "const e = <Text>{`   ✓ 審查通過`}</Text>",
         ])
         hits = old_words('hooks/x.ts', text)
-        self.assertEqual([(no, w) for no, w, _ in hits], [(5, '完成檢查'), (6, '仍在執行'), (7, '複審'), (7, '資安審查')])
+        self.assertEqual([(no, w) for no, w, _ in hits], [(5, '完成檢查'), (6, '仍在執行'), (7, '複審'), (7, '資安審查'), (8, '檢查通過'), (9, '審查通過')])
 
     def test_allowed_list_is_only_data_format_with_reasons(self):
         for rel, pat, why in ALLOWED:

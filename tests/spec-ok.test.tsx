@@ -78,7 +78,7 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
   const before = data.files[CARD_B]
   await ui.press({ key: KEY })
   await clock.settle()
-  expect((await ui.find({ key: KEY }))?.text).toBe('再按 t 確認規格並核准檢查')
+  expect((await ui.find({ key: KEY }))?.text).toBe('再按 t 確認規格並核准測試')
   expect(data.files[CARD_B]).toBe(before)
   expect(specRuns(data)).toHaveLength(0)
 

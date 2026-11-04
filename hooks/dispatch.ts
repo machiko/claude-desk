@@ -2,6 +2,7 @@
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, expandHome, isPlaceholder, named, parseGate, saysNone } from './card'
+import { shownStopped } from './chain'
 import type { ChainRun } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 import { DONE_RULE, SPEC_RULE, cardRules, changelogRule, testRule } from './prompts/rules'
@@ -331,7 +332,7 @@ export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, 
   if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
   if (entry.kind === 'publish') return isMerged(c) ? '已經合併' : !needsPr(c) && !needsPush(c) ? NO_PUSH_NEEDED : ''
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
-  if (run.stopped) return `流程已暫停（${run.stopped}）`
+  if (run.stopped) return `流程已暫停（${shownStopped(run.stopped)}）`
   if (specBlocks(c)) return specGapReason(c)
   if (isMerged(c)) return '已經合併'
   return ''

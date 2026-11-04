@@ -9,6 +9,7 @@ import { passWords } from '../hooks/auto-pr'
 import { nextStep } from '../hooks/chain'
 import { summary } from '../hooks/model'
 import { STATE, WORD } from '../hooks/theme'
+import { queuedBrokeText } from '../hooks/verify-runner'
 import type { Case, Verify } from '../types'
 
 const ALPHA = '/home/u/wt/alpha'
@@ -21,9 +22,9 @@ const screen = async (ui: any) => text(await ui.drawn())
 /** 段名後面接六段字形：畫面上出現這種寫法就是舊段名還在。 */
 const OLD_STAGE = /(檢查|審查)\s*[●◉◆✕○·]/
 /** 「輪到你」與按鍵提示不再用的舊說法。 */
-const OLD_HINT = /執行完成檢查|派審查|派獨立審查|自動審查|重新審查|檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完)|完成檢查|審查(?:通過|結論|有要修)|重新檢查|複審|免審查|資安審查|進行中|仍在執行/
+const OLD_HINT = /執行完成檢查|派審查|派獨立審查|自動審查|重新審查|檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完|沒跑成)|完成檢查|審查(?:通過|結論|有要修)|重新檢查|複審|免審查|資安審查|進行中|仍在執行/
 /** 測試結果、驗收結果的動態與通知不再用的舊說法。 */
-const OLD_RESULT = /檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完)|完成檢查|審查(?:通過|結論|有要修)|重新(?:檢查|審查)|免審查|資安審查/
+const OLD_RESULT = /檢查(?:通過|未通過|中斷|未執行|仍在執行|跑完|沒跑成)|完成檢查|審查(?:通過|結論|有要修)|重新(?:檢查|審查)|免審查|資安審查/
 
 /**
  * 三件：Alpha 在測試段（驗收過後又有新 commit，完成檢查還沒在新的 HEAD 跑），Beta 在驗收段（測試通過、待驗收），
@@ -318,6 +319,9 @@ test('測試結果的動態與通知用新詞', async ($, on) => {
   expect(data.toasts).toContain('Alpha：測試在跑')
   release!()
   await clock.settle()
+
+  // 排隊的那件輪到時接手出錯（沒跑成）：也說「測試」
+  expect(queuedBrokeText('Beta', new Error('狀態寫不進去'))).toBe('Beta：排隊的測試沒跑成（狀態寫不進去）')
 
   // 指令還沒核准：不跑，說「測試指令」
   data.store.trustedVerify = {}
