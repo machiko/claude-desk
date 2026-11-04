@@ -6,7 +6,7 @@ import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './ca
 import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
-import { fixByG, idleNext, reviewNext } from './dispatch'
+import { fixByG, idleNext, reviewNext, untrustedSteps } from './dispatch'
 import { CATCHUP_RUNNING, catchupAutoTurn, catchupHandTurn, catchupHold } from './catchup'
 
 export type Turn = {
@@ -19,9 +19,9 @@ export type Turn = {
 
 /**
  * 畫面上才知道的事：完成檢查執行中、排隊中、派工中、派工排第幾位（1 起，沒排是 undefined）、決策送出了沒、現在是不是教學模式，
- * 以及現在幾點（判斷卡片落後）。
+ * 以及現在幾點（判斷卡片落後）、上次派工有沒有被擋下（hold）。
  */
-export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; agentQueued?: number; tutorial?: boolean; sent?: SentState; now?: number }
+export type TurnCtx = { /** untrusted：上次派工因為 repo 還沒信任而開不了，改說三步。 */ hold?: 'untrusted'; verifying?: boolean; queued?: boolean; launching?: boolean; agentQueued?: number; tutorial?: boolean; sent?: SentState; now?: number }
 
 /** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
 export type SentState = 'waiting' | 'unwritten'
@@ -140,6 +140,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
   if (ctx.launching) return { who: 'ai', text: '派工中，等 Agent 啟動' }
   if (ctx.agentQueued) return { who: 'ai', text: `派工排隊中（第 ${ctx.agentQueued} 位）：同時執行的 Agent 已達上限，有空位會自動派出` }
+  if (ctx.hold === 'untrusted') return { who: 'you', text: untrustedSteps(c.root), key: 'g' }
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
   const lesson = ctx.tutorial && !isRunning(c) && !ctx.verifying && !ctx.queued ? tutorialTurn(c) : null
   if (lesson) return { who: 'you', ...lesson }

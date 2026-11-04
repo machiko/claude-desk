@@ -209,6 +209,35 @@ export function parseLaunchToken(stdout: string): string | null {
   return found.size === 1 ? [...found][0]! : null
 }
 
+/**
+ * `claude --bg` 因為 repo 還沒信任而開不了：不分大小寫、整字比對 not trusted／not yet trusted／untrusted，出現在任何一行都算。
+ * 待確認實際字樣；目前依 docs/WORKFLOW.md 的 workspace not trusted 寬鬆比對（distrusted、單獨的 trusted 不算）。
+ */
+const UNTRUSTED_RE = /\b(?:not\s+(?:yet\s+)?trusted|untrusted)\b/i
+
+/** 啟動失敗的整段輸出（stderr＋stdout）是不是「還沒信任」。 */
+export function isUntrustedLaunch(text: string): boolean {
+  return UNTRUSTED_RE.test(text)
+}
+
+/** 啟動失敗：訊息是輸出的最後一行；untrusted 是整段輸出看得出 repo 還沒信任。 */
+export class LaunchError extends Error {
+  readonly untrusted: boolean
+  constructor(message: string, untrusted: boolean) {
+    super(message)
+    this.name = 'LaunchError'
+    this.untrusted = untrusted
+  }
+}
+
+/** 面板記著的派工擋下原因（每件一筆）：派工開頭與成功派出時清掉。 */
+export type UntrustedHold = { kind: 'untrusted'; root: string; at: number }
+
+/** 還沒信任時的三步（不含任務名）：「輪到你」直接用，toast 與動態在前面接「<任務名>：」。 */
+export function untrustedSteps(root: string): string {
+  return `Agent 開不了，這個 repo 還沒信任。①另開終端機分頁：cd ${root} && claude ②信任提示選 Yes ③輸入 /exit 回面板再按 g（不要用 ! 跑）`
+}
+
 /** 啟動後清單裡唯一一個叫這個名字、對得上 token、且啟動前不存在的背景 agent。 */
 export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: string, token: string): RawAgent | null {
   const seen = new Set(before.map(a => `${a.id ?? ''}|${a.sessionId ?? ''}`))

@@ -10,7 +10,7 @@ const BETA = '/home/u/wt/beta'
 const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
 const LAUNCH = 'desk-launch-1'
 const PREFIX = `case-${CARD_B}-`
-const APPROVE = `Agent 在等權限批准：到終端機跑 claude agents 選 ${LAUNCH} 批准`
+const APPROVE = `Agent 在等權限批准：到終端機跑 claude agents 選 ${LAUNCH} 批准；批准後面板會自動更新`
 const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 只留 Beta 一件：工作桌派出去的那次停下來（blocked）。 */

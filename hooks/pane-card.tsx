@@ -41,7 +41,7 @@ export const picksKey = (c: Case) => `${c.statusPath}\n${c.ask}`
 /** 畫面上才知道、turnOf 需要的事。 */
 export function turnCtx(view: PaneView, c: Case): TurnCtx {
   const agentQueued = (view.agentQueue ?? []).indexOf(c.statusPath) + 1
-  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, ...(agentQueued ? { agentQueued } : {}), tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now }
+  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, ...(agentQueued ? { agentQueued } : {}), tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now, ...(view.untrusted?.[c.statusPath] ? { hold: 'untrusted' as const } : {}) }
 }
 
 /** 檢查列上待確認的鍵（確認規格、執行檢查、派實作），沒有就是 null。 */

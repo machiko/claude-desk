@@ -3,8 +3,8 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents } from './dispatch'
-import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents, untrustedSteps } from './dispatch'
+import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
 import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, JOBS_KEY } from './desk-io'
@@ -18,6 +18,25 @@ import { restage, spin, tutorial, lastAgents } from './register'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
+/** 派工因為 repo 還沒信任而開不了的那幾件（卡片路徑 → 擋下原因）：面板的「輪到你」改說三步；派工開頭與成功派出時清掉。 */
+const untrustedAtom = atom({ plugin: 'desk', key: 'untrusted' } as const, {} as Record<string, UntrustedHold>)
+
+/** 三步說明比一般失敗長：toast 留久一點。 */
+const UNTRUSTED_TOAST_MS = 15_000
+
+/** 拿掉這件的「還沒信任」紀錄。 */
+async function clearUntrusted($: any, statusPath: string) {
+  await update($, untrustedAtom, v => (statusPath in v ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== statusPath)) : v))
+}
+
+/** 啟動失敗是因為 repo 還沒信任：記下這件，動態、toast 與對話說三步。 */
+async function holdUntrusted($: any, c: Case, now: number, skipPanel: boolean) {
+  await update($, untrustedAtom, v => ({ ...v, [c.statusPath]: { kind: 'untrusted', root: c.root, at: now } }))
+  const steps = untrustedSteps(c.root)
+  await feedPush($, [{ at: now, text: `${c.name}：${steps}`, tone: 'error', card: c.statusPath }])
+  await tellPanel($, now, steps, { name: c.name, skip: skipPanel })
+  $.ui.toast(`${c.name}：${steps}`, { timeoutMs: UNTRUSTED_TOAST_MS })
+}
 
 /** 按下時再問一次背景 agent 清單的上限：查不到就照快照，不讓按鈕卡太久。 */
 export const PRESS_AGENTS_MS = 10_000
@@ -140,6 +159,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     return false
   }
   slots.add(c.statusPath)
+  await clearUntrusted($, c.statusPath)
   // 佔位之後的準備（審查要讀 git 與流程紀錄）也在 try 裡：拋錯時一樣放掉名額、說派工失敗。
   try {
     const sessionId = fresh ? undefined : kind === 'reply' && own.last?.sessionId ? own.last.sessionId : own.sessionId
@@ -183,9 +203,11 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const sent = `派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`
     await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}${sent}`, tone: 'suggestion', card: c.statusPath }])
     await tellPanel($, now, sent, { name: c.name, skip: opts.auto || tutorial })
+    await clearUntrusted($, c.statusPath)
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
     return true
   } catch (error) {
+    if (error instanceof LaunchError && error.untrusted) { await holdUntrusted($, c, now, !!opts.auto || tutorial); return false }
     const message = error instanceof Error ? error.message : String(error)
     await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
     await tellPanel($, now, `${KIND_LABEL[kind]}失敗：${message}`, { name: c.name, skip: opts.auto || tutorial })
