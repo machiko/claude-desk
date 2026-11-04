@@ -83,7 +83,7 @@ export function fixture(on: any) {
     askHeaders: [] as string[],
     /** false 模擬輸入框無法預填。 */
     fillable: true,
-    /** 輸入框裡還沒送出的字（$.prompt.read 讀到的）；預設空的。 */
+    /** 輸入框裡還沒送出的字（$.prompt.read 讀到的）；預設空的。預填照 mode 改它（replace 換掉、append／insert 接在後面），送出後清空。 */
     draft: '',
     run: async (_e: any): Promise<any> => result(0, 'all green\n'),
     /** `claude stop <id>` 停過的 id（依序）。 */
@@ -205,8 +205,12 @@ export function fixture(on: any) {
     return { text: 'Reloaded plugins' }
   })
   on('prompt.read', () => ({ value: { text: data.draft, cursor: data.draft.length } }))
-  on('prompt.fill', (_: any, e: any) => { data.fills.push({ text: e.text, mode: e.mode }); return { isFilled: data.fillable } })
-  on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); return { text: e.text, context: e.context } })
+  on('prompt.fill', (_: any, e: any) => {
+    data.fills.push({ text: e.text, mode: e.mode })
+    if (data.fillable) data.draft = e.mode === 'append' || e.mode === 'insert' ? `${data.draft}${e.text}` : e.text
+    return { isFilled: data.fillable }
+  })
+  on('prompt.submit', (_: any, e: any) => { data.submitted.push(e); data.draft = ''; return { text: e.text, context: e.context } })
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [] }))
   return { data, clock }
 }

@@ -5,7 +5,7 @@
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
-import { parseDecisions, decisionAnswer, decisionPrompt, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
+import { parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
 import { errorLine, quotaHeld, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
@@ -139,7 +139,17 @@ async function promptDraft($: any): Promise<string> {
   return typeof box?.text === 'string' ? box.text : ''
 }
 
-/** 預填決策：輸入框有草稿就把決策另起一行接在後面（送出時 decisionName 照樣認得），空的就直接填入。 */
+/**
+ * 預填決策：輸入框是空的就直接填入；有草稿就另起一行接在後面（送出時 decisionNames 照樣認得）。
+ * 草稿裡已有這件的決策（還沒送出又改選、或多按一次 f）就換掉那一行，不疊出兩行互相矛盾的決策。
+ */
+async function decisionFill($: any, name: string, text: string): Promise<{ input: { text: string; mode: string }; how: string }> {
+  const draft = await promptDraft($)
+  if (!draft.trim()) return { input: { text, mode: 'replace' }, how: '已填入' }
+  if (decisionNames(draft).includes(name)) return { input: { text: withDecision(draft, name, text), mode: 'replace' }, how: '已換成新的選擇' }
+  return { input: { text: draft.endsWith('\n') ? text : `\n${text}`, mode: 'append' }, how: '已接在輸入框原本的字後面' }
+}
+
 export async function fillDecision($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const decisions = parseDecisions(c.ask)
@@ -149,11 +159,10 @@ export async function fillDecision($: any, c: Case) {
   const answer = decisionAnswer(decisions, picks)
   if (tutorial) { await tutorialDecision($, c, answer); return }
   const text = decisionPrompt(c.name, answer)
-  const draft = await promptDraft($)
-  const fill = draft.trim() ? { text: draft.endsWith('\n') ? text : `\n${text}`, mode: 'append' } : { text, mode: 'replace' }
-  const filled = await $.prompt.fill(fill).catch(() => ({ isFilled: false }))
+  const { input, how } = await decisionFill($, c.name, text)
+  const filled = await $.prompt.fill(input).catch(() => ({ isFilled: false }))
   if (!filled.isFilled) { $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入${text}`); return }
-  $.ui.toast(`${c.name}：決策已${draft.trim() ? '接在輸入框原本的字後面' : '填入'}，按 Esc 回到輸入框再按 Enter 送出；此任務的卡片會一併附上`, { timeoutMs: 6000 })
+  $.ui.toast(`${c.name}：決策${how}，按 Esc 回到輸入框再按 Enter 送出；此任務的卡片會一併附上`, { timeoutMs: 6000 })
 }
 
 /**

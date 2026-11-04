@@ -3,8 +3,8 @@
 // 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、面板操作紀錄的附加與清除、送出的決策與兩個計時器。
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
-import type { PanelAction, SentRecord } from '../types'
-import { decisionName, parseGate } from './card'
+import type { Case, PanelAction, SentRecord } from '../types'
+import { decisionNames, parseGate } from './card'
 import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext, tellPanel } from './desk-io'
 import type { Timer } from './desk-io'
 import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
@@ -246,15 +246,17 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
     const which = await read($, selected).catch(() => null)
     const s = await read($, snapshot).catch(() => null)
     const c = which && s ? s.cases.find(x => x.statusPath === which) ?? null : null
-    const name = !deps.isTutorial() && s ? decisionName(String(e.text ?? '')) : null
-    const decided = name && s ? s.cases.find(x => !x.demo && x.name === name && x.state === 'ask') ?? null : null
-    if (!c && !decided && !actions.length) return next(e)
+    // 一則可以帶幾件的決策（先後在不同任務按 f，決策一件一行）：每件都記成已送出、鎖題並附上它的卡。
+    const names = !deps.isTutorial() && s ? decisionNames(String(e.text ?? '')) : []
+    const decided = s ? names.map(name => s.cases.find(x => !x.demo && x.name === name && x.state === 'ask')).filter((x): x is Case => !!x) : []
+    if (!c && !decided.length && !actions.length) return next(e)
     const key = c ? cardKey(c) : ''
     // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
-    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...(decided ? [decisionContext(decided, decided !== c)] : [])]
-    if (decided) await update($, sentAtom, v => ({ ...v, [decided.statusPath]: { ask: decided.ask, ...(e.turnId ? { during: e.turnId } : {}) } }))
+    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c))]
+    const sentPaths = new Set(decided.map(d => d.statusPath))
+    if (decided.length) await update($, sentAtom, v => ({ ...v, ...Object.fromEntries(decided.map(d => [d.statusPath, { ask: d.ask, ...(e.turnId ? { during: e.turnId } : {}) }])) }))
     const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })
-    if (result.drop) { if (decided) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== decided.statusPath))) }
+    if (result.drop) { if (decided.length) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => !sentPaths.has(k)))) }
     // 斜線指令（skill 等）附了卡也不算附過：有些指令不進模型，下一則照樣附全文，最多重複一次。
     else {
       if (c && !e.command) lastAttached = key

@@ -276,6 +276,26 @@ test('test_conflict_attempt_is_not_recorded_when_queue_is_cleared', { timeoutMs:
   expect(data.launches.length).toBe(1)
 })
 
+/** 審查 MEDIUM：取消排隊中的自動解衝突：合併段沒有 g 可按，提示與動態說在對話處理，不叫你按 g。 */
+test('取消排隊中的自動解衝突說在對話處理、不叫按 g', { timeoutMs: SLOW_MS }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const seen = watchFeed(on)
+  conflictingBeta(data, clock)
+  data.agents = [1, 2, 3].map(i => ({ id: `f000000${i}`, kind: 'background', cwd: `/home/u/wt/other${i}`, name: `desk-zz-${i}`, sessionId: `f000000${i}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 }))
+  await refresh($, clock, 2)
+  expect(seen.feed.filter(e => e.text === 'Beta 自動派解衝突排隊中（第 1 位）').length).toBe(1)
+
+  const ui = await $.ui.mount(PANE(160))
+  await focus(ui, CARD_B)
+  await ui.press({ key: `case-${CARD_B}-unqueue` }); await clock.settle()
+  expect(data.toasts).toContain('Beta：已取消排隊，流程已暫停：在對話合併基準分支、解衝突')
+  expect(seen.feed.some(e => e.text === 'Beta 已取消排隊，流程已暫停：在對話合併基準分支、解衝突')).toBe(true)
+  expect([...data.toasts, ...seen.feed.map(e => e.text)].some(t => t.includes('按 g 重開'))).toBe(false)
+  // 合併段真的沒有 g
+  expect(await ui.find({ key: `case-${CARD_B}-continue` })).toBeUndefined()
+  await ui.unmount()
+})
+
 /** 背景 fetch 不停下來問帳密：關掉 git 的提示，ssh 用 BatchMode 並沿用你設的 ssh 指令（審查 MEDIUM，D-05）。 */
 test('test_background_fetch_never_prompts_for_credentials', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)

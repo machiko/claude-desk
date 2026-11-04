@@ -123,7 +123,8 @@ test('test_release_request_lists_cleanup_of_released_cards_when_pressed', async 
   expect(data.submitted.length).toBe(0)
   await ui.unmount()
 
-  // 兩張都有 release 關卡：括號只寫一句，不列任何 slug 與分支
+  // 兩張都有 release 關卡：括號只寫一句，不列任何 slug 與分支（先清掉輸入框裡上一次的請求，不然照 AC-3 不填）
+  data.draft = ''
   data.files[CARD_B] = data.files[CARD_B]!.replace(PASSED, RELEASE_GATE)
   ui = await mountBeta($)
   await ui.press({ key: KEY })
