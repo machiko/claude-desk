@@ -379,7 +379,7 @@ test('done 的新舊下一步都不派 Agent', () => {
       expect(reviewNext(next)).toBe(false)
       expect(idleNext(next)).toBe('下一步只剩等測試／驗收／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事')
       expect(dispatchRefusal(c, 'continue')).not.toBe('')
-      expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', key: 'v' })
+      expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', action: 'verify', key: 'v' })
     }
   }
 })
