@@ -11,7 +11,7 @@ import { errorLine, quotaHeld, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
 import { afterSpecRefusal, dispatchRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, replyRefusal } from './dispatch'
 import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
-import { AGENT_STOPPED, paused } from './chain'
+import { AGENT_STOPPED, CHAIN_CHANGED, paused, revOf } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
 import type { AutoPrPlan } from './auto-pr'
@@ -34,13 +34,17 @@ const snapshotAtom = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
  * 擋在派修正前的不走這裡（照舊按 g 派修正）；沒有記到被擋的那步（舊紀錄）也不走，回 null。
  * 這是你手動派的：先過手動派審查的拒絕檢查（Agent 在跑、已經合併、規格還擋著、手動任務）與 worktree 檢查；
  * 流程改成這個對話的（別的對話開的也一樣，跟手動按 g 開新的一輪相同）；排隊時不看額度（resumed）。
+ * 面板上次重新整理之後流程紀錄被別的對話改過（版本不同）：不派，回 CHAIN_CHANGED。
  * 回傳給 /desk go 的一句話（派出、排隊、拒絕或沒派出）。
  */
 export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): Promise<string | null> {
   const key = normalizeRoot(c.root)
   const run = (await loadChains($))[key]
+  if (!quotaHeld(c.chain)) return null
+  // 面板看到的是額度暫停，但之後別的對話改過這件的流程紀錄（例如接手開了新一輪、暫停已解除）：不派、照它寫的留著。
+  if (revOf(run) !== (c.chain?.rev ?? 0)) return chainChanged($, c)
   const resume = run?.resume
-  if (!quotaHeld(c.chain) || !run?.stopped || !resume || resume.dispatch !== 'review') return null
+  if (!run?.stopped || !resume || resume.dispatch !== 'review') return null
   const what = resume.security ? '資安審查' : '驗收'
   const refusal = dispatchRefusal(c, 'review') || (tutorial ? '' : markRefusal(await worktreeMark($, c.root), (await loadJobs($))[key]))
   if (refusal) {
@@ -56,7 +60,9 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   }
   const reason = run.stopped
   const mine = await me($)
-  await saveChain($, key, r => { if (!r) return r; const { stopped: _s, resume: _r, ...rest } = r; return { ...rest, owner: mine, round: resume.round } })
+  // 帶著面板上次重新整理看到的版本寫：之後別的對話改過這件的流程紀錄（例如接手開了新一輪），就不派、照它寫的留著。
+  const taken = await saveChain($, key, r => { if (!r) return r; const { stopped: _s, resume: _r, ...rest } = r; return { ...rest, owner: mine, round: resume.round } }, { basedOn: c.chain?.rev ?? 0 })
+  if (!taken) return chainChanged($, c)
   const sent = await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, resumed: true, ...(resume.security ? { security: true } : {}) })
   // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗；排進隊伍 dispatch 回 true）：流程照原本的原因停著，下次 g 再來。
   if (!sent) {
@@ -65,6 +71,13 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   }
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 額度煞車後按 g 重開：直接派${what}，不多派實作`, tone: 'suggestion', card: c.statusPath }])
   return isAgentQueued(c.statusPath) ? `${c.name}：額度煞車後接續，${what}排隊中。` : `${c.name}：額度煞車後接續，已派${what}。`
+}
+
+/** 接續時流程紀錄已被別的對話改過：toast 並回給 /desk go 同一句。 */
+function chainChanged($: any, c: Case): string {
+  const text = `${c.name}：${CHAIN_CHANGED}`
+  $.ui.toast(text, { timeoutMs: 10_000 })
+  return text
 }
 
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
