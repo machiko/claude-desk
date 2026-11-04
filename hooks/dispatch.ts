@@ -11,7 +11,8 @@ import { PUBLISH_CARD_RULE, publishHead } from './prompts/publish'
 import { reviewPrompt, reviewTask } from './prompts/review'
 import type { ReviewOpts } from './prompts/review'
 import { fixHead, manualFixHead } from './prompts/fix'
-import { REVIEW_NEXT_AT_REVIEW, idleNext, reviewNext } from './next-words'
+import { IDLE_WHY, MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext, reviewNext } from './next-words'
+import { shipTurn } from './turn'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
 export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
@@ -19,7 +20,7 @@ export { openPrRequest, openPrSteps, prHowOf, pushRequest } from './prompts/publ
 export type { PrHow } from './prompts/publish'
 export { REVIEW_FILE, SECURITY_FILE, reviewTask } from './prompts/review'
 export type { ReviewOpts } from './prompts/review'
-export { REVIEW_NEXT, idleNext, reviewNext } from './next-words'
+export { IDLE_WHY, MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext, reviewNext } from './next-words'
 export { markOf, markRefusal } from './worktree-mark'
 export type { WorktreeMark } from './worktree-mark'
 
@@ -277,41 +278,85 @@ const MANUAL = '登錄表設為 manual，只追蹤不派工'
 export const PUBLISH_ONLY_AT_MERGE = '只有合併段還要 push 或開 PR 時才能推送'
 const BUSY = 'Agent 處理中'
 const APPROVAL_WAIT = 'Agent 在等權限批准'
+const FOLLOW_TURN = '照「輪到你」做'
+const OPEN_NEXT = '開卡片（o）看下一步'
+const APPROVE_NEXT = '到終端機跑 claude agents 批准它'
+const BUSY_NEXT = '等 Agent 做完再按一次；要中途停掉按 k'
 
-/** 不能回覆的原因；空字串代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
-export function replyRefusal(c: Case): string {
-  if (c.demo) return '示範任務只能看'
-  if (c.manual) return MANUAL
+/** 不能派（或回覆）的原因與下一步；next 是面板上此刻按得到的鍵、要輸入的指令，或「照「輪到你」做」。示範任務沒有下一步。 */
+export type Refusal = { why: string; next?: string }
+
+/** 不能回覆的原因；null 代表 Agent 停下來在等你、可以回覆（不管卡片關卡或「等你」是什麼）。 */
+function replyRefusalOf(c: Case): Refusal | null {
+  if (c.demo) return { why: '示範任務只能看' }
+  if (c.manual) return { why: MANUAL, next: `在這個對話自己做；${OPEN_NEXT}` }
   // 權限提示要到 claude agents 批准；回覆會被當成一則新訊息，不會放行那個工具。
-  if (c.state === 'approve' || approvalWait(c.agent)) return `${APPROVAL_WAIT}，不是提問`
-  if (c.state === 'reply' || agentWaits(c.agent)) return ''
-  return c.state === 'running' || c.agent?.status === 'busy' ? BUSY : 'Agent 沒有在等你回覆'
+  if (c.state === 'approve' || approvalWait(c.agent)) return { why: `${APPROVAL_WAIT}，不是提問`, next: APPROVE_NEXT }
+  if (c.state === 'reply' || agentWaits(c.agent)) return null
+  if (c.state === 'running' || c.agent?.status === 'busy') return { why: BUSY, next: BUSY_NEXT }
+  return { why: 'Agent 沒有在等你回覆', next: '要交代新的事，開卡片（o）改下一步' }
 }
 
-/** 手動派工不能派的原因；空字串代表可以派。回覆看 Agent 是否在等你，其他看 dispatchable。 */
-export function dispatchRefusal(c: Case, kind: DispatchKind): string {
-  if (kind === 'reply') return replyRefusal(c)
-  if (dispatchable(c).includes(kind)) return ''
-  if (c.manual) return MANUAL
-  if (c.state === 'running' || (kind === 'publish' && agentBusy(c))) return BUSY
+/** 不能回覆的原因（一行）；空字串代表可以回覆。 */
+export function replyRefusal(c: Case): string {
+  return refusalLine(replyRefusalOf(c))
+}
+
+/** 卡片狀態擋下的原因：照 dispatchable 擋下的順序分句（條件不新增）。 */
+function stageRefusal(c: Case, kind: DispatchKind): Refusal {
+  if (c.state === 'reply') return { why: 'Agent 停著在等你回覆', next: '按 y 回覆它' }
+  if (c.state === 'approve') return { why: APPROVAL_WAIT, next: APPROVE_NEXT }
+  if (c.state === 'done') return { why: '已上線', next: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
+  if (reviewTask(c) && kind === 'continue') return { why: '這張是驗收任務卡，只派驗收、不派實作', next: FOLLOW_TURN }
+  if (isReleaseLine(c) && kind === 'review') return { why: '發版線不派驗收，只跑測試', next: FOLLOW_TURN }
+  if (kind === 'continue' && !c.next) return { why: '下一步空白', next: '開卡片（o）寫下一步' }
+  if (c.state === 'idle') return { why: '卡片閒置（下一步寫「無」）', next: '開卡片（o）寫狀態與下一步' }
+  return { why: `這個階段不能${KIND_LABEL[kind]}`, next: FOLLOW_TURN }
+}
+
+/** 手動派工不能派的原因與下一步；null 代表可以派。回覆看 Agent 是否在等你，其他看 dispatchable。 */
+export function refusalOf(c: Case, kind: DispatchKind): Refusal | null {
+  if (kind === 'reply') return replyRefusalOf(c)
+  if (dispatchable(c).includes(kind)) return null
+  if (c.manual) return { why: MANUAL, next: `在這個對話自己做；${OPEN_NEXT}` }
+  if (c.state === 'running' || (kind === 'publish' && agentBusy(c))) return { why: BUSY, next: BUSY_NEXT }
   // 排隊等名額時 PR 被合併、或按了還沒重新整理的舊鍵：跟自動排的一樣說已經合併，不叫你按已經不列的 v、w。
-  if (mergedUnshipped(c)) return '已經合併'
-  if (kind === 'publish') return PUBLISH_ONLY_AT_MERGE
-  if (specBlocks(c)) return specGapReason(c)
-  if (parseGate(c.gate)?.kind === 'spec') return '規格還沒確認'
-  if (!c.verify) return '卡片還沒有測試指令，規格未通過'
-  // 審查段（檢查已通過）：「輪到你」已經是按 w，不再叫你先按 v。
-  if (kind === 'continue' && reviewNext(c.next) && c.pipeline?.current === 'review') return REVIEW_NEXT_AT_REVIEW
-  return (kind === 'continue' ? idleNext(c.next) : '') || '卡片狀態不符'
+  if (mergedUnshipped(c)) return { why: '分支已合併，不再派實作或驗收', next: shipTurn(c).text }
+  if (kind === 'publish') return { why: PUBLISH_ONLY_AT_MERGE, next: FOLLOW_TURN }
+  if (specBlocks(c)) return { why: '規格沒有驗收情境', next: `輸入 ${CARD_CMD} spec ${slugOf(c)}` }
+  if (parseGate(c.gate)?.kind === 'spec') return { why: '規格還沒確認', next: `看過規格（o）後按 t 確認，或輸入 ${CARD_CMD} spec ${slugOf(c)} ok` }
+  // 走到這裡規格已過：只差檢查欄。
+  if (!c.verify) return { why: MISSING_CHECK_WHY, next: MISSING_CHECK_NEXT }
+  if (kind === 'continue') {
+    // 審查段（檢查已通過）：「輪到你」已經是按 w，不再叫你先按 v。
+    if (reviewNext(c.next) && c.pipeline?.current === 'review') return { why: REVIEW_WHY, next: '按 w 派驗收' }
+    // 還沒過測試：通過後流程可能自動驗收，w 也要那時才列，所以不在這裡叫你按 w。
+    const idle = idleNext(c.next)
+    if (idle === REVIEW_WHY) return { why: REVIEW_WHY, next: '先按 v 執行測試，通過後照「輪到你」派驗收' }
+    if (idle === IDLE_WHY) return { why: IDLE_WHY, next: '按 v 執行測試；要改程式先開卡片（o）把下一步寫成要做的事' }
+  }
+  return stageRefusal(c, kind)
+}
+
+/** 一行「原因；下一步」（沒有下一步只回原因）；null 回空字串。給動態與 /desk 指令這類只要一句的地方。 */
+export const refusalLine = (r: Refusal | null): string => !r ? '' : r.next ? `${r.why}；${r.next}` : r.why
+
+/** toast 與對話回覆的拒絕句：「<任務>：無法<動作>（<原因>）；<下一步>」。 */
+export const refusalText = (name: string, action: string, r: Refusal): string =>
+  `${name}：無法${action}（${r.why}）${r.next ? `；${r.next}` : ''}`
+
+/** 手動派工不能派的原因（一行「原因；下一步」）；空字串代表可以派。排隊的動態用這句。 */
+export function dispatchRefusal(c: Case, kind: DispatchKind): string {
+  return refusalLine(refusalOf(c, kind))
 }
 
 /**
- * 確認規格後自動派實作不能派的原因；空字串代表可以派。按 g 在「等你」有事時照樣能派，自動派不行：要你決定的事還沒決定。
+ * 確認規格後自動派實作不能派的原因；null 代表可以派。按 g 在「等你」有事時照樣能派，自動派不行：要你決定的事還沒決定。
  * 其他照手動派繼續（manual、Agent 在跑、規格還擋著、沒有完成檢查、下一步只剩等待）。
  */
-export function afterSpecRefusal(c: Case): string {
-  if (!saysNone(c.ask)) return '卡片「等你」還有要你決定的事'
-  return dispatchRefusal(c, 'continue')
+export function afterSpecRefusal(c: Case): Refusal | null {
+  if (!saysNone(c.ask)) return { why: '卡片「等你」還有要你決定的事', next: '開卡片（o）處理「等你」的決定' }
+  return refusalOf(c, 'continue')
 }
 
 /** 排隊等派的一筆：手動（g、w、s、y、⇡）或自動流程排的；opts 照原本派工的參數。 */

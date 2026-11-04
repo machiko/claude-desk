@@ -1,7 +1,12 @@
 import { expect, test } from 'claude-code/testing'
-import { parseSettings, pitfallsFor, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, prHowOf, pushRequest } from '../hooks/dispatch'
+import { parseSettings, pitfallsFor, modelFor, launchArgs, parseLaunchToken, confirmLaunch, buildPrompt, dispatchable, dispatchRefusal, idleNext, markOf, markRefusal, refusalOf, replyRefusal, reviewNext, reviewTask, runningDeskAgents, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, PUBLISH_ONLY_AT_MERGE, REVIEW_FILE, openPrRequest, prHowOf, pushRequest } from '../hooks/dispatch'
 import { parseGate } from '../hooks/card'
-import type { JobRecord, RootJobs } from '../hooks/dispatch'
+import type { DispatchKind, JobRecord, RootJobs } from '../hooks/dispatch'
+import { shipTurn } from '../hooks/turn'
+import { IDLE_WHY, REVIEW_WHY } from '../hooks/next-words'
+
+/** 拒絕原因（不含下一步）；可以派時是空字串。 */
+const whyOf = (c: any, kind: DispatchKind): string => refusalOf(c, kind)?.why ?? ''
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
 import type { Case, Verify } from '../types'
@@ -109,10 +114,9 @@ test('test_dispatchable_returns_only_sync_once_merged', () => {
   // 手動排的（等名額時 PR 被合併、按了舊鍵）：跟自動排的一樣說已經合併，不叫你按 v、w 或改下一步
   for (const next of ['派審查', '等審查', '依審核修正']) {
     const c = { ...viaPr, next }
-    expect(dispatchRefusal(c, 'continue')).toBe('已經合併')
-    expect(dispatchRefusal(c, 'review')).toBe('已經合併')
+    for (const kind of ['continue', 'review'] as const) expect(refusalOf(c, kind)).toEqual({ why: '分支已合併，不再派實作或驗收', next: shipTurn(c).text })
   }
-  expect(dispatchRefusal(viaGit, 'publish')).toBe('已經合併')
+  expect(whyOf(viaGit, 'publish')).toBe('分支已合併，不再派實作或驗收')
   // 還沒合併的照舊能派審查；發版線沒有合併段，不受影響
   expect(dispatchable(open)).toContain('review')
   expect(dispatchable(releaseLine)).toEqual(['continue', 'sync'])
@@ -122,10 +126,12 @@ test('reply refusal names why: waiting agents can be answered, others say why no
   const asks = { '/p/a': { name: 'x', state: 'blocked', status: 'idle', asks: true } }
   expect(replyRefusal(mk('寫測試', asks))).toBe('')
   expect(replyRefusal({ ...mk('寫測試', asks), gate: 'spec：待確認規格' })).toBe('')
-  expect(replyRefusal(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }))).toBe('Agent 處理中')
-  expect(replyRefusal(mk('寫測試'))).toBe('Agent 沒有在等你回覆')
-  expect(replyRefusal({ ...mk('寫測試', asks), manual: true })).toBe('登錄表設為 manual，只追蹤不派工')
-  expect(replyRefusal({ ...mk('寫測試', asks), demo: true })).toBe('示範任務只能看')
+  expect(whyOf(mk('寫測試', { '/p/a': { name: 'x', state: 'working', status: 'busy' } }), 'reply')).toBe('Agent 處理中')
+  expect(whyOf(mk('寫測試'), 'reply')).toBe('Agent 沒有在等你回覆')
+  expect(whyOf({ ...mk('寫測試', asks), manual: true }, 'reply')).toBe('登錄表設為 manual，只追蹤不派工')
+  expect(refusalOf({ ...mk('寫測試', asks), demo: true }, 'reply')).toEqual({ why: '示範任務只能看' })
+  // 一行版（排隊動態用）是「原因；下一步」
+  expect(replyRefusal(mk('寫測試'))).toBe('Agent 沒有在等你回覆；要交代新的事，開卡片（o）改下一步')
 })
 
 test('prompts carry the case, the card rules and the environment limits', () => {
@@ -285,7 +291,7 @@ test('dispatch and reply refusals share the same reasons', () => {
   expect(dispatchRefusal({ ...mk('寫測試'), manual: true }, 'continue')).toBe(replyRefusal({ ...mk('寫測試', asks), manual: true }))
   expect(dispatchRefusal(mk('寫測試', busy), 'continue')).toBe(replyRefusal(mk('寫測試', busy)))
   expect(dispatchRefusal(mk('寫測試', asks), 'reply')).toBe('')
-  expect(dispatchRefusal(mk('寫測試'), 'reply')).toBe('Agent 沒有在等你回覆')
+  expect(whyOf(mk('寫測試'), 'reply')).toBe('Agent 沒有在等你回覆')
 })
 
 test('spec template without AC refuses continue', () => {
@@ -293,8 +299,8 @@ test('spec template without AC refuses continue', () => {
   const staged = { ...c, pipeline: pipeline(c, undefined) }
   for (const x of [c, staged]) {
     expect(dispatchable(x)).toEqual(['sync'])
-    expect(dispatchRefusal(x, 'continue')).toBe('規格沒有驗收情境：先輸入 /desk:card spec a')
-    expect(dispatchRefusal(x, 'review')).toContain('/desk:card spec')
+    expect(refusalOf(x, 'continue')).toEqual({ why: '規格沒有驗收情境', next: '輸入 /desk:card spec a' })
+    expect(refusalOf(x, 'review')?.next).toContain('/desk:card spec')
     expect(dispatchRefusal(x, 'sync')).toBe('')
   }
   // 填好 AC 就跟現在一樣
@@ -359,24 +365,22 @@ test('implementation prompt asks for a changelog fragment instead of CHANGELOG.m
 test('idle next: waiting-only next steps refuse continue and say what to do', () => {
   // feed-current、spec-gate 實際派出去的句子，與幾種常見寫法
   for (const next of ['等自動檢查與審查；過了開 PR', '等完成檢查與審查', '等檢查', '等審查', '等合併', '等 PR', '開 PR', '等你確認', '等 Reyes 確認', '待合併', '等 CI 通過', '等你', '等審查結果；通過後開 PR', '到面板按 v 執行完成檢查', '按 v', '按 v 跑檢查；等審查', '等自動重新檢查與審查；沒動靜就到面板按 v', '到面板照「輪到你」開 PR 或合併']) {
-    const why = idleNext(next)
-    expect(why).toContain('沒有要 Agent 做的事')
-    expect(why).toContain('先把下一步寫成要做的事')
+    expect(idleNext(next)).toBe(IDLE_WHY)
     const c = mk(next)
     expect(dispatchable(c)).toEqual(['review', 'sync'])
-    expect(dispatchRefusal(c, 'continue')).toBe(why)
+    expect(refusalOf(c, 'continue')).toEqual({ why: IDLE_WHY, next: '按 v 執行測試；要改程式先開卡片（o）把下一步寫成要做的事' })
     expect(dispatchRefusal(c, 'sync')).toBe('')
   }
 })
 
 /** AC-3 */
 test('a review next step refuses continue and points to v and w', () => {
-  const why = '下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）'
   for (const next of ['審查', '派審查：/desk review 更多動作自動收回', '派獨立審查（w）', '按 w 派審查', '重新審查']) {
     const c = mk(next)
-    expect(idleNext(next)).toBe(why)
+    expect(idleNext(next)).toBe(REVIEW_WHY)
     expect(dispatchable(c)).toEqual(['review', 'sync'])
-    expect(dispatchRefusal(c, 'continue')).toBe(why)
+    // 還沒過測試：w 要通過後才列（或流程自動驗收），所以下一步只叫你先按 v
+    expect(refusalOf(c, 'continue')).toEqual({ why: REVIEW_WHY, next: '先按 v 執行測試，通過後照「輪到你」派驗收' })
     expect(dispatchRefusal(c, 'review')).toBe('')
   }
 })
@@ -400,18 +404,18 @@ test('test_next_step_old_and_new_words_are_recognized_alike', () => {
     expect(reviewNext(now)).toBe(reviewNext(old))
     expect(idleNext(now)).toBe(idleNext(old))
     expect(dispatchable(mk(now))).toEqual(dispatchable(mk(old)))
-    expect(dispatchRefusal(mk(now), 'continue')).toBe(dispatchRefusal(mk(old), 'continue'))
+    expect(refusalOf(mk(now), 'continue')).toEqual(refusalOf(mk(old), 'continue'))
   }
   // 等待類：按 g 不會被當成工作派出
   for (const [, now] of waits) {
     expect(reviewNext(now)).toBe(false)
-    expect(dispatchRefusal(mk(now), 'continue')).toContain('沒有要 Agent 做的事')
+    expect(whyOf(mk(now), 'continue')).toBe(IDLE_WHY)
     expect(dispatchable(mk(now))).not.toContain('continue')
   }
   // 派審查／派驗收類：按 g 一樣提示先 v 再 w
   for (const [, now] of reviews) {
     expect(reviewNext(now)).toBe(true)
-    expect(dispatchRefusal(mk(now), 'continue')).toBe('下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）')
+    expect(whyOf(mk(now), 'continue')).toBe(REVIEW_WHY)
   }
   // 要做事的下一步照舊派得出去
   for (const next of ['補測試', '修正驗收的 HIGH', '派驗收（補完 AC-3 的測試後）']) expect(idleNext(next)).toBe('')
@@ -550,21 +554,21 @@ test('dispatch: publish is only dispatchable at the merge stage', () => {
   // 沒有要推的、不在合併段：拒絕並說原因
   for (const c of [inSync, building]) {
     expect(dispatchable(c)).not.toContain('publish')
-    expect(dispatchRefusal(c, 'publish')).toBe(PUBLISH_ONLY_AT_MERGE)
+    expect(refusalOf(c, 'publish')).toEqual({ why: PUBLISH_ONLY_AT_MERGE, next: '照「輪到你」做' })
   }
   expect(PUBLISH_ONLY_AT_MERGE).toBe('只有合併段還要 push 或開 PR 時才能推送')
   // Agent 在跑：說它在跑
   expect(dispatchable(running)).toEqual([])
-  expect(dispatchRefusal(running, 'publish')).toBe('Agent 處理中')
+  expect(whyOf(running, 'publish')).toBe('Agent 處理中')
   // 推送 Agent 在跑、卡片「等你」有內容（state 是 ask，不是 running）：一樣不能再派，說它在跑
   const busy = { name: 'desk-p', state: 'working', status: 'busy', kind: 'publish' as const }
   const ask = '審查 MEDIUM 1 條怎麼處理：A) 現在改 B) 之後再說'
   for (const c of [atMerge({ ask, state: 'ask', agent: busy }), atMerge({ ask, state: 'ask', agent: busy, pr: open, gitState: ahead(1) })]) {
     expect(c.pipeline!.current).toBe('merge')
     expect(dispatchable(c)).not.toContain('publish')
-    expect(dispatchRefusal(c, 'publish')).toBe('Agent 處理中')
+    expect(whyOf(c, 'publish')).toBe('Agent 處理中')
   }
-  expect(dispatchRefusal({ ...noPr, manual: true }, 'publish')).toBe('登錄表設為 manual，只追蹤不派工')
+  expect(whyOf({ ...noPr, manual: true }, 'publish')).toBe('登錄表設為 manual，只追蹤不派工')
 })
 
 test('publish prompt: push and PR only, keeps the gate, no spec or changelog duties, fresh session', () => {

@@ -7,6 +7,7 @@ import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr,
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { fixByG, idleNext, reviewNext } from './dispatch'
+import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './next-words'
 import { CATCHUP_RUNNING, catchupAutoTurn, catchupHandTurn, catchupHold } from './catchup'
 
 export type Turn = {
@@ -61,7 +62,7 @@ const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKin
 
 const SELF_REVIEW = '（驗收是自審，可按 w 派獨立驗收）'
 /** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
-const MISSING_CHECK = '卡片還沒有測試指令：開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
+const MISSING_CHECK = `${MISSING_CHECK_WHY}：${MISSING_CHECK_NEXT}`
 
 // 派工（dispatch.ts）也要用，放在 pipeline.ts；這裡照舊匯出。
 export { needsPr, needsPush }

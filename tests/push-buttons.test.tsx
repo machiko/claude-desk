@@ -287,7 +287,7 @@ test('push buttons: push dispatches a publish agent that only pushes', async ($,
   expect(p).toContain('不 force push')
   // 有未提交的檔案：照樣派（Agent 只推已 commit 的），並提醒
   expect(data.toasts.some(t => t.includes('有 3 檔未提交，只會 push 已 commit 的'))).toBe(true)
-  expect(data.toasts.some(t => t.includes('目前無法推送') || t.includes('推送失敗'))).toBe(false)
+  expect(data.toasts.some(t => t.includes('無法推送') || t.includes('無法派推送'))).toBe(false)
   expect(data.toasts.some(t => t.includes('Beta：推送已派出'))).toBe(true)
   expect(data.fills).toHaveLength(0)
   expect(wroteRemote(calls)).toBe(false)
@@ -335,7 +335,7 @@ test('push buttons: after publish the stage is merge', async ($, on) => {
   expect(chain.round).toBe(0)
   expect(chain.stopped).toBeUndefined()
   expect(ready).not.toContain(flat('流程已暫停'))
-  expect(ready).not.toContain(flat('推送失敗'))
+  expect(ready).not.toContain(flat('無法派推送'))
 })
 
 /** 「有 n 檔未提交」只跟著真的派出去的 push：啟動失敗時不說，免得跟失敗訊息矛盾。 */
@@ -352,7 +352,7 @@ test('push buttons: the uncommitted reminder only follows a dispatched push', as
   await ui.unmount()
 
   expect(data.launches).toHaveLength(1)
-  expect(data.toasts.some(t => t.includes('推送失敗'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('無法派推送'))).toBe(true)
   expect(data.toasts.some(t => t.includes('只會 push 已 commit 的'))).toBe(false)
 })
 

@@ -185,15 +185,15 @@ test('test_issue_line_shows_only_the_latest_unresolved_error_or_warning', async 
   const failedAt = clock.now()
   await h.run('go Alpha')
   let shown = await screen(ui)
-  expect(shown).toContain(flat(`${hhmm(failedAt)}  Alpha 繼續失敗：launch boom`))
-  expect(await issueRow(ui, /Alpha 繼續失敗/)).toBeDefined()
+  expect(shown).toContain(flat(`${hhmm(failedAt)}  Alpha 無法派繼續（launch boom）；再按一次重試，一直失敗就到終端機跑 claude agents 看原因`))
+  expect(await issueRow(ui, /Alpha 無法派繼續/)).toBeDefined()
   // 之後檢查沒過（錯誤）：只看到第二個
   await h.later()
   data.run = async (e: any) => e.argv[0] === 'sh' ? result(1, 'FAILED\n') : run(e)
   await h.run('verify Alpha')
   shown = await screen(ui)
   expect(shown).toContain(flat('Alpha 測試未通過（exit 1）'))
-  expect(shown).not.toContain(flat('Alpha 繼續失敗'))
+  expect(shown).not.toContain(flat('Alpha 無法派繼續'))
   expect(await issueRow(ui, /Alpha 測試未通過/)).toBeDefined()
   // 一般事件（檢查通過）之後，問題列消失
   await h.later()
@@ -201,7 +201,7 @@ test('test_issue_line_shows_only_the_latest_unresolved_error_or_warning', async 
   await h.run('verify Alpha')
   shown = await screen(ui)
   expect(shown).not.toContain(flat('Alpha 測試未通過'))
-  expect(shown).not.toContain(flat('Alpha 繼續失敗'))
+  expect(shown).not.toContain(flat('Alpha 無法派繼續'))
   expect(shown).not.toContain(flat('Alpha 測試通過'))
 
   // 不屬於任何一件的：比這件最新的錯誤新，就顯示它
@@ -343,7 +343,7 @@ test('test_history_reads_only_the_focused_card_and_never_writes_it', async ($, o
     expect(shown).toContain(flat('第五筆'))
     expect(shown).not.toContain(flat('Beta 的私事'))
     expect(shown).not.toContain(flat('beta launch boom'))
-    expect(shown).not.toContain(flat('Beta 繼續失敗'))
+    expect(shown).not.toContain(flat('Beta 無法派繼續'))
   }
   await check()
   await ui.press({ key: 'expand' })

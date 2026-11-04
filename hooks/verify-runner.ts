@@ -8,7 +8,7 @@ import { missingServices } from './containers'
 import { feedPush, tellPanel, me, loadChains, loadJobs, saveChain, VERIFIES_KEY, JOBS_KEY } from './desk-io'
 import { paused } from './chain'
 import { isMerged, pipeline, finalState } from './pipeline'
-import { normalizeRoot } from './dispatch'
+import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, normalizeRoot } from './dispatch'
 import { errorText, stateOf } from './model'
 import { optionsRef, notify, restage, spin, refreshSoon, tutorial } from './register'
 import { busyRefused } from './dispatch-runner'
@@ -40,9 +40,9 @@ export function resetCheckingState() {
 /** 回傳有沒有接手：開跑或排進隊伍是 true；沒跑（卡片沒檢查、還沒核准、已經在跑或在排）是 false。 */
 export async function runVerify($: any, c: Case, auto = false, fromQueue = false): Promise<boolean> {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
-  if (!c.verify) { $.ui.toast(`${c.name}：卡片還沒有測試指令`); return false }
-  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：測試在跑`); return false }
-  if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：已在排隊`); return false }
+  if (!c.verify) { $.ui.toast(`${c.name}：無法執行測試（${MISSING_CHECK_WHY}）；${MISSING_CHECK_NEXT}`); return false }
+  if (checking === c.statusPath) { if (!auto) $.ui.toast(`${c.name}：測試在跑；跑完結果會列在測試列`); return false }
+  if (!fromQueue && isQueued(c.statusPath)) { if (!auto) $.ui.toast(`${c.name}：測試已排隊；前面跑完自動開始`); return false }
   // 沒核准的不跑也不問：面板按兩次 v 才核准（第一次在檢查列列出全文）。
   if (!isApproved(await trustedChecks($), c)) { if (!auto) $.ui.toast(unapprovedText(c)); return false }
   // 讀核准紀錄之後再看一次：這段時間它可能已經被排進隊伍或開始跑了。

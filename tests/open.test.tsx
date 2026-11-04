@@ -24,5 +24,6 @@ test('a failed open says so', async ($, on) => {
   data.run = async (e: any) => e.argv[0] === 'uname' ? result(0, 'Linux\n') : result(3, '', 'xdg-open: no method available')
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await $.command.run({ command: 'desk', args: 'open Alpha' } as any)
-  expect(data.toasts.some(t => t.includes('無法開啟'))).toBe(true)
+  // refusal-next-step AC-6：說開不了哪個檔、接著怎麼辦
+  expect(data.toasts).toContain(`Alpha：無法開啟卡片（${CARD_A}）；用編輯器自己開，或核對登錄表的路徑`)
 })

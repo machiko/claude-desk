@@ -19,8 +19,13 @@ const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開
 const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?(?:審查|驗收)'
 const REVIEW_CMD = '/desk\\s+review(?:\\s+(?!.*(?:修|補|改|寫|實作)).*)?'
 const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(]\\s*(?:按\\s*)?[wW]\\s*[）)])?(?:\\s*[:：]\\s*${REVIEW_CMD})?|${REVIEW_CMD}|按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
-export const REVIEW_NEXT = '下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）'
-export const REVIEW_NEXT_AT_REVIEW = '下一步是驗收：按 w 派驗收（g 派的是繼續，不會驗收）'
+/** 下一步是派驗收時，g 不派的原因（下一步怎麼做由 dispatch.ts 依階段另給）。 */
+export const REVIEW_WHY = '下一步是驗收，g 派的是繼續、不會驗收'
+/** 下一步只剩等待時，g 不派的原因。 */
+export const IDLE_WHY = '下一步只剩等待，沒有要 Agent 做的事'
+/** 檢查欄空白或範本佔位：不派實作、不跑測試的原因與下一步；「輪到你」那句由兩段組成，三處說法一致。 */
+export const MISSING_CHECK_WHY = '卡片還沒有測試指令'
+export const MISSING_CHECK_NEXT = '開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 
 const nextParts = (next: string) => next.split(/[；;]/).map(s => s.trim()).filter(Boolean)
 
@@ -30,12 +35,13 @@ export function reviewNext(next: string): boolean {
   return parts.some(p => REVIEW_CLAUSE.test(p)) && parts.every(p => REVIEW_CLAUSE.test(p) || IDLE_CLAUSE.test(p))
 }
 
-/** 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」（或派審查）時，沒有要 Agent 做的事；回傳拒絕原因，否則空字串。 */
+/**
+ * 下一步每一件都只是「等檢查／審查／合併／PR／CI／確認」或「開 PR」（或派審查）時，沒有要 Agent 做的事；
+ * 回傳拒絕原因（REVIEW_WHY 或 IDLE_WHY），否則空字串。
+ */
 export function idleNext(next: string): string {
   if (saysNone(next)) return ''
-  if (reviewNext(next)) return REVIEW_NEXT
+  if (reviewNext(next)) return REVIEW_WHY
   const parts = nextParts(next)
-  return parts.length > 0 && parts.every(p => IDLE_CLAUSE.test(p))
-    ? '下一步只剩等測試／驗收／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事'
-    : ''
+  return parts.length > 0 && parts.every(p => IDLE_CLAUSE.test(p)) ? IDLE_WHY : ''
 }
