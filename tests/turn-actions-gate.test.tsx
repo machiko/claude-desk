@@ -8,7 +8,7 @@ import { isHandling, stageActions, turnOf } from '../hooks/turn'
 import { caseActions, turnCtx } from '../hooks/pane-card'
 import type { Action } from '../hooks/pane-card'
 import type { AgentInfo, Case, ChainInfo, Verify } from '../types'
-import { fixture, CARD_B, PANE, REGISTRY, flat, text } from './fixture'
+import { fixture, CARD_B, NOW, PANE, REGISTRY, flat, text } from './fixture'
 
 // 守門矩陣（卡片「提示與動作單一來源」規格）：「▶ 輪到你」那句指定的動作、句子裡的「按 X」與 footer 畫出的動作一致。
 // 維度與值照規格列舉，不另加；取法照規格的 1～4。
@@ -364,4 +364,50 @@ test('test_approval_hint_only_when_its_key_is_on_footer', async ($, on) => {
   const held = { verify: (await buttonKeys(ui)).includes('verify'), hint: flat(text(await ui.drawn())).includes(flat('還沒核准的指令（按兩次 v 核准並執行）')) }
   await ui.unmount()
   expect(held).toEqual({ verify: true, hint: true })
+})
+
+// ── 審查第 1 輪：處理中收掉同步後，其他列也不叫你按 s；m 展開的退回判斷看這一段本來的動作 ──
+
+/** 審查 HIGH：卡片落後時，「卡片」列叫你按 s；CI 跑中（處理中、同步收進 m）footer 上沒有 s，那列就不列。CI 過了、s 回到 footer，那列照舊。 */
+test('test_card_behind_row_asks_for_s_only_when_sync_is_on_footer', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, `- 關卡：${PASSED_REVIEW}`, deskAgent(DESK))
+  data.agents = []
+  data.store.chains = { [BETA]: { owner: 'other-session', startedAt: 0, round: 0, passed: true, reviewHead: 'c2', judgedHead: 'c2' } }
+  data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'c2' } }
+  data.mtimes[CARD_B] = NOW - 2 * 3_600_000
+  data.git[BETA] = { branch: 'feature/b', head: 'c2', remote: 'git@github.com:acme/shop.git', upstream: true, ahead: 0, commitAt: NOW - 10 * 60_000 }
+  const openPr = { number: 12, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: PR_URL }
+  const look = async () => {
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    await clock.settle()
+    const ui = await $.ui.mount(PANE(120))
+    const seen = { sync: (await buttonKeys(ui)).includes('sync'), asks: flat(text(await ui.drawn())).includes(flat('分支最近一次變更（10 分鐘前）比卡片')), pending: flat(text(await ui.drawn())).includes(flat('PR 的 CI 在跑')) }
+    await ui.unmount()
+    return seen
+  }
+  data.gh = [{ ...openPr, statusCheckRollup: [{ conclusion: null, status: 'IN_PROGRESS' }] }]
+  const running = await look()
+  data.gh = [{ ...openPr, statusCheckRollup: [] }]
+  const passedCi = await look()
+  expect({ running, passedCi }).toEqual({ running: { sync: false, asks: false, pending: true }, passedCi: { sync: true, asks: true, pending: false } })
+})
+
+/** 審查 HIGH：合併段處理中（CI 跑中、衝突自動解）按 m 展開：本段的動作（自審的審查、CI 失敗的繼續）不歸到「退回：」。 */
+test('test_merge_expand_while_handling_keeps_stage_actions_out_of_retreat', () => {
+  const groups = (seg: Segment) => {
+    const c = mk(seg, undefined, SELF)
+    const view = { ...viewOf(c), showAll: true }
+    const out = caseActions(view, c, ACT)
+    const at = out.findIndex(a => a.label === '退回：')
+    return { handling: turnOf(c, turnCtx(view, c)).who === 'ai', front: ids(at < 0 ? out : out.slice(0, at)), back: at < 0 ? [] : ids(out.slice(at + 1)) }
+  }
+  const selfReview = groups({ name: '合併：自審、CI 跑中', card: { gate: PASSED_REVIEW }, extra: { chain: { round: 0, selfReview: true }, pr: pr({ ci: 'pending' }), gitState: synced } })
+  expect(selfReview.handling).toBe(true)
+  expect(selfReview.front).toContain('review')
+  expect(selfReview.back).not.toContain('review')
+  const ciFailed = groups({ name: '合併：CI 失敗、衝突自動解', card: { gate: PASSED_REVIEW }, extra: { chain: { round: 0, passed: true }, pr: pr({ ci: 'fail' }), gitState: synced, conflict: { into: 'main', ref: 'origin/main', files: ['a.ts'], dirty: 0 } } })
+  expect(ciFailed.handling).toBe(true)
+  expect(ciFailed.front).toContain('continue')
+  expect(ciFailed.back).not.toContain('continue')
 })

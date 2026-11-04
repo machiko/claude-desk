@@ -399,7 +399,8 @@ export function expandedActions(c: Case, ctx: TurnCtx = {}): ExpandedAction[] {
   if (ctx.tutorial && tutorialStep(c)) add('tutorial')
   add('open')
   const atMerge = c.pipeline?.current === 'merge' && !isMerged(c)
-  const listed = atMerge ? stageActions(c, ctx) : new Set<ActionId>()
+  // 退回看的是這一段本來的動作（沒經過「處理中」過濾）：CI 跑中時自審的審查、CI 失敗的繼續照樣算本段。
+  const listed = atMerge ? actionsFor(c, ctx, false) : new Set<ActionId>()
   return ACTION_ORDER.flatMap(id => {
     const a = shown.get(id)
     if (!a) return []
