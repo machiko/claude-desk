@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, NOW, PANE, CARD_B, REGISTRY, result } from './fixture'
+import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_B, REGISTRY, result } from './fixture'
 import { resetText } from '../hooks/model'
-import { AGENT_STOPPED, CHAIN_CHANGED, CHAIN_OVERWRITTEN } from '../hooks/chain'
+import { AGENT_STOPPED, CHAIN_CHANGED, CHAIN_OVERWRITTEN, CHECK_UNAPPROVED } from '../hooks/chain'
 
 // 流程紀錄帶版本號：每次寫回加 1；拿早先看到的版本做決定的寫入在版本變了時被拒絕；整張表被別的對話用舊表寫回時偵測並重套。
 const ALPHA = '/home/u/wt/alpha'
@@ -229,15 +229,18 @@ test('test_save_chain_rejects_a_write_based_on_a_stale_rev', async ($, on) => {
   expect(chains(data)[BETA].rev).toBe(seen + 3)
 })
 
-/** 別的對話在這個對話寫完 Beta 的流程紀錄之後（Beta 版本超過 2），用它早先讀到的舊表整張寫回（改的是 Alpha），把 Beta 退回版本 2；times 次之後不再發生。 */
-function staleOverwrites(data: any, times: number) {
+/**
+ * 別的對話在這個對話寫完 Beta 的流程紀錄之後，用它早先讀到的舊表整張寫回（改的是 Alpha），把 Beta 退回版本 2；times 次之後不再發生。
+ * `when` 挑哪幾次寫入會被蓋掉（預設：Beta 版本超過 2 的每一次）。
+ */
+function staleOverwrites(data: any, times: number, when: (beta: any) => boolean = beta => beta?.rev > 2) {
   let n = 0
   const stale = () => ({
     [ALPHA]: { owner: 'other-session', startedAt: 0, round: 1, rev: 5 },
     [BETA]: { owner: ME, startedAt: 0, round: 0, rev: 2 },
   })
   data.storeAfterSet = (key: string, value: any) => {
-    if (key !== 'chains' || !(value?.[BETA]?.rev > 2) || n >= times) return
+    if (key !== 'chains' || !when(value?.[BETA]) || n >= times) return
     n++
     data.store.chains = stale()
   }
@@ -337,6 +340,198 @@ test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — no agent is 
   expect(data.launches).toHaveLength(0)
   expect(chains(data)[BETA]).toEqual({ owner: ME, startedAt: 0, round: 0, rev: 2 })
   expect(log.list.filter(e => e.text === `Beta：${CHAIN_OVERWRITTEN}`)).toHaveLength(1)
+  expect((data.store.jobs as any)[BETA].last.handled).toBeFalsy()
+
+  // 那次派工改回未處理：下次重新整理再重套 3 次，仍不派、警告仍一筆
+  await h.refresh()
+  await h.step()
+  expect(overwrites.count()).toBe(6)
+  expect(data.launches).toHaveLength(0)
+  expect(log.list.filter(e => e.text === `Beta：${CHAIN_OVERWRITTEN}`)).toHaveLength(1)
+})
+
+/** AC-5：只動文件、檢查通過的過關寫入放棄：不發過關的動態、toast、通知，不自動派推送；那次派工改回未處理。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a pass is not announced or pushed', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const notified = capture(on)
+  betaImplemented(data, clock, { rev: 2 })
+  data.git[BETA] = { branch: 'feature/b', head: 'c2', files: ['README.md'], remote: 'git@github.com:acme/shop.git', upstream: false }
+  data.files[`${PROJECT_DIR}/dispatch.json`] = JSON.stringify({ autoPr: true })
+  const overwrites = staleOverwrites(data, Infinity)
+  const h = helpers($, clock)
+
+  await h.refresh()
+  for (let i = 0; i < 3; i++) await h.step()
+
+  expect(overwrites.count()).toBeGreaterThanOrEqual(3)
+  expect(chains(data)[BETA].passed).toBeUndefined()
+  expect(log.list.some(e => e.text.includes('免審查'))).toBe(false)
+  expect(data.toasts.some((t: string) => t.includes('免審查'))).toBe(false)
+  expect(notified).toEqual([])
+  expect(data.launches).toHaveLength(0)
+  expect((data.store.jobs as any)[BETA].last.handled).toBeFalsy()
+  expect(log.list.filter(e => e.text === `Beta：${CHAIN_OVERWRITTEN}`)).toHaveLength(1)
+})
+
+/** AC-5：審查結論（審查時的 HEAD）寫入放棄：不歸檔審查檔、不往下走（不過關、不派），那次審查派工維持未處理。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a review verdict is not archived', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  betaImplemented(data, clock, { rev: 2, reviewHead: 'c2', reviewBranch: 'feature/b' })
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可合併')
+  data.files[`${BETA}/.task/REVIEW.md`] = '（無）'
+  data.store.jobs = { [BETA]: lastJob('review') }
+  const overwrites = staleOverwrites(data, Infinity)
+  const h = helpers($, clock)
+
+  await h.refresh()
+  await h.step()
+
+  expect(overwrites.count()).toBe(3)
+  expect(data.writes.some((w: string) => w.includes('/reviews/'))).toBe(false)
+  expect(chains(data)[BETA]).toEqual({ owner: ME, startedAt: 0, round: 0, rev: 2 })
+  expect(log.list.some(e => e.text.includes('可開 PR') || e.text.includes('審查通過'))).toBe(false)
+  expect(data.launches).toHaveLength(0)
+  expect((data.store.jobs as any)[BETA].last.handled).toBeFalsy()
+})
+
+const TEMPLATE_SPEC = '\n## 規格\n\n- 目標：<一句話>\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | <前提> | <操作> | <看得到的結果> | `<測試名稱>` |\n'
+
+/** AC-5：規格還是範本、流程要停在規格段，寫入放棄：不寫「流程停下」；之後每次重新整理再試，警告仍只有一筆。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a spec stop is not announced', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  betaImplemented(data, clock, { rev: 2 })
+  data.files[CARD_B] = data.files[CARD_B]! + TEMPLATE_SPEC
+  const overwrites = staleOverwrites(data, Infinity)
+  const h = helpers($, clock)
+
+  await h.refresh()
+  await h.step()
+  expect(overwrites.count()).toBe(3)
+  expect(log.list.some(e => e.text.startsWith('Beta 流程停下'))).toBe(false)
+
+  await h.refresh()
+  await h.step()
+  expect(overwrites.count()).toBe(6)
+  expect(log.list.some(e => e.text.startsWith('Beta 流程停下'))).toBe(false)
+  expect(log.list.filter(e => e.text === `Beta：${CHAIN_OVERWRITTEN}`)).toHaveLength(1)
+  expect(chains(data)[BETA].stopped).toBeUndefined()
+})
+
+/** AC-5：排隊的自動驗收被額度擋下、停下流程的寫入放棄：不跳「流程已暫停」的 toast 與通知，紀錄維持別的對話寫的。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a dropped queued dispatch does not announce a pause', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const notified = capture(on)
+  betaImplemented(data, clock)
+  data.agents = [busy('desk-m0-0', '/home/u/other/one'), busy('desk-m0-1', '/home/u/other/two'), busy('desk-m0-2', '/home/u/other/three')]
+  const h = helpers($, clock)
+  await h.refresh()
+  await h.step()
+  expect(log.has('Beta 自動派驗收排隊中（第 1 位）')).toBe(true)
+
+  const overwrites = staleOverwrites(data, Infinity, beta => !!beta?.stopped)
+  quota(data, 75)
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  await h.refresh()
+
+  expect(overwrites.count()).toBe(3)
+  expect(data.launches).toHaveLength(0)
+  expect(chains(data)[BETA].stopped).toBeUndefined()
+  expect(data.toasts.some((t: string) => t.startsWith('Beta：流程已暫停'))).toBe(false)
+  expect(notified.some(t => t.startsWith('Beta：流程已暫停'))).toBe(false)
+})
+
+/** AC-5：自動跑的完成檢查中斷、停下流程的寫入放棄：不發「流程已暫停」的通知。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — an interrupted check does not announce a pause', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const notified = capture(on)
+  // 檢查跑完要記 Beta 的結果時被拒：檢查中斷（重新整理自己讀進來的那次不擋）。
+  on('state.set', (_: any, e: any, next: any) => e?.plugin === 'desk' && e?.key === 'verifies' && e.value?.[CARD_B] ? { deny: '狀態寫不進去' } : next(e))
+  betaImplemented(data, clock, { rev: 2 })
+  data.store.verifies = {}
+  const overwrites = staleOverwrites(data, Infinity)
+  const h = helpers($, clock)
+
+  await h.refresh()
+  for (let i = 0; i < 3; i++) await h.step()
+
+  expect(data.toasts.some((t: string) => t.startsWith('Beta：檢查中斷'))).toBe(true)
+  expect(overwrites.count()).toBeGreaterThanOrEqual(3)
+  expect(chains(data)[BETA].stopped).toBeUndefined()
+  expect(notified.some(t => t.includes('流程已暫停'))).toBe(false)
+})
+
+/** AC-5：自動跑的完成檢查要用的容器沒啟動、停下流程的寫入放棄：不發「流程已暫停」的通知。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a check held for a stopped container does not announce a pause', { options: { composeDir: '/home/u/app' } }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const notified = capture(on)
+  const check = 'docker compose exec -T app php artisan test'
+  betaImplemented(data, clock, { rev: 2 })
+  data.files[CARD_B] = data.files[CARD_B]!.replace('`npm test`', `\`${check}\``)
+  data.compose = JSON.stringify({ Service: 'app', State: 'exited', Health: '' })
+  data.store.trustedVerify = { [CARD_B]: check }
+  data.store.verifies = {}
+  const overwrites = staleOverwrites(data, Infinity)
+  const h = helpers($, clock)
+
+  await h.refresh()
+  for (let i = 0; i < 3; i++) await h.step()
+
+  expect(data.toasts.some((t: string) => t.includes('容器 app 未啟動'))).toBe(true)
+  expect(overwrites.count()).toBeGreaterThanOrEqual(3)
+  expect(chains(data)[BETA].stopped).toBeUndefined()
+  expect(notified.some(t => t.includes('流程已暫停'))).toBe(false)
+})
+
+/** AC-5：停在檢查段、你按 v 跑完，解除暫停的寫入放棄：不寫「流程繼續」，那次實作維持處理過。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — a check run by hand does not claim the chain resumed', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  betaImplemented(data, clock, { rev: 2, stopped: CHECK_UNAPPROVED, heldAtCheck: true })
+  data.store.verifies = {}
+  data.store.jobs = { [BETA]: lastJob('continue', { fresh: false, handled: true }) }
+  const h = helpers($, clock)
+  await h.refresh()
+  const overwrites = staleOverwrites(data, Infinity)
+
+  await $.command.run({ command: 'desk', args: 'verify Beta' } as any)
+  await clock.settle()
+  await h.step()
+
+  expect(log.has('Beta 檢查通過')).toBe(true)
+  expect(overwrites.count()).toBe(3)
+  expect(log.list.some(e => e.text.includes('流程繼續'))).toBe(false)
+  expect((data.store.jobs as any)[BETA].last.handled).toBe(true)
+})
+
+/** AC-5：審查過關後跟基準分支有衝突、解衝突派不出去，停下流程的寫入放棄：不寫「流程已暫停」、不發通知。 */
+test('test_three_overwrites_in_a_row_give_up_and_post_a_warning — an unsent conflict agent does not announce a pause', { timeoutMs: 15_000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const notified = capture(on)
+  data.agents = []
+  data.gh = [{ number: 12, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }]
+  data.files[REGISTRY] = registry([['Beta', CARD_B]])
+  data.files[CARD_B] = '<!-- DESK -->\n- 狀態：Beta 過關\n- 驗證：`npm test`\n- 等你：無\n- 下一步：合併\n- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 1；可合併\n<!-- /DESK -->'
+  data.git[BETA] = { branch: 'feature/b', head: 'h1', remote: 'git@github.com:acme/shop.git', releases: '', conflicts: ['src/a.ts', 'src/b.ts'] }
+  data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/b', judgedHead: 'h1', judgedBranch: 'feature/b', rev: 2 } }
+  data.store.verifies = { [CARD_B]: ok('h1') }
+  data.store.jobs = { [BETA]: lastJob('review', { handled: true }) }
+  data.store.trustedVerify = { [CARD_B]: 'npm test' }
+  data.launch = async () => result(1, '', 'claude: 無法啟動背景 Agent')
+  const overwrites = staleOverwrites(data, Infinity, beta => !!beta?.stopped)
+  const h = helpers($, clock)
+
+  for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
+
+  expect(data.launches.length).toBeGreaterThanOrEqual(1)
+  expect(overwrites.count()).toBe(3)
+  expect(chains(data)[BETA].stopped).toBeUndefined()
+  expect(log.list.some(e => e.text.includes('流程已暫停'))).toBe(false)
+  expect(notified.some(t => t.includes('解衝突沒派出'))).toBe(false)
 })
 
 /** AC-6：同一件的兩個寫入同時進行、兩邊都讀到版本 4：這個對話停下流程（寫 stopped），別的對話接手（改 owner），它比較晚寫回、蓋掉這格。
