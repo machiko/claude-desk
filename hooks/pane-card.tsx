@@ -21,7 +21,7 @@ import type { PaneActions, PaneView } from './pane'
 
 /** 列上的動作鍵；決策選項若撞到這些字母就只能用點的。新加帶單鍵的動作按鈕，字母要加進來（tests/stage-actions.test.tsx 守門）。 */
 export const RESERVED = new Set(['f', 'v', 'o', 'r', 'x', 'h', 'g', 's', 'w', 'y', 'k', 'l', 'n', 'e', 'p', 'i', 'u', 'm', 't', 'q', 'z'])
-/** 推送（開 PR／push，按兩次）、發版（按一次，只填輸入框）、歸檔（按兩次）的單鍵。 */
+/** 推送（開 PR／push，按兩次）、發版（按兩次，第二次填輸入框）、歸檔（按兩次）的單鍵。 */
 export const PUBLISH_KEY = 'n'
 export const RELEASE_KEY = 'z'
 export const ARCHIVE_KEY = 'q'
@@ -270,7 +270,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   if (c.reviewTop?.length) rows.push(...kvRows(ui, GATE_LABEL.review, c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；等你時也不換成別的話）。
   // Agent 在跑時 u 與歸檔都鎖著：已打 tag（要你按 u 或歸檔）或六段全過時不叫你做，只說它完成後再做；
-  // 還沒打 tag 的發版那句照舊（發版只填輸入框，不鎖）。部署步驟照常列出，可以先看。
+  // 還沒打 tag 的發版那句照舊（發版按兩次 z 只填輸入框，不鎖）。部署步驟照常列出，可以先看。
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
   const ship = shipTurn(c, view.s.tutorial)
   const toShip = !!c.tag && parseGate(c.gate)?.kind === 'release' && !isDone
@@ -373,8 +373,11 @@ export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[]
   if (c.agent?.id && can('logs')) out.push(button({ key: prefix + 'logs', hotkey: 'l', isDim: true, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : '≡ 輸出', onPress: () => act.logs(c) }))
   if ((c.reviewTop?.length || riskyNoPr(c)) && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
   if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
-  // 發版：只填輸入框、不寫遠端，按一次就好（z）。「▶ 輪到你」帶 z 時它帶頭。
-  if (!view.s.tutorial && canRelease(c) && can('release')) out.push(button({ key: prefix + 'release', hotkey: RELEASE_KEY, isLead: !leadKey || leadKey === RELEASE_KEY, isDim: !!leadKey && leadKey !== RELEASE_KEY, label: '⚑ 發版', onPress: () => act.release(c) }))
+  // 發版：按兩次 z，第二次填入已確認照慣例版號的請求（只填輸入框、不寫遠端）。「▶ 輪到你」帶 z 時它帶頭。
+  if (!view.s.tutorial && canRelease(c) && can('release')) {
+    const armed = isArmed(view.armed, `${c.statusPath}\nrelease`, view.now)
+    out.push(button({ key: prefix + 'release', hotkey: RELEASE_KEY, isBoxed: armed, isLead: armed || !leadKey || leadKey === RELEASE_KEY, isDim: !armed && !!leadKey && leadKey !== RELEASE_KEY, label: armed ? `再按 ${RELEASE_KEY} 確認：照慣例版號直接發版（不再問）` : '⚑ 發版', onPress: () => act.release(c) }))
+  }
   // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次 n 確認才派（寫遠端）。高風險改動的第一次按改提醒先看過審查檔。
   const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
     const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)

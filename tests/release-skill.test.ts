@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import SAMPLE from './release-sample.mjs'
-import { parseDecisions } from '../hooks/card'
+import { RELEASE_CONFIRMED, parseDecisions, releasePrompt } from '../hooks/card'
 
 /**
  * AC-4：skills/release/SKILL.md 的確認題範本填上樣本後，面板只看到一題、選項恰好 A、B、C（「PR #13）」不是選項）。
@@ -18,4 +18,12 @@ test('test_release_skill_keeps_every_rule_and_parses_as_one_abc_question', () =>
     { key: 'B', text: '改用 v0.37.1 照做' },
     { key: 'C', text: '先不發' },
   ])
+})
+
+/** AC-4：面板按兩次 z 帶的確認段跟 skills/release/SKILL.md 認的是同一個字串（Python 那邊斷言 SKILL.md 含 SAMPLE.confirmed），接在括號最後。 */
+test('test_release_confirm_marker_matches_skill_sample', () => {
+  expect(RELEASE_CONFIRMED).toBe(SAMPLE.confirmed)
+  const beta = { name: 'Beta', root: '/home/u/wt/beta', git: { branch: 'feature/b' } as any, gate: '無', pr: { id: 12, state: 'MERGED', ci: 'none' } as any }
+  expect(releasePrompt([beta], { confirmed: true })).toEndWith(`；${SAMPLE.confirmed}）`)
+  expect(releasePrompt([beta])).not.toContain(SAMPLE.confirmed)
 })

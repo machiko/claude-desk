@@ -99,7 +99,7 @@ const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current 
 const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped && !c.chain.passed
 
 /**
- * 上線段該做的事與做完之後：還沒打 tag 就按「⚑ 發版」把發版請求填進輸入框（關卡是 release 的打了 tag 接著部署、按 u，否則歸檔）；
+ * 上線段該做的事與做完之後：還沒打 tag 就按兩次 z（「⚑ 發版」）把已確認照慣例版號的發版請求填進輸入框（關卡是 release 的打了 tag 接著部署、按 u，否則歸檔）；
  * tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。合併進發版線（release/*）的卡隨那條線發版，等它打 tag；
  * 其他沒有發版按鈕的（教學模式、發版線本身）照舊叫你打 tag。
  * 面板合併後的下一步與部署步驟列「全部做完後：」也用這一句。
@@ -115,7 +115,7 @@ export function shipTurn(c: Case, tutorial = false): Turn {
   return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}`, key: 'z' }
 }
 
-export const RELEASE_TURN = '按 z 發版填入對話（Enter 送出）'
+export const RELEASE_TURN = '按兩次 z 發版，再按 Enter 送出'
 
 /** 可以從面板歸檔：按兩次 q（⌫ 歸檔），或在對話輸入歸檔指令。 */
 const archiveTurn = (c: Case) => ({ text: `按兩次 q 歸檔（或輸入 ${CARD_CMD} archive ${slugOf(c)}）`, key: 'q' })

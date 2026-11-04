@@ -9,5 +9,6 @@ export default {
     "<動作，用 → 串>": "合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過 → 歸檔並移除 worktree 與分支",
     "<另一個版號>": "0.37.1"
   },
+  "confirmed": "已在面板確認：版號照慣例直接做",
   "question": "發版 v0.38.0（「Beta」PR #12、「Gamma」PR #13，升次版號（新增功能來自 PR #13）），照做會依序：合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過 → 歸檔並移除 worktree 與分支：A) 照做 v0.38.0（推薦） B) 改用 v0.37.1 照做 C) 先不發"
 }

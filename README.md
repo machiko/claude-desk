@@ -102,7 +102,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk:card overlap <slug>` | 列出實作計畫跟登錄表上其他進行中的卡同檔的檔案（`同檔預警：…`，沒有就印「無」） |
 | `/desk:card done <slug> <狀態一句>` | 主對話告一段落時寫回卡片：狀態、下一步（平常是到面板按 v；驗收過關後有新 commit 是等自動重新測試與驗收，沒動靜就按 v；驗收過關後沒有新 commit 是照面板開 PR 或合併）與 History（分支、HEAD）；規格沒確認會拒絕 |
 | `/desk:flow` | 在主對話（不派 Agent）走六段的說明：每段對話做什麼、面板怎麼看得到，末尾附一行 CLAUDE.md 規則 |
-| `/desk:release <卡名與 PR>（<清理對象>）` | 發版規則：「⚑ 發版」填的就是這行；只問一次（A／B／C 寫進那幾張卡的「等你」），選照做就依序發版到 CI 通過再清理，失敗就停 |
+| `/desk:release <卡名與 PR>（<清理對象>）` | 發版規則：按兩次 z（「⚑ 發版」）填的就是這行，帶「已在面板確認」段就不出題、照慣例版號依序發版到 CI 通過再清理；手打的或判斷不了版號才出一題 A／B／C 寫進那幾張卡的「等你」；失敗就停 |
 | `/desk:card archive <slug>… [--cleanup]` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree）；發版時帶 `--cleanup` 再移除已合併又乾淨的 worktree 與分支（`git worktree remove`、`git branch -d`），保留的寫進登錄表「## 提醒」 |
 | `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在要發版的那份 main 執行：主 repo，照「⚑ 發版」流程時是從 origin/main 開的暫存 worktree；沒有片段、版本段已存在、片段格式錯都不改檔） |
 
@@ -120,7 +120,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | u | 上線確認：有 tag 包含這個 commit、關卡是 `release：…` 時才出現；按兩次清關卡、記 History 並歸檔（worktree 與分支保留；發版線與教學那件只清關卡） |
 | o／e／p | 開卡片／審查檔／PR；合併之後 footer 只列該段的主動作（沒打 tag：⚑ 發版與開啟；有 `release：` 關卡：上線確認與開啟；可歸檔：只剩 ⌫ 歸檔），輸出、審查檔、PR 收進 `m` |
 | ⇡ 開 PR／⇡ push | 合併段才出現、快捷鍵 `n`，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag）。專案設了 `autoPr` 時驗收過關會自動派，按鈕照樣可用 |
-| ⚑ 發版 | 上線段、還沒打 tag 時出現、快捷鍵 `z`，按一下把一行 `/desk:release …` 短請求（所有待發版的卡名與 PR、發版後要歸檔並移除 worktree 與分支的卡；有 `release：` 關卡的卡改由按 `u` 歸檔）填入輸入框；Enter 送出後對話照 [`/desk:release`](skills/release/SKILL.md) 的規則做（只問一次、A／B／C 與失敗處理都寫在那裡），desk 自己的發版步驟見 [docs/WORKFLOW.md](docs/WORKFLOW.md)。面板不打 tag、不 push |
+| ⚑ 發版 | 上線段、還沒打 tag 時出現、快捷鍵 `z`，按兩次（第二次就算同意照慣例版號）把一行 `/desk:release …` 短請求（所有待發版的卡名與 PR、發版後要歸檔並移除 worktree 與分支的卡；有 `release：` 關卡的卡改由按 `u` 歸檔）填入輸入框；Enter 送出後對話照 [`/desk:release`](skills/release/SKILL.md) 的規則做（帶確認段就不出題照做到底；判斷不了版號才出題；失敗處理都寫在那裡），desk 自己的發版步驟見 [docs/WORKFLOW.md](docs/WORKFLOW.md)。面板不打 tag、不 push |
 | ⌫ 歸檔 | 可歸檔時出現、快捷鍵 `q`，**按兩次確認**：卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree 與分支） |
 | t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`），確認後自動派實作（確認同時核准檢查欄的指令，不再多問；「等你」有事、manual、worktree 有別人的改動時只確認不派；Agent 已滿就排隊）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
 | x／m／i | 展開全文（含完整歷程）／更多動作／說明 |
