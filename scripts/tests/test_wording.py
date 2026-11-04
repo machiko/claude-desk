@@ -24,8 +24,9 @@ ALLOWED = (
     ('hooks/chain.ts', re.compile(r'^const LEGACY_HELD: '),
      '換詞前存進流程紀錄（$.store 的 chain.stopped）的原因句，資料格式：只拿來比對換成新句、不顯示'),
 )
-# 正規式字面值前面可能接的字元或關鍵字（其餘的「/」是除號）；不含「<」：`</` 是 JSX 收尾標籤，不是正規式
-REGEX_PREFIX = re.compile(r'(?:^|[(,=:\[!&|?{};+\-*%>~^]|\breturn|\btypeof|\bcase|\bin|\bof)\s*$')
+# 正規式字面值前面可能接的字元或關鍵字（其餘的「/」是除號）。不含「<」：`</` 是 JSX 收尾標籤；不含「}」：`{a}/{b}` 是 JSX 文字或除號
+# （hooks 裡接在「}」後面的「/」都在樣板字串或正規式裡面）。另外 `/>` 是 JSX 自閉合標籤，也不是正規式。
+REGEX_PREFIX = re.compile(r'(?:^|[(,=:\[!&|?{;+\-*%>~^]|\breturn|\btypeof|\bcase|\bin|\bof)\s*$')
 
 
 def strip_code(text):
@@ -68,7 +69,7 @@ def strip_code(text):
             if stack[-1] == 0:
                 stack.pop(); out.append(ch); i += 1; continue
             stack[-1] -= 1
-        if ch == '/' and REGEX_PREFIX.search(''.join(out[-40:])):
+        if ch == '/' and text[i + 1:i + 2] != '>' and REGEX_PREFIX.search(''.join(out[-40:])):
             j, in_class = i + 1, False
             while j < n and text[j] != '\n' and (in_class or text[j] != '/'):
                 if text[j] == '\\':
@@ -125,9 +126,11 @@ class WordingGuardTest(unittest.TestCase):
             "const c = `${x ? `複審` : ''}資安審查`",
             "const d = <Box><Text>好</Text><Text>檢查通過</Text></Box>",
             "const e = <Text>{`   ✓ 審查通過`}</Text>",
+            "const f = <Box><Box flexGrow={1} /><Text>檢查通過</Text></Box>",
+            "const g = <Text>{done}/{total} 免審查</Text>",
         ])
         hits = old_words('hooks/x.ts', text)
-        self.assertEqual([(no, w) for no, w, _ in hits], [(5, '完成檢查'), (6, '仍在執行'), (7, '複審'), (7, '資安審查'), (8, '檢查通過'), (9, '審查通過')])
+        self.assertEqual([(no, w) for no, w, _ in hits], [(5, '完成檢查'), (6, '仍在執行'), (7, '複審'), (7, '資安審查'), (8, '檢查通過'), (9, '審查通過'), (10, '檢查通過'), (11, '免審查')])
 
     def test_allowed_list_is_only_data_format_with_reasons(self):
         for rel, pat, why in ALLOWED:
