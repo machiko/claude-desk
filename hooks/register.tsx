@@ -5,13 +5,13 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { CARD_CMD, parseRegistry, saysNone } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, askedOnCardAtEnd, plain, errorText, quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, runSeen, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, askedOnCardAtEnd, plain, errorText, quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
 import { archiveReview, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, addRunTime, buildPrompt, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runMsOn, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, addRunTime, buildPrompt, dispatchRunMs, observeRun, runOf, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
@@ -28,7 +28,7 @@ import { checkQueue, checking, isQueued, verifyPending, runVerify, resetChecking
 export { checkQueue, verifyPending, runVerify } from './verify-runner'
 import { slots, launchKinds, launchingCount, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState } from './dispatch-runner'
 export { dispatch, launchingCount, busyRefused, confirmedIdle } from './dispatch-runner'
-import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, registryError, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
+import { JOBS_KEY, SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, refreshMs, registryError, runGraceMs, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
 import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
@@ -87,10 +87,6 @@ export let optionsRef: PluginOptions | undefined
 const cardParseCache = new Map<string, { raw: string; steps: string[]; history: any[] }>()
 const reviewTextCache = new Map<string, { raw: string; top: any[]; preflight: string | undefined }>()
 
-const refreshMs = (options: PluginOptions) => {
-  const n = Number(options.refreshSeconds)
-  return (Number.isFinite(n) && n > 0 ? Math.min(MAX_REFRESH_S, Math.max(MIN_REFRESH_S, n)) : 30) * 1000
-}
 
 /** 讀一輪：登錄表 → 每張卡＋檔案時間 → 背景 agent → 快照；差異進動態與 toast。 */
 export async function refresh($: any, options: PluginOptions) {
@@ -183,8 +179,8 @@ export async function refresh($: any, options: PluginOptions) {
           reviewTextCache.set(base.root, { raw: reviewText, top, preflight })
         }
       }
-      const runMs = tutorial ? 0 : runMsOn(jobs[normalizeRoot(base.root)], probe.git?.branch)
-      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...(runMs ? { runMs } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
+      const runTime = tutorial ? { runMs: 0 } : runOf(jobs[normalizeRoot(base.root)], probe.git?.branch)
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...(runTime.runMs ? { runMs: runTime.runMs } : {}), ...(runTime.runFrom !== undefined ? { runFrom: runTime.runFrom } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -239,7 +235,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 做完、程序還活著的工作桌 Agent 要停掉：它們的根目錄（含別的專案、已歸檔的）也先記結束，
       // 最後一次派工才先記成做完，停掉後那邊的流程不會當成被人停掉。
       const ended = settings?.stopDone !== false ? endedAlive(list) : []
-      await noteEnded($, list, [...cases.filter(c => !c.demo).map(c => c.root), ...ended.map(a => a.root)], now, branchesOf(cases))
+      await noteRuns($, list, [...cases.filter(c => !c.demo).map(c => c.root), ...ended.map(a => a.root)], now, runGraceMs(options), branchesOf(cases))
       await stopEnded($, cases, ended, now)
       await noteCardAsks($, list, cases, now)
     }
@@ -257,40 +253,58 @@ export async function refresh($: any, options: PluginOptions) {
 }
 
 /**
- * 這幾個根目錄（登錄表上的卡，加上要停掉的做完 Agent 所在的，可能是別的專案）最後一次派工的 Agent 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
- * 之後派工用它分辨「現在的改動是上一個 Agent 留下的」還是別的對話在改。每一次派工只記一次，審查與同步不動指紋。
+ * 這幾個根目錄（登錄表上的卡，加上要停掉的做完 Agent 所在的，可能是別的專案）最後一次派工的 Agent：
+ * - 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
+ *   之後派工用它分辨「現在的改動是上一個 Agent 留下的」還是別的對話在改。每一次派工只記一次，審查與同步不動指紋。
+ *   同時把這次派工在跑的時間加進總執行時間：只在第一次記下 ended 時加，同一次派工不會重複算；
+ *   最多算到最後看到它在跑之後 grace（工作桌關著時結束的，不把關著的時間算進去）。
+ * - 還在跑或停下來等人：記下最後看到在跑的時間、等人時暫停（見 observeRun），等的時間不算。
+ * 記下之後同步更新這一輪的畫面（畫面在記下之前就算好了），總執行不會晚一輪才跟上。
  */
-/** 每件任務的根目錄（正規化）現在在哪條分支；讀不到 git 的不列。 */
-function branchesOf(cases: readonly Case[]): Record<string, string> {
-  return Object.fromEntries(cases.filter(c => !c.demo && c.git?.branch).map(c => [normalizeRoot(c.root), c.git!.branch]))
-}
-
-/**
- * 同時把這次派工跑了多久（從派出到工作桌看到它結束）加進總執行時間：只在第一次記下 ended 時加，同一次派工不會重複算。
- */
-async function noteEnded($: any, list: readonly any[], roots: readonly string[], now: number, branches: Readonly<Record<string, string>>) {
+async function noteRuns($: any, list: readonly any[], roots: readonly string[], now: number, grace: number, branches: Readonly<Record<string, string>>) {
   for (const key of new Set(roots.map(normalizeRoot))) {
     const last = (await loadJobs($))[key]?.last
     if (!last || last.ended) continue
     const how = endedHow(list, last.launchName)
-    if (!how) continue
+    if (!how) { await noteSeen($, key, last, runSeen(list, last.launchName), now, grace); continue }
     const codeAgent = last.kind === 'continue' || last.kind === 'reply' || last.kind === 'catchup'
     const mark = codeAgent ? await worktreeMark($, key) : undefined
     // 算指紋的這段時間可能剛派了新工：只改還是同一筆的紀錄。
     const all = await loadJobs($)
     const cur = all[key]?.last
     if (!cur || cur.launchName !== last.launchName || cur.ended) continue
-    const timed = addRunTime(all[key], now - cur.startedAt, branches[key])
-    await $.store.set(JOBS_KEY, { ...all, [key]: { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } } })
-    // 這一輪的畫面在記下之前就算好了：同步補上，Agent 剛結束時總執行不會少掉這一次。
-    await update($, snapshot, s => s ? { ...s, cases: s.cases.map(c => !c.demo && normalizeRoot(c.root) === key ? withRunMs(c, runMsOn(timed, c.git?.branch)) : c) } : s)
+    const timed = addRunTime(all[key], dispatchRunMs(cur, now, grace), branches[key])
+    const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } }
+    await $.store.set(JOBS_KEY, { ...all, [key]: next })
+    await restageRun($, key, next)
   }
 }
 
-/** 換上總執行毫秒（0 就拿掉這欄），回傳新的一份。 */
-function withRunMs(c: Case, runMs: number): Case {
-  const { runMs: _, ...rest } = c
-  return runMs ? { ...rest, runMs } : rest
+/** 還沒結束的派工：看到它在跑或停下來等人，紀錄有變才寫（只改還是同一筆、還沒結束的紀錄）。 */
+async function noteSeen($: any, key: string, last: JobRecord, seen: 'busy' | 'waiting' | null, now: number, grace: number) {
+  if (!seen || observeRun(last, seen, now, grace) === last) return
+  const all = await loadJobs($)
+  const cur = all[key]?.last
+  if (!cur || cur.launchName !== last.launchName || cur.ended) return
+  const next: RootJobs = { ...all[key], last: observeRun(cur, seen, now, grace) }
+  await $.store.set(JOBS_KEY, { ...all, [key]: next })
+  await restageRun($, key, next)
+}
+
+/** 這個根目錄的卡換上剛記下的總執行（畫面用的 runMs、runFrom）。 */
+async function restageRun($: any, key: string, jobs: RootJobs) {
+  await update($, snapshot, s => s ? { ...s, cases: s.cases.map(c => !c.demo && normalizeRoot(c.root) === key ? withRun(c, runOf(jobs, c.git?.branch)) : c) } : s)
+}
+
+/** 換上總執行（0 或沒有就拿掉那欄），回傳新的一份。 */
+function withRun(c: Case, run: { runMs: number; runFrom?: number }): Case {
+  const { runMs: _, runFrom: _f, ...rest } = c
+  return { ...rest, ...(run.runMs ? { runMs: run.runMs } : {}), ...(run.runFrom !== undefined ? { runFrom: run.runFrom } : {}) }
+}
+
+/** 每件任務的根目錄（正規化）現在在哪條分支；讀不到 git 的不列。 */
+function branchesOf(cases: readonly Case[]): Record<string, string> {
+  return Object.fromEntries(cases.filter(c => !c.demo && c.git?.branch).map(c => [normalizeRoot(c.root), c.git!.branch]))
 }
 
 /**

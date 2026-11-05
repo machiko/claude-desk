@@ -3,11 +3,11 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps, writesCode } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, addRunTime, dispatchRunMs, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps, writesCode } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
-import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, JOBS_KEY } from './desk-io'
+import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, runGraceMs, JOBS_KEY } from './desk-io'
 import { hasAgentQueue, isAgentQueued, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
 import { startSim } from './tutorial-run'
 import { rawAgents, supersede, agentInfo, agentsByRoot } from './model'
@@ -123,6 +123,17 @@ async function refuseStarting($: any, c: Case, kind: DispatchKind, opts: QueueOp
 export const LAUNCH_ERROR_MAX = 80
 
 /** 派工沒做成：「無法派<種類>（<錯誤最後一行>）；<怎麼重試>」；toast、動態與下一則對話提示共用。 */
+/**
+ * 換上新派工前這個根目錄要留下的紀錄（不含 last、sessionId，由呼叫端換上新的）。上一次派工還沒記結束（例如停著等回覆、按 y 回覆）：
+ * 它在跑的時間先加進總執行時間，換掉之後就不會再算到它。
+ */
+export function carriedJobs(cur: RootJobs | undefined, now: number, grace: number, branch: string | undefined): RootJobs {
+  const prev = cur?.last
+  const kept = prev && !prev.ended ? addRunTime(cur, dispatchRunMs(prev, now, grace), branch) : cur ?? {}
+  const { last: _, sessionId: _s, ...rest } = kept
+  return rest
+}
+
 export function launchFailed(label: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   const last = message.split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? '沒有錯誤訊息'
@@ -214,8 +225,10 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。
     const tried = c.git?.head
     if (kind === 'catchup' && opts.auto && tried) await saveChain($, rootKey, r => r ? { ...r, catchupHead: tried } : r)
-    const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), ...(own.runMs !== undefined ? { runMs: own.runMs } : {}), ...(own.runBranch ? { runBranch: own.runBranch } : {}), last: record }
-    await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
+    // 派工一開始讀的紀錄已經過了好幾秒（算指紋、派出）：重讀一次，這段時間別處記下的結束、檢查時間、指紋才不會被蓋掉。
+    const latest = await loadJobs($)
+    const next: RootJobs = { ...carriedJobs(latest[rootKey], now, runGraceMs(options), c.git?.branch), sessionId: fresh ? latest[rootKey]?.sessionId : confirmed.sessionId!, last: record }
+    await $.store.set(JOBS_KEY, { ...latest, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安驗收' : KIND_LABEL[kind]

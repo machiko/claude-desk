@@ -319,9 +319,8 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
 /** 選取標記「▸ 」佔的格數：從那一列的任務名扣，六段照樣對齊。 */
 const MARK_WIDTH = 2
 
-/** 清單的時間欄：Agent 在跑的寫「▶ 已跑多久」，其他寫多久前更新。 */
+/** 清單的時間欄：總執行超過 15 分寫「⏱ 總執行多久」（警示色），否則 Agent 在跑的寫「▶ 已跑多久」，其他寫多久前更新。 */
 function ageText(c: Case, now: number): string {
-  // 總執行超過 15 分：時間欄改寫總執行多久（「⏱ 16 分」），用警示色。
   if (isRunLong(c, now)) return `⏱ ${runMinutesText(totalRunMs(c, now))}`
   return c.state === 'running' && c.agent?.startedAt ? `▶ ${elapsedText(now - c.agent.startedAt)}` : ago(c.updatedAt, now)
 }

@@ -7,7 +7,7 @@ import { hhmm, keepFeed, liveCases, plain, rawAgents } from './model'
 import { logTail } from './probes'
 import type { DeskPaths } from './probes'
 import { CONFIRM_MS, confirmStep } from './extras'
-import { LaunchError, confirmLaunch, isUntrustedLaunch, launchArgs, parseLaunchToken } from './dispatch'
+import { LaunchError, RUN_SEEN_STEP_MS, confirmLaunch, isUntrustedLaunch, launchArgs, parseLaunchToken } from './dispatch'
 import type { RootJobs } from './dispatch'
 import { stageLabel } from './pipeline'
 import { SUMMARY_SYSTEM, cleanSummary, summaryPrompt, textKey } from './digest-status'
@@ -35,6 +35,18 @@ export const SPIN_MS = 400
 export const LAUNCH_TIMEOUT_MS = 60_000
 export const MIN_REFRESH_S = 10
 export const MAX_REFRESH_S = 600
+
+/** 自動重新整理的間隔（refreshSeconds，夾在 MIN_REFRESH_S～MAX_REFRESH_S，預設 30 秒）。 */
+export function refreshMs(options: PluginOptions): number {
+  const n = Number(options.refreshSeconds)
+  return (Number.isFinite(n) && n > 0 ? Math.min(MAX_REFRESH_S, Math.max(MIN_REFRESH_S, n)) : 30) * 1000
+}
+
+/**
+ * 派工結束時最多算到「最後看到它在跑」之後多久：工作桌一直開著時，最後看到在跑最多晚一次記錄間隔加一次重新整理，
+ * 看到它結束又最多晚一次重新整理；超過這麼久就是工作桌沒在看（關著），之後的時間不算。
+ */
+export const runGraceMs = (options: PluginOptions): number => 2 * refreshMs(options) + RUN_SEEN_STEP_MS
 
 export type Timer = { cancel: () => void } | undefined
 const summarizing = new Set<string>()

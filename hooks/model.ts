@@ -201,26 +201,22 @@ export function runMinutesText(ms: number): string {
   return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
 }
 
-/** 正在跑的 Agent（不是停下來等人）已經跑了多久；沒有就是 0。 */
-function runningMs(c: Case, now: number): number {
-  const a = c.agent
-  if (!a?.startedAt || a.status !== 'busy' || agentWaits(a)) return 0
-  return Math.max(0, now - a.startedAt)
-}
-
-/** 這件的總執行時間：已結束的派工與自動檢查，加上正在跑的 Agent。 */
+/**
+ * 這件的總執行時間：已結束的派工與自動檢查、還沒結束那次派工收起來的幾段（c.runMs），加上它現在這段在跑的時間（now - c.runFrom）。
+ * 跟存進去的累計同一套紀錄算（見 dispatch.ts 的 runOf）。
+ */
 export function totalRunMs(c: Case, now: number): number {
-  return (c.runMs ?? 0) + runningMs(c, now)
+  return (c.runMs ?? 0) + (c.runFrom !== undefined ? Math.max(0, now - c.runFrom) : 0)
 }
 
-/** 總執行時間超過門檻（15 分鐘）。 */
-export const isRunLong = (c: Case, now: number): boolean => totalRunMs(c, now) > RUN_WARN_MS
+/** 總執行時間超過門檻（15 分鐘）：用畫面上寫的整分數比，「15 分」不會被標成超過。 */
+export const isRunLong = (c: Case, now: number): boolean => Math.floor(totalRunMs(c, now) / 60_000) > RUN_WARN_MS / 60_000
 
 /** 卡片頭一列的「總執行 13 分」；超過 15 分加「（超過 15 分）」（hasNote 為 false 時不加，窄畫面用）；沒派過工是空字串。 */
 export function runTimeText(c: Case, now: number, hasNote = true): string {
   const ms = totalRunMs(c, now)
   if (ms <= 0) return ''
-  return `總執行 ${runMinutesText(ms)}${hasNote && ms > RUN_WARN_MS ? `（超過 ${RUN_WARN_MS / 60_000} 分）` : ''}`
+  return `總執行 ${runMinutesText(ms)}${hasNote && isRunLong(c, now) ? `（超過 ${RUN_WARN_MS / 60_000} 分）` : ''}`
 }
 
 export const hhmm = (t: number) => {
@@ -427,6 +423,16 @@ export function endedHow(list: readonly any[], launchName: string | undefined): 
   if (status === 'busy' || status === 'waiting') return null
   if (isBlocked(a) && !blockedDone(a)) return null
   return String(a.state ?? '').toLowerCase() === 'stopped' ? 'stopped' : 'finished'
+}
+
+/**
+ * 工作桌派出去的那一次（按啟動名）還沒結束時的樣子：busy 在跑；停在提問、權限提示或還沒做完的 blocked 是 waiting（等人，不算時間）；
+ * 不在清單裡（還在啟動）是 null。已經結束的由 endedHow 判斷，這裡不管。
+ */
+export function runSeen(list: readonly any[], launchName: string | undefined): 'busy' | 'waiting' | null {
+  const a = launchOf(list, launchName)
+  if (!a) return null
+  return String(a.status ?? '').toLowerCase() === 'busy' && !a.waitingFor ? 'busy' : 'waiting'
 }
 
 /** 停下來等人的 agent：權限提示，或工作桌派出去的那次停在提問。 */
