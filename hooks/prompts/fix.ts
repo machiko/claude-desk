@@ -23,7 +23,7 @@ const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL�
  * 你在「等你」對審查 MEDIUM 題選了修掉：照卡片 Decisions 修那幾條 MEDIUM（你主動要的，不受自動修正上限擋）。
  * `file` 是要看的審查檔：這次流程有跑資安審查時兩份都寫（那題可能是程式碼審查問的、資安審查問的或兩份合成的），否則只有 REVIEW.md。
  */
-const mediumPickedStep = (file: string) => `你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 ${file} 修正標「（等你決定）」、卡片 Decisions 記著你選修掉的那幾條 MEDIUM（其他 MEDIUM 與 LOW 不用修）。${FIX_DONE}`
+const mediumPickedStep = (file: string) => `你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 ${file} 修正標「（等你決定）」、卡片 Decisions 記著你選修掉的那幾條 MEDIUM（其他 MEDIUM 與 LOW 不用修）。${FIX_WHOLE_CLASS}${FIX_DONE}`
 
 /** 回答 B 的修正要看的審查檔：這次流程跑過資安審查就兩份都看。 */
 const mediumFiles = (security?: boolean) => security ? `${REVIEW_FILE} 與 ${SECURITY_FILE}` : REVIEW_FILE
