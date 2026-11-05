@@ -148,12 +148,12 @@ test('filled AC or no spec section passes spec stage', () => {
   expect(filled.specGap).toBeUndefined()
   expect(pipeline(filled, undefined).current).toBe('build')
   expect(glyphs(filled)).toBe('●◆○○○○')
-  expect(turnOf(flow(filled))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', key: 'g' })
+  expect(turnOf(flow(filled))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', action: 'continue', key: 'g' })
   // 沒有「## 規格」段的舊卡：跟現在一樣
   const old = mk()
   expect(old.specGap).toBeUndefined()
   expect(pipeline(old, undefined).current).toBe('build')
-  expect(turnOf(flow(old))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', key: 'g' })
+  expect(turnOf(flow(old))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', action: 'continue', key: 'g' })
 })
 
 test('later evidence is not pulled back by empty spec', () => {
