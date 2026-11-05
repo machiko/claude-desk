@@ -1,7 +1,7 @@
 // 現在卡：一列一個元素（content 會捲動，列數要算得出來），操作按鈕另外列成清單交給常駐的 footer 排。
 import type { Case, Verify } from '../types'
 import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
-import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary, quotaHeld } from './model'
+import { ago, displayWidth, elapsedText, fit, hhmm, isRunLong, pad, runTimeText, slugOf, summary, quotaHeld } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, normalizeRoot } from './dispatch'
 import { archivesOnShip, canArchive, parseVerdict, stageParts } from './pipeline'
@@ -198,6 +198,19 @@ export function nowCardRows(ui: any, view: PaneView, c: Case, width: number, act
   ))
 }
 
+/** 現在卡頭一列至少留給任務名的寬度。 */
+const HEADER_NAME_MIN = 12
+
+/**
+ * 現在卡頭一列狀態標籤後面的字：「 · 總執行 N 分（超過 15 分） · 多久前」。任務名放不下 HEADER_NAME_MIN 格時由寬到窄退讓：
+ * 先省掉多久前，再省掉「（超過 15 分）」（警示色照舊）；都省了還是放不下就照最窄的，任務名被截。
+ */
+function headerTail(label: string, runFull: string, runShort: string, age: string, width: number): { runTime: string; age: string; text: string } {
+  const tries = [{ runTime: runFull, age }, { runTime: runFull, age: '' }, { runTime: runShort, age: '' }]
+  const withText = tries.map(t => ({ ...t, text: `   ${label} ${t.runTime ? ` · ${t.runTime}` : ''}${t.age ? ` · ${t.age}` : ''}` }))
+  return withText.find(t => !t.runTime || width - 2 - displayWidth(t.text) >= HEADER_NAME_MIN) ?? withText[withText.length - 1]!
+}
+
 /** 現在卡的內容列：任務名、六段、PR、狀態、git、審查、部署、決策、Agent、下一步、檢查。 */
 function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneActions): any[] {
   const { Box, Text, Button } = ui
@@ -212,7 +225,9 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   const gate = parseGate(c.gate)
   const prefix = `case-${c.statusPath}-`
   // 狀態字是反白徽章：前後各多一格。
-  const tailText = `   ${meta.label} ${age ? ` · ${age}` : ''}`
+  // 總執行時間接在狀態標籤後面（已結束的加正在跑的，跟著每秒的重畫動），超過 15 分用警示色。
+  const isLong = isRunLong(c, view.now)
+  const { runTime, age: shownAge, text: tailText } = headerTail(meta.label, runTimeText(c, view.now), runTimeText(c, view.now, false), age, width)
   const title = <Text bold color={COLOR.text} wrap="truncate-end">{fit(c.name, Math.max(4, width - 2 - displayWidth(tailText)))}</Text>
   // 任務名只是文字：點了不動作。取消選取在「更多動作」裡。
   const rows: any[] = []
@@ -223,7 +238,8 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
       <Box flexGrow={1} flexShrink={1} overflow="hidden">{title}</Box>
       <Text>{'  '}</Text>
       <Text color={meta.color} bold inverse>{` ${meta.label} `}</Text>
-      {age ? <Text color={COLOR.faint}>{` · ${age}`}</Text> : null}
+      {runTime ? <Text color={isLong ? COLOR.attention : COLOR.faint} bold={isLong}>{` · ${runTime}`}</Text> : null}
+      {shownAge ? <Text color={COLOR.faint}>{` · ${shownAge}`}</Text> : null}
     </Box>,
   )
   const turn = turnOf(c, turnCtx(view, c))

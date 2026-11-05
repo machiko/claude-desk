@@ -2,7 +2,7 @@
 // 只有 content（現在卡、全部任務進度表、歷程、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord, HistoryEntry } from '../types'
-import { LIMIT_NAME, displayWidth, elapsedText, fit, focusCase, hhmm, issueOf, modelLabel, pad, resetText, sorted, stateCounts, summary, waitingBesides, ago } from './model'
+import { LIMIT_NAME, displayWidth, elapsedText, fit, focusCase, hhmm, isRunLong, issueOf, modelLabel, pad, resetText, runMinutesText, sorted, stateCounts, summary, totalRunMs, waitingBesides, ago } from './model'
 export { resetText } from './model'
 import { COLOR, SPINNER, STATE, WORD } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
@@ -319,8 +319,9 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
 /** 選取標記「▸ 」佔的格數：從那一列的任務名扣，六段照樣對齊。 */
 const MARK_WIDTH = 2
 
-/** 清單的時間欄：Agent 在跑的寫「▶ 已跑多久」，其他寫多久前更新。 */
+/** 清單的時間欄：總執行超過 15 分寫「⏱ 總執行多久」（警示色），否則 Agent 在跑的寫「▶ 已跑多久」，其他寫多久前更新。 */
 function ageText(c: Case, now: number): string {
+  if (isRunLong(c, now)) return `⏱ ${runMinutesText(totalRunMs(c, now))}`
   return c.state === 'running' && c.agent?.startedAt ? `▶ ${elapsedText(now - c.agent.startedAt)}` : ago(c.updatedAt, now)
 }
 
@@ -376,12 +377,13 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
     // 一串版（不是太窄）：這一列還放得下時間才放。
     const age = !narrow && g.ageWidth ? ages[i]! : g.compact && !tight && width - used - 1 >= displayWidth(ages[i]!) ? ages[i]! : ''
     const isRunningAge = c.state === 'running' && !!c.agent?.startedAt
+    const isLongAge = isRunLong(c, view.now)
     const parts = [
       ...(isPicked ? [<Text key="mark" color={COLOR.text} bold>{'▸ '}</Text>] : []),
       <Text key="g" color={meta.color}>{glyph}</Text>, ' ', <Text key="n" color={COLOR.text} bold={isPicked || c.state === 'ask' || c.state === 'reply' || c.state === 'approve'}>{name}</Text>,
       <Text key="gap">{'  '}</Text>,
       ...cells,
-      age ? <Text key="age" color={isRunningAge ? COLOR.running : COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null,
+      age ? <Text key="age" color={isLongAge ? COLOR.attention : isRunningAge ? COLOR.running : COLOR.faint}>{' '.repeat(Math.max(1, width - used - displayWidth(age))) + age}</Text> : null,
     ]
     // 你選的那件整列反白：還是一顆按鈕（再按不會換人）。
     const line = isPicked ? [<Text key="picked" inverse>{parts}</Text>] : parts

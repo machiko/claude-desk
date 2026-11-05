@@ -8,7 +8,7 @@ import { missingServices } from './containers'
 import { feedPush, tellPanel, me, loadChains, loadJobs, saveChain, VERIFIES_KEY, JOBS_KEY } from './desk-io'
 import { paused } from './chain'
 import { isMerged, pipeline, finalState } from './pipeline'
-import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, normalizeRoot } from './dispatch'
+import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, addRunTime, normalizeRoot } from './dispatch'
 import { errorText, stateOf } from './model'
 import { optionsRef, notify, restage, spin, refreshSoon, tutorial } from './register'
 import { busyRefused } from './dispatch-runner'
@@ -107,6 +107,7 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
+  await addCheckTime($, c, result.at - startedAt)
   const outcome = result.ok ? '測試通過' : `測試未通過（exit ${result.exitCode}）`
   await feedPush($, [{ at: result.at, text: `${c.name} ${outcome}`, tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
@@ -117,6 +118,13 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
   return true
+}
+
+/** 檢查跑完：這次花的時間加進這件的總執行時間。記不下來只少算這一次，不擋檢查結果。 */
+async function addCheckTime($: any, c: Case, ms: number) {
+  const key = normalizeRoot(c.root)
+  const all = await loadJobs($)
+  await $.store.set(JOBS_KEY, { ...all, [key]: addRunTime(all[key], ms, c.git?.branch) }).catch(() => {})
 }
 
 /**

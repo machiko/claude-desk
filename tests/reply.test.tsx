@@ -111,17 +111,22 @@ test('reply is refused with a reason when no agent is waiting', async ($, on) =>
   await refused('reply 訂單匯出 好', '示範任務')
 })
 
+/** 派工紀錄上記總執行時間的計時欄位（見 dispatch.ts 的 observeRun）。 */
+const RUN_TIMING_FIELDS = ['busyMs', 'runAt', 'seenAt', 'paused']
+
 test('cancelling the reply dialog dispatches nothing', async ($, on) => {
   const { data, clock } = fixture(on)
   waiting(data)
   data.answer = '取消'
   const before = { ...data.files }
-  const jobs = JSON.stringify(data.store.jobs)
+  // 重新整理會在派工紀錄記下總執行時間的計時欄位（停下等人時暫停）；取消回覆要比的是派工本身沒變
+  const dispatchOf = (jobs: unknown) => JSON.stringify(jobs, (k, v) => RUN_TIMING_FIELDS.includes(k) ? undefined : v)
+  const jobs = dispatchOf(data.store.jobs)
   const ui = await pressReply($, data, clock)
   expect(data.asks).toHaveLength(1)
   expect(data.launches).toHaveLength(0)
   expect(data.files).toEqual(before)
-  expect(JSON.stringify(data.store.jobs)).toBe(jobs)
+  expect(dispatchOf(data.store.jobs)).toBe(jobs)
   expect(data.toasts.some(t => t.includes('回覆'))).toBe(false)
   // 還是停在等你回覆，按鈕還在
   await $.command.run({ command: 'desk', args: 'refresh' } as any)

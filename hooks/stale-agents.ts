@@ -63,7 +63,7 @@ async function stopOne($: any, agent: Superseded, card: Case, now: number) {
 /**
  * 停掉做完、程序還活著的工作桌 Agent（`claude stop <id>`），不限登錄表上的卡（歸檔後留下的也收）；對話保留，之後派工照常 --resume。
  * 跟 stopSuperseded 一樣先記再停、每個只試一次，`claude stop` 不等、卡住也不拖住重新整理。成功不寫「最近」，停不掉才寫一筆。
- * 要排在 noteEnded 之後：最後一次派工這一輪先記成做完，下一輪清單變成 stopped 也不會當成被人停掉。
+ * 要排在 noteRuns 之後：最後一次派工這一輪先記成做完，下一輪清單變成 stopped 也不會當成被人停掉。
  */
 export async function stopEnded($: any, cases: readonly Case[], found: readonly EndedAlive[], now: number) {
   if (!found.length) return
