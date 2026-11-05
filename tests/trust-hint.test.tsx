@@ -335,3 +335,30 @@ test('test_untrusted_auto_review_toast_names_the_same_key_as_turn', async ($, on
   expect(await screen(ui)).toContain(flat(`▶ 輪到你 ${steps}`))
   await ui.unmount()
 })
+
+/** 複審 MEDIUM：檢查失敗後自動派修正遇到未信任，toast、動態與「輪到你」說同一個鍵（g），不說「重新派工」。 */
+test('test_untrusted_auto_fix_after_failed_check_toast_names_the_same_key_as_turn', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  const log = feedLog(on)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(96))
+  await ui.press({ key: `row-${CARD_A}` })
+  await h.pressGo(ui)
+  expect(data.launches.length).toBe(1)
+  const run = data.run
+  data.run = async (e: any) => e.argv[0] === 'sh' ? result(1, 'FAILED\n') : run(e)
+  data.launch = async () => result(1, '', UNTRUSTED_OUTPUT)
+
+  // 實作結束 → 自動檢查沒過 → 自動派修正，派的時候遇到未信任
+  await h.finish()
+
+  const steps = untrustedSteps(ROOT, 'g')
+  expect(data.toasts).toContain(`Alpha：${steps}`)
+  expect(data.toasts.some(t => t.includes('回面板再重新派工'))).toBe(false)
+  expect(log.list.some(e => e.text === `Alpha：${steps}` && e.tone === 'error')).toBe(true)
+  expect(await screen(ui)).toContain(flat(`▶ 輪到你 ${steps}`))
+  await ui.unmount()
+})

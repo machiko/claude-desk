@@ -152,7 +152,8 @@ function untrustedTurn(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx
 
 /**
  * 還沒信任時 ③ 要按的鍵：「輪到你」與派工當下的 toast、動態共用，兩邊說同一個鍵。
- * 自動流程派的照流程暫停後的「輪到你」：派工當下流程還沒標暫停（還說「接著自動驗收」、沒有鍵），面板看到時已經停了。
+ * 自動流程派的照「這一步沒派出去」時的「輪到你」取派工鍵：派工當下的快照還說「接著自動驗收」（沒有鍵），所以算鍵時把流程當成已停下；
+ * 檢查失敗後派修正那種，state 是 failed，停下時一樣說按 g。c 要是快照裡這件的樣子（跟面板同一份），不是派工用的 state 改成 ready 的複本。
  */
 export function untrustedKey(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx = {}): string | undefined {
   const { hold: _, ...rest } = ctx

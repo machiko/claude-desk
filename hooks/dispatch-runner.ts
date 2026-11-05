@@ -29,11 +29,15 @@ async function clearUntrusted($: any, statusPath: string) {
   await update($, untrustedAtom, v => (statusPath in v ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== statusPath)) : v))
 }
 
-/** 啟動失敗是因為 repo 還沒信任：記下這件派的是哪一種，動態、toast 與對話說三步（③ 跟「輪到你」同一個鍵：手動派的是剛按的鍵，自動流程派的照原本「輪到你」的派工鍵）。 */
+/**
+ * 啟動失敗是因為 repo 還沒信任：記下這件派的是哪一種，動態、toast 與對話說三步（③ 跟「輪到你」同一個鍵：手動派的是剛按的鍵，自動流程派的照原本「輪到你」的派工鍵）。
+ * 鍵用快照裡這件的樣子算（跟面板同一份）：自動流程派工傳進來的是 state 改成 ready 的複本，檢查失敗那種會算錯鍵。
+ */
 async function holdUntrusted($: any, c: Case, kind: DispatchKind, now: number, auto: boolean, skipPanel: boolean) {
   const hold: UntrustedHold = { kind: 'untrusted', root: c.root, at: now, dispatch: kind, auto }
   await update($, untrustedAtom, v => ({ ...v, [c.statusPath]: hold }))
-  const steps = untrustedSteps(c.root, untrustedKey(c, hold))
+  const shown = (await read($, snapshot))?.cases.find(x => x.statusPath === c.statusPath) ?? c
+  const steps = untrustedSteps(c.root, untrustedKey(shown, hold))
   await feedPush($, [{ at: now, text: `${c.name}：${steps}`, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, steps, { name: c.name, skip: skipPanel })
   $.ui.toast(`${c.name}：${steps}`, { timeoutMs: UNTRUSTED_TOAST_MS })
