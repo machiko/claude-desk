@@ -227,9 +227,12 @@ export function cardReminder(c: Case): string {
   return `${lead(c)}卡片 ${c.statusPath} 跟前面附過的一樣，沒有變動。`
 }
 
-/** 從面板送出的決策：請對話照決策處理後寫回卡片，工作桌看到「等你」改了才解除鎖定。 */
-export function decisionContext(c: Case, withCard: boolean): string {
-  const ask = `這是使用者在工作桌對任務「${c.name}」卡片「等你」的決策。照決策處理後寫回卡片 ${c.statusPath}：「等你」拿掉已決定的題目（都決定了就寫「無」），在 Decisions 記一筆；工作桌看到「等你」改了，才會解除這題的鎖定。`
+/** 決策裡審查 MEDIUM 題選了修掉：對話只記決策，修正由工作桌派。 */
+export const MEDIUM_FIX_BY_DESK = '審查 MEDIUM 那題選了 B) 修掉：不要自己修、不要改程式，只在 Decisions 記哪幾條要修、把那題從「等你」拿掉；「等你」清掉後工作桌會自動派 Agent 修正（算一輪修正，不受上限擋），修完自動重新測試與驗收。'
+
+/** 從面板送出的決策：請對話照決策處理後寫回卡片，工作桌看到「等你」改了才解除鎖定。`fixMedium`：審查 MEDIUM 題選了修掉。 */
+export function decisionContext(c: Case, withCard: boolean, fixMedium = false): string {
+  const ask = `這是使用者在工作桌對任務「${c.name}」卡片「等你」的決策。照決策處理後寫回卡片 ${c.statusPath}：「等你」拿掉已決定的題目（都決定了就寫「無」），在 Decisions 記一筆；工作桌看到「等你」改了，才會解除這題的鎖定。${fixMedium ? MEDIUM_FIX_BY_DESK : ''}`
   return withCard ? `${ask}\n${cardData(c)}` : ask
 }
 

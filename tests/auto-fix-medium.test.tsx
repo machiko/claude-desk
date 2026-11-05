@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat } from './fixture'
 import { buildPrompt } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
+import { decisionAnswerOf, picksMediumFix } from '../hooks/card'
 
 // 修正輪收斂：自動流程只修 CRITICAL／HIGH；可能影響行為的 MEDIUM 由審查標「（等你決定）」寫進「等你」，不自動派修正。
 const ALPHA = '/home/u/wt/alpha'
@@ -240,4 +241,68 @@ test('test_foreign_flow_with_only_medium_is_not_taken_over', async ($, on) => {
   expect(data.launches).toHaveLength(0)
   expect((data.store.chains as any)[ALPHA]).toEqual(before)
   expect((data.store.jobs as any)[ALPHA]).toEqual(jobs)
+})
+
+/** AC-4（D-05／D-06）：在「等你」對審查 MEDIUM 題選 B) 修掉送出、對話清掉等你：工作桌自動派修正（上限用完也派）、累計數 +1，修完照常重新測試與驗收 */
+test('test_answer_b_on_review_medium_dispatches_fix_and_counts', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  launchOneAtATime(data, clock)
+  // 已自動修滿 2 輪後過關，審查在等你問一條 MEDIUM
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可', ASK)
+  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理（等你決定）'
+  data.store.chains = { [ALPHA]: { owner: ME, startedAt: 0, round: 0, fixTotal: 2, fixBranch: 'feature/alpha', passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha' } }
+  data.store.jobs = { [ALPHA]: { sessionId: IMPL, last: { launchName: 'desk-rv-0', nativeId: 'r0000001', sessionId: 'r0000001-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: ME, handled: true } } }
+  await h.refresh()
+
+  // 面板選 B、f 填入、送出：提示叫對話別自己修，流程紀錄記下送出時的 HEAD
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `case-${CARD_A}-opt0B` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  expect(data.fills[0].text).toBe('「Alpha」決策：B')
+  await $.prompt.submit({ text: data.fills[0].text } as any)
+  await ui.unmount()
+  expect((data.submitted.at(-1).context ?? []).join('\n')).toContain('審查 MEDIUM 那題選了 B) 修掉：不要自己修')
+  expect((data.store.chains as any)[ALPHA].mediumFixAt).toBe('h1')
+  // 對話還沒清掉等你：不派
+  await h.refresh()
+  expect(data.launches).toHaveLength(0)
+
+  // 對話記了決策、清掉等你：派修正（上限已用完也派），累計數 2 → 3，紀錄拿掉
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/REVIEW.md 修正')).toBe(true)
+  expect(data.launches[0].argv[data.launches[0].argv.indexOf('--resume') + 1]).toBe(IMPL)
+  const run = (data.store.chains as any)[ALPHA]
+  expect(run.fixTotal).toBe(3)
+  expect(run.mediumFixAt).toBeUndefined()
+  // 再重新整理不重派
+  await h.refresh(); await h.step()
+  expect(data.launches).toHaveLength(1)
+
+  // 修完 commit：照常自動重新測試、派重新審查
+  setCard(data, CARD_A, '無')
+  data.git[ALPHA]!.head = 'h2'
+  await h.finish(3)
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(1)
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1).startsWith('程式碼審查')).toBe(true)
+  expect((data.store.chains as any)[ALPHA].fixTotal).toBe(3)
+})
+
+/** 選 A（不修）或別題選 B 都不派；多題時照題號認 */
+test('test_only_fix_on_review_medium_counts_as_answer_b', () => {
+  expect(picksMediumFix(ASK, 'B')).toBe(true)
+  expect(picksMediumFix(ASK, 'A')).toBe(false)
+  expect(picksMediumFix(ASK, 'C')).toBe(false)
+  const two = `要 push 嗎？A) 要 B) 等；${ASK}`
+  expect(picksMediumFix(two, '1B 2A')).toBe(false)
+  expect(picksMediumFix(two, '1A 2B')).toBe(true)
+  expect(picksMediumFix('要 push 嗎？A) 要 B) 修掉', 'B')).toBe(false)
+  expect(decisionAnswerOf('先看一下\n「Alpha」決策：1A 2B\n「Beta」決策：A', 'Alpha')).toBe('1A 2B')
+  expect(decisionAnswerOf('「Beta」決策：A', 'Alpha')).toBe('')
 })

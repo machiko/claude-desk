@@ -17,8 +17,12 @@ const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIG
 /** 自動流程的審查修正：只修 CRITICAL、HIGH；MEDIUM 由你在「等你」決定，不在這輪改。 */
 const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）。${FIX_DONE}`
 
-/** 自動流程修正輪的提示頭：「第 n／2 輪」是這條分支累計的修正輪數。完成檢查沒過附輸出最後幾行；審查要修就依那一份審查檔。 */
+/** 你在「等你」對審查 MEDIUM 題選了修掉：照卡片 Decisions 修那幾條 MEDIUM（你主動要的，不受自動修正上限擋）。 */
+const mediumPickedStep = (file: string) => `你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 ${file} 修正標「（等你決定）」、卡片 Decisions 記著你選修掉的那幾條 MEDIUM（其他 MEDIUM 與 LOW 不用修）。${FIX_DONE}`
+
+/** 自動流程修正輪的提示頭：「第 n／2 輪」是這條分支累計的修正輪數。完成檢查沒過附輸出最後幾行；審查要修就依那一份審查檔；你選了修掉 MEDIUM 的不寫輪數（不受上限擋）。 */
 export function fixHead(c: Case, fix: FixReason): string {
+  if (fix.from === 'medium') return `修正：${mediumPickedStep(REVIEW_FILE)}`
   return fix.from === 'check'
     ? `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
     : `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：${autoReviewFixStep(fix.security ? SECURITY_FILE : REVIEW_FILE)}`

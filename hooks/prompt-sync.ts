@@ -4,8 +4,9 @@
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
 import type { Case, PanelAction, SentRecord } from '../types'
-import { decisionNames, parseGate } from './card'
-import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext, tellPanel } from './desk-io'
+import { decisionAnswerOf, decisionNames, parseGate, picksMediumFix } from './card'
+import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext, saveChain, tellPanel } from './desk-io'
+import { normalizeRoot } from './dispatch'
 import type { Timer } from './desk-io'
 import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
 import type { SpecOkMarks } from './touch'
@@ -235,6 +236,14 @@ const rowText = (message: any) => typeof message?.content === 'string' ? message
   : Array.isArray(message?.content) ? message.content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : ''
 
 
+/** 審查 MEDIUM 題選了修掉、決策真的送出了：在那件的流程紀錄記下送出時的 HEAD（結構化欄位，不從原因句認），等「等你」清掉後由自動流程派修正。 */
+async function noteMediumFix($: any, cases: readonly Case[]) {
+  for (const d of cases) {
+    const head = d.git?.head
+    if (head) await saveChain($, normalizeRoot(d.root), r => r ? { ...r, mediumFixAt: head } : r)
+  }
+}
+
 export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   // 選取的任務是對話的主角：每次送出都附上它（卡片變了附全文，沒變附一句提醒），取消選取在現在卡上方的區段標題列或「更多動作」裡。
   // 從面板填入的決策送出時記下來：面板鎖住那題，等對話寫回卡片。
@@ -252,13 +261,16 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
     if (!c && !decided.length && !actions.length) return next(e)
     const key = c ? cardKey(c) : ''
     // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
-    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c))]
+    // 審查 MEDIUM 題選了修掉：提示叫對話別自己修，送出後記下當時的 HEAD，「等你」清掉後由工作桌派修正。
+    const fixMedium = new Set(decided.filter(d => picksMediumFix(d.ask, decisionAnswerOf(String(e.text ?? ''), d.name))).map(d => d.statusPath))
+    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c, fixMedium.has(d.statusPath)))]
     const sentPaths = new Set(decided.map(d => d.statusPath))
     if (decided.length) await update($, sentAtom, v => ({ ...v, ...Object.fromEntries(decided.map(d => [d.statusPath, { ask: d.ask, ...(e.turnId ? { during: e.turnId } : {}) }])) }))
     const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })
     if (result.drop) { if (decided.length) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => !sentPaths.has(k)))) }
     // 斜線指令（skill 等）附了卡也不算附過：有些指令不進模型，下一則照樣附全文，最多重複一次。
     else {
+      await noteMediumFix($, decided.filter(d => fixMedium.has(d.statusPath)))
       if (c && !e.command) lastAttached = key
       // 只拿掉這次附上的那幾筆：送出途中面板又做的，留給下一則。
       const sent = new Set(actions.map(actionKey))

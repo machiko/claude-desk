@@ -316,6 +316,9 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       acted = true
       continue
     }
+    // 你在「等你」對審查 MEDIUM 題選了修掉、對話清掉了「等你」：派一次修正（不受上限擋）。
+    const idle = !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !isAgentQueued(c.statusPath) && !(c.statusPath in (await read($, launchingAtom)))
+    if (!merged && run?.mediumFixAt && run.owner === mine && idle && await fixPickedMedium($, options, c, run, jobs[key], s.at)) { acted = true; continue }
     // 實作或回覆做完時把要你決定的事寫進「等你」：等你在對話處理完（清成「無」後照「已在對話處理」那條走，不自動接著派）。
     if (!run || !last || last.handled || agentBusy || c.agent?.asks || askedOnCardAtEnd(last, c.ask) || c.statusPath in verifies || checking === c.statusPath || isQueued(c.statusPath) || isAgentQueued(c.statusPath) || c.statusPath in (await read($, launchingAtom))) continue
     // 別的對話開的流程：照舊不碰。
@@ -396,6 +399,26 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     }
   }
   if (acted) refreshSoon($, options)
+}
+
+/**
+ * 你在「等你」對審查 MEDIUM 題選了修掉（送出時記下 HEAD 在 mediumFixAt）、對話把「等你」清掉了：派一次依審查檔修那幾條 MEDIUM 的修正。
+ * 你主動要的修正不受上限擋；派出去才算一輪（dispatch 的 countedFix），修完的 commit 由「審查通過後有新 commit」的重新測試與驗收接手。
+ * 這之後 HEAD 變了（對話自己修了、或你改了別的）就不派，拿掉紀錄；worktree 有別人的未提交改動先不派，下次重新整理再看。回傳有沒有派。
+ */
+async function fixPickedMedium($: any, options: PluginOptions, c: Case, run: ChainRun, own: RootJobs | undefined, at: number): Promise<boolean> {
+  const head = run.mediumFixAt
+  if (!saysNone(c.ask) || tutorial) return false
+  const key = normalizeRoot(c.root)
+  const clear = (r: ChainRun | undefined) => { if (!r || r.mediumFixAt !== head) return r; const { mediumFixAt: _, ...rest } = r; return rest }
+  if (head !== c.git?.head) { await saveChain($, key, clear); return false }
+  if (markRefusal(await worktreeMark($, c.root), own)) return false
+  // 先拿掉紀錄再派：重新整理時不會再派一次。
+  if (!(await saveChain($, key, clear))) return false
+  await feedPush($, [{ at, text: `${c.name} 你選了修掉審查 MEDIUM，自動派修正`, tone: 'suggestion', card: c.statusPath }])
+  const fix: FixReason = { from: 'medium', round: fixTotalOf(run) + 1 }
+  await dispatch($, options, { ...c, state: 'ready' }, 'continue', { fix, auto: true })
+  return true
 }
 
 /**
