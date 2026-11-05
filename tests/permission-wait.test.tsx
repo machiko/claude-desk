@@ -74,21 +74,20 @@ test('permission wait: a permission prompt asks you to approve in claude agents,
   }
 })
 
+/** blocked-reply-loop AC-3：只有 status waiting（等的不是權限）才是停下來提問；做完一輪的 blocked／idle 不在這裡（見 blocked-ends）。 */
 test('permission wait: a blocked agent waiting on anything else still asks you to reply', async ($, on) => {
   const { data } = fixture(on)
-  for (const agent of [{ status: 'waiting', waitingFor: 'input needed' }, { status: 'idle' }]) {
-    blocked(data, agent)
+  blocked(data, { status: 'waiting', waitingFor: 'input needed' })
 
-    await $.command.run({ command: 'desk', args: 'refresh' } as any)
-    const ui = await $.ui.mount(PANE(120))
-    const shown = await screen(ui)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(120))
+  const shown = await screen(ui)
 
-    expect(shown).toContain(flat('等回覆'))
-    expect(shown).toContain(flat('按 y 回覆 Agent 的提問'))
-    expect(shown).not.toContain(flat('等權限批准'))
-    expect((await ui.find({ key: `${PREFIX}reply` }))?.text).toBe('↩ 回覆')
-    await ui.unmount()
-  }
+  expect(shown).toContain(flat('等回覆'))
+  expect(shown).toContain(flat('按 y 回覆 Agent 的提問'))
+  expect(shown).not.toContain(flat('等權限批准'))
+  expect((await ui.find({ key: `${PREFIX}reply` }))?.text).toBe('↩ 回覆')
+  await ui.unmount()
 })
 
 /** 背景 Agent 的 `claude logs`：整個畫面的重繪紀錄，顏色、游標移動、轉圈圈與狀態列夾在句子裡。 */

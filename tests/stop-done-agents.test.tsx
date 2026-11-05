@@ -49,7 +49,10 @@ test('stop done: finished desk agents with a live pid are stopped once', async (
   expect(log.list.some(e => e.text.includes('停') || e.text.includes(LATEST) || e.text.includes(LEFTOVER))).toBe(false)
 })
 
-/** AC-2：程序已退出、不是工作桌派的、還在跑的、停在提問（「等你」已清）的，一個都不停；面板照舊。 */
+/**
+ * AC-2：程序已退出、不是工作桌派的、還在跑的，一個都不停；面板照舊。
+ * blocked-reply-loop AC-5：做完一輪停在 blocked（status idle、有 pid、工作桌派的）算做完，會被停掉。
+ */
 test('stop done: exited, foreign, busy and blocked agents are left alone', async ($, on) => {
   const { data, clock } = fixture(on)
   data.gh = []
@@ -62,7 +65,7 @@ test('stop done: exited, foreign, busy and blocked agents are left alone', async
     { id: 'cccccccc', kind: 'background', cwd: GAMMA, name: 'my-own-agent', sessionId: 'cccccccc-0000-4000-8000-000000000000', state: 'done', status: 'idle', pid: 5151, startedAt: OLD_AT },
     // 還在跑
     { id: 'bbbbbbbb', kind: 'background', cwd: BETA, name: launchName(LAST_AT, 3), sessionId: SID, state: 'working', status: 'busy', pid: 5252, startedAt: LAST_AT },
-    // 停在提問，題目已在對話處理（卡片「等你」清成無）
+    // 做完一輪停在 blocked（卡片「等你」是無）：會被停掉
     { id: 'aaaaaaaa', kind: 'background', cwd: ALPHA, name: LATEST, sessionId: 'aaaaaaaa-0000-4000-8000-000000000000', state: 'blocked', status: 'idle', pid: 5353, startedAt: LAST_AT },
   ]
 
@@ -76,7 +79,7 @@ test('stop done: exited, foreign, busy and blocked agents are left alone', async
   const beta = await actions(CARD_B)
   const alpha = await actions(CARD_A)
 
-  expect(data.stops).toEqual([])
+  expect(data.stops).toEqual(['aaaaaaaa'])
   expect(beta.stop).toBeDefined()
   expect(alpha.reply).toBeUndefined()
   expect(alpha.stop).toBeUndefined()

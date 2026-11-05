@@ -242,7 +242,10 @@ test('endedHow: stopped, finished, still running, asking, or unknown', () => {
   expect(endedHow([a({ state: 'done' })], 'desk-1')).toBe('finished')
   expect(endedHow([a({ state: 'working', status: 'busy' })], 'desk-1')).toBeNull()
   expect(endedHow([a({ state: 'blocked', status: 'waiting', waitingFor: 'x' })], 'desk-1')).toBeNull()
-  expect(endedHow([a({ state: 'blocked', status: 'idle' })], 'desk-1')).toBeNull()
+  // blocked-reply-loop：做完一輪的 blocked（status idle 或沒有 status）算做完；還停在權限提示的不算
+  expect(endedHow([a({ state: 'blocked', status: 'idle' })], 'desk-1')).toBe('finished')
+  expect(endedHow([a({ state: 'blocked' })], 'desk-1')).toBe('finished')
+  expect(endedHow([a({ state: 'blocked', status: 'idle', waitingFor: 'permission prompt' })], 'desk-1')).toBeNull()
   expect(endedHow([a({ state: 'stopped', kind: 'interactive' })], 'desk-1')).toBeNull()
   expect(endedHow([a({ state: 'stopped', name: 'desk-2' })], 'desk-1')).toBeNull()
   expect(endedHow([], 'desk-1')).toBeNull()

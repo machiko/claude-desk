@@ -1,10 +1,10 @@
 // 被後來派工取代、還停在提問的工作桌 Agent：重新整理時停掉，每個只試一次，結果寫進「最近」。
 // 做完、程序還活著的工作桌 Agent：重新整理時停掉（stopEnded），每個只試一次，停不掉才寫進「最近」。
-// 最後一次派工停在提問、題目寫進卡片又在對話處理掉的：記下來，不再等它（noteCardAsks）。
+// 最後一次派工停在提問（status waiting、不是權限；做完一輪的 blocked 不算）、題目寫進卡片又在對話處理掉的：記下來，不再等它（noteCardAsks）。
 // 挑哪些算被取代是 model.ts 的 supersede（純函式）；這裡只做 I/O。跨檔傳 $ 的函式一律用 function 宣告。
 import type { Case } from '../types'
 import type { EndedAlive, LastLaunch, Superseded } from './model'
-import { askClearedOnCard, asksQuestion, errorLine, hhmm, plain } from './model'
+import { askClearedOnCard, asksQuestion, codeJobEnded, errorLine, hhmm, plain } from './model'
 import type { RootJobs } from './dispatch'
 import { normalizeRoot } from './dispatch'
 import { saysNone } from './card'
@@ -85,7 +85,7 @@ async function stopEndedOne($: any, agent: EndedAlive, card: Case | undefined, n
 }
 
 /**
- * 最後一次派工停在提問、題目也寫進卡片「等你」：記下 cardAsked。之後「等你」清成「無」（題目在對話處理了）就記成 answered，
+ * 最後一次派工停在提問、或做完一輪（繼續、修正、回覆）時，題目寫進卡片「等你」：記下 cardAsked。之後「等你」清成「無」（題目在對話處理了）就記成 answered，
  * 「最近」寫一筆；面板從這一輪起照卡片走。那個 Agent 不停、不回覆。只改還是同一次派工的紀錄，新派工不帶舊標記。
  */
 export async function noteCardAsks($: any, list: readonly any[], cases: readonly Case[], now: number) {
@@ -94,10 +94,12 @@ export async function noteCardAsks($: any, list: readonly any[], cases: readonly
     const key = normalizeRoot(c.root)
     const all = await loadJobs($)
     const last = all[key]?.last
-    if (!last || last.answered || !asksQuestion(list, last.launchName)) continue
+    const asking = !!last && asksQuestion(list, last.launchName)
+    // 做完一輪的程式派工只在流程還沒接手、還沒處理過它時才算在等你：流程早已接著走（開跑自動檢查、停在檢查段、過關）之後「等你」有過一題又清掉，跟那次派工無關。
+    if (!last || last.answered || !(asking || (codeJobEnded(last) && !last.handled && !last.chained))) continue
     const cleared = askClearedOnCard(last, c.ask)
     if (!cleared && (last.cardAsked || saysNone(c.ask))) continue
     await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...last, ...(cleared ? { answered: true } : { cardAsked: true }) } } })
-    if (cleared) await feedPush($, [{ at: now, text: `${c.name} Agent 的提問已在對話處理（卡片「等你」已清），不再等它回覆`, tone: 'subtle', card: c.statusPath }])
+    if (cleared) await feedPush($, [{ at: now, text: asking ? `${c.name} Agent 的提問已在對話處理（卡片「等你」已清），不再等它回覆` : `${c.name} 「等你」已在對話處理，流程不替那次派工接著跑；照「輪到你」繼續`, tone: 'subtle', card: c.statusPath }])
   }
 }

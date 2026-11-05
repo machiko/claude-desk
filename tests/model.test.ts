@@ -41,7 +41,8 @@ test('agents json: only busy or waiting background agents count; newest per cwd 
     { kind: 'background', cwd: '/p/x/', state: 'working', status: 'busy', name: 'one', startedAt: 10 },
     { kind: 'background', cwd: '/p/x', state: 'working', status: 'busy', name: 'two', startedAt: 20 },
     { kind: 'background', cwd: '/p/y', state: 'done', status: 'idle', name: 'gone' },
-    { kind: 'background', cwd: '/p/z', state: 'blocked', status: 'idle', name: 'finished-asking' },
+    { kind: 'background', cwd: '/p/z', state: 'blocked', status: 'idle', name: 'finished-round' },
+    { kind: 'background', cwd: '/p/w', state: 'blocked', status: 'idle', waitingFor: 'permission prompt', name: 'idle-permission' },
     { kind: 'interactive', cwd: '/p/i', state: 'working', status: 'busy', name: 'me' },
     { kind: 'background', state: 'working', status: 'busy', name: 'nocwd' },
   ])
@@ -51,7 +52,9 @@ test('agents json: only busy or waiting background agents count; newest per cwd 
   expect(parseAgents('not json')).toEqual({})
   expect(parseAgents('{"agents":[{"kind":"background","cwd":"/q","state":"blocked","status":"waiting","waitingFor":"權限"}]}')['/q']!.waitingFor).toBe('權限')
   const list = JSON.parse(json)
-  expect(asksFor(list, 'finished-asking')?.asks).toBe(true)
+  // blocked-reply-loop：做完一輪的 blocked 不是提問；只有還停在權限提示的才補成停下來的 Agent
+  expect(asksFor(list, 'finished-round')).toBeNull()
+  expect(asksFor(list, 'idle-permission')?.waitsFor).toBe('permission')
   expect(asksFor(list, 'two')).toBeNull()
   expect(asksFor(list, 'gone')).toBeNull()
   expect(asksFor(list, undefined)).toBeNull()

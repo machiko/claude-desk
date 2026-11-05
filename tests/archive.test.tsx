@@ -305,7 +305,10 @@ test('a tagged case without PR info ignores an idle blocked agent', async ($, on
   await ui.unmount()
 })
 
-/** exited-agent-asks AC-3：範圍外：還沒合併時，停在 blocked 的 Agent 照舊等你回覆。 */
+/**
+ * exited-agent-asks AC-3 → blocked-reply-loop AC-1：還沒合併時，停在 blocked 的 Agent 是做完一輪（要問人寫進卡片「等你」），
+ * 不再等你回覆：沒有回覆鍵，也還沒合併、不給歸檔。
+ */
 test('an unmerged case still waits for the reply of a blocked agent', async ($, on) => {
   const { data } = fixture(on)
   only(data, PASSED, {})
@@ -313,9 +316,9 @@ test('an unmerged case still waits for the reply of a blocked agent', async ($, 
   leftoverAsk(data)
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
-  expect(await labelShown(ui, '等回覆')).toBe(true)
-  expect(await screen(ui)).toContain(flat('▶ 輪到你 按 y 回覆 Agent 的提問'))
-  expect((await ui.find({ key: `case-${CARD_B}-reply` }))?.text).toBe('↩ 回覆')
+  expect(await labelShown(ui, '等回覆')).toBe(false)
+  expect(await screen(ui)).not.toContain(flat('按 y 回覆 Agent 的提問'))
+  expect(await ui.find({ key: `case-${CARD_B}-reply` })).toBeUndefined()
   expect(await ui.find({ key: KEY })).toBeUndefined()
   await ui.unmount()
 })

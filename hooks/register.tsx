@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { CARD_CMD, parseRegistry, saysNone } from './card'
-import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText, quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
+import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, askedOnCardAtEnd, plain, errorText, quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
 import { archiveReview, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
@@ -134,6 +134,7 @@ export async function refresh($: any, options: PluginOptions) {
       const cleared = askClearedOnCard(last, base.ask)
       const { agent: found, ...rest } = base
       let agent: AgentInfo | undefined = cleared && found?.name === last?.launchName && found?.waitsFor === 'question' ? undefined : found
+      // 清單沒挑到時補上最後一次派工還停在權限提示的那個；提問只剩 status waiting（清單已挑到），做完一輪的 blocked 回 null、不補。
       if (!agent && last && !last.answered && !cleared) agent = asksFor(list, last.launchName) ?? undefined
       if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy', ...(launchKinds[row.statusPath] ? { kind: launchKinds[row.statusPath] } : {}) }
       if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) agent = { ...agent, last: await lastLine($, agent.id) }
@@ -331,10 +332,12 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       acted = true
       continue
     }
-    if (!run || !last || last.handled || agentBusy || c.agent?.asks || c.statusPath in verifies || checking === c.statusPath || isQueued(c.statusPath) || isAgentQueued(c.statusPath) || c.statusPath in (await read($, launchingAtom))) continue
+    // 實作或回覆做完時把要你決定的事寫進「等你」：等你在對話處理完（清成「無」後照「已在對話處理」那條走，不自動接著派）。
+    if (!run || !last || last.handled || agentBusy || c.agent?.asks || askedOnCardAtEnd(last, c.ask) || c.statusPath in verifies || checking === c.statusPath || isQueued(c.statusPath) || isAgentQueued(c.statusPath) || c.statusPath in (await read($, launchingAtom))) continue
     // 別的對話開的流程：只有剛做完、只剩 MEDIUM 的審查可能接手（下面確定要派的是帶 MEDIUM 的修正才接），其他照舊不碰。
     const foreignRun = run.owner !== mine
     if (foreignRun && !mayTakeOver(c, run, last)) continue
+    const markChained = async () => { const all = await loadJobs($); const done = all[key]?.last; if (done && !done.chained) await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...done, chained: true } } }) }
     const markHandled = async () => { const all = await loadJobs($); if (all[key]?.last) await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...all[key]!.last!, handled: true } } }) }
     // 流程紀錄寫入被別的對話蓋掉、放棄：那次派工改回未處理，下次重新整理照最新的紀錄再判斷一次（不發暫停、過關的通知，也不派工）。
     const unmarkHandled = async () => { const all = await loadJobs($); const done = all[key]?.last; if (!done?.handled) return; const { handled: _, ...open } = done; await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: open } }) }
@@ -377,7 +380,8 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     // 停在提問、題目已在對話處理的那次：結論照記，不替它跑檢查或派 Agent（也就不會因為被取代而停掉它）。
     const next = handed ? handedOver(planned) : planned
     if (!next) { await markHandled(); continue }
-    if (next.kind === 'verify') { void runVerify($, c, true); continue }
+    // 開跑自動檢查前記下流程已接手：檢查跑到一半或停在檢查段（容器未啟動、測試中斷）時「等你」出現的題目，不再當成那次派工寫的。
+    if (next.kind === 'verify') { await markChained(); void runVerify($, c, true); continue }
     await markHandled()
     // 要派下一步之前先看 worktree：有不是上一個 Agent 留下的未提交改動（別的對話在改），停下來說原因，不派。
     const foreign = next.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
