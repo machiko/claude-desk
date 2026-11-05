@@ -751,7 +751,8 @@ export const register: Register = (on, options) => {
       ship: c => void (async () => { if (await confirmedIdle($, c, 'ship', '確認上線')) await confirmShipped($, c) })(),
       specOk: c => void (async () => { if (!tutorial && awaitsSpecOk(c) && await confirmedIdle($, c, 'spec-ok', '確認規格')) await confirmSpec($, options, c) })(),
       archive: c => void (async () => { if (!tutorial && canArchive(c) && await confirmedIdle($, c, 'archive', '歸檔')) await archiveCase($, options, c) })(),
-      release: c => void (tutorial ? undefined : fillRelease($, c)),
+      // 按兩次 z：第一次只待確認，第二次才填（草稿檢查在 fillRelease 裡，也就是第二次按）。
+      release: c => void (tutorial ? undefined : confirmThen($, `${c.statusPath}\nrelease`, () => fillRelease($, c))),
       tutorial: c => void tutorialAct($, options, c),
       logs: c => void toggleLogs($, c),
       openReview: c => void openPath($, `${c.root}/${REVIEW_FILE}`, '審查檔'),

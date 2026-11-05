@@ -184,21 +184,22 @@ export async function fillDecision($: any, c: Case) {
 }
 
 /**
- * 「⚑ 發版」：填一行 `/desk:release` 短請求（所有已合併待發版的卡與清理對象）進輸入框，你按 Enter 送給對話；
- * 對話載入 skills/release/SKILL.md，版號由對話提、你確認後照規則發版。面板不打 tag、不 push、不派工、不跑任何指令，也不自動送出。
+ * 「⚑ 發版」第二次按 z（第一次只待確認）：填一行帶確認段的 `/desk:release` 短請求（所有已合併待發版的卡與清理對象）進輸入框，你按 Enter 送給對話；
+ * 對話載入 skills/release/SKILL.md，看到確認段就照慣例版號直接做、不再出題。面板不打 tag、不 push、不派工、不跑任何指令，也不自動送出。
  * 輸入框有還沒送出的字就不填（發版請求要整行送出，接在草稿後面會變成一則混在一起的提示）。
  */
 export async function fillRelease($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   if ((await promptDraft($)).trim()) { $.ui.toast(RELEASE_DRAFT, { timeoutMs: 8000 }); return }
   const cases = ((await read($, snapshotAtom)) as Snapshot | null)?.cases.filter(canRelease) ?? []
-  const text = releasePrompt(cases.length ? cases : [c])
+  const text = releasePrompt(cases.length ? cases : [c], { confirmed: true })
   const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
   if (!filled.isFilled) { $.ui.toast(`輸入框無法預填，請直接輸入：${text}`, { timeoutMs: 10_000 }); return }
-  $.ui.toast('發版請求已填入，按 Esc 回到輸入框再按 Enter 送出', { timeoutMs: 6000 })
+  $.ui.toast(RELEASE_FILLED, { timeoutMs: 6000 })
 }
 
 const RELEASE_DRAFT = '輸入框有未送出的字，先送出或清掉再按發版'
+const RELEASE_FILLED = '發版請求已填入（已確認照慣例版號），按 Esc 回輸入框再按 Enter；要改版號就在送出前改這行'
 
 export async function openCard($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }

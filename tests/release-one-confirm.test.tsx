@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, text, flat, PANE, CARD_A, CARD_B, CARD_C, REGISTRY } from './fixture'
-import { parseDecisions, releasePrompt } from '../hooks/card'
+import { fixture, text, flat, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, pressHotkey } from './fixture'
+import { RELEASE_CONFIRMED, parseDecisions, releasePrompt } from '../hooks/card'
 
 const ALPHA = '/home/u/wt/alpha'
 const BETA = '/home/u/wt/beta'
@@ -9,7 +9,11 @@ const PREFIX = `case-${CARD_B}-`
 const KEY = `${PREFIX}release`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
 const GITHUB = 'git@github.com:acme/shop.git'
-const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送出'
+const FILLED = '發版請求已填入（已確認照慣例版號），按 Esc 回輸入框再按 Enter；要改版號就在送出前改這行'
+/** 按一次 z 後發版按鈕的待確認標籤。 */
+const ARMED = '再按 z 確認：照慣例版號直接發版（不再問）'
+/** 面板按兩次 z 填入的請求括號最後一段。 */
+const CONFIRMED = '；已在面板確認：版號照慣例直接做'
 const LINE = 'release/v26.2.7'
 /** skills/release/SKILL.md 的照做動作順序（tests/release-skill.test.ts 與 skills/card/tests/test_release_skill.py 驗 SKILL.md 本身）。 */
 const CHAIN = '合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過'
@@ -52,26 +56,29 @@ async function mountBeta($: any, clock: any) {
   return ui
 }
 
-/** 按「⚑ 發版」，回傳填入輸入框的那句。 */
+/** 按兩次「⚑ 發版」（第一次只待確認），回傳填入輸入框的那句。 */
 async function pressRelease(ui: any, data: any, clock: any): Promise<string> {
+  await ui.press({ key: KEY })
+  await clock.settle()
+  expect(data.fills).toHaveLength(0)
   await ui.press({ key: KEY })
   await clock.settle()
   expect(data.fills).toHaveLength(1)
   return data.fills[0].text as string
 }
 
-/** AC-1：發版請求是一行 `/desk:release`：列卡名、PR 與清理對象，不帶規則字句（只問一次、A／B／C 在 skill 裡），不超過 200 字。 */
+/** AC-2：按兩次後發版請求是一行 `/desk:release`：列卡名、PR、清理對象與確認段，不帶規則字句（確認方式、A／B／C 在 skill 裡），不超過 200 字。 */
 test('test_release_prompt_asks_one_question_with_version_cards_and_actions_when_release_pressed', async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data)
   const ui = await mountBeta($, clock)
   const asked = await pressRelease(ui, data, clock)
 
-  expect(asked).toBe(releasePrompt([BETA_CASE, GAMMA_CASE]))
-  expect(asked).toBe('/desk:release 「Beta」PR #12、「Gamma」PR #13（歸檔並移除 worktree 與分支：beta feature/b、gamma fix/c）')
+  expect(asked).toBe(releasePrompt([BETA_CASE, GAMMA_CASE], { confirmed: true }))
+  expect(asked).toBe('/desk:release 「Beta」PR #12、「Gamma」PR #13（歸檔並移除 worktree 與分支：beta feature/b、gamma fix/c；已在面板確認：版號照慣例直接做）')
   for (const gone of [...RULES, 'Alpha']) expect(asked).not.toContain(gone)
   expect(asked.length).toBeLessThanOrEqual(200)
-  // 沒有自動送出，toast 照舊
+  // 沒有自動送出；提示寫明已確認照慣例版號、要改版號在送出前改
   expect(data.submitted).toHaveLength(0)
   expect(data.toasts.some((t: string) => t.includes(FILLED))).toBe(true)
   await ui.unmount()
@@ -124,6 +131,11 @@ test('test_release_request_lists_cleanup_targets_and_release_gated_cards', () =>
   // 沒有 PR 的卡只寫「卡名」
   const delta = { ...merged('Delta', 0, '/home/u/wt/delta', 'fix/d'), pr: undefined }
   expect(releasePrompt([beta, delta])).toBe('/desk:release 「Beta」PR #12、「Delta」（歸檔並移除 worktree 與分支：beta feature/b、delta fix/d）')
+  // 面板確認段：接在清理段之後（「；」分隔）；全部有 release 關卡時接在那一句之後；沒有清理段時括號只有它
+  const confirmed = { confirmed: true }
+  expect(releasePrompt([beta, gated(gamma)], confirmed)).toBe(`/desk:release 「Beta」PR #12、「Gamma」PR #13（歸檔並移除 worktree 與分支：beta feature/b；「Gamma」有 release 關卡，部署後按 u${CONFIRMED}）`)
+  expect(releasePrompt([gated(beta), gated(gamma)], confirmed)).toBe(`/desk:release 「Beta」PR #12、「Gamma」PR #13（都有 release 關卡，不清理，部署後按 u${CONFIRMED}）`)
+  expect(releasePrompt([], confirmed)).toBe(`/desk:release （${RELEASE_CONFIRMED}）`)
 })
 
 /** AC-3：範圍外的卡（沒合併的、併進發版線的）不列；按下只填輸入框，不跑外部指令、卡片不變。 */
@@ -136,13 +148,59 @@ test('test_release_prompt_skips_unmerged_cases_and_forbids_unlisted_actions_when
   const launches = data.launches.length
   const asked = await pressRelease(ui, data, clock)
 
-  expect(asked).toBe(releasePrompt([BETA_CASE]))
-  expect(asked).toBe('/desk:release 「Beta」PR #12（歸檔並移除 worktree 與分支：beta feature/b）')
+  expect(asked).toBe(releasePrompt([BETA_CASE], { confirmed: true }))
+  expect(asked).toBe('/desk:release 「Beta」PR #12（歸檔並移除 worktree 與分支：beta feature/b；已在面板確認：版號照慣例直接做）')
   for (const gone of ['Alpha', 'Gamma', 'PR #13']) expect(asked).not.toContain(gone)
   // 只填輸入框：不送出、不跑 git／gh／claude、三張卡片一字不變
   expect(data.submitted).toHaveLength(0)
   expect(data.launches.length).toBe(launches)
   expect(calls.slice(before).filter((c: any) => ['git', 'gh', 'claude'].includes(c.argv[0]))).toEqual([])
   expect([CARD_A, CARD_B, CARD_C].map(p => data.files[p])).toEqual(cards)
+  await ui.unmount()
+})
+
+/** 發版按鈕的畫面狀態：加框（variant primary、不是 plain）與標籤。 */
+async function releaseButton(ui: any) {
+  const b = await ui.find({ key: KEY })
+  return { isBoxed: b?.props?.variant === 'primary' && !b?.props?.plain, label: b?.text || b?.props?.label }
+}
+
+/** AC-1：按一次 z 只待確認：輸入框不變、按鈕加框改寫確認句，不跑外部指令、卡片一字不變。 */
+test('test_release_button_arms_without_filling_when_pressed_once', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const calls = setup(data)
+  const ui = await mountBeta($, clock)
+  const cards = [CARD_A, CARD_B, CARD_C].map(p => data.files[p])
+  const before = calls.length
+  const launches = data.launches.length
+  expect(await releaseButton(ui)).toEqual({ isBoxed: false, label: '⚑ 發版' })
+
+  await pressHotkey(ui, 'z')
+  await clock.settle()
+
+  expect(data.fills).toEqual([])
+  expect(data.submitted).toHaveLength(0)
+  expect(await releaseButton(ui)).toEqual({ isBoxed: true, label: ARMED })
+  expect(data.launches.length).toBe(launches)
+  expect(calls.slice(before).filter((c: any) => ['git', 'gh', 'claude'].includes(c.argv[0]))).toEqual([])
+  expect([CARD_A, CARD_B, CARD_C].map(p => data.files[p])).toEqual(cards)
+  await ui.unmount()
+})
+
+/** AC-3：待確認超過三秒再按：只重新進入待確認，輸入框不變。 */
+test('test_release_rearms_instead_of_filling_when_pressed_again_after_three_seconds', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data)
+  const ui = await mountBeta($, clock)
+  await ui.press({ key: KEY })
+  await clock.settle()
+  await clock.advance(3500)
+  await clock.settle()
+
+  await ui.press({ key: KEY })
+  await clock.settle()
+
+  expect(data.fills).toEqual([])
+  expect(await releaseButton(ui)).toEqual({ isBoxed: true, label: ARMED })
   await ui.unmount()
 })

@@ -13,6 +13,7 @@ import type { ReviewOpts } from './prompts/review'
 import { fixHead, manualFixHead } from './prompts/fix'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext } from './next-words'
 import { shipTurn, stageActions } from './turn'
+import { KIND_LABEL } from './kind-label'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
 export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
@@ -95,7 +96,7 @@ export type JobRecord = { launchName: string; nativeId: string; sessionId: strin
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string }
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
-export const KIND_LABEL: Record<DispatchKind, string> = { continue: '繼續', sync: '同步', review: '驗收', reply: '回覆', publish: '推送', catchup: '解衝突' }
+export { KIND_LABEL }
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
