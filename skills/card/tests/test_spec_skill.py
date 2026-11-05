@@ -71,6 +71,9 @@ class SpecSkillTest(unittest.TestCase):
         confirm = next(l for l in report.splitlines() if l.strip().startswith('`確認：'))
         self.assertIn('確認規格同時確認上面列的預設決定', confirm)
         self.assertIn('要改哪一條（含預設）直接說', confirm)
+        # 沒有預設決定時，那句與「（含預設）」都要省略，確認行字面才成立
+        omit = next(l for l in report.splitlines() if '沒有預設決定時省略' in l)
+        self.assertIn('「確認規格同時確認上面列的預設決定；」那句與「（含預設）」', omit)
 
     def test_spec_skill_runs_preflight_in_background(self):
         """AC-4：相關檔 3 個以上時前審在背景跑，同時繼續讀程式與擬草稿，寫進卡片前收結果；History 照舊記候選與採用數。"""
