@@ -35,10 +35,10 @@ function atSpec(data: any, clock: any, cards: string[], opts: { trusted?: boolea
   }
 }
 
-/** /desk:card spec-ok 是真的腳本（skills/card/tests 驗它）；這裡照它的效果改那張卡。 */
+/** /desk:card spec-ok 是真的腳本（skills/card/tests 驗它）；這裡照它的效果改那張卡（History 行跟腳本一樣帶時間）。 */
 function confirmCard(data: any, card: string) {
   const withGate = setFields(data.files[card]!, { 關卡: '無', 狀態: CONFIRMED })
-  data.files[card] = appendTo(appendTo(withGate, '## Decisions', '- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）'), '## History', '- 2030-01-05：規格確認，關卡清為無，可派實作')
+  data.files[card] = appendTo(appendTo(withGate, '## Decisions', '- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）'), '## History', '- 2030-01-05 12:00：規格確認，關卡清為無，可派實作')
 }
 
 function scriptOk(data: any) {
@@ -106,7 +106,7 @@ test('test_spec_confirm_dispatches_build_agent_when_card_is_ready', { timeoutMs:
   // 卡片跟 /desk:card spec beta ok 一樣：關卡清掉、Decisions 與 History 各一筆
   expect(data.files[CARD_B]).toContain('- 關卡：無')
   expect(data.files[CARD_B]).toContain('- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）')
-  expect(data.files[CARD_B]).toContain('- 2030-01-05：規格確認，關卡清為無，可派實作')
+  expect(data.files[CARD_B]).toContain('- 2030-01-05 12:00：規格確認，關卡清為無，可派實作')
   // 同一次就派出實作（派繼續），不用再按 g；檢查早就核准過，不再問
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
@@ -654,6 +654,10 @@ test('test_spec_ok_verdict_confirms_only_when_gate_clears_with_new_history_and_d
   expect(spec).toEqual({ isSpec: true, history: 0, decisions: 0 })
   expect(confirmed).toEqual({ isSpec: false, history: 1, decisions: 1 })
   expect(specOkMarks('不是卡片')).toBeNull()
+  // card.py 現在寫的 History 帶時間（`- YYYY-MM-DD HH:MM：`）；舊卡只有日期的照樣算（上面那張）
+  const timed = specOkMarks(card('無', '- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）與實作計畫（3 項）\n\n## History\n\n- 2030-01-05 12:00：規格確認，關卡清為無，可派實作\n'))!
+  expect(timed).toEqual({ isSpec: false, history: 1, decisions: 1 })
+  expect(specOkVerdict(spec, timed)).toBe('confirmed')
 
   expect(specOkVerdict(spec, confirmed)).toBe('confirmed')
   // 腳本失敗：關卡還是 spec；前面讀不到也一樣

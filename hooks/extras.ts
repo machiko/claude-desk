@@ -50,8 +50,8 @@ export function deploySteps(cardText: string | null): string[] {
 
 /**
  * 卡片「## History」段落的每一筆，新的在前：`- ` 開頭的行是一筆，縮排的續行併進前一筆。
- * 開頭的 `YYYY-MM-DD` 是日期（去掉後面的「：」）；模板佔位（`YYYY-MM-DD`、日期後沒有內容）不算。
- * 日期由新到舊，同一天照卡片裡由後往前（卡片由舊到新寫），沒有日期的放最後。
+ * 開頭的 `YYYY-MM-DD` 是日期、後面可接 `HH:MM` 時間（去掉後面的「：」）；模板佔位（`YYYY-MM-DD`、日期後沒有內容）不算。
+ * 日期＋時間由新到舊；時間相同或沒寫時間（舊卡）的照卡片裡由後往前（卡片由舊到新寫），沒有日期的放最後。
  */
 export function historyEntries(cardText: string | null): HistoryEntry[] {
   if (!cardText) return []
@@ -67,12 +67,20 @@ export function historyEntries(cardText: string | null): HistoryEntry[] {
   }
   const entries = raw.flatMap((body, order) => {
     if (/^YYYY-MM-DD/.test(body)) return []
-    const m = body.match(/^(\d{4}-\d{2}-\d{2})\s*[：:]?\s*(.*)$/)
-    const text = plain(m ? m[2]! : body).trim()
-    return text ? [{ order, entry: m ? { date: m[1]!, text } : { text } }] : []
+    const m = body.match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(?!\d))?\s*[：:]?\s*(.*)$/)
+    const text = plain(m ? m[3]! : body).trim()
+    if (!text) return []
+    const entry: HistoryEntry = !m ? { text } : m[2] ? { date: m[1]!, time: m[2], text } : { date: m[1]!, text }
+    return [{ order, entry }]
   })
-  return entries
-    .sort((a, b) => (b.entry.date ?? '').localeCompare(a.entry.date ?? '') || b.order - a.order)
+  // 排序鍵：沒寫時間的沿用卡片裡前面同一天最近一筆的時間（舊新格式混排時跟著前一筆），都沒有就當當天最早。
+  const keyed = entries.map((e, i) => {
+    const date = e.entry.date ?? ''
+    const time = e.entry.time ?? entries.slice(0, i).reverse().find(p => p.entry.date === e.entry.date && p.entry.time)?.entry.time ?? ''
+    return { ...e, key: `${date} ${time}` }
+  })
+  return keyed
+    .sort((a, b) => b.key.localeCompare(a.key) || b.order - a.order)
     .map(e => e.entry)
 }
 

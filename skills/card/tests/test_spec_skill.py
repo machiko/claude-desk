@@ -87,7 +87,7 @@ class SpecSkillTest(unittest.TestCase):
         pre = step(self.body, '2b.')
         self.assertIn('相關檔只有 1～2 個', pre)
         self.assertIn('不跑前審', pre)
-        self.assertIn('`- YYYY-MM-DD：規格前審：略過（小卡：相關檔 n 個）`', pre)
+        self.assertIn('`- YYYY-MM-DD HH:MM：規格前審：略過（小卡：相關檔 n 個）`', pre)
         trivial = step(self.body, '2c.')
         self.assertIn('跳過 2b 規格前審', trivial)
 
