@@ -49,7 +49,7 @@ export const WORD = {
   pickedNote: '之後每則對話都附上它的卡',
   deselect: '✕ 取消選取',
   history: '歷程',
-  empty: '尚無任務：用 /desk:card new <分支> <任務名> 開第一張卡；第一次用可以輸入 /desk tutorial 看教學。',
+  empty: '尚無任務。\n第一次用：輸入 /desk tutorial 看教學\n開第一張卡：/desk:card new <分支> <任務名>',
   loading: '讀取任務中…',
   off: '此對話未開啟工作桌；輸入 /desk 開啟。',
   verify: '測試',
@@ -62,6 +62,8 @@ export const WORD = {
   upToDate: '已是最新版本',
   readAt: '讀取',
   createRegistry: '建立空的登錄表',
+  /** 讀不到登錄表時，紅字下那行。 */
+  retryRegistry: '排除後輸入 /desk refresh 重讀',
   hide: '收起',
   /** 執行中鎖住的動作：標籤後面接這句，不能按。 */
   busyLocked: '（處理中，完成後可用）',

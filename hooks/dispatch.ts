@@ -209,6 +209,57 @@ export function parseLaunchToken(stdout: string): string | null {
   return found.size === 1 ? [...found][0]! : null
 }
 
+/**
+ * `claude --bg` 因為 repo 還沒信任而開不了：不分大小寫、整字比對 not trusted／not yet trusted／untrusted，出現在任何一行都算。
+ * 待確認實際字樣；目前依 docs/WORKFLOW.md 的 workspace not trusted 寬鬆比對（distrusted、單獨的 trusted 不算）。
+ */
+const UNTRUSTED_RE = /\b(?:not\s+(?:yet\s+)?trusted|untrusted)\b/i
+
+/** 啟動失敗的整段輸出（stderr＋stdout）是不是「還沒信任」。 */
+export function isUntrustedLaunch(text: string): boolean {
+  return UNTRUSTED_RE.test(text)
+}
+
+/** 啟動失敗：訊息是輸出的最後一行；untrusted 是整段輸出看得出 repo 還沒信任。 */
+export class LaunchError extends Error {
+  readonly untrusted: boolean
+  constructor(message: string, untrusted: boolean) {
+    super(message)
+    this.name = 'LaunchError'
+    this.untrusted = untrusted
+  }
+}
+
+/**
+ * 面板記著的「還沒信任」（每件一筆）：派的是哪一種、是不是自動流程派的，「輪到你」才說得出要按哪個鍵。
+ * 派工開頭、成功派出，以及重新整理看到之後又有 Agent 開過時清掉。
+ */
+export type UntrustedHold = { kind: 'untrusted'; root: string; at: number; dispatch: DispatchKind; auto: boolean }
+
+/** 給人照抄到終端機的路徑：有空白或 shell 特殊字元時用單引號包起來，一般路徑照原樣。 */
+export function shellPath(path: string): string {
+  return /^[A-Za-z0-9_@%+=:,./~-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * 還沒信任時的三步（不含任務名）：「輪到你」直接用，toast 與動態在前面接「<任務名>：」。
+ * key 是回面板要再按的鍵；不知道（自動流程派的、解衝突）就說重新派工。
+ */
+export function untrustedSteps(root: string, key?: string): string {
+  const again = key ? `回面板再按 ${key}` : '回面板再重新派工'
+  return `Agent 開不了，這個 repo 還沒信任。①另開終端機分頁：cd ${shellPath(root)} && claude ②信任提示選 Yes ③輸入 /exit ${again}（不要用 ! 跑）`
+}
+
+/**
+ * 重新整理時留下還成立的「還沒信任」：失敗之後這件又有 Agent 開過（別的對話派的、或信任後派出的），repo 顯然已經信任，拿掉那筆。
+ * 都還成立就回原本那份（不觸發重畫）。
+ */
+export function liveHolds(holds: Readonly<Record<string, UntrustedHold>>, cases: readonly Pick<Case, 'statusPath' | 'agent'>[]): Readonly<Record<string, UntrustedHold>> {
+  const startedAfter = (path: string, at: number) => cases.some(c => c.statusPath === path && (c.agent?.startedAt ?? 0) > at)
+  const kept = Object.entries(holds).filter(([path, h]) => !startedAfter(path, h.at))
+  return kept.length === Object.keys(holds).length ? holds : Object.fromEntries(kept)
+}
+
 /** 啟動後清單裡唯一一個叫這個名字、對得上 token、且啟動前不存在的背景 agent。 */
 export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: string, token: string): RawAgent | null {
   const seen = new Set(before.map(a => `${a.id ?? ''}|${a.sessionId ?? ''}`))

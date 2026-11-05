@@ -15,7 +15,7 @@ import { button, caseActions, nowCardRows, picksKey, shortCommand } from './pane
 import { noticeText } from './update'
 import type { Action } from './pane-card'
 import { KIND_LABEL } from './dispatch'
-import type { DispatchKind } from './dispatch'
+import type { DispatchKind, UntrustedHold } from './dispatch'
 
 export { picksKey, shortCommand }
 
@@ -37,6 +37,8 @@ export type PaneView = {
   tick: number
   isExpanded: boolean
   launching: Record<string, number>
+  /** 上次派工因為 repo 還沒信任而開不了的那幾件（卡片路徑 → 擋下原因）；舊的呼叫端沒給就當沒有。 */
+  untrusted?: Record<string, UntrustedHold>
   queue: string[]
   /** 派工隊伍（同時執行的 Agent 達上限時排的），卡片路徑依序；舊的呼叫端沒給就當空的。 */
   agentQueue?: string[]
@@ -310,6 +312,8 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
   }
   // 新專案還沒有登錄表是正常的起點，不是錯誤：用一般字色，下方動作列有建立按鈕。
   if (s.error) rows.push(...wrapText(s.error, width).map(l => <Text color={s.missingRegistry ? COLOR.text : COLOR.bad} wrap="truncate-end">{l}</Text>))
+  // 讀不到登錄表是要你排除的錯誤：紅字下說排除後怎麼重讀（還沒有登錄表的起點不算）。
+  if (s.error && !s.missingRegistry) rows.push(<Text color={COLOR.faint} wrap="truncate-end">{WORD.retryRegistry}</Text>)
   rows.push(<Text color={COLOR.faint}>{'─'.repeat(Math.max(2, width))}</Text>)
   return rows
 }
@@ -430,10 +434,30 @@ function historyRows(ui: any, view: PaneView, focus: Case | null, width: number)
 const HELP: [string, string][] = [
   ['1–9', '選任務（數字依清單固定，選了不會換號；取消選取在「現在 · 你選的」那列或「更多動作」裡）'], ['a b c d', '回答決策'], ['f', '填入決策'],
   ['g / w / s', '繼續／驗收／同步（按兩次確認；同步平常收在 m，卡片落後分支時才出現）'], ['y', '回覆 Agent'], ['k', '停止 Agent（按兩次確認）；派工排隊中是取消排隊（按一次）'], ['l', 'Agent 輸出'],
-  ['v', '執行測試；指令還沒核准（或改過）時按兩次，第一次列出全文'], ['u', '上線確認（清 release 關卡，按兩次）'], ['n', '⇡ 開 PR／⇡ push：派 Agent 推送（按兩次確認）'], ['z', '⚑ 發版：按兩次，把已確認照慣例版號的發版請求填進輸入框'], ['q', '⌫ 歸檔（按兩次確認）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文（含完整歷程）'], ['h', '隱藏摘要列（說明開著時）'],
+  ['v', '執行測試；指令還沒核准（或改過）時按兩次，第一次列出全文'], ['u', '上線確認（清 release 關卡，按兩次）'], ['n', '⇡ 開 PR／⇡ push：派 Agent 推送（按兩次確認）'], ['z', '⚑ 發版：按兩次，把已確認照慣例版號的發版請求填進輸入框'], ['q', '⌫ 歸檔（按兩次確認）'], ['m', '更多動作：平常只列現在這一段能做的，按 m 展開全部'], ['o / e / p', '開卡片／審查檔／PR'], ['r', '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update'], ['x', '展開全文（含完整歷程）'], ['i', '說明（這份；再按 i 收起）'], ['h', '隱藏摘要列：只在說明開著時能按，或輸入 /desk bar'],
   ['t', '確認規格（按兩次）；教學模式的下一步（確認規格／合併／打 tag）'], ['↑ ↓ 滾輪', '捲動中間的內容；上下兩區固定'], ['Esc', '回輸入框（面板留著）'], ['/desk close', '收起面板（或點摘要列的 ⌗ desk）'],
   ['● ◉ ◆ ✕ ○ ·', '已過／處理中／等你／卡住／未到／不適用'], ['✓（綠）', '六段全過、已上線，可歸檔'],
 ]
+
+/** 說明頁鍵名欄的寬度：描述放不下時換到下一列，續列對齊描述欄。 */
+const HELP_KEY_WIDTH = 12
+/** 還沒有登錄表時才列的那條：n 建立空的登錄表（有登錄表時 n 是推送）。 */
+const HELP_CREATE: [string, string] = ['n', `＋ ${WORD.createRegistry}（還沒有登錄表時）`]
+
+/** 說明的每一條：還沒有登錄表時，推送那條 n 之後多列建立登錄表的 n。 */
+function helpEntries(view: PaneView): [string, string][] {
+  if (!view.s.missingRegistry) return HELP
+  const at = HELP.findIndex(([k]) => k === 'n') + 1
+  return [...HELP.slice(0, at), HELP_CREATE, ...HELP.slice(at)]
+}
+
+/** 一條說明：描述懸掛換行、不截字，一列一個元素（content 要算得出列數）。 */
+function helpEntryRows(ui: any, [k, d]: [string, string], width: number): any[] {
+  const { Box, Text } = ui
+  return wrapText(d, width - HELP_KEY_WIDTH).map((l, i) => i === 0
+    ? <Box flexDirection="row"><Text color={COLOR.attention}>{pad(k, HELP_KEY_WIDTH)}</Text><Text color={COLOR.dim}>{l}</Text></Box>
+    : <Box flexDirection="row" paddingLeft={HELP_KEY_WIDTH}><Text color={COLOR.dim}>{l}</Text></Box>)
+}
 
 function helpRows(ui: any, view: PaneView, act: PaneActions, width: number): any[] {
   const { Box, Text, Button } = ui
@@ -441,7 +465,7 @@ function helpRows(ui: any, view: PaneView, act: PaneActions, width: number): any
   return [
     <Text> </Text>,
     section(ui, '說明', width),
-    ...HELP.map(([k, d]) => <Box flexDirection="row"><Text color={COLOR.attention}>{pad(k, 12)}</Text><Text color={COLOR.dim} wrap="truncate-end">{fit(d, width - 12)}</Text></Box>),
+    ...helpEntries(view).flatMap(entry => helpEntryRows(ui, entry, width)),
     <Box flexDirection="row"><Button key="band" plain dimColor hotkey="h" label="— 隱藏摘要列" onPress={act.toggleBand} /></Box>,
   ]
 }
@@ -490,7 +514,8 @@ function nowTitle(ui: any, view: PaneView, focus: Case | null, width: number, ac
 function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): any[] {
   const { Box, Text } = ui
   const s = view.s
-  if (!s.cases.length) return wrapText(s.error ? '' : WORD.empty, width).map(l => <Text color={COLOR.dim} wrap="truncate-end">{l}</Text>)
+  // 沒有任務（含還沒有登錄表）時說明頁也要看得到。
+  if (!s.cases.length) return [...(s.error ? [] : wrapText(WORD.empty, width).map(l => <Text color={COLOR.dim} wrap="truncate-end">{l}</Text>)), ...helpRows(ui, view, act, width)]
   const focus = focusOf(view)
   const list = sorted(s.cases)
   const wide = view.columns >= WIDE

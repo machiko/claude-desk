@@ -11,8 +11,8 @@ import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
-import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
+import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
 import { MAX_FIX_ROUNDS, handedOver, judgedAt, nextStep, paused, revOf, seenHeads, shownStopped } from './chain'
@@ -58,6 +58,8 @@ const tick = atom({ plugin: 'desk', key: 'tick' } as const, 0)
 const isExpanded = atom({ plugin: 'desk', key: 'isExpanded' } as const, false)
 const contentOffset = atom({ plugin: 'desk', key: 'contentOffset' } as const, 0)
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
+/** 派工因為 repo 還沒信任而開不了的那幾件；寫入在 dispatch-runner（引擎規定 read 的 atom 要同檔宣告）。 */
+const untrustedAtom = atom({ plugin: 'desk', key: 'untrusted' } as const, {} as Record<string, UntrustedHold>)
 const queueAtom = atom({ plugin: 'desk', key: 'checkQueue' } as const, [])
 const armedAtom = atom({ plugin: 'desk', key: 'armed' } as const, null)
 const logsOpenAtom = atom({ plugin: 'desk', key: 'logsOpen' } as const, null)
@@ -218,6 +220,8 @@ export async function refresh($: any, options: PluginOptions) {
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
     await update($, snapshot, () => cur)
+    // 失敗之後這件又有 Agent 開過：「還沒信任」不再成立，三步不再出現。
+    await update($, untrustedAtom, v => liveHolds(v, cases) as Record<string, UntrustedHold>)
     await collapseMoreIfMoved($)
     await feedPush($, fresh)
     for (const e of fresh) if (e.tone === 'warning' || e.tone === 'error') { $.ui.toast(e.text, { timeoutMs: 8000 }); notify($, e.text) }
@@ -678,7 +682,8 @@ export const register: Register = (on, options) => {
     const launching = await read($, launchingAtom)
     const sent = await readSent($)
     const agentQueue = await readAgentQueue($)
-    const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, agentQueued: agentQueue.indexOf(c.statusPath) + 1 || undefined, tutorial: !!s.tutorial, sent: sentState(sent, c) })
+    const untrusted = await read($, untrustedAtom)
+    const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, agentQueued: agentQueue.indexOf(c.statusPath) + 1 || undefined, tutorial: !!s.tutorial, sent: sentState(sent, c), ...(untrusted[c.statusPath] ? { hold: untrusted[c.statusPath] } : {}) })
     const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf, await read($, selected)), columns, () => {})
     const below = await next(e).catch(() => null)
     const { Box } = ui as any
@@ -689,13 +694,14 @@ export const register: Register = (on, options) => {
     const ui = $.ui.resolve(e) as any
     const { Text } = ui
     const s = await read($, snapshot)
-    if (!s) return <Text color="subtle">{active ? '讀取任務中…' : '此對話未開啟工作桌；輸入 /desk refresh 開啟。'}</Text>
+    if (!s) return <Text color="subtle">{active ? WORD.loading : WORD.off}</Text>
     const base: PaneView = {
       s, now: await $.clock.now(), columns: Math.max(20, e.props.bodyColumns ?? 80), isFocused: !!e.props.isFocused,
       bodyRows: e.props.scroll?.bodyRows, placement: e.props.placement, offset: await read($, contentOffset),
       selected: await read($, selected), feed: await read($, feedAtom), picks: await read($, picksAtom),
       verifies: await read($, verifiesAtom), verifying: await read($, verifyingAtom), tick: await read($, tick), isExpanded: await read($, isExpanded),
       launching: await read($, launchingAtom),
+      untrusted: await read($, untrustedAtom),
       queue: await read($, queueAtom),
       agentQueue: await readAgentQueue($),
       armed: await read($, armedAtom),

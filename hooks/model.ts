@@ -325,7 +325,7 @@ function waitsOf(a: any): AgentInfo['waitsFor'] {
 export const approvalWait = (a: AgentInfo | undefined) => a?.waitsFor === 'permission'
 
 /** 等權限批准時給人看的那句：現在卡最上方、摘要列與列表都用它。 */
-export const approveText = (c: Pick<Case, 'agent'>) => `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准`
+export const approveText = (c: Pick<Case, 'agent'>) => `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准；批准後面板會自動更新`
 
 /** 工作桌派出去的那一次（按啟動名）做完後停在提問：state blocked 且不再 busy。 */
 export function asksFor(list: any[], launchName: string | undefined): AgentInfo | null {
