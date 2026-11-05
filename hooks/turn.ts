@@ -6,7 +6,8 @@ import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './ca
 import { awaitsSpecOk, canArchive, canRelease, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
-import { fixByG, idleNext, reviewNext, untrustedSteps } from './dispatch'
+import { DISPATCH_KEY, fixByG, holdKey, idleNext, reviewNext, untrustedSteps } from './dispatch'
+import type { DispatchKind, UntrustedHold } from './dispatch'
 import { CATCHUP_RUNNING, catchupAutoTurn, catchupHandTurn, catchupHold } from './catchup'
 
 export type Turn = {
@@ -21,7 +22,7 @@ export type Turn = {
  * 畫面上才知道的事：完成檢查執行中、排隊中、派工中、派工排第幾位（1 起，沒排是 undefined）、決策送出了沒、現在是不是教學模式，
  * 以及現在幾點（判斷卡片落後）、上次派工有沒有被擋下（hold）。
  */
-export type TurnCtx = { /** untrusted：上次派工因為 repo 還沒信任而開不了，改說三步。 */ hold?: 'untrusted'; verifying?: boolean; queued?: boolean; launching?: boolean; agentQueued?: number; tutorial?: boolean; sent?: SentState; now?: number }
+export type TurnCtx = { /** 上次派工因為 repo 還沒信任而開不了：派的是哪一種、是不是自動流程派的；沒有更要緊的事時改說三步。 */ hold?: Pick<UntrustedHold, 'dispatch' | 'auto'>; verifying?: boolean; queued?: boolean; launching?: boolean; agentQueued?: number; tutorial?: boolean; sent?: SentState; now?: number }
 
 /** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
 export type SentState = 'waiting' | 'unwritten'
@@ -135,12 +136,28 @@ function reviewTurnText(c: Case): string {
   return `${head}；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
 }
 
+const DISPATCH_KEYS = new Set(Object.values(DISPATCH_KEY))
+
+/**
+ * 還沒信任：說三步，③ 是回面板要再按的鍵。手動派的就是剛按的那個（stageActions 會把它列出來）；
+ * 自動流程派的照沒有這筆紀錄時「輪到你」叫你按的派工鍵，沒有派工鍵就說重新派工。
+ * 排在執行中、等你、等回覆、等批准之後：那些比重派要緊，紀錄是這個對話自己的，別的對話派出 Agent 它不知道。
+ */
+function untrustedTurn(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx): Turn {
+  const { hold: _, ...rest } = ctx
+  const base = hold.auto ? turnOf(c, rest).key : undefined
+  const key = holdKey(hold) ?? (base && DISPATCH_KEYS.has(base) ? base : undefined)
+  return { who: 'you', text: untrustedSteps(c.root, key), ...(key ? { key } : {}) }
+}
+
+/** 手動派工遇到還沒信任：剛按的那個動作要留在列上，照三步回來才按得到（推送的兩顆鍵照原本的條件）。 */
+const HOLD_ACTION: Partial<Record<DispatchKind, ActionId>> = { continue: 'continue', review: 'review', sync: 'sync', reply: 'reply' }
+
 export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   if (c.demo) return { who: 'none', text: '示範任務：只能看，照教學那件的指示操作' }
   if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
   if (ctx.launching) return { who: 'ai', text: '派工中，等 Agent 啟動' }
   if (ctx.agentQueued) return { who: 'ai', text: `派工排隊中（第 ${ctx.agentQueued} 位）：同時執行的 Agent 已達上限，有空位會自動派出` }
-  if (ctx.hold === 'untrusted') return { who: 'you', text: untrustedSteps(c.root), key: 'g' }
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
   const lesson = ctx.tutorial && !isRunning(c) && !ctx.verifying && !ctx.queued ? tutorialTurn(c) : null
   if (lesson) return { who: 'you', ...lesson }
@@ -157,6 +174,7 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
   // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
   if (isBusy(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
+  if (ctx.hold) return untrustedTurn(c, ctx.hold, ctx)
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', ...(!ctx.tutorial && canArchive(c) ? archiveTurn(c) : { text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }) }
   const hold = checkHold(c)
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
@@ -255,6 +273,8 @@ export function stageActions(c: Case, ctx: TurnCtx = {}): Set<ActionId> {
   if (c.state === 'reply') out.add('reply')
   // 等權限批准：回覆放行不了工具；能做的只有看輸出、停掉它。
   if (busy) { out.add('stop'); return out }
+  const held = ctx.hold && !ctx.hold.auto ? HOLD_ACTION[ctx.hold.dispatch] : undefined
+  if (held) out.add(held)
   if (!merged) {
     if (ctx.now !== undefined && cardBehind(c, ctx.now)) out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)

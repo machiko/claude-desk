@@ -3,7 +3,7 @@ import type { Case, Verify } from '../types'
 import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
 import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary, quotaHeld } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
-import { KIND_LABEL, dispatchable, mergedUnshipped, normalizeRoot } from './dispatch'
+import { DISPATCH_KEY, KIND_LABEL, dispatchable, mergedUnshipped, normalizeRoot } from './dispatch'
 import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
 import { checkApprovalLine, gitLine, isArmed, mergedAtHead } from './extras'
 import type { ApprovalKey, HeldReason } from './extras'
@@ -22,13 +22,13 @@ import type { PaneActions, PaneView } from './pane'
 /** 列上的動作鍵；決策選項若撞到這些字母就只能用點的。新加帶單鍵的動作按鈕，字母要加進來（tests/stage-actions.test.tsx 守門）。 */
 export const RESERVED = new Set(['f', 'v', 'o', 'r', 'x', 'h', 'g', 's', 'w', 'y', 'k', 'l', 'n', 'e', 'p', 'i', 'u', 'm', 't', 'q', 'z'])
 /** 推送（開 PR／push，按兩次）、發版（按一次，只填輸入框）、歸檔（按兩次）的單鍵。 */
-export const PUBLISH_KEY = 'n'
+export const PUBLISH_KEY = DISPATCH_KEY.publish
 export const RELEASE_KEY = 'z'
 export const ARCHIVE_KEY = 'q'
 /** 有單鍵的派工；推送（publish）走「⇡ 開 PR」「⇡ push」兩顆按鈕（單鍵 n），不在這裡。 */
 type KeyedKind = Exclude<DispatchKind, 'publish' | 'catchup'>
 const isKeyed = (k: DispatchKind): k is KeyedKind => k !== 'publish' && k !== 'catchup'
-const DISPATCH_HOTKEY: Record<KeyedKind, string> = { continue: 'g', sync: 's', review: 'w', reply: 'y' }
+const DISPATCH_HOTKEY: Record<KeyedKind, string> = DISPATCH_KEY
 const DISPATCH_GLYPH: Record<KeyedKind, string> = { continue: '▶', sync: '↻', review: '◆', reply: '↩' }
 
 export const KV_LABEL = 8
@@ -41,7 +41,7 @@ export const picksKey = (c: Case) => `${c.statusPath}\n${c.ask}`
 /** 畫面上才知道、turnOf 需要的事。 */
 export function turnCtx(view: PaneView, c: Case): TurnCtx {
   const agentQueued = (view.agentQueue ?? []).indexOf(c.statusPath) + 1
-  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, ...(agentQueued ? { agentQueued } : {}), tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now, ...(view.untrusted?.[c.statusPath] ? { hold: 'untrusted' as const } : {}) }
+  return { verifying: c.statusPath in view.verifying, queued: view.queue.includes(c.statusPath), launching: c.statusPath in view.launching, ...(agentQueued ? { agentQueued } : {}), tutorial: !!view.s.tutorial, sent: sentState(view.sent, c), now: view.now, ...(view.untrusted?.[c.statusPath] ? { hold: view.untrusted[c.statusPath] } : {}) }
 }
 
 /** 檢查列上待確認的鍵（確認規格、執行檢查、派實作），沒有就是 null。 */

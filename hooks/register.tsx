@@ -11,7 +11,7 @@ import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
@@ -220,6 +220,8 @@ export async function refresh($: any, options: PluginOptions) {
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
     await update($, snapshot, () => cur)
+    // 失敗之後這件又有 Agent 開過：「還沒信任」不再成立，三步不再出現。
+    await update($, untrustedAtom, v => liveHolds(v, cases) as Record<string, UntrustedHold>)
     await collapseMoreIfMoved($)
     await feedPush($, fresh)
     for (const e of fresh) if (e.tone === 'warning' || e.tone === 'error') { $.ui.toast(e.text, { timeoutMs: 8000 }); notify($, e.text) }
@@ -681,7 +683,7 @@ export const register: Register = (on, options) => {
     const sent = await readSent($)
     const agentQueue = await readAgentQueue($)
     const untrusted = await read($, untrustedAtom)
-    const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, agentQueued: agentQueue.indexOf(c.statusPath) + 1 || undefined, tutorial: !!s.tutorial, sent: sentState(sent, c), ...(untrusted[c.statusPath] ? { hold: 'untrusted' as const } : {}) })
+    const ctxOf = (c: Case) => ({ verifying: c.statusPath in verifying, queued: queue.includes(c.statusPath), launching: c.statusPath in launching, agentQueued: agentQueue.indexOf(c.statusPath) + 1 || undefined, tutorial: !!s.tutorial, sent: sentState(sent, c), ...(untrusted[c.statusPath] ? { hold: untrusted[c.statusPath] } : {}) })
     const mine = renderBand(ui, layoutBand(s, columns, await read($, isPaneOpen), ctxOf, await read($, selected)), columns, () => {})
     const below = await next(e).catch(() => null)
     const { Box } = ui as any

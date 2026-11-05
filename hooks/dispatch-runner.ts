@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents, untrustedSteps } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents, holdKey, untrustedSteps } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
@@ -29,10 +29,11 @@ async function clearUntrusted($: any, statusPath: string) {
   await update($, untrustedAtom, v => (statusPath in v ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== statusPath)) : v))
 }
 
-/** 啟動失敗是因為 repo 還沒信任：記下這件，動態、toast 與對話說三步。 */
-async function holdUntrusted($: any, c: Case, now: number, skipPanel: boolean) {
-  await update($, untrustedAtom, v => ({ ...v, [c.statusPath]: { kind: 'untrusted', root: c.root, at: now } }))
-  const steps = untrustedSteps(c.root)
+/** 啟動失敗是因為 repo 還沒信任：記下這件派的是哪一種，動態、toast 與對話說三步（③ 是剛按的那個鍵）。 */
+async function holdUntrusted($: any, c: Case, kind: DispatchKind, now: number, auto: boolean, skipPanel: boolean) {
+  const hold: UntrustedHold = { kind: 'untrusted', root: c.root, at: now, dispatch: kind, auto }
+  await update($, untrustedAtom, v => ({ ...v, [c.statusPath]: hold }))
+  const steps = untrustedSteps(c.root, holdKey(hold))
   await feedPush($, [{ at: now, text: `${c.name}：${steps}`, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, steps, { name: c.name, skip: skipPanel })
   $.ui.toast(`${c.name}：${steps}`, { timeoutMs: UNTRUSTED_TOAST_MS })
@@ -207,7 +208,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
     return true
   } catch (error) {
-    if (error instanceof LaunchError && error.untrusted) { await holdUntrusted($, c, now, !!opts.auto || tutorial); return false }
+    if (error instanceof LaunchError && error.untrusted) { await holdUntrusted($, c, kind, now, !!opts.auto, !!opts.auto || tutorial); return false }
     const message = error instanceof Error ? error.message : String(error)
     await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
     await tellPanel($, now, `${KIND_LABEL[kind]}失敗：${message}`, { name: c.name, skip: opts.auto || tutorial })

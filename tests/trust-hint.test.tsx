@@ -1,14 +1,15 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, BAND, PANE, CARD_A, CARD_C, REGISTRY, result, text, flat } from './fixture'
+import { fixture, feedLog, BAND, PANE, CARD_A, CARD_C, REGISTRY, result, text, flat, pressHotkey } from './fixture'
 import { ROOT, alphaOnly, helpers } from './alpha-chain'
 import { isUntrustedLaunch, untrustedSteps } from '../hooks/dispatch'
 import { approveText, buildCase } from '../hooks/model'
-import { turnOf } from '../hooks/turn'
+import { stageActions, turnOf } from '../hooks/turn'
+import { finalState, pipeline } from '../hooks/pipeline'
 import { TUTORIAL_INTRO } from '../hooks/tutorial'
 import type { Case } from '../types'
 
 // 信任失敗提示與空狀態文案：沒信任過的 repo 派 Agent 失敗時直接列出三步；各種空狀態、錯誤都說下一步；說明頁換行不截字。
-const STEPS = untrustedSteps(ROOT)
+const STEPS = untrustedSteps(ROOT, 'g')
 const STEPS_WITH_NAME = `Alpha：${STEPS}`
 /** 多行輸出，信任那行不是最後一行。 */
 const UNTRUSTED_OUTPUT = 'Starting background agent…\nError: workspace not trusted\nRun claude in this folder first.'
@@ -58,7 +59,7 @@ test('test_untrusted_launch_shows_three_steps_in_toast_feed_and_turn', async ($,
   await band.unmount()
   // 標 g：「輪到你」該按的鍵是 g
   const alpha = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}), git: { branch: 'feature/alpha', head: 'h1' } } as Case
-  expect(turnOf(alpha, { hold: 'untrusted' })).toEqual({ who: 'you', text: STEPS, key: 'g' })
+  expect(turnOf(alpha, { hold: { dispatch: 'continue', auto: false } })).toEqual({ who: 'you', text: STEPS, key: 'g' })
 })
 
 test('test_untrusted_pattern_matches_listed_samples_only', () => {
@@ -215,4 +216,97 @@ test('test_help_lists_create_registry_n_only_without_registry', async ($, on) =>
   expect(shown).toContain(flat('n ＋ 建立空的登錄表（還沒有登錄表時）'))
   expect(shown).toContain(flat('⇡ 開 PR／⇡ push：派 Agent 推送（按兩次確認）'))
   await ui.unmount()
+})
+
+/** 卡片：沒有等你、規格已確認、檢查已核准；只改需要的欄位。 */
+const card = (f: { check?: string; ask?: string } = {}) =>
+  `<!-- DESK -->\n- 狀態：ok\n- 檢查：${f.check ?? '`node test.mjs`'}\n- 等你：${f.ask ?? '無'}\n- 下一步：依規格實作\n- 關卡：無\n<!-- /DESK -->`
+/** 跟工作桌一樣：讀卡 → 疊上 git → 算六段 → 決定狀態。 */
+function alphaCase(f: Parameters<typeof card>[0] = {}): Case {
+  const base = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, card(f), 1, {}), git: { branch: 'feature/alpha', head: 'h1' } } as Case
+  const piped = { ...base, pipeline: pipeline(base) }
+  return { ...piped, state: finalState(piped) } as Case
+}
+
+/** 審查 HIGH：驗收段按兩次 w 遇到未信任，③ 與「輪到你」說 w、列上有 w，不叫你按不存在的 g。 */
+test('test_untrusted_review_dispatch_says_press_w_and_keeps_w_on_the_row', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.verify()
+  const ui = await $.ui.mount(PANE(96))
+  expect(await screen(ui)).toContain(flat('按 w 派驗收'))
+  data.launch = async () => result(1, '', UNTRUSTED_OUTPUT)
+  await pressHotkey(ui, 'w'); await clock.settle()
+  await pressHotkey(ui, 'w'); await clock.settle()
+
+  const steps = untrustedSteps(ROOT, 'w')
+  expect(data.toasts).toContain(`Alpha：${steps}`)
+  const shown = await screen(ui)
+  expect(shown).toContain(flat(`▶ 輪到你 ${steps}`))
+  expect(shown).not.toContain(flat('回面板再按 g'))
+  // 照三步回來按 w 按得到：列上有 w，沒有綁 g 的按鈕也不叫你按 g
+  expect((await ui.findAll({ type: 'Button' })).some((b: any) => b.props?.hotkey === 'w')).toBe(true)
+  await ui.unmount()
+})
+
+/** 手動按的鍵平常收在 m 裡（同步 s）：還沒信任時 s 留在列上；自動流程派的照「輪到你」原本的派工鍵，沒有派工鍵就說重新派工。 */
+test('test_untrusted_hold_key_follows_dispatch_kind_and_auto_flow', () => {
+  const c = alphaCase()
+  const sync = turnOf(c, { hold: { dispatch: 'sync', auto: false } })
+  expect(sync).toEqual({ who: 'you', text: untrustedSteps(ROOT, 's'), key: 's' })
+  expect(stageActions(c, { hold: { dispatch: 'sync', auto: false } }).has('sync')).toBe(true)
+  expect(stageActions(c).has('sync')).toBe(false)
+  // 自動流程派的（例如修正）：照原本「按 g 派 Agent」的 g
+  expect(turnOf(c, { hold: { dispatch: 'continue', auto: true } })).toEqual({ who: 'you', text: untrustedSteps(ROOT, 'g'), key: 'g' })
+  // 原本的「輪到你」不是派工鍵（還沒有檢查指令，叫你按 o）：不編一個鍵，說重新派工
+  const noCheck = turnOf(alphaCase({ check: '無' }), { hold: { dispatch: 'catchup', auto: true } })
+  expect(noCheck).toEqual({ who: 'you', text: untrustedSteps(ROOT) })
+  expect(noCheck.text).toContain('③輸入 /exit 回面板再重新派工（不要用 ! 跑）')
+})
+
+/** 審查 HIGH：還沒信任的紀錄只在這個對話；別的對話派出 Agent、或卡片在等你決定時，「輪到你」照那件事說。 */
+test('test_untrusted_hint_yields_to_running_agent_and_pending_decision', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  await h.refresh()
+  data.launch = async () => result(1, '', UNTRUSTED_OUTPUT)
+  let ui = await $.ui.mount(PANE(96))
+  await h.pressGo(ui)
+  expect(await screen(ui)).toContain(flat(STEPS))
+  await ui.unmount()
+
+  // 別的對話信任後派出 Agent：重新整理後是處理中，三步不見
+  await clock.advance(60_000)
+  data.agents = [{ id: 'cccccccc', kind: 'background', cwd: ROOT, name: 'desk-other-1', sessionId: 'cccccccc-0000-4000-8000-000000000000', state: 'working', status: 'busy', startedAt: clock.now() }]
+  await h.refresh()
+  ui = await $.ui.mount(PANE(96))
+  let shown = await screen(ui)
+  expect(shown).toContain(flat('Agent 在寫程式'))
+  expect(shown).not.toContain(flat('還沒信任'))
+  await ui.unmount()
+  // 那個 Agent 做完：紀錄已清掉，不會再冒出三步
+  data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
+  await h.refresh()
+  ui = await $.ui.mount(PANE(96))
+  shown = await screen(ui)
+  expect(shown).not.toContain(flat('還沒信任'))
+  await ui.unmount()
+  const band = await $.ui.mount(BAND(400))
+  expect(flat(text(await band.drawn()))).not.toContain(flat('還沒信任'))
+  await band.unmount()
+
+  // 同一個對話：卡片寫了要你決定的題目，「輪到你」照決策說，不蓋掉
+  expect(turnOf(alphaCase({ ask: '要 push 嗎？A) 要 B) 等' }), { hold: { dispatch: 'continue', auto: false } })).toMatchObject({ who: 'you', key: 'f' })
+})
+
+/** 審查 MEDIUM：三步裡的路徑是給人照抄的，有空白或引號時加單引號，一般路徑照原樣。 */
+test('test_untrusted_steps_quote_paths_with_spaces', () => {
+  expect(untrustedSteps('/home/u/wt/alpha', 'g')).toContain('cd /home/u/wt/alpha && claude')
+  expect(untrustedSteps('/home/u/My Projects/app', 'g')).toContain("cd '/home/u/My Projects/app' && claude")
+  expect(untrustedSteps("/home/u/it's/app", 'g')).toContain("cd '/home/u/it'\\''s/app' && claude")
 })
