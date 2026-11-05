@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps, writesCode } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
@@ -182,20 +182,23 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const name = launchName(now, launchSeq++)
     let review: ReviewOpts | undefined
     const probed = kind === 'review' ? (await gitProbe($, c.root)).git : undefined
-    if (kind === 'review') {
+    // 常犯錯誤清單：審查與會改程式的派工（繼續、回覆、修正）都讀；檔案不在就不給。
+    const writes = writesCode(kind, opts.fix)
+    const paths = kind === 'review' || writes ? await deskPaths($, options) : undefined
+    const pitfallsPath = paths ? pitfallsFor(settings, paths.pitfalls, await home($)) : ''
+    const pitfalls = pitfallsPath && (await $.fs.exists(pitfallsPath).catch(() => false)) ? pitfallsPath : ''
+    if (kind === 'review' && paths) {
       const run = (await loadChains($))[rootKey]
       const round = opts.auto ? run?.round ?? 0 : 0
       // 舊紀錄存的是分支名稱，拿來 diff 會是空的：當作沒有基準，整條分支重審。
       const recorded = opts.security ? run?.securityHead : run?.reviewHead
       const base = recorded && recorded !== c.git?.branch ? recorded : undefined
-      const paths = await deskPaths($, options)
-      const pitfalls = pitfallsFor(settings, paths.pitfalls, await home($))
       const template = settings.review.template || `${$.plugin.root}/templates/review.md`
       const recheck = !!opts.auto && !!run?.recheck && !opts.security
       const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target
-      review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls: (await $.fs.exists(pitfalls).catch(() => false)) ? pitfalls : '', history: paths.reviews }
+      review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls, history: paths.reviews }
     }
-    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name)
+    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls)
     const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
     launchKinds = { ...launchKinds, [c.statusPath]: doing }
     await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
