@@ -70,7 +70,7 @@ export type ChainRun = {
   fixBranch?: string
   /** 你在「等你」對審查 MEDIUM 題選了「修掉」送出時的 HEAD：對話清掉「等你」、HEAD 沒變，工作桌就派一次修正（不受上限擋，派出去才算一輪）。 */
   mediumFixAt?: string
-  /** 你選修掉的那題 MEDIUM 是資安審查問的（送出時最後一次派工是資安審查）：修正依 SECURITY.md，不是 REVIEW.md。下一次選修掉時重寫。 */
+  /** 你選修掉 MEDIUM 時，這次流程已跑過資安審查（送出時最後一次派工是資安審查）：那題可能是哪一份問的，修正提示兩份審查檔都寫。下一次選修掉時重寫。 */
   mediumFixSecurity?: boolean
   /** 最近一次自動派解衝突時的 HEAD：同一個 HEAD 只自動試一次。 */
   catchupHead?: string

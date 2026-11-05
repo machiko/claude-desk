@@ -17,12 +17,18 @@ const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIG
 /** 自動流程的審查修正：只修 CRITICAL、HIGH；MEDIUM 由你在「等你」決定，不在這輪改。 */
 const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）。${FIX_DONE}`
 
-/** 你在「等你」對審查 MEDIUM 題選了修掉：照卡片 Decisions 修那幾條 MEDIUM（你主動要的，不受自動修正上限擋）。`file` 是問這題的那份審查檔（資安審查問的是 SECURITY.md）。 */
+/**
+ * 你在「等你」對審查 MEDIUM 題選了修掉：照卡片 Decisions 修那幾條 MEDIUM（你主動要的，不受自動修正上限擋）。
+ * `file` 是要看的審查檔：這次流程有跑資安審查時兩份都寫（那題可能是程式碼審查問的、資安審查問的或兩份合成的），否則只有 REVIEW.md。
+ */
 const mediumPickedStep = (file: string) => `你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 ${file} 修正標「（等你決定）」、卡片 Decisions 記著你選修掉的那幾條 MEDIUM（其他 MEDIUM 與 LOW 不用修）。${FIX_DONE}`
+
+/** 回答 B 的修正要看的審查檔：這次流程跑過資安審查就兩份都看。 */
+const mediumFiles = (security?: boolean) => security ? `${REVIEW_FILE} 與 ${SECURITY_FILE}` : REVIEW_FILE
 
 /** 自動流程修正輪的提示頭：「第 n／2 輪」是這條分支累計的修正輪數。完成檢查沒過附輸出最後幾行；審查要修就依那一份審查檔；你選了修掉 MEDIUM 的不寫輪數（不受上限擋）。 */
 export function fixHead(c: Case, fix: FixReason): string {
-  if (fix.from === 'medium') return `修正：${mediumPickedStep(fix.security ? SECURITY_FILE : REVIEW_FILE)}`
+  if (fix.from === 'medium') return `修正：${mediumPickedStep(mediumFiles(fix.security))}`
   return fix.from === 'check'
     ? `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
     : `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：${autoReviewFixStep(fix.security ? SECURITY_FILE : REVIEW_FILE)}`
@@ -35,7 +41,7 @@ export function fixHead(c: Case, fix: FixReason): string {
 export function manualFixHead(c: Case, ci: boolean): string {
   if (ci) return `修正：PR #${c.pr!.id} 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。`
   const stopped = c.chain?.stopped
-  if (stopped === MEDIUM_FIX_NOT_SENT) return `修正：${mediumPickedStep(c.chain?.mediumSecurity ? SECURITY_FILE : REVIEW_FILE)}`
+  if (stopped === MEDIUM_FIX_NOT_SENT) return `修正：${mediumPickedStep(mediumFiles(c.chain?.mediumSecurity))}`
   if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
   // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
   if (isQuotaHold(stopped)) return quotaRestartHead(c)

@@ -644,7 +644,9 @@ const SNAPSHOT = {
     '資安審查：這是新的對話，不接續 Agent、不參考 Agent 的結論。', SNAP_CONTRACT,
     '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。',
     '資安審查只看：授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩（log、匯出、版控）、機密與金鑰、檔案路徑、外部呼叫；其他交給程式碼審查。',
-    SNAP_GRADES('.task/SECURITY.md'), SNAP_MEDIUM, SNAP_GATE,
+    SNAP_GRADES('.task/SECURITY.md'), SNAP_MEDIUM,
+    '卡片 等你 已有程式碼審查問的 MEDIUM 題就保留；這份也有標「（等你決定）」的 MEDIUM 就跟它合成一題（摘要兩份都寫到），不要因為這份沒有就把 等你 寫成 無。',
+    SNAP_GATE,
     '不改程式、不 commit。',
   ],
   rereview: [

@@ -120,8 +120,14 @@ test('test_review_prompt_always_asks_behavior_medium', () => {
   expect(again).toContain('標「（等你決定）」的照原樣再列')
   // 重新審查（過關後又有新 commit）：等你還沒回答、或剛選了修掉的那條 MEDIUM 也照原樣再列，不會被整份覆寫清掉
   const recheck = review(0, { base: 'abc123', recheck: true })
-  expect(recheck).toContain('標「（等你決定）」而沒被改到的照原樣再列（過關時要在 等你 問）')
   expect(recheck).not.toContain('沒被改到的 MEDIUM／LOW 不要再提')
+  // 已回答不修或改規格的（卡片 Decisions 有記）不再問；選了修掉卻沒被改到的照原樣再列
+  expect(recheck).toContain('卡片 Decisions 已記你對那條選了不修或改規格的，改標「（不修，見 Decisions）」、不在 等你 再問')
+  expect(recheck).toContain('還沒回答、或選了修掉卻沒被改到的，照原樣再列')
+  // 資安審查接在程式碼審查之後：等你已有的程式碼審查 MEDIUM 題要保留
+  const keep = '卡片 等你 已有程式碼審查問的 MEDIUM 題就保留'
+  expect(review(0, { security: true })).toContain(keep)
+  expect(review(0)).not.toContain(keep)
 })
 
 /** AC-1：有 HIGH 也有 MEDIUM：自動修正只修 CRITICAL／HIGH，MEDIUM 不在這輪改；修完複審只剩 MEDIUM 就過關 */
@@ -461,8 +467,8 @@ test('test_answer_b_fix_is_not_sent_twice_when_agent_list_lags', async ($, on) =
   expect(data.launches).toHaveLength(1)
 })
 
-/** 高風險卡的資安審查問的 MEDIUM 選 B：派出的修正只寫 SECURITY.md；沒派出停下後按 g 重派也照它 */
-test('test_answer_b_on_security_review_medium_names_security_file', async ($, on) => {
+/** 高風險卡（流程跑過資安審查）的 MEDIUM 選 B：兩份都有標等你決定的，派出的修正 REVIEW.md 與 SECURITY.md 都寫；沒派出停下後按 g 重派也一樣 */
+test('test_answer_b_after_security_review_names_both_review_files', async ($, on) => {
   const { data, clock } = fixture(on)
   const h = helpers($, data, clock)
   data.agents = []
@@ -478,19 +484,36 @@ test('test_answer_b_on_security_review_medium_names_security_file', async ($, on
   setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
   await h.refresh()
 
-  // 自動試的那次：指到 SECURITY.md，不提 REVIEW.md
+  // 自動試的那次：兩份都寫，哪一份的（等你決定）都不漏
   expect(data.launches).toHaveLength(1)
-  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/SECURITY.md 修正')).toBe(true)
-  expect(h.prompt(0)).not.toContain('REVIEW.md')
+  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/REVIEW.md 與 .task/SECURITY.md 修正')).toBe(true)
   expect((data.store.chains as any)[ALPHA].stopped).toBe(MEDIUM_FIX_NOT_SENT)
 
-  // 沒派出、按 g 重派：照樣指到 SECURITY.md
+  // 沒派出、按 g 重派：照樣兩份都寫
   await h.refresh(); await h.step()
   launchOneAtATime(data, clock)
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
   await clock.settle()
   expect(data.launches).toHaveLength(2)
-  expect(h.prompt(1).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/SECURITY.md 修正')).toBe(true)
+  expect(h.prompt(1).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/REVIEW.md 與 .task/SECURITY.md 修正')).toBe(true)
+})
+
+/** 高風險卡上程式碼審查問的 MEDIUM 選 B：資安審查無發現、但最後一次派工是它，修正照樣指到 REVIEW.md（不只寫 SECURITY.md） */
+test('test_answer_b_on_code_review_medium_in_high_risk_card_names_review_file', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  launchOneAtATime(data, clock)
+  passedWithMediumAsk(data, { owner: ME })
+  data.files[`${ALPHA}/.task/SECURITY.md`] = '無發現'
+  const jobs = data.store.jobs as any
+  data.store.jobs = { ...jobs, [ALPHA]: { ...jobs[ALPHA], last: { ...jobs[ALPHA].last, security: true } } }
+  await h.refresh()
+  await answerB($, data)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0)).toContain('依 .task/REVIEW.md 與 .task/SECURITY.md 修正標「（等你決定）」')
 })
 
 /** 程式碼審查問的 MEDIUM 選 B：上一次選修掉的是資安審查也不沿用，指到 REVIEW.md */

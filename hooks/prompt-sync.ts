@@ -249,7 +249,8 @@ async function mediumFixable($: any, cases: readonly Case[]): Promise<Case[]> {
 /**
  * 審查 MEDIUM 題選了修掉、決策真的送出了：在那件的流程紀錄記下送出時的 HEAD（結構化欄位，不從原因句認），
  * 並把流程改成這個對話的（跟按 g 一樣接手：開流程的對話可能已經不在），等「等你」清掉後由這個對話的自動流程派修正。
- * 一起記下那題是哪份審查問的：送出時這件最後一次派工是資安審查就記 mediumFixSecurity，修正提示只寫 SECURITY.md。
+ * 一起記下這次流程有沒有跑資安審查：送出時這件最後一次派工是資安審查就記 mediumFixSecurity（高風險卡過關前最後一定是資安審查，
+ * 那題可能是程式碼審查問的），修正提示 REVIEW.md 與 SECURITY.md 兩份都寫。
  */
 async function noteMediumFix($: any, cases: readonly Case[]) {
   if (!cases.length) return
