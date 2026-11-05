@@ -32,6 +32,8 @@ RULES = [
     '發版 v<版號>：進行中（<步驟>）',
     '判斷不了版號（沒有 v* tag、兩個候選都合理）才寫題目停下',
     '沒有確認段（手打的）',
+    # 手打路徑出題後停下（AC-5）
+    '寫完題就停，等使用者在面板按 a／b／c 再按 `f`',
 ]
 
 
@@ -49,6 +51,14 @@ class ReleaseSkillTest(unittest.TestCase):
         body = text[front.end():]
         for rule in RULES:
             self.assertIn(rule, body)
+        # AC-5：手打的請求（沒有確認段）照範本出題、寫完就停，不照做
+        manual = body[body.find('- 沒有確認段'):]
+        manual = manual[:manual.find('\n')]
+        self.assertGreater(body.find('- 沒有確認段'), -1)
+        self.assertIn('照第 1 點的範本寫題目', manual)
+        self.assertIn('寫完就停', manual)
+        for go in ('不寫題目', '照慣例版號直接做', '不出題'):
+            self.assertNotIn(go, manual)
         # 確認題範本：反引號裡以「發版 v<版號>」開頭的那句，整句沒有「；」
         templates = re.findall(r'`(發版 v<版號>[^`]*)`', body)
         self.assertEqual(len(templates), 1)
