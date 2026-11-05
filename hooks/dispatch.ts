@@ -114,14 +114,23 @@ export function addRunTime(jobs: RootJobs | undefined, ms: number, branch?: stri
 export const RUN_SEEN_STEP_MS = 60_000
 
 /**
- * 這次派工現在這段在跑的時間，算到 now；但不超過「最後看到它在跑＋grace」：
- * 工作桌關著時結束的，不會把關著的那幾個小時算進去。停下來等人時是 0。
+ * 這次派工現在這段在跑的時段：從 from 起，最多算到 until（最後看到它在跑＋grace）：
+ * 工作桌關著時結束的、或 Agent 已經不在清單裡的，不會把之後的時間算進去。停下來等人時沒有這段。
+ * 存進去的累計（stretchMs）與畫面上的數字（runOf → totalRunMs）都用它，兩邊封頂一樣。
  */
-function stretchMs(r: JobRecord, now: number, grace: number): number {
-  if (r.paused) return 0
+function stretchSpan(r: JobRecord, grace: number): { from: number; until: number } | null {
+  if (r.paused) return null
   const from = r.runAt ?? r.startedAt
-  const seen = Math.max(r.seenAt ?? from, from)
-  return Math.max(0, Math.min(now, seen + grace) - from)
+  return { from, until: Math.max(r.seenAt ?? from, from) + grace }
+}
+
+/** 這段時段算到 now 是幾毫秒（不超過 until）。 */
+export const spanMs = (span: { from: number; until: number }, now: number): number => Math.max(0, Math.min(now, span.until) - span.from)
+
+/** 這次派工現在這段在跑的時間，算到 now（見 stretchSpan）；停下來等人時是 0。 */
+function stretchMs(r: JobRecord, now: number, grace: number): number {
+  const span = stretchSpan(r, grace)
+  return span ? spanMs(span, now) : 0
 }
 
 /** 這次派工總共在跑多久：之前收起來的幾段，加上現在這段。 */
@@ -143,15 +152,19 @@ export function observeRun(r: JobRecord, seen: 'busy' | 'waiting', now: number, 
   return r.paused ? r : { ...r, busyMs: dispatchRunMs(r, now, grace), paused: true }
 }
 
+/** 畫面用的總執行（見 runOf）。 */
+export type RunShown = { runMs: number; runFrom?: number; runUntil?: number }
+
 /**
- * 畫面用的總執行：runMs 是這條分支已結束的，加上還沒結束那次派工收起來的幾段；runFrom 是它現在這段從何時開始在跑（停下等人、已結束就沒有），
- * 畫面上再加 now - runFrom，跟著每秒的重畫動。
+ * 畫面用的總執行：runMs 是這條分支已結束的，加上還沒結束那次派工收起來的幾段；runFrom～runUntil 是它現在這段在跑的時段
+ * （停下等人、已結束就沒有），畫面上再加 min(now, runUntil) - runFrom，跟著每秒的重畫動，封頂跟存進去的一樣（見 stretchSpan）。
  */
-export function runOf(jobs: RootJobs | undefined, branch: string | undefined): { runMs: number; runFrom?: number } {
+export function runOf(jobs: RootJobs | undefined, branch: string | undefined, grace: number): RunShown {
   const done = runMsOn(jobs, branch)
   const last = jobs?.last
   if (!last || last.ended) return { runMs: done }
-  return { runMs: done + (last.busyMs ?? 0), ...(last.paused ? {} : { runFrom: last.runAt ?? last.startedAt }) }
+  const span = stretchSpan(last, grace)
+  return { runMs: done + (last.busyMs ?? 0), ...(span ? { runFrom: span.from, runUntil: span.until } : {}) }
 }
 
 /** 這條分支已結束的總執行毫秒：記的是別條分支（同一個資料夾換了分支）就是 0。 */

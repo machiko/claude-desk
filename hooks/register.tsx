@@ -12,7 +12,7 @@ import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, addRunTime, buildPrompt, dispatchRunMs, observeRun, runOf, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
-import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
+import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, RunShown, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
 import { MAX_FIX_ROUNDS, handedOver, judgedAt, nextStep, paused, revOf, seenHeads, shownStopped } from './chain'
@@ -86,7 +86,6 @@ export let lastAgents: readonly RawAgent[] | null = null
 export let optionsRef: PluginOptions | undefined
 const cardParseCache = new Map<string, { raw: string; steps: string[]; history: any[] }>()
 const reviewTextCache = new Map<string, { raw: string; top: any[]; preflight: string | undefined }>()
-
 
 /** 讀一輪：登錄表 → 每張卡＋檔案時間 → 背景 agent → 快照；差異進動態與 toast。 */
 export async function refresh($: any, options: PluginOptions) {
@@ -179,8 +178,8 @@ export async function refresh($: any, options: PluginOptions) {
           reviewTextCache.set(base.root, { raw: reviewText, top, preflight })
         }
       }
-      const runTime = tutorial ? { runMs: 0 } : runOf(jobs[normalizeRoot(base.root)], probe.git?.branch)
-      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...(runTime.runMs ? { runMs: runTime.runMs } : {}), ...(runTime.runFrom !== undefined ? { runFrom: runTime.runFrom } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
+      const runTime: RunShown = tutorial ? { runMs: 0 } : runOf(jobs[normalizeRoot(base.root)], probe.git?.branch, runGraceMs(options))
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...(runTime.runMs ? { runMs: runTime.runMs } : {}), ...(runTime.runFrom !== undefined ? { runFrom: runTime.runFrom, runUntil: runTime.runUntil } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -276,7 +275,7 @@ async function noteRuns($: any, list: readonly any[], roots: readonly string[], 
     const timed = addRunTime(all[key], dispatchRunMs(cur, now, grace), branches[key])
     const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } }
     await $.store.set(JOBS_KEY, { ...all, [key]: next })
-    await restageRun($, key, next)
+    await restageRun($, key, next, grace)
   }
 }
 
@@ -288,18 +287,18 @@ async function noteSeen($: any, key: string, last: JobRecord, seen: 'busy' | 'wa
   if (!cur || cur.launchName !== last.launchName || cur.ended) return
   const next: RootJobs = { ...all[key], last: observeRun(cur, seen, now, grace) }
   await $.store.set(JOBS_KEY, { ...all, [key]: next })
-  await restageRun($, key, next)
+  await restageRun($, key, next, grace)
 }
 
-/** 這個根目錄的卡換上剛記下的總執行（畫面用的 runMs、runFrom）。 */
-async function restageRun($: any, key: string, jobs: RootJobs) {
-  await update($, snapshot, s => s ? { ...s, cases: s.cases.map(c => !c.demo && normalizeRoot(c.root) === key ? withRun(c, runOf(jobs, c.git?.branch)) : c) } : s)
+/** 這個根目錄的卡換上剛記下的總執行（畫面用的 runMs、runFrom、runUntil）。 */
+async function restageRun($: any, key: string, jobs: RootJobs, grace: number) {
+  await update($, snapshot, s => s ? { ...s, cases: s.cases.map(c => !c.demo && normalizeRoot(c.root) === key ? withRun(c, runOf(jobs, c.git?.branch, grace)) : c) } : s)
 }
 
 /** 換上總執行（0 或沒有就拿掉那欄），回傳新的一份。 */
-function withRun(c: Case, run: { runMs: number; runFrom?: number }): Case {
-  const { runMs: _, runFrom: _f, ...rest } = c
-  return { ...rest, ...(run.runMs ? { runMs: run.runMs } : {}), ...(run.runFrom !== undefined ? { runFrom: run.runFrom } : {}) }
+function withRun(c: Case, run: RunShown): Case {
+  const { runMs: _, runFrom: _f, runUntil: _u, ...rest } = c
+  return { ...rest, ...(run.runMs ? { runMs: run.runMs } : {}), ...(run.runFrom !== undefined ? { runFrom: run.runFrom, runUntil: run.runUntil } : {}) }
 }
 
 /** 每件任務的根目錄（正規化）現在在哪條分支；讀不到 git 的不列。 */
@@ -493,7 +492,7 @@ async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRu
 /**
  * 審查通過後分支又有新 commit（你決定要改、或在面板外改了）：開新的一輪流程（不算修正輪數），
  * 排一次「做完了」讓流程照常走：完成檢查 → 審查只看上次審查之後的 diff。
- * 這筆是合成的、不是真的派工，直接記成已結束：noteEnded 不會再對它重算指紋（這時 worktree 的改動多半是人在面板外改的），
+ * 這筆是合成的、不是真的派工，直接記成已結束：noteRuns 不會再對它重算指紋（這時 worktree 的改動多半是人在面板外改的），
  * 派審查前照樣拿上一個程式 Agent 結束時的指紋比對。
  */
 async function recheck($: any, key: string, run: ChainRun, last: JobRecord | undefined, owner: string, now: number) {

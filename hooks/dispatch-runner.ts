@@ -122,7 +122,6 @@ async function refuseStarting($: any, c: Case, kind: DispatchKind, opts: QueueOp
 /** 啟動失敗的錯誤只留最後一行、截到這麼多字（多的換成「…」）。 */
 export const LAUNCH_ERROR_MAX = 80
 
-/** 派工沒做成：「無法派<種類>（<錯誤最後一行>）；<怎麼重試>」；toast、動態與下一則對話提示共用。 */
 /**
  * 換上新派工前這個根目錄要留下的紀錄（不含 last、sessionId，由呼叫端換上新的）。上一次派工還沒記結束（例如停著等回覆、按 y 回覆）：
  * 它在跑的時間先加進總執行時間，換掉之後就不會再算到它。
@@ -134,6 +133,7 @@ export function carriedJobs(cur: RootJobs | undefined, now: number, grace: numbe
   return rest
 }
 
+/** 派工沒做成：「無法派<種類>（<錯誤最後一行>）；<怎麼重試>」；toast、動態與下一則對話提示共用。 */
 export function launchFailed(label: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   const last = message.split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? '沒有錯誤訊息'

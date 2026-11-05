@@ -392,3 +392,30 @@ test('test_dispatch_keeps_run_time_written_while_it_was_launching', async ($, on
   expect(runMsOf(data, '/home/u/wt/alpha')).toBe(2 * MIN)
   expect((data.store.jobs as any)[BETA].last.launchName).toBe(data.launches[0].argv[3])
 })
+
+/** 複審 MEDIUM：工作桌一直開著，但 Agent 從清單消失（派工紀錄沒記到結束）好幾小時：畫面跟存檔一樣封頂，不會一直長、不亮警示 */
+test('test_shown_run_time_is_capped_like_the_stored_total', { timeoutMs: SLOW_MS }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  betaOnly(data)
+  // 看著它跑了 4 分，接著 Agent 從清單消失（沒有 done／stopped 可看）
+  betaDispatched(data, 'desk-vanished', clock.now(), { state: 'working', status: 'busy' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  await clock.advance(4 * MIN)
+  await clock.settle()
+  data.agents = []
+  await clock.advance(3 * 60 * MIN)
+  await clock.settle()
+
+  // 派工紀錄還沒記結束；卡頭最多是「最後看到在跑＋寬限」（預設約 2 分），清單沒有「⏱」
+  expect((data.store.jobs as any)[BETA].last.ended).toBeUndefined()
+  const ui = await $.ui.mount(PANE(120))
+  const header = String((await textNode(ui, /總執行/))?.text)
+  expect(header).not.toContain('小時')
+  expect(header).not.toContain('超過 15 分')
+  const minutes = Number(header.match(/總執行 (\d+) 分/)?.[1])
+  expect(minutes).toBeGreaterThanOrEqual(4)
+  expect(minutes).toBeLessThanOrEqual(6)
+  expect((await ui.find({ key: `row-${CARD_B}` }))?.text).not.toContain('⏱')
+  await ui.unmount()
+})

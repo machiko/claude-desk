@@ -5,7 +5,7 @@ import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
-import { RUN_WARN_MS, isDeskLaunch } from './dispatch'
+import { RUN_WARN_MS, isDeskLaunch, spanMs } from './dispatch'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
 import type { Limit } from './quota-words'
 import type { JobRecord } from './dispatch'
@@ -202,11 +202,12 @@ export function runMinutesText(ms: number): string {
 }
 
 /**
- * 這件的總執行時間：已結束的派工與自動檢查、還沒結束那次派工收起來的幾段（c.runMs），加上它現在這段在跑的時間（now - c.runFrom）。
- * 跟存進去的累計同一套紀錄算（見 dispatch.ts 的 runOf）。
+ * 這件的總執行時間：已結束的派工與自動檢查、還沒結束那次派工收起來的幾段（c.runMs），加上它現在這段在跑的時間
+ * （min(now, c.runUntil) - c.runFrom）。跟存進去的累計同一套紀錄、同樣的封頂算（見 dispatch.ts 的 runOf）。
  */
 export function totalRunMs(c: Case, now: number): number {
-  return (c.runMs ?? 0) + (c.runFrom !== undefined ? Math.max(0, now - c.runFrom) : 0)
+  const running = c.runFrom !== undefined ? spanMs({ from: c.runFrom, until: c.runUntil ?? Infinity }, now) : 0
+  return (c.runMs ?? 0) + running
 }
 
 /** 總執行時間超過門檻（15 分鐘）：用畫面上寫的整分數比，「15 分」不會被標成超過。 */
