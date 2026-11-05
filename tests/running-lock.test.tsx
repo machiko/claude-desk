@@ -185,6 +185,8 @@ test('test_running_case_keeps_stop_logs_open_and_other_cases_unlocked', async ($
   await ui.press({ key: `${PREFIX}open` })
   await clock.settle()
   expect(data.processCalls.some((c: any) => c.argv.includes(CARD_B))).toBe(true)
+  // 發版按兩次：第二次才填
+  await ui.press({ key: `${PREFIX}release` })
   await ui.press({ key: `${PREFIX}release` })
   await clock.settle()
   expect(data.fills).toHaveLength(1)

@@ -26,6 +26,14 @@ RULES = [
     '題目沒列的事一律不做（force push、改寫歷史、合併 PR、刪分支、改清單外的卡）',
     '有 `release：` 關卡的卡留給使用者部署後按 u',
     '照專案文件的發版步驟補上專案自己的步驟與收尾',
+    # 面板按兩次 z 的確認段（AC-4、AC-6）
+    '有確認段：不寫題目，版號照慣例提',
+    '發版 v<版號>（<理由>），面板確認',
+    '發版 v<版號>：進行中（<步驟>）',
+    '判斷不了版號（沒有 v* tag、兩個候選都合理）才寫題目停下',
+    '沒有確認段（手打的）',
+    # 手打路徑出題後停下（AC-5）
+    '寫完題就停，等使用者在面板按 a／b／c 再按 `f`',
 ]
 
 
@@ -43,6 +51,14 @@ class ReleaseSkillTest(unittest.TestCase):
         body = text[front.end():]
         for rule in RULES:
             self.assertIn(rule, body)
+        # AC-5：手打的請求（沒有確認段）照範本出題、寫完就停，不照做
+        manual = body[body.find('- 沒有確認段'):]
+        manual = manual[:manual.find('\n')]
+        self.assertGreater(body.find('- 沒有確認段'), -1)
+        self.assertIn('照第 1 點的範本寫題目', manual)
+        self.assertIn('寫完就停', manual)
+        for go in ('不寫題目', '照慣例版號直接做', '不出題'):
+            self.assertNotIn(go, manual)
         # 確認題範本：反引號裡以「發版 v<版號>」開頭的那句，整句沒有「；」
         templates = re.findall(r'`(發版 v<版號>[^`]*)`', body)
         self.assertEqual(len(templates), 1)
@@ -56,6 +72,42 @@ class ReleaseSkillTest(unittest.TestCase):
         self.assertNotIn('<', question)
         self.assertEqual(question, sample['question'])
         self.assertIn('PR #13）', question)
+
+    def test_release_skill_takes_panel_confirmation_without_asking(self):
+        """AC-4、AC-6：帶確認段的請求不出題、先記 Decisions 與狀態再照順序做；判斷不了版號才寫題停下、不打 tag。"""
+        text = read(SKILL)
+        front = re.match(r'---\n(.*?)\n---\n', text, re.S)
+        body = text[front.end():]
+        sample = json.loads(read(SAMPLE).split('\nexport default ', 1)[1])
+        self.assertIn(sample['confirmed'], body)
+        self.assertIn(sample['confirmed'], front.group(1))
+        self.assertIn('不出題', front.group(1))
+        confirm = body[body.find('- 有確認段'):body.find('- 沒有確認段')]
+        self.assertGreater(len(confirm), 0)
+        # 先記 Decisions、寫狀態，再照順序做；「等你」不動
+        self.assertIn('Decisions', confirm)
+        self.assertIn('進行中', confirm)
+        self.assertLess(confirm.find('Decisions'), confirm.find('進行中'))
+        self.assertLess(confirm.find('進行中'), confirm.find('照第 3 點的順序做完'))
+        self.assertIn('「等你」不動', confirm)
+        # 判斷不了版號：照範本寫題、不打 tag
+        stuck = confirm[confirm.find('判斷不了版號'):]
+        self.assertIn('寫題目停下', stuck)
+        self.assertIn('不打 tag', stuck)
+        # 失敗就停在那步、狀態寫原因
+        self.assertIn('任何一步失敗就停在那步、「狀態」寫原因', body)
+
+    def test_release_skill_uses_version_written_in_request_when_confirmed(self):
+        """AC-7：帶確認段的請求另寫了版號（填入提示叫人在送出前改這行）：用那個版號、不出題，理由寫使用者指定。"""
+        body = read(SKILL)
+        confirm = body[body.find('- 有確認段'):body.find('- 沒有確認段')]
+        given = confirm[confirm.find('請求裡另寫了版號'):]
+        self.assertGreater(confirm.find('請求裡另寫了版號'), -1)
+        self.assertIn('就用那個版號', given)
+        self.assertIn('照樣不出題', given)
+        self.assertIn('使用者指定', given)
+        # 指定版號的規則在「判斷不了版號」之前：寫了版號就不算判斷不了
+        self.assertLess(confirm.find('請求裡另寫了版號'), confirm.find('判斷不了版號'))
 
 
 if __name__ == '__main__':

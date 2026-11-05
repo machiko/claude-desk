@@ -183,12 +183,13 @@ const releaseGated = (c: Pick<Case, 'gate'>) => parseGate(c.gate)?.kind === 'rel
 
 /**
  * 「⚑ 發版」填進輸入框的那行：`/desk:release` 接所有已合併待發版的卡（有 PR 的附 PR 編號），括號裡是 releaseCleanup。
- * 只問一次、A／B／C、失敗就停這些規則在 skills/release/SKILL.md，送出後由對話載入照做；這裡只列要發什麼。
+ * confirmed（面板按兩次 z）時括號最後多一段 RELEASE_CONFIRMED，用「；」接在清理段之後；手打的路徑預設不帶。
+ * 規則與確認方式在 skills/release/SKILL.md，送出後由對話載入照做；這裡只列要發什麼。
  */
-export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' | 'git' | 'gate'>[]): string {
+export function releasePrompt(cases: readonly Pick<Case, 'name' | 'pr' | 'root' | 'git' | 'gate'>[], opts: { confirmed?: boolean } = {}): string {
   const list = cases.map(c => `「${c.name}」${c.pr ? `PR #${c.pr.id}` : ''}`).join('、')
-  const cleanup = releaseCleanup(cases)
-  return `${RELEASE_CMD} ${list}${cleanup ? `（${cleanup}）` : ''}`
+  const notes = [releaseCleanup(cases), opts.confirmed ? RELEASE_CONFIRMED : ''].filter(Boolean).join('；')
+  return `${RELEASE_CMD} ${list}${notes ? `（${notes}）` : ''}`
 }
 
 /**
@@ -243,6 +244,8 @@ export function projectRoot(statusPath: string): string {
 export const CARD_CMD = '/desk:card'
 /** 發版請求的指令：skills/release/SKILL.md。 */
 export const RELEASE_CMD = '/desk:release'
+/** 面板按兩次 z 填入的發版請求括號最後一段：使用者已在面板確認、同意照慣例版號，對話不再出題（skills/release/SKILL.md 與 tests/release-sample.mjs 對照同一字串）。 */
+export const RELEASE_CONFIRMED = '已在面板確認：版號照慣例直接做'
 /** 上線確認寫進卡片的字：狀態「<tag> 已上線（工作桌確認）」、下一步「可歸檔：…」；六段也靠它們認得已確認上線。 */
 export const SHIPPED_WORD = '已上線'
 export const ARCHIVE_WORD = '可歸檔'

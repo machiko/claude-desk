@@ -1734,10 +1734,10 @@ class ReleaseDocsTest(unittest.TestCase):
             self.assertIn('從 origin/main 開的暫存 worktree', text)
         self.assertNotIn('在主 repo、要發的 PR 都合併之後執行', skill)
 
-    def test_release_docs_state_one_question_and_version_rule_when_releasing_desk(self):
-        """AC-4：發版段指向 /desk:release（題目範本與規則只在 skills/release/SKILL.md）、寫 desk 的版號規則與照做的 10 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
+    def test_release_docs_state_two_press_confirm_and_version_rule_when_releasing_desk(self):
+        """AC-1：發版段寫按兩次 z、帶「已在面板確認」段（題目範本與規則只在 skills/release/SKILL.md）、desk 的版號規則與照做的 10 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
         section = self.release_section()
-        for part in ('/desk:release', 'skills/release/SKILL.md', '只問一次', '失敗就停'):
+        for part in ('/desk:release', 'skills/release/SKILL.md', '按兩次 z', '已在面板確認', '失敗就停'):
             self.assertIn(part, section)
         # 範本與「做到底」的規則字句搬進 SKILL.md（test_release_skill.py 驗），WORKFLOW 不再寫一份
         for part in ('A) 照做', 'B) 改用', 'C) 先不發', '選 A／B 後一路做完不再問'):
@@ -1756,7 +1756,8 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertNotIn('歸檔', section[:last_step + len(steps[9][1])])
         readme = read(os.path.join(REPO, 'README.md'))
         row = next(l for l in readme.splitlines() if l.startswith('| ⚑ 發版 |'))
-        self.assertIn('只問一次', row)
+        self.assertIn('按兩次', row)
+        self.assertNotIn('按一下', row)
         self.assertNotIn('打 tag 並 push', row)
 
     def test_release_docs_add_update_desk_closing_for_desk_itself(self):
