@@ -214,7 +214,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。
     const tried = c.git?.head
     if (kind === 'catchup' && opts.auto && tried) await saveChain($, rootKey, r => r ? { ...r, catchupHead: tried } : r)
-    const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), last: record }
+    const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), ...(own.runMs !== undefined ? { runMs: own.runMs } : {}), ...(own.runBranch ? { runBranch: own.runBranch } : {}), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))

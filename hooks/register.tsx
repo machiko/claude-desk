@@ -11,7 +11,7 @@ import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, addRunTime, buildPrompt, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runMsOn, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
@@ -183,7 +183,8 @@ export async function refresh($: any, options: PluginOptions) {
           reviewTextCache.set(base.root, { raw: reviewText, top, preflight })
         }
       }
-      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
+      const runMs = tutorial ? 0 : runMsOn(jobs[normalizeRoot(base.root)], probe.git?.branch)
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...(runMs ? { runMs } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -238,7 +239,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 做完、程序還活著的工作桌 Agent 要停掉：它們的根目錄（含別的專案、已歸檔的）也先記結束，
       // 最後一次派工才先記成做完，停掉後那邊的流程不會當成被人停掉。
       const ended = settings?.stopDone !== false ? endedAlive(list) : []
-      await noteEnded($, list, [...cases.filter(c => !c.demo).map(c => c.root), ...ended.map(a => a.root)])
+      await noteEnded($, list, [...cases.filter(c => !c.demo).map(c => c.root), ...ended.map(a => a.root)], now, branchesOf(cases))
       await stopEnded($, cases, ended, now)
       await noteCardAsks($, list, cases, now)
     }
@@ -259,7 +260,15 @@ export async function refresh($: any, options: PluginOptions) {
  * 這幾個根目錄（登錄表上的卡，加上要停掉的做完 Agent 所在的，可能是別的專案）最後一次派工的 Agent 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
  * 之後派工用它分辨「現在的改動是上一個 Agent 留下的」還是別的對話在改。每一次派工只記一次，審查與同步不動指紋。
  */
-async function noteEnded($: any, list: readonly any[], roots: readonly string[]) {
+/** 每件任務的根目錄（正規化）現在在哪條分支；讀不到 git 的不列。 */
+function branchesOf(cases: readonly Case[]): Record<string, string> {
+  return Object.fromEntries(cases.filter(c => !c.demo && c.git?.branch).map(c => [normalizeRoot(c.root), c.git!.branch]))
+}
+
+/**
+ * 同時把這次派工跑了多久（從派出到工作桌看到它結束）加進總執行時間：只在第一次記下 ended 時加，同一次派工不會重複算。
+ */
+async function noteEnded($: any, list: readonly any[], roots: readonly string[], now: number, branches: Readonly<Record<string, string>>) {
   for (const key of new Set(roots.map(normalizeRoot))) {
     const last = (await loadJobs($))[key]?.last
     if (!last || last.ended) continue
@@ -271,8 +280,17 @@ async function noteEnded($: any, list: readonly any[], roots: readonly string[])
     const all = await loadJobs($)
     const cur = all[key]?.last
     if (!cur || cur.launchName !== last.launchName || cur.ended) continue
-    await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } } })
+    const timed = addRunTime(all[key], now - cur.startedAt, branches[key])
+    await $.store.set(JOBS_KEY, { ...all, [key]: { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } } })
+    // 這一輪的畫面在記下之前就算好了：同步補上，Agent 剛結束時總執行不會少掉這一次。
+    await update($, snapshot, s => s ? { ...s, cases: s.cases.map(c => !c.demo && normalizeRoot(c.root) === key ? withRunMs(c, runMsOn(timed, c.git?.branch)) : c) } : s)
   }
+}
+
+/** 換上總執行毫秒（0 就拿掉這欄），回傳新的一份。 */
+function withRunMs(c: Case, runMs: number): Case {
+  const { runMs: _, ...rest } = c
+  return runMs ? { ...rest, runMs } : rest
 }
 
 /**

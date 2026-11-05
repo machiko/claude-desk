@@ -5,7 +5,7 @@ import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
-import { isDeskLaunch } from './dispatch'
+import { RUN_WARN_MS, isDeskLaunch } from './dispatch'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
 import type { Limit } from './quota-words'
 import type { JobRecord } from './dispatch'
@@ -191,6 +191,36 @@ export function elapsedText(ms: number): string {
   const m = Math.floor(s / 60)
   if (m < 60) return `${m} 分 ${s % 60} 秒`
   return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+}
+
+/** 總執行時間只到分：不到 1 分、13 分、1 小時 3 分。 */
+export function runMinutesText(ms: number): string {
+  const m = Math.floor(Math.max(0, ms) / 60_000)
+  if (m < 1) return '不到 1 分'
+  if (m < 60) return `${m} 分`
+  return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+}
+
+/** 正在跑的 Agent（不是停下來等人）已經跑了多久；沒有就是 0。 */
+function runningMs(c: Case, now: number): number {
+  const a = c.agent
+  if (!a?.startedAt || a.status !== 'busy' || agentWaits(a)) return 0
+  return Math.max(0, now - a.startedAt)
+}
+
+/** 這件的總執行時間：已結束的派工與自動檢查，加上正在跑的 Agent。 */
+export function totalRunMs(c: Case, now: number): number {
+  return (c.runMs ?? 0) + runningMs(c, now)
+}
+
+/** 總執行時間超過門檻（15 分鐘）。 */
+export const isRunLong = (c: Case, now: number): boolean => totalRunMs(c, now) > RUN_WARN_MS
+
+/** 卡片頭一列的「總執行 13 分」；超過 15 分加「（超過 15 分）」（hasNote 為 false 時不加，窄畫面用）；沒派過工是空字串。 */
+export function runTimeText(c: Case, now: number, hasNote = true): string {
+  const ms = totalRunMs(c, now)
+  if (ms <= 0) return ''
+  return `總執行 ${runMinutesText(ms)}${hasNote && ms > RUN_WARN_MS ? `（超過 ${RUN_WARN_MS / 60_000} 分）` : ''}`
 }
 
 export const hhmm = (t: number) => {

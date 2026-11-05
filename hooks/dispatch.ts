@@ -93,7 +93,28 @@ const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
 const strList = (v: unknown) => Array.isArray(v) ? v.map(str).filter(Boolean) : []
 /** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
 export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 自動流程已接手這次（開跑自動檢查，或停在檢查段後你重開）：之後「等你」出現的題目不是它做完時寫的。 */ chained?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' } }
-export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string }
+export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string; /** 這條分支已結束的派工與自動檢查總共跑了幾毫秒（不含正在跑的）。 */ runMs?: number; /** runMs 算的是哪條分支；同一個資料夾換了分支就從 0 起算。 */ runBranch?: string }
+
+/** 總執行時間超過這麼久（15 分鐘）就用警示色標出來。 */
+export const RUN_WARN_MS = 15 * 60_000
+
+/**
+ * 把一次派工或自動檢查花的時間加進總執行時間（回傳新的一份，不改原本的）。
+ * branch 跟記著的分支不同：換了分支，從這次重新算。沒有 branch（讀不到）就照原本的分支加。
+ */
+export function addRunTime(jobs: RootJobs | undefined, ms: number, branch?: string): RootJobs {
+  const own = jobs ?? {}
+  const spent = Math.max(0, ms)
+  const isNewBranch = !!branch && !!own.runBranch && branch !== own.runBranch
+  const runBranch = branch ?? own.runBranch
+  return { ...own, runMs: (isNewBranch ? 0 : own.runMs ?? 0) + spent, ...(runBranch ? { runBranch } : {}) }
+}
+
+/** 這條分支已結束的總執行毫秒：記的是別條分支（同一個資料夾換了分支）就是 0。 */
+export function runMsOn(jobs: RootJobs | undefined, branch: string | undefined): number {
+  if (!jobs?.runMs) return 0
+  return jobs.runBranch && branch && jobs.runBranch !== branch ? 0 : jobs.runMs
+}
 export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
 
 export { KIND_LABEL }
