@@ -310,3 +310,28 @@ test('test_untrusted_steps_quote_paths_with_spaces', () => {
   expect(untrustedSteps('/home/u/My Projects/app', 'g')).toContain("cd '/home/u/My Projects/app' && claude")
   expect(untrustedSteps("/home/u/it's/app", 'g')).toContain("cd '/home/u/it'\\''s/app' && claude")
 })
+
+/** 審查 MEDIUM：自動流程派驗收遇到未信任，toast 與動態的 ③ 跟「輪到你」說同一個鍵（w），不說重新派工。 */
+test('test_untrusted_auto_review_toast_names_the_same_key_as_turn', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  const log = feedLog(on)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(96))
+  await ui.press({ key: `row-${CARD_A}` })
+  await h.pressGo(ui)
+  expect(data.launches.length).toBe(1)
+  data.launch = async () => result(1, '', UNTRUSTED_OUTPUT)
+
+  // 實作結束 → 自動檢查通過 → 自動派驗收，派的時候遇到未信任
+  await h.finish()
+
+  const steps = untrustedSteps(ROOT, 'w')
+  expect(data.toasts).toContain(`Alpha：${steps}`)
+  expect(data.toasts.some(t => t.includes('回面板再重新派工'))).toBe(false)
+  expect(log.list.some(e => e.text === `Alpha：${steps}` && e.tone === 'error')).toBe(true)
+  expect(await screen(ui)).toContain(flat(`▶ 輪到你 ${steps}`))
+  await ui.unmount()
+})

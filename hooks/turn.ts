@@ -137,6 +137,8 @@ function reviewTurnText(c: Case): string {
 }
 
 const DISPATCH_KEYS = new Set(Object.values(DISPATCH_KEY))
+/** 只用來算鍵：把還在走的流程當成已暫停，不寫回卡片也不顯示。 */
+const UNTRUSTED_STOP = 'repo 還沒信任'
 
 /**
  * 還沒信任：說三步，③ 是回面板要再按的鍵。手動派的就是剛按的那個（stageActions 會把它列出來）；
@@ -144,10 +146,19 @@ const DISPATCH_KEYS = new Set(Object.values(DISPATCH_KEY))
  * 排在執行中、等你、等回覆、等批准之後：那些比重派要緊，紀錄是這個對話自己的，別的對話派出 Agent 它不知道。
  */
 function untrustedTurn(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx): Turn {
-  const { hold: _, ...rest } = ctx
-  const base = hold.auto ? turnOf(c, rest).key : undefined
-  const key = holdKey(hold) ?? (base && DISPATCH_KEYS.has(base) ? base : undefined)
+  const key = untrustedKey(c, hold, ctx)
   return { who: 'you', text: untrustedSteps(c.root, key), ...(key ? { key } : {}) }
+}
+
+/**
+ * 還沒信任時 ③ 要按的鍵：「輪到你」與派工當下的 toast、動態共用，兩邊說同一個鍵。
+ * 自動流程派的照流程暫停後的「輪到你」：派工當下流程還沒標暫停（還說「接著自動驗收」、沒有鍵），面板看到時已經停了。
+ */
+export function untrustedKey(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx = {}): string | undefined {
+  const { hold: _, ...rest } = ctx
+  const paused = c.chain && !c.chain.stopped ? { ...c, chain: { ...c.chain, stopped: UNTRUSTED_STOP } } : c
+  const base = hold.auto ? turnOf(paused, rest).key : undefined
+  return holdKey(hold) ?? (base && DISPATCH_KEYS.has(base) ? base : undefined)
 }
 
 /** 手動派工遇到還沒信任：剛按的那個動作要留在列上，照三步回來才按得到（推送的兩顆鍵照原本的條件）。 */

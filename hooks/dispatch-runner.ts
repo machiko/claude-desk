@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents, holdKey, untrustedSteps } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents, untrustedSteps } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
@@ -11,7 +11,7 @@ import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, la
 import { hasAgentQueue, isAgentQueued, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
 import { startSim } from './tutorial-run'
 import { rawAgents, supersede, agentInfo, agentsByRoot } from './model'
-import { isBusy } from './turn'
+import { isBusy, untrustedKey } from './turn'
 import { WORD } from './theme'
 import { lastLaunches } from './stale-agents'
 import { restage, spin, tutorial, lastAgents } from './register'
@@ -29,11 +29,11 @@ async function clearUntrusted($: any, statusPath: string) {
   await update($, untrustedAtom, v => (statusPath in v ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== statusPath)) : v))
 }
 
-/** 啟動失敗是因為 repo 還沒信任：記下這件派的是哪一種，動態、toast 與對話說三步（③ 是剛按的那個鍵）。 */
+/** 啟動失敗是因為 repo 還沒信任：記下這件派的是哪一種，動態、toast 與對話說三步（③ 跟「輪到你」同一個鍵：手動派的是剛按的鍵，自動流程派的照原本「輪到你」的派工鍵）。 */
 async function holdUntrusted($: any, c: Case, kind: DispatchKind, now: number, auto: boolean, skipPanel: boolean) {
   const hold: UntrustedHold = { kind: 'untrusted', root: c.root, at: now, dispatch: kind, auto }
   await update($, untrustedAtom, v => ({ ...v, [c.statusPath]: hold }))
-  const steps = untrustedSteps(c.root, holdKey(hold))
+  const steps = untrustedSteps(c.root, untrustedKey(c, hold))
   await feedPush($, [{ at: now, text: `${c.name}：${steps}`, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, steps, { name: c.name, skip: skipPanel })
   $.ui.toast(`${c.name}：${steps}`, { timeoutMs: UNTRUSTED_TOAST_MS })
