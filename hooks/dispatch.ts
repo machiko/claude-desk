@@ -2,7 +2,7 @@
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, expandHome, isPlaceholder, named, parseGate, saysNone } from './card'
-import { shownStopped } from './chain'
+import { AGENT_STOPPED, shownStopped } from './chain'
 import type { ChainRun } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 import { DONE_RULE, SPEC_RULE, cardRules, changelogRule, testRule } from './prompts/rules'
@@ -295,6 +295,11 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
 export const ciFailed = (c: Case): boolean => c.pipeline?.current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)
 /** 「輪到你」叫你按 g 修的時候（檢查失敗、流程停下、Agent 被停掉、PR 的 CI 失敗）：下一步寫什麼，g 都要派得出去。 */
 export const fixByG = (c: Case): boolean => c.state === 'failed' || ciFailed(c)
+/**
+ * 按 g 派出去的真的是修正（算進整張卡的修正輪數，不受上限擋）：fixByG 裡扣掉不是修東西的兩種——
+ * Agent 被停掉後重開（接著把那件事做完）、停在檢查段（測試沒跑成，不是沒過）。
+ */
+export const fixesByG = (c: Case): boolean => fixByG(c) && c.chain?.stopped !== AGENT_STOPPED && !c.chain?.heldAtCheck
 
 /** 已合併、停在上線段（還沒上線）：分支已進基準分支，不派實作、審查，也不跑檢查。發版線沒有合併段，不算。 */
 export const mergedUnshipped = (c: Case): boolean => c.pipeline?.current === 'ship' && isMerged(c)

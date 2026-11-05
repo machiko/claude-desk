@@ -83,6 +83,11 @@ export type ChainStep =
 /** 這條分支累計派過的修正輪數：沒記總數的舊紀錄用這一輪的 round。 */
 export const fixTotalOf = (run: Pick<ChainRun, 'fixTotal' | 'round'> | undefined): number => run?.fixTotal ?? run?.round ?? 0
 
+/** 自動流程的修正真的派出去了：這條分支累計的修正輪數加 1，記下是哪條分支。 */
+export function countedFix(run: ChainRun, branch: string | undefined): Pick<ChainRun, 'fixTotal' | 'fixBranch'> {
+  return { fixTotal: fixTotalOf(run) + 1, ...(branch ? { fixBranch: branch } : {}) }
+}
+
 /**
  * 開新一輪流程（重新驗收、按 g／w 重開）時要帶上的累計修正數：只帶同一條分支記的；換了分支、沒記分支或還沒修過就不帶（從 0 起算）。
  * `fixed`：這次開流程就是你主動派的修正，總數再加 1（不受上限擋，但照樣算）。

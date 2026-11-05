@@ -266,6 +266,44 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold', async
   expect(data.toasts).toContain(`Alpha：流程已暫停，${REASON}`)
 })
 
+/** 審查 HIGH：自動派的修正排進隊伍、額度不足被丟掉（沒派出）不算一輪；之後你按 g 派出修正才算，整張卡只算 1 輪 */
+test('test_dropped_queued_fix_then_g_counts_one_round', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[SETTINGS] = JSON.stringify({})
+  data.files[REGISTRY] = registry([['Alpha', CARD_A]])
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace('- 下一步：push', '- 下一步：派審查')
+  setGate(data, CARD_A, 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1', files: ['src/a.ts'] }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.store.chains = { [ALPHA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
+  data.store.jobs = { [ALPHA]: lastJob('review') }
+  data.agents = FULL()
+  startsAgents(data, clock)
+  const h = helpers($, data, clock)
+
+  // 名額滿：修正排進隊伍，還沒派出，不算
+  await h.refresh(); await h.step()
+  expect(data.launches).toHaveLength(0)
+  expect((data.store.chains as any)[ALPHA].fixTotal ?? 0).toBe(0)
+  // 排隊期間額度跌到 25%、空出名額：那筆被丟掉，流程暫停，一樣不算
+  quota(data, 75)
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  await h.refresh()
+  expect(data.launches).toHaveLength(0)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[ALPHA].fixTotal ?? 0).toBe(0)
+
+  // 你按 g：派出修正，整張卡算 1 輪
+  data.agents = []
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(ALPHA)
+  expect((data.store.chains as any)[ALPHA].fixTotal).toBe(1)
+  expect((data.store.chains as any)[ALPHA].stopped).toBeUndefined()
+})
+
 /** AC-4：額度剩 25%：面板按兩次 g、w，指令 /desk sync：照常派出，面板與提示不提額度。 */
 test('test_manual_dispatch_ignores_quota_threshold', async ($, on) => {
   const { data, clock } = fixture(on)

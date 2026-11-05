@@ -223,8 +223,8 @@ test('each user turn before merging says what happens after it', () => {
   // 審查段：有開著的 PR 過關後合併，沒有就開 PR。
   const openPr = mk({}, { pr: { id: 12, state: 'OPEN', ci: 'pass' } }, passed)
   expect(openPr.pipeline?.current).toBe('review')
-  expect(turnOf(openPr)).toEqual({ who: 'you', text: '按 w 派驗收（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後合併 PR', action: 'review', key: 'w' })
-  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派驗收（新對話）；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後開 PR', action: 'review', key: 'w' })
+  expect(turnOf(openPr)).toEqual({ who: 'you', text: '按 w 派驗收（新對話）；有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後合併 PR', action: 'review', key: 'w' })
+  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: '按 w 派驗收（新對話）；有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後開 PR', action: 'review', key: 'w' })
 })
 
 /** one-next-step D-04：審查後有新 commit，但流程會自己接手（自動排的重新檢查、修正輪剛做完）：新的一輪還沒過關，也照樣是自動重新審查 */

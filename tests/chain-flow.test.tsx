@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, CARD_A, result } from './fixture'
+import { AGENT_STOPPED } from '../hooks/chain'
 
 test('continue → auto check → auto review → fix round 1 on HIGH → check → review → pass, Bitbucket read only', async ($, on) => {
   const { data, clock } = fixture(on)
@@ -405,4 +406,36 @@ test('test_manual_fix_after_limit_is_dispatched_once', async ($, on) => {
   expect(data.launches.length).toBe(2)
   expect(f.chain().stopped).toBe(limitStop(1))
   expect(f.chain().fixTotal).toBe(3)
+})
+
+/** 審查 HIGH：Agent 被停掉後按 g 重開是接著把那件事做完，不是修正：累計修正數不加；之後的自動修正照實際派出的輪數算 */
+test('test_restart_after_stopped_agent_is_not_counted_as_fix', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  // 已自動修過 1 輪；之後的實作 Agent 被你停掉
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, fixTotal: 1, fixBranch: 'feature/alpha', stopped: AGENT_STOPPED } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'continue', startedAt: 0, fresh: false, owner: 'fixture-session', handled: true, ended: { how: 'stopped' } } } }
+  await f.refresh()
+
+  // 按 g 重開：派出去了，累計數照帶、不加
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(1)
+  expect(f.chain().stopped).toBeUndefined()
+  expect(f.chain().fixTotal).toBe(1)
+
+  // 做完 → 檢查 → 審查有 HIGH：還能自動修第 2 輪（不是直接停）
+  data.git[f.root]!.head = 'h2'
+  await f.finish()
+  expect(data.launches.length).toBe(2)
+  expect(f.prompt(1).startsWith('程式碼審查')).toBe(true)
+  f.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  await f.finish()
+  expect(data.launches.length).toBe(3)
+  expect(f.prompt(2).startsWith('修正第 2／2 輪：')).toBe(true)
+  expect(f.chain().fixTotal).toBe(2)
+  expect(f.chain().stopped).toBeUndefined()
 })

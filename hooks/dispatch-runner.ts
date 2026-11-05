@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, fixByG, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, fixesByG, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
@@ -15,7 +15,7 @@ import { isBusy, untrustedKey } from './turn'
 import { WORD } from './theme'
 import { lastLaunches } from './stale-agents'
 import { restage, spin, tutorial, lastAgents } from './register'
-import { carriedFix } from './chain'
+import { carriedFix, countedFix } from './chain'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
@@ -206,9 +206,11 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp })
     const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。同一條分支累計的修正數照帶（不歸零）；
-    // 你按 g 派的修正（「輪到你」叫你按 g 修的時候）不受上限擋，但照樣算一輪。
-    const fixed = kind === 'continue' && fixByG(c)
+    // 你按 g 派的修正不受上限擋，但照樣算一輪；Agent 被停掉後重開、停在檢查段時按 g 不是修正，不算（fixesByG）。
+    const fixed = kind === 'continue' && fixesByG(c)
     if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...carriedFix(r, c.git?.branch, fixed), ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
+    // 自動流程的修正（含從隊伍派出的）真的派出去了才算一輪：排隊後被額度煞車或別的原因丟掉的不算。
+    if (opts.auto && opts.fix) await saveChain($, rootKey, r => r ? { ...r, ...countedFix(r, c.git?.branch) } : r)
     // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。
     if (kind === 'review' && probed) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: probed.head, securityBranch: probed.branch } : { reviewHead: probed.head, reviewBranch: probed.branch }) } : r)
     // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。

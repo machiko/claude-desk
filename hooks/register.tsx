@@ -150,7 +150,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 這個對話的流程還沒處理剛做完的實作：檢查通過後會自動派審查。
       const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       const chain = run
-        ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: shownStopped(run.stopped), ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
+        ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: shownStopped(run.stopped), ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.fixTotal ? { fixTotal: run.fixTotal } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
@@ -384,11 +384,12 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       notify($, say)
       if (plan) await autoPublish($, options, { ...c, pr }, plan)
     } else {
-      // 派修正：這條分支累計的修正輪數加 1（重新驗收、按 g／w 重開都帶著，用完就停下）；派審查不算。
-      // 寫回時以最新的紀錄為準（被別的對話改過會重套）：提示用的輪數跟寫進去的同一個。
+      // 派修正：這條分支累計的修正輪數要等真的派出去（dispatch 啟動成功）才加 1，排進隊伍後被丟掉、沒派成的不算；
+      // 這裡先把目前的累計數寫成數字（舊紀錄沒有，round 改掉之前照它算），提示的「第 n／2 輪」是派出去後的數。
+      // 寫回時以最新的紀錄為準（被別的對話改過會重套）：提示用的輪數跟寫進去的同一個。派審查不算。
       let total = fixTotalOf(run) + 1
-      const counted = (r: ChainRun): Partial<ChainRun> => { total = fixTotalOf(r) + 1; return step.reason ? { fixTotal: total, ...(c.git?.branch ? { fixBranch: c.git.branch } : {}) } : {} }
-      if (!(await saveChain($, key, r => r ? { ...withoutMedium(r), round: step.round, ...counted(r) } : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
+      const counted = (r: ChainRun): Partial<ChainRun> => { const now = fixTotalOf(r); total = now + 1; return step.reason ? { fixTotal: now } : {} }
+      if (!(await saveChain($, key, r => r ? { ...withoutMedium(r), ...counted(r), round: step.round } : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
       // 審查修正帶著剛結束的是不是資安審查：提示只寫那一份審查檔（SECURITY.md 或 REVIEW.md）。提示的「第 n／2 輪」是整張卡累計的。
       const fix: FixReason | undefined = step.reason ? { from: step.reason as 'check' | 'review', round: total, ...(step.reason === 'check' ? { tail: fresh?.tail ?? [] } : {}), ...(step.reason === 'review' && last.security ? { security: true } : {}) } : undefined
       await dispatch($, options, { ...c, state: 'ready' }, step.dispatch, { fix, auto: true, ...(step.security ? { security: true } : {}) })
