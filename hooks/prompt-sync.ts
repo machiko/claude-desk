@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
 import type { Case, PanelAction, SentRecord } from '../types'
 import { decisionAnswerOf, decisionNames, parseGate, picksMediumFix } from './card'
-import { cardContext, cardKey, cardReminder, decisionContext, feedPush, loadChains, me, panelActionsContext, saveChain, tellPanel } from './desk-io'
+import { cardContext, cardKey, cardReminder, decisionContext, feedPush, loadChains, loadJobs, me, panelActionsContext, saveChain, tellPanel } from './desk-io'
 import { normalizeRoot } from './dispatch'
 import type { Timer } from './desk-io'
 import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
@@ -249,13 +249,23 @@ async function mediumFixable($: any, cases: readonly Case[]): Promise<Case[]> {
 /**
  * 審查 MEDIUM 題選了修掉、決策真的送出了：在那件的流程紀錄記下送出時的 HEAD（結構化欄位，不從原因句認），
  * 並把流程改成這個對話的（跟按 g 一樣接手：開流程的對話可能已經不在），等「等你」清掉後由這個對話的自動流程派修正。
+ * 一起記下那題是哪份審查問的：送出時這件最後一次派工是資安審查就記 mediumFixSecurity，修正提示只寫 SECURITY.md。
  */
 async function noteMediumFix($: any, cases: readonly Case[]) {
   if (!cases.length) return
   const mine = await me($)
+  const jobs = await loadJobs($)
   for (const d of cases) {
     const head = d.git?.head
-    if (head) await saveChain($, normalizeRoot(d.root), r => r ? { ...r, owner: mine, mediumFixAt: head } : r)
+    if (!head) continue
+    const key = normalizeRoot(d.root)
+    const last = jobs[key]?.last
+    const security = last?.kind === 'review' && !!last.security
+    await saveChain($, key, r => {
+      if (!r) return r
+      const { mediumFixSecurity: _, ...rest } = r
+      return { ...rest, owner: mine, mediumFixAt: head, ...(security ? { mediumFixSecurity: true } : {}) }
+    })
   }
 }
 

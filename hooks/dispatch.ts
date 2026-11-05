@@ -272,7 +272,7 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
   return hits.length === 1 ? hits[0]! : null
 }
 
-export type FixReason = { /** medium：你在「等你」對審查 MEDIUM 題選了修掉。 */ from: 'check' | 'review' | 'medium'; round: number; tail?: string[]; /** 審查修正接在資安審查之後：依 SECURITY.md 修，不是 REVIEW.md。 */ security?: boolean }
+export type FixReason = { /** medium：你在「等你」對審查 MEDIUM 題選了修掉。 */ from: 'check' | 'review' | 'medium'; round: number; tail?: string[]; /** 審查修正接在資安審查之後（或你選修掉的 MEDIUM 是資安審查問的）：依 SECURITY.md 修，不是 REVIEW.md。 */ security?: boolean }
 
 /** `self`：這次派出去的啟動名；Agent 查同一個 worktree 有沒有別的 Agent 時，才不會把自己當成別人。 */
 export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = ''): string {

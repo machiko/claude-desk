@@ -118,6 +118,10 @@ test('test_review_prompt_always_asks_behavior_medium', () => {
   const again = review(1)
   expect(again).toContain('只判斷上一輪的 CRITICAL／HIGH 有沒有修好')
   expect(again).toContain('標「（等你決定）」的照原樣再列')
+  // 重新審查（過關後又有新 commit）：等你還沒回答、或剛選了修掉的那條 MEDIUM 也照原樣再列，不會被整份覆寫清掉
+  const recheck = review(0, { base: 'abc123', recheck: true })
+  expect(recheck).toContain('標「（等你決定）」而沒被改到的照原樣再列（過關時要在 等你 問）')
+  expect(recheck).not.toContain('沒被改到的 MEDIUM／LOW 不要再提')
 })
 
 /** AC-1：有 HIGH 也有 MEDIUM：自動修正只修 CRITICAL／HIGH，MEDIUM 不在這輪改；修完複審只剩 MEDIUM 就過關 */
@@ -455,4 +459,52 @@ test('test_answer_b_fix_is_not_sent_twice_when_agent_list_lags', async ($, on) =
   data.agents = [started]
   for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
   expect(data.launches).toHaveLength(1)
+})
+
+/** 高風險卡的資安審查問的 MEDIUM 選 B：派出的修正只寫 SECURITY.md；沒派出停下後按 g 重派也照它 */
+test('test_answer_b_on_security_review_medium_names_security_file', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  data.launch = async () => result(1, '', 'claude: boom')
+  passedWithMediumAsk(data, { owner: ME })
+  data.files[`${ALPHA}/.task/SECURITY.md`] = '- [MEDIUM][輸入] c.ts:3 — 路徑沒正規化（等你決定）'
+  // 這件最後一次派工是資安審查（高風險卡：程式碼審查過關後派的）
+  const jobs = data.store.jobs as any
+  data.store.jobs = { ...jobs, [ALPHA]: { ...jobs[ALPHA], last: { ...jobs[ALPHA].last, security: true } } }
+  await h.refresh()
+  await answerB($, data)
+  expect((data.store.chains as any)[ALPHA].mediumFixSecurity).toBe(true)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+
+  // 自動試的那次：指到 SECURITY.md，不提 REVIEW.md
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/SECURITY.md 修正')).toBe(true)
+  expect(h.prompt(0)).not.toContain('REVIEW.md')
+  expect((data.store.chains as any)[ALPHA].stopped).toBe(MEDIUM_FIX_NOT_SENT)
+
+  // 沒派出、按 g 重派：照樣指到 SECURITY.md
+  await h.refresh(); await h.step()
+  launchOneAtATime(data, clock)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/SECURITY.md 修正')).toBe(true)
+})
+
+/** 程式碼審查問的 MEDIUM 選 B：上一次選修掉的是資安審查也不沿用，指到 REVIEW.md */
+test('test_answer_b_on_code_review_medium_clears_old_security_mark', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  launchOneAtATime(data, clock)
+  passedWithMediumAsk(data, { owner: ME, mediumFixSecurity: true })
+  await h.refresh()
+  await answerB($, data)
+  expect((data.store.chains as any)[ALPHA].mediumFixSecurity).toBeUndefined()
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/REVIEW.md 修正')).toBe(true)
 })
