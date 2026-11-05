@@ -22,8 +22,8 @@ const NOT_AFTER_MERGE: ActionId[] = ['continue', 'review', 'sync', 'verify']
 test('merged case whose check failed afterwards only offers post-merge actions', () => {
   const c = mk({}, merged, failedCheck)
   expect(c.state).not.toBe('failed')
-  expect(ids(c)).toEqual(['open', 'release', 'ship'])
-  expect(turnOf(c)).toEqual({ who: 'you', text: '按兩次 z 發版，再按 Enter 送出；打了 tag 之後歸檔', key: 'z' })
+  expect(ids(c)).toEqual(['open', 'release'])
+  expect(turnOf(c)).toEqual({ who: 'you', text: '按兩次 z 發版，再按 Enter 送出；打了 tag 之後歸檔', action: 'release', key: 'z' })
   // 完成檢查在跑或排隊也一樣：合併後不再出現檢查
   for (const ctx of [{ verifying: true }, { queued: true }]) for (const id of NOT_AFTER_MERGE) expect(stageActions(c, ctx).has(id)).toBe(false)
 })
@@ -38,7 +38,7 @@ test('merged case whose chain stopped after merge is not failed and has no conti
 test('merged and tagged with a release gate offers ship confirm, never continue or check', () => {
   const c = mk({ gate: 'release：v0.2.0' }, { ...merged, tag: 'v0.2.0', chain: { round: 0, stopped: '完成檢查未通過' } }, failedCheck)
   expect(ids(c)).toEqual(['open', 'ship'])
-  expect(turnOf(c)).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線；確認後歸檔', key: 'u' })
+  expect(turnOf(c)).toEqual({ who: 'you', text: '部署 v0.2.0 後按 u 確認上線；確認後歸檔', action: 'ship', key: 'u' })
 })
 
 test('merged, tagged and confirmed with a failed check is done: archive only', () => {
@@ -50,14 +50,14 @@ test('merged, tagged and confirmed with a failed check is done: archive only', (
 test('merged via git (no PR) drops sync and check as well', () => {
   const c = mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }, { mergedInto: 'origin/main' }, failedCheck)
   expect(c.state).not.toBe('failed')
-  expect(ids(c)).toEqual(['open', 'release', 'ship'])
+  expect(ids(c)).toEqual(['open', 'release'])
 })
 
 test('merged via git after a commit that followed the review still counts as merged', () => {
   const c = mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }, { mergedInto: 'origin/main', chain: { round: 0, passed: true, stale: true } }, failedCheck)
   expect(c.pipeline?.stages.find(s => s.id === 'merge')?.status).toBe('done')
   expect(c.state).not.toBe('failed')
-  expect(ids(c)).toEqual(['open', 'release', 'ship'])
+  expect(ids(c)).toEqual(['open', 'release'])
 })
 
 test('merged case does not hint to sync the card', () => {
