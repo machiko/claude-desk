@@ -285,3 +285,83 @@ test('test_check_paused_chain_resumed_with_question_on_card_still_dispatches_rev
   expect(log.has(HANDED)).toBe(false)
   expect(data.launches).toHaveLength(2)
 })
+
+const COMPOSE = { options: { composeDir: '/home/u/app' } }
+const IN_APP = 'docker compose exec -T app php artisan test'
+const svc = (Service: string, State = 'running') => JSON.stringify({ Service, State, Health: '' })
+
+/**
+ * AC-6 的範圍：自動檢查開跑後流程因容器未啟動停在檢查段（那次實作沒標成處理過），暫停中「等你」出現題目：
+ * 題目留著按 v、或先清掉再按 v，通過後都照舊派驗收，不說「不替那次派工接著跑」。
+ */
+for (const clearFirst of [false, true]) {
+  test(`test_check_paused_for_containers_still_dispatches_review_with_question_on_card${clearFirst ? '_cleared_first' : ''}`, COMPOSE, async ($, on) => {
+    const { data, clock } = fixture(on)
+    const log = feedLog(on)
+    alphaOnly(data, clock)
+    data.files[CARD_A] = data.files[CARD_A]!.replace(/- 驗證：.*$/m, `- 驗證：\`${IN_APP}\``)
+    data.store.trustedVerify = { [CARD_A]: IN_APP }
+    const h = helpers($, data, clock)
+    await h.refresh()
+    await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+    await clock.settle()
+
+    // 容器沒起來：實作做完、自動檢查跑不了 → 停在檢查段
+    data.compose = svc('app', 'exited')
+    await h.finish()
+    expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toContain('容器 app 未啟動')
+
+    // 暫停中「等你」寫了一題（不是那次實作寫的）
+    setAsk(data, '要先發版嗎？A) 要 B) 不要')
+    await h.refresh()
+    if (clearFirst) { setAsk(data, '無'); await h.refresh() }
+
+    // 容器起來後重開：通過後照舊派驗收
+    data.compose = svc('app')
+    await h.verify()
+    await h.step(); await h.step()
+    expect(data.launches).toHaveLength(2)
+    expect(h.prompt(1)).toContain('程式碼審查')
+
+    setAsk(data, '無')
+    await h.refresh()
+    await h.step(); await h.step()
+    expect(log.has(HANDED)).toBe(false)
+    expect(data.launches).toHaveLength(2)
+  })
+}
+
+/**
+ * AC-6 之後：實作改了測試指令、又把題目寫進「等你」後做完；在對話清掉後流程停在檢查段（指令改過）。
+ * 核准新指令後重開：照暫停時說的「流程接著走」，通過後派驗收。
+ */
+test('test_question_handled_then_check_paused_resumes_to_review', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+
+  h.setCheck('node test.mjs --all')
+  setAsk(data, '快取要用哪種：A) 記憶體 B) Redis')
+  await h.finish()
+  expect(data.launches).toHaveLength(1)
+
+  // 在對話處理完：說一聲不替那次派工接著跑，流程停在檢查段等你核准指令
+  setAsk(data, '無')
+  await h.refresh(); await h.step(); await h.step()
+  expect(log.has(HANDED)).toBe(true)
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toContain('測試指令改過')
+  expect(data.launches).toHaveLength(1)
+
+  // 核准後重開：通過後派驗收
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs --all' }
+  await h.verify()
+  await h.step(); await h.step()
+  expect(sh(data)).toBe(1)
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1)).toContain('程式碼審查')
+})

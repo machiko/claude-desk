@@ -380,10 +380,10 @@ export const codeJobEnded = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck'>
 
 /**
  * 做完一輪時把要你決定的事寫進了「等你」、還沒處理：自動流程停著等，不替它跑測試、派驗收或修正。
- * 已記成 answered 的（在對話處理過、流程自己排的重新測試、或你從檢查段重開的）不算。
+ * 流程已接手的（chained：開跑自動檢查、停在檢查段後你重開）不算，那之後「等你」的題目不是它寫的。
  */
-export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck' | 'answered'> | undefined, ask: string): boolean =>
-  codeJobEnded(last) && !last?.answered && !saysNone(ask)
+export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck' | 'chained'> | undefined, ask: string): boolean =>
+  codeJobEnded(last) && !last?.chained && !saysNone(ask)
 
 /**
  * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑或停下來等（busy／waiting）、清單裡找不到都是 null；

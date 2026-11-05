@@ -137,12 +137,12 @@ export async function resumeAtCheck($: any, c: Case) {
   })
   if (!resumed) return
   // 停下時流程已把那次實作記成處理過（指令未核准的那種）：改回未處理，流程才會接手。
-  // 同時記成 answered、拿掉 cardAsked：這是你重開的，不是那次 Agent 剛做完；「等你」這時有題目也不是它寫的，流程照舊往下走。
+  // 同時記成流程已接手（chained）、拿掉 cardAsked：這是你重開的，不是那次 Agent 剛做完；「等你」這時有題目也不是它寫的，流程照舊往下走。
   const all = await loadJobs($)
   const last = all[key]?.last
   if (last?.handled) {
     const { handled: _, cardAsked: _c, ...open } = last
-    await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...open, answered: true } } })
+    await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...open, chained: true } } })
   }
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 流程繼續：測試跑完了，接著自動往下走`, tone: 'suggestion', card: c.statusPath }])
   refreshSoon($, optionsRef!)
