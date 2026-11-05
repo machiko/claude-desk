@@ -75,7 +75,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
    ```
 
 2. 在 repo 裡開一件任務：`/desk:card new feature/order-export 訂單匯出`，會建 worktree、DESK 卡，並把一列寫進這個專案的登錄表（`projects-scope.md`，還沒有就自動建立）。想先開工作桌、還不開卡，就在面板按 `n`（「＋ 建立空的登錄表」）。
-3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。它會問幾個釐清問題，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後在面板按兩次 `t` 確認（或輸入 `/desk:card spec order-export ok`）。按 `t` 確認後會自動派實作；在對話用指令確認的，回合結束後一樣自動派。
+3. 寫規格：`/desk:card spec order-export 管理員可以把訂單匯出成 CSV`。有推薦答案的釐清題它照推薦寫成預設決定、沒推薦的才問，把目標、非目標、驗收情境與完成檢查寫進卡片。看過後在面板按兩次 `t` 確認（或輸入 `/desk:card spec order-export ok`）。按 `t` 確認後會自動派實作；在對話用指令確認的，回合結束後一樣自動派。
 4. 輸入 `/desk` 開工作桌，照現在卡第二列的指示按鍵（例如按兩次 `g` 派 Agent）。
 
 背景 Agent 只會在「信任過的 repo」裡啟動：第一次用某個 repo 前，先在那個 repo 根目錄開一次 `claude`，信任提示選 Yes。
@@ -267,7 +267,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
 | `updateCheck` | `"off"` 不自動檢查 desk 新版本；沒設＝每 24 小時查一次（`/desk update` 不受影響） |
 | `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base（desk 也拿它當 diff 與合併判斷的基準之一）、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
-| `card.specPreflight` | 規格前審指令：`/desk:card spec` 讀現況後提示執行，輸出當候選清單（`.task/SPEC-gemini.md`）供對話篩選併入規格；指令失敗跳過照常寫規格。任何會輸出規格候選的工具都行。`{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成相關模組檔案路徑（逗號分隔），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
+| `card.specPreflight` | 規格前審指令：`/desk:card spec` 讀現況後提示執行，輸出當候選清單（`.task/SPEC-gemini.md`）供對話篩選併入規格；在背景執行，對話同時繼續讀程式與擬草稿，相關檔 1～2 個的小卡跳過；指令失敗跳過照常寫規格。任何會輸出規格候選的工具都行。`{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成相關模組檔案路徑（逗號分隔），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
 | `card.retro` | 歸檔回顧指令：`card.py archive` 複製完 `.task` 檔後、清理 worktree 之前執行，`{slug}` 換成任務名稱，stdout 原樣印出；指令失敗印一行警示但不中斷歸檔。任何會做歸檔統計或產出回顧的工具都行。desk 不執行也不檢查這條指令；空白＝不加 |
 
 ## 開發
