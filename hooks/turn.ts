@@ -152,14 +152,25 @@ const UNTRUSTED_STOP = 'repo 還沒信任'
 /** 手動派工遇到還沒信任：剛按的那個動作（推送看現在是開 PR 還是 push）。 */
 const HOLD_ACTION: Partial<Record<DispatchKind, ActionId>> = { continue: 'continue', review: 'review', sync: 'sync', reply: 'reply' }
 const heldAction = (c: Case, kind: DispatchKind): ActionId | undefined => kind === 'publish' ? (needsPr(c) ? 'open-pr' : needsPush(c) ? 'push' : undefined) : HOLD_ACTION[kind]
+/** 派工鍵派得出去：dispatchable 列了它；等你有決策時不派繼續（先回答決策）。列上與 ③ 用同一個判斷。 */
+function mayDispatch(c: Case, k: 'continue' | 'review' | 'sync' | 'reply'): boolean {
+  return dispatchable(c).includes(k) && !(k === 'continue' && c.state === 'ask' && parseDecisions(c.ask).length > 0)
+}
+/** 手動派的那個動作此刻還在列上（派得出去）才算；失敗後卡片改成派不出去就不算（推送兩顆鍵照原本的條件）。 */
+const heldOnRow = (c: Case, kind: DispatchKind): ActionId | undefined => {
+  const a = heldAction(c, kind)
+  return a && (a === 'open-pr' || a === 'push' || mayDispatch(c, a as 'continue' | 'review' | 'sync' | 'reply')) ? a : undefined
+}
 
 /**
- * 還沒信任時 ③ 要按的動作：手動派的就是剛按的那個（actionsFor 會把它列出來）；
+ * 還沒信任時 ③ 要按的動作：手動派的就是剛按的那個，前提是它還派得出去（actionsFor 用同一個 heldOnRow 列它）；
+ * 失敗後卡片改成派不出去了，跟自動流程派的一樣照「輪到你」取派工動作，沒有就說重新派工。
  * 自動流程派的照「這一步沒派出去」時的「輪到你」取派工動作：派工當下的快照還說「接著自動驗收」（沒有動作），所以算的時候把流程當成已停下；
  * 檢查失敗後派修正那種，state 是 failed，停下時一樣是繼續（g）。c 要是快照裡這件的樣子（跟面板同一份），不是派工用的 state 改成 ready 的複本。
  */
 function untrustedAction(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx): ActionId | undefined {
-  if (!hold.auto) return heldAction(c, hold.dispatch)
+  const held = hold.auto ? undefined : heldOnRow(c, hold.dispatch)
+  if (held) return held
   const { hold: _, ...rest } = ctx
   const paused = c.chain && !c.chain.stopped ? { ...c, chain: { ...c.chain, stopped: UNTRUSTED_STOP } } : c
   const action = turnOf(paused, rest).action
@@ -377,9 +388,9 @@ function actionsFor(c: Case, ctx: TurnCtx, isAi: boolean): Set<ActionId> {
     if (canStop(c)) out.add('stop')
     return handling(out, isAi, ctx)
   }
-  // 手動派工遇到還沒信任：剛按的那個留在列上，照三步回來才按得到（派不出去的照樣不列）。
-  const held = ctx.hold && !ctx.hold.auto ? heldAction(c, ctx.hold.dispatch) : undefined
-  if (held && (held === 'open-pr' || held === 'push' || may(held))) out.add(held)
+  // 手動派工遇到還沒信任：剛按的那個留在列上，照三步回來才按得到（派不出去的照樣不列，③ 也不說它）。
+  const held = ctx.hold && !ctx.hold.auto ? heldOnRow(c, ctx.hold.dispatch) : undefined
+  if (held) out.add(held)
   if (!merged) {
     if (ctx.now !== undefined && cardBehind(c, ctx.now) && may('sync')) out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)

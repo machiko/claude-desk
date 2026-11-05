@@ -362,3 +362,29 @@ test('test_untrusted_auto_fix_after_failed_check_toast_names_the_same_key_as_tur
   expect(await screen(ui)).toContain(flat(`▶ 輪到你 ${steps}`))
   await ui.unmount()
 })
+
+/** 審查 MEDIUM：手動按 g 遇到未信任後，卡片被改成派不出去（關卡改成 spec）：③ 不再說按 g，說的鍵一定在列上，列上也沒有 g。 */
+test('test_untrusted_manual_hold_drops_key_when_card_can_no_longer_dispatch_it', () => {
+  const hold = { hold: { dispatch: 'continue' as const, auto: false } }
+  // 前提：卡片還派得出去時 ③ 說 g、g 在列上
+  expect(turnOf(alphaCase(), hold)).toMatchObject({ key: 'g' })
+  expect(stageActions(alphaCase(), hold).has('continue')).toBe(true)
+  const gated = (() => {
+    const text = card().replace('- 關卡：無', '- 關卡：spec：待確認規格（AC-1～AC-3）')
+    const base = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, text, 1, {}), git: { branch: 'feature/alpha', head: 'h1' } } as Case
+    const piped = { ...base, pipeline: pipeline(base) }
+    return { ...piped, state: finalState(piped) } as Case
+  })()
+
+  const turn = turnOf(gated, hold)
+  const row = stageActions(gated, hold)
+
+  expect(row.has('continue')).toBe(false)
+  expect(turn.text).not.toContain('回面板再按 g')
+  if (turn.action) {
+    expect(row.has(turn.action)).toBe(true)
+    expect(turn.text).toContain(`回面板再按 ${turn.key}`)
+  } else {
+    expect(turn.text).toContain('回面板再重新派工')
+  }
+})
