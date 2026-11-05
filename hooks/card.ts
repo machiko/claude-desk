@@ -290,7 +290,7 @@ export function confirmShip(text: string, date: string, time: string, tag: strin
   if (m[1] === 'CARD') body = body.replace(/^- 更新：.*?rev (\d+).*$/m, (_l, rev) => `- 更新：${date} ${time} · rev ${Number(rev) + 1} · desk 上線確認`)
   const start = m.index + m[0].indexOf(m[2]!)
   const next = text.slice(0, start) + body + text.slice(start + m[2]!.length)
-  const entry = `- ${date}：${named(user).trimStart()}在工作桌確認 ${tag || '這一版'} 已上線，release 關卡清為無`
+  const entry = `- ${date} ${time}：${named(user).trimStart()}在工作桌確認 ${tag || '這一版'} 已上線，release 關卡清為無`
   const lines = next.replace(/\s+$/, '').split('\n')
   const at = lines.findIndex(l => /^## History\b/.test(l))
   if (at < 0) return `${lines.join('\n')}\n\n## History\n\n${entry}\n`

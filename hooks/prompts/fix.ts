@@ -9,13 +9,15 @@ import { isQuotaHold } from '../quota-words'
 /** 要改規格才能修的 MEDIUM：不改，交給你決定。修正提示共用。 */
 const MEDIUM_DECIDE = `要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。`
 const FIX_DONE = '修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。'
+/** 依審查檔修時不只修舉的例子：先列出同一類的所有情況，每種都修、補測試。修正提示共用。 */
+export const FIX_WHOLE_CLASS = '每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進歷程。'
 /**
  * 你按 g 修審查結論：依審查檔修 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM（你主動要修的照修，不受自動修正上限擋）。
  * `file` 是要依的那一份審查檔（接在資安審查之後是 SECURITY.md，其他是 REVIEW.md），提示只寫這一份，修正的 Agent 不用猜。
  */
-const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。${MEDIUM_DECIDE}${FIX_DONE}`
+const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。${FIX_WHOLE_CLASS}${MEDIUM_DECIDE}${FIX_DONE}`
 /** 自動流程的審查修正：只修 CRITICAL、HIGH；MEDIUM 由你在「等你」決定，不在這輪改。 */
-const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）。${FIX_DONE}`
+const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）。${FIX_WHOLE_CLASS}${FIX_DONE}`
 
 /**
  * 你在「等你」對審查 MEDIUM 題選了修掉：照卡片 Decisions 修那幾條 MEDIUM（你主動要的，不受自動修正上限擋）。
@@ -45,7 +47,7 @@ export function manualFixHead(c: Case, ci: boolean): string {
   if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
   // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
   if (isQuotaHold(stopped)) return quotaRestartHead(c)
-  if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_DECIDE}），commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
+  if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_DECIDE}），${FIX_WHOLE_CLASS}commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
   // 審查結論還要修（CRITICAL＋HIGH，加上流程這輪要修的 MEDIUM）：檢查是過的，依審查檔修。
   const verdict = parseVerdict(c.gate)
   if (verdict && toFix(c, verdict) > 0) return `修正：${reviewFixStep(REVIEW_FILE)}`
