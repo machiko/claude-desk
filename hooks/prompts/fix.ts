@@ -1,6 +1,6 @@
 // 修正派工的提示詞：自動流程的修正輪（檢查沒過、審查要修）與手動按 g 修。
 import type { Case } from '../../types'
-import { AGENT_STOPPED } from '../chain'
+import { AGENT_STOPPED, MAX_FIX_ROUNDS } from '../chain'
 import type { FixReason } from '../dispatch'
 import { parseVerdict, toFix } from '../pipeline'
 import { REVIEW_FILE, SECURITY_FILE } from './review'
@@ -8,17 +8,20 @@ import { isQuotaHold } from '../quota-words'
 
 /** 要改規格才能修的 MEDIUM：不改，交給你決定。修正提示共用。 */
 const MEDIUM_DECIDE = `要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。`
+const FIX_DONE = '修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。'
 /**
- * 依審查檔修正：自動流程的修正輪與手動按 g 修審查結論共用。`file` 是這輪要依的那一份審查檔
- * （接在資安審查之後是 SECURITY.md，其他是 REVIEW.md），提示只寫這一份，修正的 Agent 不用猜。
+ * 你按 g 修審查結論：依審查檔修 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM（你主動要修的照修，不受自動修正上限擋）。
+ * `file` 是要依的那一份審查檔（接在資安審查之後是 SECURITY.md，其他是 REVIEW.md），提示只寫這一份，修正的 Agent 不用猜。
  */
-const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。${MEDIUM_DECIDE}修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。`
+const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。${MEDIUM_DECIDE}${FIX_DONE}`
+/** 自動流程的審查修正：只修 CRITICAL、HIGH；MEDIUM 由你在「等你」決定，不在這輪改。 */
+const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）。${FIX_DONE}`
 
-/** 自動流程修正輪的提示頭：完成檢查沒過附輸出最後幾行；審查要修就依那一份審查檔。 */
+/** 自動流程修正輪的提示頭：「第 n／2 輪」是這條分支累計的修正輪數。完成檢查沒過附輸出最後幾行；審查要修就依那一份審查檔。 */
 export function fixHead(c: Case, fix: FixReason): string {
   return fix.from === 'check'
-    ? `修正第 ${fix.round}／2 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
-    : `修正第 ${fix.round}／2 輪：${reviewFixStep(fix.security ? SECURITY_FILE : REVIEW_FILE)}`
+    ? `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
+    : `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：${autoReviewFixStep(fix.security ? SECURITY_FILE : REVIEW_FILE)}`
 }
 
 /**

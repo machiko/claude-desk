@@ -364,7 +364,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — p
   await h.refresh(); await h.step()
 
   expect(data.launches).toHaveLength(0)
-  expect(data.toasts).toContain('Beta：流程已暫停，修了 2 輪仍有 CRITICAL 0、HIGH 2')
+  expect(data.toasts).toContain('Beta：流程已暫停，整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 2：開 PR、按 g 再修一輪，或改規格')
   expect(data.toasts.some((t: string) => t.includes('自動派'))).toBe(false)
 })
 

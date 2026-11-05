@@ -190,61 +190,10 @@ test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
     expect(p).toContain('都算進關卡的 MEDIUM 數')
     expect(p).toContain('review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>')
   }
-  // 修正提示：CRITICAL／HIGH 與沒加註記的 MEDIUM 一起修，LOW 不用修
+  // 自動流程的修正提示：只修 CRITICAL／HIGH，MEDIUM、LOW 不用修（MEDIUM 由你在等你決定）
   const fix = buildPrompt(c, 'continue', '', { from: 'review', round: 1 })
-  expect(fix).toContain('沒標「不修」「等你決定」的 MEDIUM')
-  expect(fix).toContain('LOW 不用修')
-})
-
-/** auto-fix-medium AC-3：還有修正輪數時，影響行為的 MEDIUM 交給流程自動修；最後一輪才在「等你」問 */
-test('test_review_prompt_hands_medium_to_chain_until_last_round', () => {
-  const c = mk('寫測試')
-  const AUTO = '工作桌會跟 CRITICAL／HIGH 一起自動派修正'
-  const LAST = '這次不會自動修'
-  const ASK = '審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格'
-  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', history: '', ...more })
-  // 第 0、1 輪：程式碼審查、通過後重新審查、資安審查都交給流程，不寫進等你
-  const early = [review(0), review(1), review(0, { base: 'abc123', recheck: true }), review(0, { security: true }), review(1, { security: true })]
-  for (const p of early) {
-    expect(p).toContain(AUTO)
-    expect(p).toContain('不加註記、不寫進 等你')
-    expect(p).not.toContain(LAST)
-    // 要你決定才能處理的照樣問
-    expect(p).toContain('驗收情境無法驗證、要改規格才能修')
-    expect(p).toContain('（等你決定）')
-    expect(p).toContain(ASK)
-  }
-  // 第 2 輪（輪數用完）：這次不會自動修，可能影響行為的標「（等你決定）」並在等你問
-  for (const p of [review(2), review(2, { security: true })]) {
-    expect(p).toContain(LAST)
-    expect(p).not.toContain(AUTO)
-    expect(p).toContain('（等你決定）')
-    expect(p).toContain(ASK)
-    expect(p).toContain('記錄、不修')
-    expect(p).toContain('都算進關卡的 MEDIUM 數')
-  }
-  // 第 1 輪複審：要確認上一輪沒加註記的 MEDIUM 修好沒；等你在問的標「（等你決定）」，不再提
-  const recheck = review(1)
-  expect(recheck).toContain('這是修正後的複審（第 1 輪）')
-  expect(recheck).toContain('CRITICAL／HIGH 與沒加註記的 MEDIUM 有沒有修好')
-  expect(recheck).toContain('標「不修」「等你決定」的項目不要再提')
-})
-
-/** 審查 MEDIUM 第 2 條：第 2 輪複審（修正輪數用完）不再叫審查「MEDIUM 不加註記」，跟同一份提示要標「（等你決定）」的那句不矛盾；第 1 輪照舊 */
-test('test_recheck_prompt_drops_medium_no_mark_rule_when_fix_rounds_are_used_up', () => {
-  const c = mk('寫測試')
-  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, base: 'abc123', pitfalls: '', history: '', ...more })
-
-  const early = [review(1), review(1, { security: true })]
-  const last = [review(2), review(2, { security: true })]
-
-  for (const p of early) expect(p).toContain('沒修好的照原樣再列（MEDIUM 不加註記）')
-  for (const p of last) {
-    expect(p).toContain('這是修正後的複審（第 2 輪）')
-    expect(p).toContain('沒修好的照原樣再列')
-    expect(p).not.toContain('MEDIUM 不加註記')
-    expect(p).toContain('這次不會自動修')
-  }
+  expect(fix).toContain('修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）')
+  expect(fix).not.toContain('沒標「不修」「等你決定」的 MEDIUM')
 })
 
 /** 審查 MEDIUM 第 3 條：修正提示只寫這輪要依的那一份審查檔：資安審查之後依 SECURITY.md，其他依 REVIEW.md */
@@ -679,7 +628,7 @@ test('test_review_prompt_preflight_on_rereview_and_security', () => {
 
 /** 加這個功能之前的審查提示詞（到「任務：」之前），用來確認沒設前置時逐字不變。 */
 const SNAP_GRADES = (file: string) => `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 授權、個資、測試、命名）。寫進 ${file}（整份覆寫）。`
-const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）不加註記、不寫進 等你，工作桌會跟 CRITICAL／HIGH 一起自動派修正；要你決定才能處理的（驗收情境無法驗證、要改規格才能修）才審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」。都算進關卡的 MEDIUM 數。'
+const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。都算進關卡的 MEDIUM 數。'
 const SNAP_GATE = '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>'
 const SNAP_CONTRACT = '契約：templates/review.md。自己重跑完成檢查 `true`。'
 const SNAPSHOT = {
@@ -700,7 +649,7 @@ const SNAPSHOT = {
   ],
   rereview: [
     '程式碼審查：這是新的對話，不接續 Agent、不參考 Agent 的結論。', SNAP_CONTRACT,
-    '這是修正後的複審（第 1 輪）：只看 `git diff abc123..HEAD`。先讀現有 .task/REVIEW.md 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 與沒加註記的 MEDIUM 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列（MEDIUM 不加註記），卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」「等你決定」的項目不要再提。',
+    '這是修正後的複審（第 1 輪）：只看 `git diff abc123..HEAD`。先讀現有 .task/REVIEW.md 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列，卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」的項目不要再提，標「（等你決定）」的照原樣再列（過關時要在 等你 問）。',
     SNAP_GRADES('.task/REVIEW.md'), SNAP_MEDIUM, SNAP_GATE,
     '不改程式、不 commit。',
   ],

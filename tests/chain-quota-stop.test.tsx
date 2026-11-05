@@ -195,7 +195,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   expect(shown).toContain(flat('輪到你 與 main 有衝突：在對話把 main 合併進來、解衝突並 commit（5 小時額度剩 25%，低於門檻 30%）'))
 })
 
-/** AC-2：剛結束的審查有 HIGH（和要修的 MEDIUM）、額度不足：審查檔照常歸檔、結論照記、MEDIUM 數照記，只有派修正不做。 */
+/** AC-2：剛結束的審查有 HIGH（和 MEDIUM）、額度不足：審查檔照常歸檔、結論照記，只有派修正不做（MEDIUM 不自動修，不記要修的 MEDIUM 數）。 */
 test('test_quota_stop_after_review_still_archives_and_records_verdict', async ($, on) => {
   const { data, clock } = fixture(on)
   data.agents = []
@@ -220,7 +220,7 @@ test('test_quota_stop_after_review_still_archives_and_records_verdict', async ($
   expect(chain.stopped).toBe(REASON)
   expect(chain.judgedHead).toBe('c2')
   expect(chain.judgedBranch).toBe('feature/b')
-  expect(chain.mediumFix).toBe(2)
+  expect(chain.mediumFix).toBeUndefined()
   expect(chain.round).toBe(0)
   expect(data.files[CARD_B]).toContain('- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 2、LOW 0；漏稽核')
 })
@@ -434,11 +434,10 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   expect(shown).not.toContain(flat('重新驗收'))
 })
 
-/** AC-1（審查 HIGH）：別的對話開的流程審查只剩要修的 MEDIUM、額度不足：這個對話接手並暫停（記 MEDIUM 數、寫原因）；額度恢復後不自己派修正。 */
-test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_threshold — taking over a foreign chain pauses it', async ($, on) => {
+/** 別的對話開的流程審查只剩 MEDIUM、額度不足：MEDIUM 不自動修，這個對話不接手、不暫停，紀錄一字不變；額度恢復後也不派。 */
+test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_threshold — a foreign chain with only MEDIUM is left alone', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)
-  const notified = capture(on)
   data.agents = []
   data.files[REGISTRY] = registry([['Alpha', CARD_A]])
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
@@ -449,27 +448,19 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   data.store.verifies = { [CARD_A]: { ...ok('h1'), command: 'node test.mjs' } }
   data.store.chains = { [ALPHA]: { owner: 'other-session', startedAt: 0, round: 1, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
   data.store.jobs = { [ALPHA]: { ...lastJob('review'), last: { ...lastJob('review').last, owner: 'other-session' } } }
+  const before = JSON.parse(JSON.stringify((data.store.chains as any)[ALPHA]))
   startsAgents(data, clock)
   quota(data, 75)
   const h = helpers($, data, clock)
 
   await h.refresh()
   await h.step()
-  const ui = await $.ui.mount(PANE(160))
-  const shown = await h.screen(ui)
-  await ui.unmount()
 
   expect(data.launches).toHaveLength(0)
-  const chain = (data.store.chains as any)[ALPHA]
-  expect(chain.owner).toBe(ME)
-  expect(chain.stopped).toBe(REASON)
-  expect(chain.mediumFix).toBe(1)
-  expect(log.has('Alpha 接手別的對話開的流程：驗收只剩 MEDIUM 1 條要修，額度不足，流程暫停')).toBe(true)
-  expect(notified).toContain(`Alpha：流程已暫停，${REASON}`)
-  expect(shown).toContain(flat(`輪到你 ${REASON}`))
-  expect(shown).not.toContain('開PR')
+  expect((data.store.chains as any)[ALPHA]).toEqual(before)
+  expect(log.has(`Alpha 流程已暫停：${REASON}`)).toBe(false)
 
-  // 額度恢復：不自己接著派修正（要你按 g 重開）
+  // 額度恢復：一樣不派
   quota(data, 10)
   for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
   expect(data.launches).toHaveLength(0)

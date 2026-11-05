@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { nextStep, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED, ASK_HANDED_OVER, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
+import { carriedFix, fixTotalOf, nextStep, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED, ASK_HANDED_OVER, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
 
 const run = (round = 0, extra = {}) => ({ owner: 'me', startedAt: 1, round, ...extra })
 const v = (critical: number, high: number, medium = 0) => ({ critical, high, medium, low: 0 })
@@ -11,14 +11,14 @@ test('after implementation: check, then review when green, fix when red, stop af
   expect(nextStep(run(), 'continue', null, null, false, { changed: true })).toEqual({ kind: 'stop', reason: CHECK_CHANGED, atCheck: true })
   expect(nextStep(run(), 'continue', true, null, true)).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
   expect(nextStep(run(0), 'continue', false, null, true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'check' })
-  expect(nextStep(run(2), 'continue', false, null, true)).toEqual({ kind: 'stop', reason: '修了 2 輪測試仍未通過' })
+  expect(nextStep(run(2), 'continue', false, null, true)).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格' })
 })
 
 test('after review: CRITICAL and HIGH are fixed, MEDIUM passes, no counts stops', () => {
   expect(nextStep(run(), 'review', null, v(0, 0, 3), true)).toEqual({ kind: 'pass' })
   expect(nextStep(run(), 'review', null, v(0, 1), true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
   expect(nextStep(run(1), 'review', null, v(1, 0), true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 2, reason: 'review' })
-  expect(nextStep(run(2), 'review', null, v(0, 2), true)).toEqual({ kind: 'stop', reason: '修了 2 輪仍有 CRITICAL 0、HIGH 2' })
+  expect(nextStep(run(2), 'review', null, v(0, 2), true)).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 2：開 PR、按 g 再修一輪，或改規格' })
   expect(nextStep(run(), 'review', null, null, true)?.kind).toBe('stop')
 })
 
@@ -76,7 +76,7 @@ test('chain: a finished catchup does not run the check or count as a fix round',
 test('chain: a job whose question was handled in the conversation records the verdict but dispatches nothing', () => {
   // 過關、停下照舊：審查結論照記。
   expect(handedOver(nextStep(run(), 'review', null, v(0, 0, 2), true))).toEqual({ kind: 'pass' })
-  expect(handedOver(nextStep(run(2), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: '修了 2 輪仍有 CRITICAL 0、HIGH 1' })
+  expect(handedOver(nextStep(run(2), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 1：開 PR、按 g 再修一輪，或改規格' })
   // 本來要派修正（審查或檢查擋下）：停下寫原因。
   expect(handedOver(nextStep(run(), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: ASK_HANDED_OVER })
   expect(handedOver(nextStep(run(), 'continue', false, null, true))).toEqual({ kind: 'stop', reason: ASK_HANDED_OVER })
@@ -87,22 +87,32 @@ test('chain: a job whose question was handled in the conversation records the ve
   expect(handedOver(null)).toBeNull()
 })
 
-/** auto-fix-medium：要修的 MEDIUM 跟 HIGH 同一輪修；資安審查一樣；輪數用完只剩 MEDIUM 過關，還有 HIGH 照原句停下 */
-test('test_next_step_fixes_medium_with_high_and_passes_at_round_cap', () => {
+/** AC-1（單元）：只剩 MEDIUM（不管審查檔有沒有註記）不派修正、過關；跟 HIGH 同時有時只照 CRITICAL／HIGH 派一輪 */
+test('test_next_step_never_fixes_medium', () => {
   const high = { level: 'high' as const, reasons: ['認證／中介層'] }
-  // 只有 MEDIUM：派修正並帶 medium
-  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
-  // 跟 HIGH 同一輪，不另外多一輪
-  expect(nextStep(run(), 'review', null, v(0, 1, 3), true, { mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
-  expect(nextStep(run(1), 'review', null, v(0, 0, 2), true, { mediumFix: 2 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 2, reason: 'review', medium: 2 })
-  // 資安審查的 MEDIUM 也派修正；沒有要修的照舊過關（高風險要你看）
-  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { risk: high, lastWasSecurity: true, mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
-  expect(nextStep(run(1), 'review', null, v(0, 0, 1), true, { risk: high, lastWasSecurity: true })?.kind).toBe('pass')
-  // 程式碼審查只剩要修的 MEDIUM：先修，不先派資安審查
-  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { risk: high, mediumFix: 1 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review', medium: 1 })
-  // 第 2 輪只剩 MEDIUM：過關，不停下；還有 HIGH 照原句停下
-  expect(nextStep(run(2), 'review', null, v(0, 0, 1), true, { mediumFix: 1 })).toEqual({ kind: 'pass' })
-  expect(nextStep(run(2), 'review', null, v(0, 1, 1), true, { mediumFix: 1 })).toEqual({ kind: 'stop', reason: '修了 2 輪仍有 CRITICAL 0、HIGH 1' })
-  // 沒有要修的 MEDIUM：回傳值跟以前一模一樣
-  expect(nextStep(run(), 'review', null, v(0, 1, 2), true, { mediumFix: 0 })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
+  expect(nextStep(run(), 'review', null, v(0, 0, 1), true)).toEqual({ kind: 'pass' })
+  expect(nextStep(run(1), 'review', null, v(0, 0, 2), true)).toEqual({ kind: 'pass' })
+  expect(nextStep(run(), 'review', null, v(0, 1, 3), true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
+  // 高風險：程式碼審查只剩 MEDIUM 照樣接資安審查；資安審查只剩 MEDIUM 過關、等你看
+  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { risk: high })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0, security: true })
+  expect(nextStep(run(), 'review', null, v(0, 0, 1), true, { risk: high, lastWasSecurity: true })?.kind).toBe('pass')
+})
+
+/** AC-5：累計修正數只帶同一條分支的；換分支、沒記分支從 0 起算；另一張卡是另一份流程紀錄，本來就從 0 起算 */
+test('test_fix_round_total_is_per_branch', () => {
+  const used = run(0, { fixTotal: 2, fixBranch: 'feature/a' })
+  // 同一條分支：重開流程照帶，自動修正已用完
+  expect(carriedFix(used, 'feature/a')).toEqual({ fixTotal: 2, fixBranch: 'feature/a' })
+  expect(nextStep(run(0, carriedFix(used, 'feature/a')), 'review', null, v(0, 1), true)).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 1：開 PR、按 g 再修一輪，或改規格' })
+  // 換了分支、沒記分支、分支不明、沒有紀錄：從 0 起算，照常自動修
+  for (const carried of [carriedFix(used, 'feature/b'), carriedFix(run(2), 'feature/a'), carriedFix(used, undefined), carriedFix(undefined, 'feature/a')]) {
+    expect(carried).toEqual({})
+    expect(fixTotalOf(run(0, carried))).toBe(0)
+    expect(nextStep(run(0, carried), 'review', null, v(0, 1), true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
+  }
+  // 你主動派的修正照樣算一輪：同分支 2 → 3，換分支 0 → 1
+  expect(carriedFix(used, 'feature/a', true)).toEqual({ fixTotal: 3, fixBranch: 'feature/a' })
+  expect(carriedFix(used, 'feature/b', true)).toEqual({ fixTotal: 1, fixBranch: 'feature/b' })
+  // 舊紀錄沒有累計數：用這一輪的 round
+  expect(fixTotalOf(run(1))).toBe(1)
 })
