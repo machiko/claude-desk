@@ -378,9 +378,12 @@ export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'>
 export const codeJobEnded = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck'> | undefined): boolean =>
   !!last && !last.recheck && (last.kind === 'continue' || last.kind === 'reply') && last.ended?.how === 'finished'
 
-/** 做完一輪時把要你決定的事寫進了「等你」、還沒處理：自動流程停著等，不替它跑測試、派驗收或修正。 */
-export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck'> | undefined, ask: string): boolean =>
-  codeJobEnded(last) && !saysNone(ask)
+/**
+ * 做完一輪時把要你決定的事寫進了「等你」、還沒處理：自動流程停著等，不替它跑測試、派驗收或修正。
+ * 已記成 answered 的（在對話處理過、流程自己排的重新測試、或你從檢查段重開的）不算。
+ */
+export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck' | 'answered'> | undefined, ask: string): boolean =>
+  codeJobEnded(last) && !last?.answered && !saysNone(ask)
 
 /**
  * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑或停下來等（busy／waiting）、清單裡找不到都是 null；

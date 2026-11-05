@@ -251,3 +251,37 @@ test('test_check_paused_chain_still_dispatches_review_after_card_question_cleare
   expect(data.launches).toHaveLength(2)
   expect(h.prompt(1)).toContain('程式碼審查')
 })
+
+/** AC-6 的範圍：流程停在檢查段時「等你」有題目（不是那次實作寫的），核准後用 /desk verify 重開：通過後照舊派驗收，清掉題目也不說「不替那次派工接著跑」。 */
+test('test_check_paused_chain_resumed_with_question_on_card_still_dispatches_review', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+
+  // 實作把測試指令改了：做完後流程停在檢查段
+  h.setCheck('node test.mjs --all')
+  await h.finish()
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toContain('測試指令改過')
+
+  // 暫停後「等你」寫了一題，題目還在時核准新指令、用指令重開
+  setAsk(data, '要先發版嗎？A) 要 B) 不要')
+  await h.refresh()
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs --all' }
+  await h.verify()
+  await h.step(); await h.step()
+  expect(sh(data)).toBe(1)
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1)).toContain('程式碼審查')
+
+  // 題目在對話處理掉：不說「不替那次派工接著跑」，也不多派
+  setAsk(data, '無')
+  await h.refresh()
+  await h.step(); await h.step()
+  expect(log.has(HANDED)).toBe(false)
+  expect(data.launches).toHaveLength(2)
+})
