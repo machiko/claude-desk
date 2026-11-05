@@ -15,7 +15,7 @@ import { KIND_LABEL, REVIEW_FILE, buildPrompt, liveHolds, dispatchRefusal, launc
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
-import { carriedFix, fixTotalOf, handedOver, judgedAt, nextStep, paused, seenHeads, shownStopped } from './chain'
+import { MEDIUM_FIX_NOT_SENT, carriedFix, fixTotalOf, handedOver, judgedAt, nextStep, paused, seenHeads, shownStopped } from './chain'
 import { isApproved, trustCheck, trustedChecks, unapprovedText } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -26,7 +26,7 @@ import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, re
 export { tutorial } from './tutorial-run'
 import { checkQueue, checking, isQueued, verifyPending, runVerify, resetCheckingState } from './verify-runner'
 export { checkQueue, verifyPending, runVerify } from './verify-runner'
-import { slots, launchKinds, launchingCount, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState } from './dispatch-runner'
+import { slots, launchKinds, launchingCount, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState, unconfirmed } from './dispatch-runner'
 export { dispatch, launchingCount, busyRefused, confirmedIdle } from './dispatch-runner'
 import { JOBS_KEY, MAX_REFRESH_S, MIN_REFRESH_S, SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, registryError, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
 import { isEmpty } from './layout'
@@ -405,7 +405,9 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
  * 你在「等你」對審查 MEDIUM 題選了修掉（送出時記下 HEAD 在 mediumFixAt）、對話把「等你」清掉了：派一次依審查檔修那幾條 MEDIUM 的修正。
  * 你主動要的修正不受上限擋；派出去才算一輪（dispatch 的 countedFix），修完的 commit 由「審查通過後有新 commit」的重新測試與驗收接手。
  * 這之後 HEAD 變了（對話自己修了、或你改了別的）就不派，拿掉紀錄；worktree 有別人的未提交改動先不派，下次重新整理再看。
- * 你主動要的：照按 g 接續的規則派（resumed），排隊時不看額度。真的派出或排進隊伍才拿掉紀錄，沒派成（啟動失敗）留著，下次重新整理再派。回傳有沒有動作。
+ * 你主動要的：照按 g 接續的規則派（resumed），排隊時不看額度。自動只試一次：派之前就拿掉紀錄（啟動一直失敗也不會每次重新整理都重派）。
+ * 沒派出去時分兩種：已啟動、只是 agents 清單還沒列出（Agent 可能在跑）就不重派、不停下，等它出現；確定沒啟動就停下流程寫明按 g 重派。
+ * 回傳有沒有派出或排進隊伍。
  */
 async function fixPickedMedium($: any, options: PluginOptions, c: Case, run: ChainRun, own: RootJobs | undefined, at: number): Promise<boolean> {
   const head = run.mediumFixAt
@@ -414,10 +416,13 @@ async function fixPickedMedium($: any, options: PluginOptions, c: Case, run: Cha
   const clear = (r: ChainRun | undefined) => { if (!r || r.mediumFixAt !== head) return r; const { mediumFixAt: _, ...rest } = r; return rest }
   if (head !== c.git?.head) { await saveChain($, key, clear); return false }
   if (markRefusal(await worktreeMark($, c.root), own)) return false
+  if (!(await saveChain($, key, clear))) return false
   await feedPush($, [{ at, text: `${c.name} 你選了修掉審查 MEDIUM，自動派修正`, tone: 'suggestion', card: c.statusPath }])
   const fix: FixReason = { from: 'medium', round: fixTotalOf(run) + 1 }
-  if (await dispatch($, options, { ...c, state: 'ready' }, 'continue', { fix, auto: true, resumed: true })) await saveChain($, key, clear)
-  return true
+  if (await dispatch($, options, { ...c, state: 'ready' }, 'continue', { fix, auto: true, resumed: true })) return true
+  if (unconfirmed.has(c.statusPath)) return false
+  if (await saveChain($, key, r => r && !r.stopped ? paused(r, MEDIUM_FIX_NOT_SENT) : r)) await feedPush($, [{ at, text: `${c.name} 流程已暫停：${MEDIUM_FIX_NOT_SENT}`, tone: 'error', card: c.statusPath }])
+  return false
 }
 
 /**

@@ -6,6 +6,7 @@ import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, s
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
 import { isDeskLaunch } from './dispatch'
+import { MEDIUM_FIX_NOT_SENT } from './chain'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
 import type { Limit } from './quota-words'
 import type { JobRecord } from './dispatch'
@@ -415,7 +416,8 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
   if (verdict) {
     if (running) return 'running'
     // 額度煞車擋在過關前（例如要派資安審查、重新審查時）：卡片上的結論沒擋，但流程還沒走完，算 failed（按 g 重開）。
-    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 || quotaHeld(c.chain) ? 'failed' : 'ready'
+    // 你選了修掉的審查 MEDIUM 沒派出修正：結論沒擋，但要你按 g 重派，算 failed。
+    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 || quotaHeld(c.chain) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT ? 'failed' : 'ready'
     return blocking(verdict) > 0 ? 'running' : 'ready'
   }
   if (parseGate(c.gate)) return 'gate'

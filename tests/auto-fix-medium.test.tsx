@@ -3,6 +3,7 @@ import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat } from './fix
 import { buildPrompt } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { decisionAnswerOf, picksMediumFix } from '../hooks/card'
+import { MEDIUM_FIX_NOT_SENT } from '../hooks/chain'
 
 // 修正輪收斂：自動流程只修 CRITICAL／HIGH；可能影響行為的 MEDIUM 由審查標「（等你決定）」寫進「等你」，不自動派修正。
 const ALPHA = '/home/u/wt/alpha'
@@ -396,4 +397,62 @@ test('test_answer_b_fix_queued_is_sent_even_when_quota_drops', async ($, on) => 
   expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉')).toBe(true)
   expect((data.store.chains as any)[ALPHA].fixTotal).toBe(1)
   expect((data.store.chains as any)[ALPHA].stopped).toBeUndefined()
+})
+
+/** 回答 B 的修正自動只試一次：啟動一直失敗時不會每次重新整理都重派；流程停下寫明按 g 重派，按 g 派的就是那幾條 MEDIUM 的修正並算一輪 */
+test('test_answer_b_fix_tries_once_when_launch_fails_then_g_restarts_it', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  data.launch = async () => result(1, '', 'claude: boom')
+  passedWithMediumAsk(data, { owner: ME })
+  await h.refresh()
+  await answerB($, data)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+  for (let i = 0; i < 5; i++) { await h.refresh(); await h.step() }
+
+  // 只試了一次；流程停下、紀錄拿掉，輪到你寫按 g 重派
+  expect(data.launches).toHaveLength(1)
+  const run = (data.store.chains as any)[ALPHA]
+  expect(run.stopped).toBe(MEDIUM_FIX_NOT_SENT)
+  expect(run.mediumFixAt).toBeUndefined()
+  expect(run.fixTotal ?? 0).toBe(0)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  expect(await screen(ui)).toContain(flat(MEDIUM_FIX_NOT_SENT))
+  await ui.unmount()
+
+  // 啟動恢復正常後按 g：派出那幾條 MEDIUM 的修正，算一輪
+  launchOneAtATime(data, clock)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉')).toBe(true)
+  expect((data.store.chains as any)[ALPHA].fixTotal).toBe(1)
+  expect((data.store.chains as any)[ALPHA].stopped).toBeUndefined()
+})
+
+/** 已啟動、只是 agents 清單晚列出：不重派第二個 Agent，流程也不停下 */
+test('test_answer_b_fix_is_not_sent_twice_when_agent_list_lags', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  let started: any = null
+  // 啟動成功，但清單要等一下才列出這個 Agent
+  data.launch = async (e: any) => { started = { ...busy(e.argv[3], e.init.cwd, clock.now()), id: 'f0000001', sessionId: 'f0000001-0000-4000-8000-000000000000' }; return result(0, 'f0000001') }
+  passedWithMediumAsk(data, { owner: ME })
+  await h.refresh()
+  await answerB($, data)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+  for (let i = 0; i < 3; i++) { await h.refresh(); await h.step() }
+  expect(data.launches).toHaveLength(1)
+  expect((data.store.chains as any)[ALPHA].stopped).toBeUndefined()
+  expect((data.store.chains as any)[ALPHA].mediumFixAt).toBeUndefined()
+
+  // 清單列出來了：照樣只有那一個
+  data.agents = [started]
+  for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
+  expect(data.launches).toHaveLength(1)
 })

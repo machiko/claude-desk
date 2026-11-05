@@ -22,6 +22,8 @@ const LEGACY_HELD: Record<string, string> = { [`完成檢查的指令改過、�
 export const shownStopped = (stopped: string): string => LEGACY_HELD[stopped] ?? stopped
 /** 流程裡的 Agent 被停掉（面板 k 或外面 `claude stop`）：不算做完，不跑檢查、不派審查或修正；它可能留下改到一半的東西，看過再重開。 */
 export const AGENT_STOPPED = 'Agent 被停止，未完成；看過 worktree 後按 g 重開'
+/** 你在「等你」選了修掉審查 MEDIUM，工作桌自動派修正只試一次、確定沒派出去：流程停下，按 g 重派（g 派的就是那幾條 MEDIUM 的修正）。 */
+export const MEDIUM_FIX_NOT_SENT = '你選了修掉的審查 MEDIUM 沒派出修正：按 g 重派'
 /** 停在提問的那次派工，題目已在對話處理（卡片「等你」清掉）：審查要修的不自動派修正。 */
 export const ASK_HANDED_OVER = '提問已在對話處理，不自動派修正'
 /** 拿早先看到的流程紀錄（版本）做決定，寫入時版本已被別的對話改過：不寫，回這句。 */

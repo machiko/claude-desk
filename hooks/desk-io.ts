@@ -247,6 +247,6 @@ export async function launch($: any, c: Case, prompt: string, o: { model: string
   const afterOut = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 })
   const after = afterOut.exitCode === 0 ? rawAgents(afterOut.stdout) : []
   const confirmed = confirmLaunch(before, after, o.name, token)
-  if (!confirmed) throw new Error(`已啟動（${token}），但在 agents 清單找不到唯一的 ${o.name}；下次重新整理時會再確認`)
+  if (!confirmed) throw new LaunchError(`已啟動（${token}），但在 agents 清單找不到唯一的 ${o.name}；下次重新整理時會再確認`, false, true)
   return { ...confirmed, id: confirmed.id ?? token }
 }

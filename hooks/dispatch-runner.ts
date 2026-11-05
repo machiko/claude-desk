@@ -61,8 +61,12 @@ let launchSeq = 0
 /** 這個對話正在啟動中的派工有幾件。 */
 export const launchingCount = (): number => slots.size
 
+/** 最近一次派工「已啟動、但 agents 清單還沒列出」的那幾件（卡片路徑）：Agent 可能已經在跑，自動重派前要看這裡。派出成功時拿掉。 */
+export const unconfirmed = new Set<string>()
+
 export function resetDispatchState() {
   slots.clear()
+  unconfirmed.clear()
   launchKinds = {}
   launchSeq = 0
 }
@@ -216,6 +220,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。
     const tried = c.git?.head
     if (kind === 'catchup' && opts.auto && tried) await saveChain($, rootKey, r => r ? { ...r, catchupHead: tried } : r)
+    unconfirmed.delete(c.statusPath)
     const next: RootJobs = { ...(fresh ? { sessionId: own.sessionId } : { sessionId: confirmed.sessionId! }), ...(own.mark !== undefined ? { mark: own.mark } : {}), last: record }
     await $.store.set(JOBS_KEY, { ...jobs, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
@@ -228,6 +233,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
     return true
   } catch (error) {
+    if (error instanceof LaunchError && error.unconfirmed) unconfirmed.add(c.statusPath)
+    else unconfirmed.delete(c.statusPath)
     if (error instanceof LaunchError && error.untrusted) { await holdUntrusted($, c, kind, now, !!opts.auto, !!opts.auto || tutorial); return false }
     const failed = launchFailed(KIND_LABEL[kind], error)
     await feedPush($, [{ at: now, text: `${c.name} ${failed}`, tone: 'error', card: c.statusPath }])

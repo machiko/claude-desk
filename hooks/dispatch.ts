@@ -2,7 +2,7 @@
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, expandHome, isPlaceholder, named, parseGate, saysNone } from './card'
-import { AGENT_STOPPED, shownStopped } from './chain'
+import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, shownStopped } from './chain'
 import type { ChainRun } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 import { DONE_RULE, SPEC_RULE, cardRules, changelogRule, testRule } from './prompts/rules'
@@ -225,10 +225,13 @@ export function isUntrustedLaunch(text: string): boolean {
 /** 啟動失敗：訊息是輸出的最後一行；untrusted 是整段輸出看得出 repo 還沒信任。 */
 export class LaunchError extends Error {
   readonly untrusted: boolean
-  constructor(message: string, untrusted: boolean) {
+  /** 已經啟動、只是 agents 清單還沒列出來：Agent 可能正在跑，不能當成沒派出去重派。 */
+  readonly unconfirmed: boolean
+  constructor(message: string, untrusted: boolean, unconfirmed = false) {
     super(message)
     this.name = 'LaunchError'
     this.untrusted = untrusted
+    this.unconfirmed = unconfirmed
   }
 }
 
@@ -275,7 +278,7 @@ export type FixReason = { /** medium：你在「等你」對審查 MEDIUM 題選
 export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = ''): string {
   const head = fix ? fixHead(c, fix)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
-    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : (fixByG(c) && idleNext(c.next) ? manualFixHead(c, ciFailed(c)) : '') || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
+    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : (fixByG(c) && (idleNext(c.next) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT) ? manualFixHead(c, ciFailed(c)) : '') || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : kind === 'publish' ? publishHead(text)

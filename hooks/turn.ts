@@ -5,7 +5,7 @@ import { agentWaits, approvalWait, approveText, isQuotaHold, QUOTA_RESTART, quot
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
-import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
+import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext, untrustedSteps } from './dispatch'
 import type { DispatchKind, UntrustedHold } from './dispatch'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './next-words'
@@ -237,6 +237,7 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
   // Agent 被停掉：原因本身就說了要做什麼，不是修一輪。
   if (c.state === 'failed' && c.chain?.stopped === AGENT_STOPPED) return { who: 'you', text: AGENT_STOPPED, action: 'continue' }
+  if (c.state === 'failed' && c.chain?.stopped === MEDIUM_FIX_NOT_SENT) return { who: 'you', text: MEDIUM_FIX_NOT_SENT, action: 'continue' }
   // 額度煞車：原因已寫了額度、重置時間與接下來要做什麼，照原句；只有「按 g 重開」那種才標 g（解衝突被擋的叫你在對話處理）。
   if ((c.state === 'failed' || quotaHeld(c.chain)) && isQuotaHold(c.chain?.stopped)) return { who: 'you', text: c.chain!.stopped!, ...(c.chain!.stopped!.endsWith(QUOTA_RESTART) ? { action: 'continue' as const } : {}) }
   if (c.state === 'failed') return c.chain?.stopped

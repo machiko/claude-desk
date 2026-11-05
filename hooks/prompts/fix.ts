@@ -1,6 +1,6 @@
 // 修正派工的提示詞：自動流程的修正輪（檢查沒過、審查要修）與手動按 g 修。
 import type { Case } from '../../types'
-import { AGENT_STOPPED, MAX_FIX_ROUNDS } from '../chain'
+import { AGENT_STOPPED, MAX_FIX_ROUNDS, MEDIUM_FIX_NOT_SENT } from '../chain'
 import type { FixReason } from '../dispatch'
 import { parseVerdict, toFix } from '../pipeline'
 import { REVIEW_FILE, SECURITY_FILE } from './review'
@@ -35,6 +35,7 @@ export function fixHead(c: Case, fix: FixReason): string {
 export function manualFixHead(c: Case, ci: boolean): string {
   if (ci) return `修正：PR #${c.pr!.id} 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。`
   const stopped = c.chain?.stopped
+  if (stopped === MEDIUM_FIX_NOT_SENT) return `修正：${mediumPickedStep(REVIEW_FILE)}`
   if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
   // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
   if (isQuotaHold(stopped)) return quotaRestartHead(c)
