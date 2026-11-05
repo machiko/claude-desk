@@ -371,12 +371,15 @@ export function asksQuestion(list: readonly any[], launchName: string | undefine
 export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'> | undefined, ask: string): boolean =>
   !!last?.cardAsked && (!!last.answered || saysNone(ask))
 
-/** 會改程式的派工（繼續、修正、回覆）做完一輪：Agent 要問人只能寫進卡片「等你」，所以它結束時「等你」有內容就是在等你決定。 */
-export const codeJobEnded = (last: Pick<JobRecord, 'kind' | 'ended'> | undefined): boolean =>
-  !!last && (last.kind === 'continue' || last.kind === 'reply') && last.ended?.how === 'finished'
+/**
+ * 會改程式的派工（繼續、修正、回覆）做完一輪：Agent 要問人只能寫進卡片「等你」，所以它結束時「等你」有內容就是在等你決定。
+ * 驗收通過後有新 commit、流程自己排的重新測試與驗收（recheck）是合成紀錄、不是 Agent 做完：「等你」裡留著的是審查寫的題目，流程照舊。
+ */
+export const codeJobEnded = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck'> | undefined): boolean =>
+  !!last && !last.recheck && (last.kind === 'continue' || last.kind === 'reply') && last.ended?.how === 'finished'
 
 /** 做完一輪時把要你決定的事寫進了「等你」、還沒處理：自動流程停著等，不替它跑測試、派驗收或修正。 */
-export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended'> | undefined, ask: string): boolean =>
+export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck'> | undefined, ask: string): boolean =>
   codeJobEnded(last) && !saysNone(ask)
 
 /**

@@ -95,7 +95,8 @@ export async function noteCardAsks($: any, list: readonly any[], cases: readonly
     const all = await loadJobs($)
     const last = all[key]?.last
     const asking = !!last && asksQuestion(list, last.launchName)
-    if (!last || last.answered || !(asking || codeJobEnded(last))) continue
+    // 做完一輪的程式派工只在流程還沒處理過它時才算在等你：流程早已接著走（停在檢查段、過關）之後「等你」有過一題又清掉，跟那次派工無關。
+    if (!last || last.answered || !(asking || (codeJobEnded(last) && !last.handled))) continue
     const cleared = askClearedOnCard(last, c.ask)
     if (!cleared && (last.cardAsked || saysNone(c.ask))) continue
     await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...last, ...(cleared ? { answered: true } : { cardAsked: true }) } } })
