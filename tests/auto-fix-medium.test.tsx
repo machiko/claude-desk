@@ -306,3 +306,94 @@ test('test_only_fix_on_review_medium_counts_as_answer_b', () => {
   expect(decisionAnswerOf('先看一下\n「Alpha」決策：1A 2B\n「Beta」決策：A', 'Alpha')).toBe('1A 2B')
   expect(decisionAnswerOf('「Beta」決策：A', 'Alpha')).toBe('')
 })
+
+/** 回答 B 的測試共用：Alpha 已過關、審查在等你問一條 MEDIUM；chain 給 undefined 就是沒有流程紀錄。 */
+function passedWithMediumAsk(data: any, chain: object | undefined) {
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可', ASK)
+  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理（等你決定）'
+  if (chain) data.store.chains = { [ALPHA]: { startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha', ...chain } }
+  data.store.jobs = { [ALPHA]: { sessionId: IMPL, last: { launchName: 'desk-rv-0', nativeId: 'r0000001', sessionId: 'r0000001-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: (chain as any)?.owner ?? ME, handled: true } } }
+}
+
+/** 面板選 B、f 填入、送出；回傳送給對話的附加說明。 */
+async function answerB($: any, data: any) {
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `case-${CARD_A}-opt0B` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  await $.prompt.submit({ text: data.fills.at(-1).text } as any)
+  await ui.unmount()
+  return (data.submitted.at(-1).context ?? []).join('\n')
+}
+
+/** AC-4：流程是別的對話開的（開流程的對話可能已經不在）：回答 B 時這個對話接手流程，等你清掉後照樣派修正 */
+test('test_answer_b_dispatches_fix_when_flow_belongs_to_another_conversation', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  launchOneAtATime(data, clock)
+  passedWithMediumAsk(data, { owner: 'other-session' })
+  await h.refresh()
+
+  expect(await answerB($, data)).toContain('不要自己修')
+  const run = (data.store.chains as any)[ALPHA]
+  expect(run.owner).toBe(ME)
+  expect(run.mediumFixAt).toBe('h1')
+
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉')).toBe(true)
+  expect((data.store.chains as any)[ALPHA].fixTotal).toBe(1)
+})
+
+/** 沒有流程紀錄（不是工作桌派的審查）：工作桌派不了修正，決策提示不叫對話別修、什麼都不記，清掉等你也不派 */
+test('test_answer_b_without_flow_record_leaves_fix_to_conversation', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  launchOneAtATime(data, clock)
+  passedWithMediumAsk(data, undefined)
+  await h.refresh()
+
+  const context = await answerB($, data)
+  expect(context).toContain('卡片「等你」的決策')
+  expect(context).not.toContain('不要自己修')
+  expect((data.store.chains as any)?.[ALPHA]).toBeUndefined()
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh(); await h.step()
+  expect(data.launches).toHaveLength(0)
+})
+
+/** 回答 B 是你主動要的：名額滿排進隊伍、輪到時 5 小時額度已低於門檻，照樣派出（不像自動項目被丟掉） */
+test('test_answer_b_fix_queued_is_sent_even_when_quota_drops', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.files['/home/u/.claude/handoffs/dispatch.json'] = JSON.stringify({ maxAgents: 1 })
+  data.agents = [busy('desk-m0-0', '/home/u/other/one')]
+  data.launch = async (e: any) => {
+    const id = `e000000${data.launches.length}`
+    data.agents = [...data.agents, { ...busy(e.argv[3], e.init.cwd, clock.now()), id, sessionId: `${id}-0000-4000-8000-000000000000` }]
+    return result(0, id)
+  }
+  passedWithMediumAsk(data, { owner: ME })
+  await h.refresh()
+  await answerB($, data)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh()
+  // 名額滿：排進隊伍，紀錄拿掉（不會重複排）
+  expect(data.launches).toHaveLength(0)
+  expect((data.store.chains as any)[ALPHA].mediumFixAt).toBeUndefined()
+
+  // 排隊期間額度跌到 20%，另一個 Agent 做完：照樣派出
+  const resetsAt = new Date(clock.now() + 2 * 3_600_000).toISOString()
+  data.usage = { ...data.usage, rateLimits: [{ kind: 'five_hour', percentUsed: 80, resetsAt }] }
+  data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(ALPHA)
+  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉')).toBe(true)
+  expect((data.store.chains as any)[ALPHA].fixTotal).toBe(1)
+  expect((data.store.chains as any)[ALPHA].stopped).toBeUndefined()
+})

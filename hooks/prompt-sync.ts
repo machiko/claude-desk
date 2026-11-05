@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
 import type { Case, PanelAction, SentRecord } from '../types'
 import { decisionAnswerOf, decisionNames, parseGate, picksMediumFix } from './card'
-import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext, saveChain, tellPanel } from './desk-io'
+import { cardContext, cardKey, cardReminder, decisionContext, feedPush, loadChains, me, panelActionsContext, saveChain, tellPanel } from './desk-io'
 import { normalizeRoot } from './dispatch'
 import type { Timer } from './desk-io'
 import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
@@ -236,11 +236,26 @@ const rowText = (message: any) => typeof message?.content === 'string' ? message
   : Array.isArray(message?.content) ? message.content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : ''
 
 
-/** 審查 MEDIUM 題選了修掉、決策真的送出了：在那件的流程紀錄記下送出時的 HEAD（結構化欄位，不從原因句認），等「等你」清掉後由自動流程派修正。 */
+/**
+ * 審查 MEDIUM 題選了修掉的那幾件裡，工作桌派得了修正的：有流程紀錄、知道 HEAD。沒有流程紀錄（例如不是工作桌派的審查）就派不了，
+ * 決策提示不叫對話別修、照舊由對話處理。
+ */
+async function mediumFixable($: any, cases: readonly Case[]): Promise<Case[]> {
+  if (!cases.length) return []
+  const chains = await loadChains($)
+  return cases.filter(d => !!d.git?.head && !!chains[normalizeRoot(d.root)])
+}
+
+/**
+ * 審查 MEDIUM 題選了修掉、決策真的送出了：在那件的流程紀錄記下送出時的 HEAD（結構化欄位，不從原因句認），
+ * 並把流程改成這個對話的（跟按 g 一樣接手：開流程的對話可能已經不在），等「等你」清掉後由這個對話的自動流程派修正。
+ */
 async function noteMediumFix($: any, cases: readonly Case[]) {
+  if (!cases.length) return
+  const mine = await me($)
   for (const d of cases) {
     const head = d.git?.head
-    if (head) await saveChain($, normalizeRoot(d.root), r => r ? { ...r, mediumFixAt: head } : r)
+    if (head) await saveChain($, normalizeRoot(d.root), r => r ? { ...r, owner: mine, mediumFixAt: head } : r)
   }
 }
 
@@ -262,7 +277,7 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
     const key = c ? cardKey(c) : ''
     // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
     // 審查 MEDIUM 題選了修掉：提示叫對話別自己修，送出後記下當時的 HEAD，「等你」清掉後由工作桌派修正。
-    const fixMedium = new Set(decided.filter(d => picksMediumFix(d.ask, decisionAnswerOf(String(e.text ?? ''), d.name))).map(d => d.statusPath))
+    const fixMedium = new Set((await mediumFixable($, decided.filter(d => picksMediumFix(d.ask, decisionAnswerOf(String(e.text ?? ''), d.name))))).map(d => d.statusPath))
     const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c, fixMedium.has(d.statusPath)))]
     const sentPaths = new Set(decided.map(d => d.statusPath))
     if (decided.length) await update($, sentAtom, v => ({ ...v, ...Object.fromEntries(decided.map(d => [d.statusPath, { ask: d.ask, ...(e.turnId ? { during: e.turnId } : {}) }])) }))
