@@ -205,7 +205,7 @@ test('no archive button before the case is done or on tutorial and sample cases'
   only(data, PASSED, {})
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   let ui = await $.ui.mount(PANE(80))
-  expect(await screen(ui)).toContain(flat('按 z 發版'))
+  expect(await screen(ui)).toContain(flat('按兩次 z 發版'))
   await noArchive(ui)
   await ui.unmount()
 

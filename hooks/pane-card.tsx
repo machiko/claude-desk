@@ -258,7 +258,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   if (c.reviewTop?.length) rows.push(...kvRows(ui, GATE_LABEL.review, c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；等你時也不換成別的話）。
   // Agent 在跑時 u 與歸檔都鎖著：已打 tag（要你按 u 或歸檔）或六段全過時不叫你做，只說它完成後再做；
-  // 還沒打 tag 的發版那句照舊（發版只填輸入框，不鎖）。部署步驟照常列出，可以先看。
+  // 還沒打 tag 的發版那句照舊（發版按兩次 z 只填輸入框，不鎖）。部署步驟照常列出，可以先看。
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
   const ship = shipTurn(c, view.s.tutorial)
   const toShip = !!c.tag && parseGate(c.gate)?.kind === 'release' && !isDone
@@ -381,8 +381,8 @@ function actionButton(view: PaneView, c: Case, act: PaneActions, id: ActionId, l
     case 'pr':
       return button({ ...base, isLead: isTurn, isDim: !isTurn, label: actionText('pr'), onPress: () => act.openPr(c) })
     case 'release':
-      // 發版：只填輸入框、不寫遠端，按一次就好。
-      return button({ ...base, isLead: isTurn, isDim: !isTurn, label: actionText('release'), onPress: () => act.release(c) })
+      // 發版：按兩次，第二次填入已確認照慣例版號的請求（只填輸入框、不寫遠端）。
+      return button({ ...base, isBoxed: armed, isLead: armed || isTurn, isDim: !armed && !isTurn, label: armed ? `再按 ${hotkey} 確認：照慣例版號直接發版（不再問）` : actionText('release'), onPress: () => act.release(c) })
     case 'open-pr': case 'push': {
       // 推送 Agent：按兩次確認才派（寫遠端）。高風險改動的第一次按改提醒先看過審查檔。
       const ask = id === 'open-pr' && needsPrConfirm(c) ? `看過審查檔了？再按 ${hotkey}` : `再按 ${hotkey}`

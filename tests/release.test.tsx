@@ -13,20 +13,27 @@ const KEY = `case-${CARD_B}-release`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
 const RELEASE_GATE = '- 關卡：release：待上線'
 const GITHUB = 'git@github.com:acme/shop.git'
-const LEAD = '按 z 發版填入對話（Enter 送出）'
+const LEAD = '按兩次 z 發版，再按 Enter 送出'
 const AFTER_ARCHIVE = '打了 tag 之後歸檔'
 const AFTER_DEPLOY = '打了 tag 之後部署並按 u 確認上線'
-/** 「⚑ 發版」填的那行：`/desk:release` 接卡名與 PR，括號裡是清理對象；規則在 skills/release/SKILL.md，不在請求裡。 */
-const ASK = (list: string, cleanup: string) => `/desk:release ${list}（${cleanup}）`
+/** 按兩次「⚑ 發版」填的那行：`/desk:release` 接卡名與 PR，括號裡是清理對象，最後一段是面板確認；規則在 skills/release/SKILL.md，不在請求裡。 */
+const ASK = (list: string, cleanup: string) => `/desk:release ${list}（${cleanup}；已在面板確認：版號照慣例直接做）`
 /** 沒有 release 關卡的卡：發版後歸檔並移除 worktree 與分支，列「slug 分支」。 */
 const CLEANUP = (targets: string) => `歸檔並移除 worktree 與分支：${targets}`
 const REQUEST = ASK('「Beta」PR #12、「Gamma」PR #13', CLEANUP('beta feature/b、gamma feature/c'))
 /** 這些規則字句搬進了 skills/release/SKILL.md，請求裡不再出現。 */
 const RULES = ['只問我一次', 'A) 照做', '→', '不 force push']
-const FILLED = '發版請求已填入，按 Esc 回到輸入框再按 Enter 送出'
+const FILLED = '發版請求已填入（已確認照慣例版號），按 Esc 回輸入框再按 Enter；要改版號就在送出前改這行'
 const pr = (n: number, state = 'MERGED', dest = 'main') => ({ number: n, state, baseRefName: dest, headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
 const isLead = (b: any) => b?.props?.variant === 'primary' || leaves(b, 'Text').some((t: any) => t.props?.bold)
+/** 按兩次「⚑ 發版」：第一次只待確認，第二次才填。 */
+async function pressRelease(ui: any, clock: any) {
+  await ui.press({ key: KEY })
+  await clock.settle()
+  await ui.press({ key: KEY })
+  await clock.settle()
+}
 
 /**
  * Alpha 還沒合併（等你決定）；Beta PR #12、Gamma PR #13 已合併、都沒打 tag。
@@ -91,8 +98,7 @@ test('release fills the prompt with the merged cases', async ($, on) => {
   await clock.settle()
   const before = calls.length
   const launches = data.launches.length
-  await ui.press({ key: KEY })
-  await clock.settle()
+  await pressRelease(ui, clock)
   expect(data.fills).toEqual([{ text: REQUEST, mode: 'replace' }])
   expect(data.fills[0].text).not.toContain('Alpha')
   for (const rule of RULES) expect(data.fills[0].text).not.toContain(rule)
@@ -115,9 +121,8 @@ test('test_release_request_lists_cleanup_of_released_cards_when_pressed', async 
   let ui = await mountBeta($)
   await clock.settle()
   const before = calls.length
-  await ui.press({ key: KEY })
-  await clock.settle()
-  expect(data.fills).toEqual([{ text: '/desk:release 「Beta」PR #12、「Gamma」PR #13（歸檔並移除 worktree 與分支：beta feature/b；「Gamma」有 release 關卡，部署後按 u）', mode: 'replace' }])
+  await pressRelease(ui, clock)
+  expect(data.fills).toEqual([{ text: '/desk:release 「Beta」PR #12、「Gamma」PR #13（歸檔並移除 worktree 與分支：beta feature/b；「Gamma」有 release 關卡，部署後按 u；已在面板確認：版號照慣例直接做）', mode: 'replace' }])
   expect(data.fills[0].text).not.toContain('Alpha')
   expect(calls.slice(before).filter(c => ['git', 'gh', 'claude'].includes(c.argv[0]))).toEqual([])
   expect(data.submitted.length).toBe(0)
@@ -127,42 +132,42 @@ test('test_release_request_lists_cleanup_of_released_cards_when_pressed', async 
   data.draft = ''
   data.files[CARD_B] = data.files[CARD_B]!.replace(PASSED, RELEASE_GATE)
   ui = await mountBeta($)
-  await ui.press({ key: KEY })
-  await clock.settle()
+  await pressRelease(ui, clock)
   const last = data.fills[data.fills.length - 1].text
   expect(last).toBe(ASK('「Beta」PR #12、「Gamma」PR #13', '都有 release 關卡，不清理，部署後按 u'))
   for (const target of ['beta', 'gamma', 'feature/', '歸檔並移除 worktree 與分支']) expect(last).not.toContain(target)
   await ui.unmount()
 })
 
-/** AC-3：輸入框有還沒送出的字時按發版：輸入框不變，提示先送出或清掉；空的照舊填入。 */
+/** AC-3：輸入框有還沒送出的字時按兩次發版：輸入框不變，提示先送出或清掉；空的照舊填入。 */
 test('有草稿時不填發版請求', async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data)
   data.draft = '幫我看一下 CI'
   const ui = await mountBeta($)
-  await ui.press({ key: KEY })
-  await clock.settle()
+  await pressRelease(ui, clock)
   expect(data.fills).toEqual([])
   expect(data.toasts).toContain('輸入框有未送出的字，先送出或清掉再按發版')
   expect(data.toasts.some(t => t.includes(FILLED))).toBe(false)
   // 清掉草稿再按：照舊填入發版請求
   data.draft = ''
-  await ui.press({ key: KEY })
-  await clock.settle()
+  await pressRelease(ui, clock)
   expect(data.fills).toEqual([{ text: REQUEST, mode: 'replace' }])
   await ui.unmount()
 })
 
-/** AC-4：可以發版的那件按 z：按一次就把發版請求填進輸入框（跟點按鈕一樣），不派工、不送出；輪到你那句看得到 z。 */
-test('按 z 一次就填入發版請求', async ($, on) => {
+/** AC-2：可以發版的那件按 z：第一次只待確認，第二次才把已確認的發版請求填進輸入框（跟點按鈕一樣），不派工、不送出；輪到你那句看得到「按兩次 z」。 */
+test('按兩次 z 填入已確認的發版請求', async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data)
   const ui = await mountBeta($)
-  expect(await texts(ui, '按 z 發版填入對話（Enter 送出）')).toBe(2)
+  expect(await texts(ui, '按兩次 z 發版，再按 Enter 送出')).toBe(2)
   const pressed = await pressHotkey(ui, 'z')
   await clock.settle()
   expect(pressed.key).toBe(KEY)
+  expect(data.fills).toEqual([])
+  await pressHotkey(ui, 'z')
+  await clock.settle()
   expect(data.fills).toEqual([{ text: REQUEST, mode: 'replace' }])
   expect(data.submitted).toHaveLength(0)
   expect(data.launches).toHaveLength(0)
@@ -174,8 +179,7 @@ test('release falls back to a toast when the prompt cannot be filled', async ($,
   setup(data)
   data.fillable = false
   const ui = await mountBeta($)
-  await ui.press({ key: KEY })
-  await clock.settle()
+  await pressRelease(ui, clock)
   expect(data.toasts.some(t => t.includes(`輸入框無法預填，請直接輸入：${REQUEST}`))).toBe(true)
   expect(data.toasts.some(t => t.includes(FILLED))).toBe(false)
   expect(data.launches.length).toBe(0)
@@ -267,8 +271,7 @@ test('a release line gets no release button and is not listed in the request', a
 
   // Beta 的發版請求只列 Beta
   await ui.press({ key: `row-${CARD_B}` })
-  await ui.press({ key: KEY })
-  await clock.settle()
+  await pressRelease(ui, clock)
   expect(data.fills).toEqual([{ text: ASK('「Beta」PR #12', CLEANUP('beta feature/b')), mode: 'replace' }])
   await ui.unmount()
 })
@@ -293,6 +296,7 @@ async function shipsWithLine(ui: any, data: any, clock: any) {
   expect(await ui.find({ key: `case-${CARD_B}-archive` })).toBeUndefined()
   await ui.press({ key: 'more' })
   await ui.press({ key: `row-${CARD_C}` })
+  await ui.press({ key: `case-${CARD_C}-release` })
   await ui.press({ key: `case-${CARD_C}-release` })
   await clock.settle()
   expect(data.fills).toEqual([{ text: ONLY_GAMMA, mode: 'replace' }])
