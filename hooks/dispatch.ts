@@ -236,10 +236,6 @@ export class LaunchError extends Error {
  */
 export type UntrustedHold = { kind: 'untrusted'; root: string; at: number; dispatch: DispatchKind; auto: boolean }
 
-/** 面板上重新派這一種的單鍵；解衝突沒有鍵（自動流程派、或在對話處理）。 */
-export const DISPATCH_KEY = { continue: 'g', sync: 's', review: 'w', reply: 'y', publish: 'n' } as const
-const keyOf = (kind: DispatchKind): string | undefined => (DISPATCH_KEY as Partial<Record<DispatchKind, string>>)[kind]
-
 /** 給人照抄到終端機的路徑：有空白或 shell 特殊字元時用單引號包起來，一般路徑照原樣。 */
 export function shellPath(path: string): string {
   return /^[A-Za-z0-9_@%+=:,./~-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`
@@ -263,9 +259,6 @@ export function liveHolds(holds: Readonly<Record<string, UntrustedHold>>, cases:
   const kept = Object.entries(holds).filter(([path, h]) => !startedAfter(path, h.at))
   return kept.length === Object.keys(holds).length ? holds : Object.fromEntries(kept)
 }
-
-/** 派工當下就知道要按哪個鍵：手動派的就是剛按的那個；自動流程派的交給面板依當時的「輪到你」決定。 */
-export const holdKey = (h: Pick<UntrustedHold, 'dispatch' | 'auto'>): string | undefined => (h.auto ? undefined : keyOf(h.dispatch))
 
 /** 啟動後清單裡唯一一個叫這個名字、對得上 token、且啟動前不存在的背景 agent。 */
 export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: string, token: string): RawAgent | null {

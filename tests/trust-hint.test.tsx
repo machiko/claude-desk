@@ -59,7 +59,7 @@ test('test_untrusted_launch_shows_three_steps_in_toast_feed_and_turn', async ($,
   await band.unmount()
   // 標 g：「輪到你」該按的鍵是 g
   const alpha = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}), git: { branch: 'feature/alpha', head: 'h1' } } as Case
-  expect(turnOf(alpha, { hold: { dispatch: 'continue', auto: false } })).toEqual({ who: 'you', text: STEPS, key: 'g' })
+  expect(turnOf(alpha, { hold: { dispatch: 'continue', auto: false } })).toEqual({ who: 'you', text: STEPS, action: 'continue', key: 'g' })
 })
 
 test('test_untrusted_pattern_matches_listed_samples_only', () => {
@@ -256,11 +256,11 @@ test('test_untrusted_review_dispatch_says_press_w_and_keeps_w_on_the_row', async
 test('test_untrusted_hold_key_follows_dispatch_kind_and_auto_flow', () => {
   const c = alphaCase()
   const sync = turnOf(c, { hold: { dispatch: 'sync', auto: false } })
-  expect(sync).toEqual({ who: 'you', text: untrustedSteps(ROOT, 's'), key: 's' })
+  expect(sync).toEqual({ who: 'you', text: untrustedSteps(ROOT, 's'), action: 'sync', key: 's' })
   expect(stageActions(c, { hold: { dispatch: 'sync', auto: false } }).has('sync')).toBe(true)
   expect(stageActions(c).has('sync')).toBe(false)
   // 自動流程派的（例如修正）：照原本「按 g 派 Agent」的 g
-  expect(turnOf(c, { hold: { dispatch: 'continue', auto: true } })).toEqual({ who: 'you', text: untrustedSteps(ROOT, 'g'), key: 'g' })
+  expect(turnOf(c, { hold: { dispatch: 'continue', auto: true } })).toEqual({ who: 'you', text: untrustedSteps(ROOT, 'g'), action: 'continue', key: 'g' })
   // 原本的「輪到你」不是派工鍵（還沒有檢查指令，叫你按 o）：不編一個鍵，說重新派工
   const noCheck = turnOf(alphaCase({ check: '無' }), { hold: { dispatch: 'catchup', auto: true } })
   expect(noCheck).toEqual({ who: 'you', text: untrustedSteps(ROOT) })

@@ -3,8 +3,8 @@ import type { Case, Verify } from '../types'
 import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
 import { ago, displayWidth, elapsedText, fit, hhmm, pad, slugOf, summary, quotaHeld } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
-import { DISPATCH_KEY, KIND_LABEL, dispatchable, mergedUnshipped, normalizeRoot } from './dispatch'
-import { archivesOnShip, awaitsSpecOk, canArchive, canRelease, finalState, isMerged, parseVerdict, stageParts } from './pipeline'
+import { KIND_LABEL, normalizeRoot } from './dispatch'
+import { archivesOnShip, canArchive, parseVerdict, stageParts } from './pipeline'
 import { checkApprovalLine, gitLine, isArmed, mergedAtHead } from './extras'
 import type { ApprovalKey, HeldReason } from './extras'
 import { isApproved } from './approve-check'
@@ -13,23 +13,16 @@ import { compactStatus } from './digest-status'
 import { STAGE_COLOR } from './band'
 import { wrapText } from './layout'
 import { isSeparator } from './verify-summary'
-import { cardBehind, isBusy, needsPr, needsPrConfirm, needsPush, riskyNoPr, sentState, shipTurn, stageActions, turnOf } from './turn'
+import { cardBehind, expandedActions, isBusy, needsPrConfirm, sentState, shipTurn, stageActions, turnOf } from './turn'
+import { ACTIONS, ACTION_ORDER, HOTKEY, RESERVED, actionText } from './actions'
+import type { ActionId } from './actions'
 import { TUTORIAL_STEP_LABEL, tutorialStep } from './tutorial'
-import type { ActionId, Turn, TurnCtx } from './turn'
+import type { ExpandedAction, Turn, TurnCtx } from './turn'
 import type { DispatchKind } from './dispatch'
 import type { PaneActions, PaneView } from './pane'
 
-/** 列上的動作鍵；決策選項若撞到這些字母就只能用點的。新加帶單鍵的動作按鈕，字母要加進來（tests/stage-actions.test.tsx 守門）。 */
-export const RESERVED = new Set(['f', 'v', 'o', 'r', 'x', 'h', 'g', 's', 'w', 'y', 'k', 'l', 'n', 'e', 'p', 'i', 'u', 'm', 't', 'q', 'z'])
-/** 推送（開 PR／push，按兩次）、發版（按一次，只填輸入框）、歸檔（按兩次）的單鍵。 */
-export const PUBLISH_KEY = DISPATCH_KEY.publish
-export const RELEASE_KEY = 'z'
-export const ARCHIVE_KEY = 'q'
-/** 有單鍵的派工；推送（publish）走「⇡ 開 PR」「⇡ push」兩顆按鈕（單鍵 n），不在這裡。 */
-type KeyedKind = Exclude<DispatchKind, 'publish' | 'catchup'>
-const isKeyed = (k: DispatchKind): k is KeyedKind => k !== 'publish' && k !== 'catchup'
-const DISPATCH_HOTKEY: Record<KeyedKind, string> = DISPATCH_KEY
-const DISPATCH_GLYPH: Record<KeyedKind, string> = { continue: '▶', sync: '↻', review: '◆', reply: '↩' }
+// 動作的單鍵、圖示、標籤與保留鍵都在 actions.ts；這裡照舊匯出保留鍵（決策選項撞到就只能用點的）。
+export { RESERVED }
 
 export const KV_LABEL = 8
 const KV_LINES = 2
@@ -51,9 +44,12 @@ function approvalKey(view: PaneView, c: Case): ApprovalKey | null {
 }
 /** 這張卡現在的檢查指令核准過了；畫面沒給核准紀錄就當核准過。 */
 const checkApproved = (view: PaneView, c: Case) => !view.trusted || isApproved(view.trusted, c)
-/** 這個對話的流程停在檢查段，原因是指令改過或從沒核准過：別的對話開的按 v 接不下去，不算；已合併還沒上線的不列 v，也不算。 */
-function heldReason(c: Case): HeldReason | null {
-  if (!c.chain?.heldAtCheck || c.chain.foreign || mergedUnshipped(c)) return null
+/**
+ * 這個對話的流程停在檢查段，原因是指令改過或從沒核准過：別的對話開的按 v 接不下去，不算；
+ * 這一刻 footer 上沒有 v（已合併、可歸檔、Agent 在跑）時也不算，不叫你按一顆不在列上的鍵。
+ */
+function heldReason(c: Case, listed: ReadonlySet<ActionId>): HeldReason | null {
+  if (!c.chain?.heldAtCheck || c.chain.foreign || !listed.has('verify')) return null
   return c.chain.stopped === CHECK_CHANGED ? 'changed' : c.chain.stopped === CHECK_UNAPPROVED ? 'unapproved' : null
 }
 
@@ -80,18 +76,9 @@ function turnRows(ui: any, t: Turn, width: number, tick: number, elapsed = ''): 
   ))
 }
 
-/** footer 上的一個操作：按鈕，或一段文字（例如「派工中」）。width 是畫出來約佔的格數，用來排列。 */
-export type Action = { key: string; label: string; hotkey?: string; isDim?: boolean; isLead?: boolean; isBoxed?: boolean; onPress?: () => void; color?: string; width: number }
+/** footer 上的一個操作：按鈕，或一段文字（例如「派工中」「退回：」，沒有 id）。width 是畫出來約佔的格數，用來排列。 */
+export type Action = { key: string; id?: ActionId; label: string; hotkey?: string; isDim?: boolean; isLead?: boolean; isBoxed?: boolean; onPress?: () => void; color?: string; width: number }
 
-/** 上線確認只在最後一段：已經有 tag 包含這個 commit、關卡是 release：…（部署完由你按）。 */
-export const canShip = (c: Case) => c.pipeline?.current === 'ship' && !!c.tag && parseGate(c.gate)?.kind === 'release'
-/** 只有 desk 派出去、正在跑的那個才能從面板停止。 */
-const canStop = (c: Case) => (c.state === 'running' || c.state === 'approve') && !!c.agent?.id && /^desk-/.test(c.agent.name)
-/** Agent 不在時的這件：執行中鎖住的確認規格、歸檔照原本的條件判斷要不要列（Agent 在跑時那兩個條件本來就不成立）。 */
-function withoutAgent(c: Case): Case {
-  const { agent: _running, ...rest } = c
-  return c.state === 'running' || c.state === 'approve' ? { ...rest, state: finalState({ ...rest, state: 'ready' }) } : rest
-}
 
 /** 確認文字裡的模型：同步用同步模型；這件有 projects 覆寫就用它實際會用的；其他看 kinds，再來是派工模型。 */
 function modelText(view: PaneView, k: DispatchKind, c: Case): string {
@@ -178,7 +165,7 @@ function verifyRows(ui: any, c: Case, v: Verify | undefined, running: boolean, v
   const count = show?.summary?.failed !== undefined ? ` · ${show.summary.failed} 支失敗` : ''
   const room = Math.max(10, width - INDENT - KV_LABEL)
   // 第二次按 t、v、g 就會核准這條指令，或流程正停在它沒核准：列出全文，不用去掉前綴的短版。
-  const approval = checkApprovalLine(approvalKey(view, c), heldReason(c), checkApproved(view, c), c.verify)
+  const approval = checkApprovalLine(approvalKey(view, c), heldReason(c, stageActions(c, turnCtx(view, c))), checkApproved(view, c), c.verify)
   const result = running ? <Text color={COLOR.running}>測試中</Text>
     : queuedAt >= 0 ? <Text color={COLOR.running}>{`排隊中（第 ${queuedAt + 1} 位）`}</Text>
     : show ? <Text color={show.ok ? COLOR.good : COLOR.bad}>{show.ok ? (brief ? '✓ 通過' : `✓ 通過 ${hhmm(show.at)}`) : `✕ 未通過（結束碼 ${show.exitCode}）· ${hhmm(show.at)}${count}`}</Text>
@@ -265,7 +252,8 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   if (c.status) rows.push(...(view.isExpanded ? kvRows(ui, '狀態', c.status, width, true, COLOR.dim) : kvRows(ui, '狀態', c.statusShort ?? compactStatus(c.status), width, false, COLOR.text, 1)))
   if (c.git && c.gitState) rows.push(...kvRows(ui, 'git', `${c.git.branch} · ${gitLine(c.gitState, mergedAtHead(c))}`, width, false, COLOR.dim, 1))
   // 面板外有新的變更、卡片沒跟著寫：提示同步（新對話只讀卡片與 git，把五欄寫回）。
-  if (cardBehind(c, view.now)) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
+  // 處理中（測試在跑、CI 跑中、派工中…）同步收進 m：footer 上沒有 s 時不叫你按 s。
+  if (cardBehind(c, view.now) && stageActions(c, turnCtx(view, c)).has('sync')) rows.push(...kvRows(ui, '卡片', `分支最近一次變更（${ago(c.commitAt!, view.now)}）比卡片新：按 s 同步`, width, false, COLOR.attention, 1))
   if (c.preflight) rows.push(...kvRows(ui, '前置', c.preflight, width, false, c.preflight.startsWith('失敗') ? COLOR.attention : COLOR.dim, 1))
   if (c.reviewTop?.length) rows.push(...kvRows(ui, GATE_LABEL.review, c.reviewTop.join('；'), width, view.isExpanded, COLOR.bad, 3))
   // 合併之後：六段全過才叫你歸檔，否則是上線段那一句（跟「▶ 輪到你」相同；等你時也不換成別的話）。
@@ -330,107 +318,95 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   return rows
 }
 
-/** 現在這件的操作（footer 第一排）：填入決策、派工、停止、輸出、審查檔、PR、檢查、開卡片。現在該按的那顆不變淡。 */
+/** 現在這件的操作（footer 第一排）：照 stageActions 的集合畫（按 m 再照 expandedActions），帶頭的只看「▶ 輪到你」的動作。 */
 export function caseActions(view: PaneView, c: Case, act: PaneActions): Action[] {
   // 示範任務只能看：連 m 展開全部也沒有動作。
   if (c.demo) return []
-  const decisions = c.state === 'ask' ? parseDecisions(c.ask) : []
-  const picks = view.picks[picksKey(c)] ?? {}
-  const ready = allPicked(decisions, picks)
-  const isVerifying = c.statusPath in view.verifying
-  const queuedAt = view.queue.indexOf(c.statusPath)
   const ctx = turnCtx(view, c)
-  const leadKey = turnOf(c, ctx).key
-  const inStage = stageActions(c, ctx)
-  const allowed = view.showAll ? null : inStage
-  const can = (id: ActionId) => !allowed || allowed.has(id)
+  const lead = turnOf(c, ctx).action
   const prefix = `case-${c.statusPath}-`
-  const out: Action[] = []
-  // Agent 執行中或等批准：會搶 worktree／卡片的動作只列成淡色文字、寫原因，連 m 展開也按不了。
-  const busy = isBusy(c)
-  const idle = busy ? withoutAgent(c) : c
-  const locked = (id: ActionId, label: string) => out.push(button({ key: prefix + id, label: `${label}${WORD.busyLocked}`, color: COLOR.faint }))
-  // 決策送出了、等對話寫回：連 m 展開全部也不給 f，免得重送。
-  if (choiceCount(decisions) && can('fill') && ctx.sent !== 'waiting') out.push(button({ key: prefix + 'fill', hotkey: 'f', isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : `✎ ${WORD.fill}`, onPress: () => act.fill(c) }))
-  if (c.statusPath in view.launching) out.push(button({ key: prefix + 'launching', label: `${SPINNER[view.tick % SPINNER.length]} 派工中`, color: COLOR.running }))
-  // 派工排隊中：跟派工中一樣不列派工鍵；還沒派出去，取消按一次就好。
-  else if (ctx.agentQueued) {
-    out.push(button({ key: prefix + 'agent-queued', label: `… 派工排隊中（第 ${ctx.agentQueued} 位）`, color: COLOR.faint }))
-    if (can('unqueue')) out.push(button({ key: prefix + 'unqueue', hotkey: 'k', label: '■ 取消排隊', onPress: () => act.unqueue(c) }))
+  const shown: ExpandedAction[] = view.showAll ? expandedActions(c, ctx) : (() => { const listed = stageActions(c, ctx); return ACTION_ORDER.filter(id => listed.has(id)).map(id => ({ id })) })()
+  const draw = (a: ExpandedAction): Action => {
+    // Agent 執行中或等批准：會搶 worktree／卡片的動作只列成淡色文字、寫原因，連 m 展開也按不了。
+    if (a.isLocked) return button({ key: prefix + a.id, id: a.id, label: `${actionText(a.id)}${WORD.busyLocked}`, color: COLOR.faint })
+    const b = actionButton(view, c, act, a.id, lead)
+    // 退回的鍵變淡、不帶頭；已待確認（加框）的照舊，第一次按了才看得到確認字樣。
+    return a.isRetreat && !b.isBoxed ? { ...b, isLead: false, isDim: true } : b
   }
-  else for (const k of dispatchable(c).filter(isKeyed).filter(k => (decisions.length === 0 || k !== 'continue') && can(k))) {
-    const armed = isArmed(view.armed, `${c.statusPath}\n${k}`, view.now)
-    // 檢查還沒核准：第二次按 g 同時核准它（第一次已在檢查列列出全文）。
-    const approving = k === 'continue' && !checkApproved(view, c) ? '核准測試並' : ''
-    // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的位置。
-    const hint = k === 'sync' && cardBehind(c, view.now)
-    out.push(button({ key: prefix + k, hotkey: DISPATCH_HOTKEY[k], isBoxed: armed, isLead: armed || leadKey === DISPATCH_HOTKEY[k] || (hint && !leadKey), isDim: !armed && leadKey !== DISPATCH_HOTKEY[k] && !hint, label: armed ? `再按 ${DISPATCH_HOTKEY[k]} 確認${approving}${k === 'continue' && quotaHeld(c.chain) ? '接續' : KIND_LABEL[k]}（${modelText(view, k, c)}）` : `${DISPATCH_GLYPH[k]} ${k === 'continue' && quotaHeld(c.chain) ? '接續' : KIND_LABEL[k]}`, onPress: () => act.dispatch(c, k) }))
-  }
-  if (!ctx.agentQueued && canStop(c) && can('stop')) {
-    const armed = isArmed(view.armed, `${c.statusPath}\nstop`, view.now)
-    out.push(button({ key: prefix + 'stop', hotkey: 'k', isBoxed: armed, isLead: armed, isDim: !armed, label: armed ? '再按 k 確認停止' : '■ 停止', onPress: () => act.stop(c) }))
-  }
-  if (c.agent?.id && can('logs')) out.push(button({ key: prefix + 'logs', hotkey: 'l', isDim: true, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : '≡ 輸出', onPress: () => act.logs(c) }))
-  if ((c.reviewTop?.length || riskyNoPr(c)) && can('review-file')) out.push(button({ key: prefix + 'review-file', hotkey: 'e', isDim: leadKey !== 'e', isLead: leadKey === 'e', label: '↗ 審查檔', onPress: () => act.openReview(c) }))
-  if (c.pr?.url && can('pr')) out.push(button({ key: prefix + 'pr', hotkey: 'p', isDim: leadKey !== 'p', isLead: leadKey === 'p', label: '↗ PR', onPress: () => act.openPr(c) }))
-  // 發版：只填輸入框、不寫遠端，按一次就好（z）。「▶ 輪到你」帶 z 時它帶頭。
-  if (!view.s.tutorial && canRelease(c) && can('release')) out.push(button({ key: prefix + 'release', hotkey: RELEASE_KEY, isLead: !leadKey || leadKey === RELEASE_KEY, isDim: !!leadKey && leadKey !== RELEASE_KEY, label: '⚑ 發版', onPress: () => act.release(c) }))
-  // 推送 Agent：「⇡ 開 PR」「⇡ push」按兩次 n 確認才派（寫遠端）。高風險改動的第一次按改提醒先看過審查檔。
-  const publish = (id: 'open-pr' | 'push', doing: string, onPress: () => void) => {
-    const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
-    const ask = id === 'open-pr' && needsPrConfirm(c) ? `看過審查檔了？再按 ${PUBLISH_KEY}` : `再按 ${PUBLISH_KEY}`
-    const lead = !leadKey || leadKey === PUBLISH_KEY
-    out.push(button({ key: prefix + id, hotkey: PUBLISH_KEY, isBoxed: armed, isLead: armed || lead, isDim: !armed && !lead, label: armed ? `${ask} 確認派 Agent ${doing}（${modelText(view, 'publish', c)}）` : `⇡ ${doing}`, onPress }))
-  }
-  if (needsPr(c) && can('open-pr')) publish('open-pr', '開 PR', () => act.publishPr(c))
-  if (needsPush(c) && can('push')) publish('push', 'push', () => act.publishPush(c))
-  // 已合併還沒上線：分支已進基準分支，展開全部也不列檢查。
-  if (c.verify && !mergedUnshipped(c) && can('verify') && busy) locked('verify', `▶ ${WORD.verify}`)
-  else if (c.verify && !mergedUnshipped(c) && can('verify')) {
-    // 檢查還沒核准：按兩次，第一次在檢查列列出全文，第二次核准並執行。
-    const armed = !checkApproved(view, c) && isArmed(view.armed, `${c.statusPath}\nverify`, view.now)
-    out.push(button({ key: prefix + 'verify', hotkey: 'v', isBoxed: armed, isDim: !armed && (isVerifying || leadKey !== 'v'), isLead: armed || (!isVerifying && leadKey === 'v'), label: isVerifying ? `${SPINNER[view.tick % SPINNER.length]} ${WORD.verify}中` : queuedAt >= 0 ? '… 排隊中' : armed ? `再按 v 核准並執行${WORD.verify}` : `▶ ${WORD.verify}`, onPress: () => act.verify(c) }))
-  }
-  if (canShip(c) && can('ship') && busy) locked('ship', '✓ 上線確認')
-  else if (canShip(c) && can('ship')) {
-    const armed = isArmed(view.armed, `${c.statusPath}\nship`, view.now)
-    out.push(button({ key: prefix + 'ship', hotkey: 'u', isBoxed: armed, isLead: armed || leadKey === 'u', label: armed ? (archivesOnShip(c, !!view.s.tutorial) ? '再按 u 確認上線並歸檔（清除 release 關卡）' : '再按 u 確認已上線（清除 release 關卡）') : '✓ 上線確認', onPress: () => act.ship(c) }))
-  }
-  if (!view.s.tutorial && busy && awaitsSpecOk(idle) && can('spec-ok')) locked('spec-ok', '✓ 確認規格')
-  else if (!view.s.tutorial && awaitsSpecOk(c) && can('spec-ok')) {
-    const armed = isArmed(view.armed, `${c.statusPath}\nspec-ok`, view.now)
-    out.push(button({ key: prefix + 'spec-ok', hotkey: 't', isBoxed: armed || leadKey === 't', isLead: armed || leadKey === 't', isDim: !armed && leadKey !== 't', label: armed ? '再按 t 確認規格並核准測試' : '✓ 確認規格', onPress: () => act.specOk(c) }))
-  }
-  if (!view.s.tutorial && busy && canArchive(idle) && can('archive')) locked('archive', '⌫ 歸檔')
-  else if (!view.s.tutorial && canArchive(c) && can('archive')) {
-    const armed = isArmed(view.armed, `${c.statusPath}\narchive`, view.now)
-    out.push(button({ key: prefix + 'archive', hotkey: ARCHIVE_KEY, isBoxed: armed, isLead: armed || leadKey === ARCHIVE_KEY, isDim: !armed && leadKey !== ARCHIVE_KEY, label: armed ? `再按 ${ARCHIVE_KEY} 確認歸檔` : '⌫ 歸檔', onPress: () => act.archive(c) }))
-  }
-  const lesson = view.s.tutorial ? tutorialStep(c) : null
-  if (lesson && can('tutorial')) out.push(button({ key: prefix + 'tutorial', hotkey: 't', isLead: leadKey === 't', isBoxed: leadKey === 't', isDim: leadKey !== 't', label: TUTORIAL_STEP_LABEL[lesson], onPress: () => act.tutorial(c) }))
-  if (can('open')) out.push(button({ key: prefix + 'open', hotkey: 'o', isDim: leadKey !== 'o', isLead: leadKey === 'o', label: `↗ ${WORD.open}`, onPress: () => act.open(c) }))
-  return view.showAll ? withRetreat(out, c, inStage, prefix) : out
+  const front = shown.filter(a => !a.isRetreat).map(draw)
+  const back = shown.filter(a => a.isRetreat).map(draw)
+  // 派工中、派工排隊中：不可按的字樣排在填入決策之後。
+  const status = c.statusPath in view.launching ? [button({ key: prefix + 'launching', label: `${SPINNER[view.tick % SPINNER.length]} 派工中`, color: COLOR.running })]
+    : ctx.agentQueued ? [button({ key: prefix + 'agent-queued', label: `… 派工排隊中（第 ${ctx.agentQueued} 位）`, color: COLOR.faint })] : []
+  const at = front[0]?.id === 'fill' ? 1 : 0
+  return [
+    ...front.slice(0, at), ...status, ...front.slice(at),
+    // 合併段平常不列的退回鍵排在本段的動作後面，前面插一段不可按的「退回：」。
+    ...(back.length ? [button({ key: prefix + 'retreat', label: '退回：', color: COLOR.faint }), ...back] : []),
+  ]
 }
 
-/** 合併段退回前面段落的鍵：繼續、審查、檢查。 */
-const RETREAT = new Set<string>(['continue', 'review', 'verify'])
-
-/**
- * 展開全部動作（m）時，合併段平常不列的退回鍵（繼續、審查、檢查）排在本段的動作後面、變淡、不帶頭，
- * 前面插一段不可按的「退回：」。本段列了的（例如 CI 失敗時的繼續、自審的審查）不算退回；
- * 只看這三個鍵，不拿 stageActions 的補集（Agent 在跑時它不列開 PR）。已待確認（加框）的照舊，第一次按了才看得到確認字樣。其他段落不分組。
- */
-function withRetreat(out: Action[], c: Case, inStage: Set<ActionId>, prefix: string): Action[] {
-  if (c.pipeline?.current !== 'merge' || isMerged(c)) return out
-  const isBack = (a: Action) => {
-    const id = a.key.slice(prefix.length)
-    return RETREAT.has(id) && !inStage.has(id as ActionId)
+/** 一顆動作按鈕：要按兩次的第一次按了就加框、換成確認字樣；帶頭的是「▶ 輪到你」的那個動作。 */
+function actionButton(view: PaneView, c: Case, act: PaneActions, id: ActionId, lead: ActionId | undefined): Action {
+  const prefix = `case-${c.statusPath}-`
+  const hotkey = HOTKEY(id)
+  const armed = isArmed(view.armed, `${c.statusPath}\n${id}`, view.now)
+  const isTurn = lead === id
+  const base = { key: prefix + id, id, hotkey }
+  switch (id) {
+    case 'fill': {
+      const decisions = parseDecisions(c.ask)
+      const picks = view.picks[picksKey(c)] ?? {}
+      // 決策選項還沒選完：填入不帶頭。
+      const ready = allPicked(decisions, picks)
+      return button({ ...base, isLead: ready, isBoxed: ready, isDim: !ready, label: ready ? `✎ ${WORD.fill}：${decisionAnswer(decisions, picks)}` : actionText('fill'), onPress: () => act.fill(c) })
+    }
+    case 'unqueue':
+      // 還沒派出去，取消按一次就好。
+      return button({ ...base, label: actionText('unqueue'), onPress: () => act.unqueue(c) })
+    case 'continue': case 'review': case 'reply': case 'sync': {
+      // 檢查還沒核准：第二次按 g 同時核准它（第一次已在檢查列列出全文）。
+      const approving = id === 'continue' && !checkApproved(view, c) ? '核准測試並' : ''
+      const word = id === 'continue' && quotaHeld(c.chain) ? '接續' : KIND_LABEL[id]
+      // 卡片比分支最近一次變更舊：同步不變淡；這一段另有該按的鍵時不搶它的帶頭。
+      const hint = id === 'sync' && cardBehind(c, view.now)
+      return button({ ...base, isBoxed: armed, isLead: armed || isTurn, isDim: !armed && !isTurn && !hint, label: armed ? `再按 ${hotkey} 確認${approving}${word}（${modelText(view, id, c)}）` : `${ACTIONS[id].glyph} ${word}`, onPress: () => act.dispatch(c, id) })
+    }
+    case 'stop':
+      return button({ ...base, isBoxed: armed, isLead: armed, isDim: !armed, label: armed ? `再按 ${hotkey} 確認停止` : actionText('stop'), onPress: () => act.stop(c) })
+    case 'logs':
+      return button({ ...base, isLead: isTurn, isDim: !isTurn, label: view.logsOpen === c.statusPath ? '▴ 收起輸出' : actionText('logs'), onPress: () => act.logs(c) })
+    case 'review-file':
+      return button({ ...base, isLead: isTurn, isDim: !isTurn, label: actionText('review-file'), onPress: () => act.openReview(c) })
+    case 'pr':
+      return button({ ...base, isLead: isTurn, isDim: !isTurn, label: actionText('pr'), onPress: () => act.openPr(c) })
+    case 'release':
+      // 發版：只填輸入框、不寫遠端，按一次就好。
+      return button({ ...base, isLead: isTurn, isDim: !isTurn, label: actionText('release'), onPress: () => act.release(c) })
+    case 'open-pr': case 'push': {
+      // 推送 Agent：按兩次確認才派（寫遠端）。高風險改動的第一次按改提醒先看過審查檔。
+      const ask = id === 'open-pr' && needsPrConfirm(c) ? `看過審查檔了？再按 ${hotkey}` : `再按 ${hotkey}`
+      const doing = ACTIONS[id].label
+      return button({ ...base, isBoxed: armed, isLead: armed || isTurn, isDim: !armed && !isTurn, label: armed ? `${ask} 確認派 Agent ${doing}（${modelText(view, 'publish', c)}）` : actionText(id), onPress: id === 'open-pr' ? () => act.publishPr(c) : () => act.publishPush(c) })
+    }
+    case 'verify': {
+      const isVerifying = c.statusPath in view.verifying
+      // 檢查還沒核准：按兩次，第一次在檢查列列出全文，第二次核准並執行。
+      const confirm = !checkApproved(view, c) && armed
+      const label = isVerifying ? `${SPINNER[view.tick % SPINNER.length]} ${WORD.verify}中` : view.queue.includes(c.statusPath) ? '… 排隊中' : confirm ? `再按 ${hotkey} 核准並執行${WORD.verify}` : actionText('verify')
+      return button({ ...base, isBoxed: confirm, isDim: !confirm && (isVerifying || !isTurn), isLead: confirm || (!isVerifying && isTurn), label, onPress: () => act.verify(c) })
+    }
+    case 'ship':
+      return button({ ...base, isBoxed: armed, isLead: armed || isTurn, label: armed ? (archivesOnShip(c, !!view.s.tutorial) ? `再按 ${hotkey} 確認上線並歸檔（清除 release 關卡）` : `再按 ${hotkey} 確認已上線（清除 release 關卡）`) : actionText('ship'), onPress: () => act.ship(c) })
+    case 'spec-ok':
+      return button({ ...base, isBoxed: armed || isTurn, isLead: armed || isTurn, isDim: !armed && !isTurn, label: armed ? `再按 ${hotkey} 確認規格並核准測試` : actionText('spec-ok'), onPress: () => act.specOk(c) })
+    case 'archive':
+      return button({ ...base, isBoxed: armed, isLead: armed || isTurn, isDim: !armed && !isTurn, label: armed ? `再按 ${hotkey} 確認歸檔` : actionText('archive'), onPress: () => act.archive(c) })
+    case 'tutorial': {
+      const lesson = tutorialStep(c)
+      return button({ ...base, isLead: isTurn, isBoxed: isTurn, isDim: !isTurn, label: lesson ? TUTORIAL_STEP_LABEL[lesson] : '', onPress: () => act.tutorial(c) })
+    }
+    case 'open':
+      return button({ ...base, isDim: !isTurn, isLead: isTurn, label: actionText('open'), onPress: () => act.open(c) })
   }
-  const back = out.filter(isBack)
-  if (!back.length) return out
-  return [
-    ...out.filter(a => !isBack(a)),
-    button({ key: prefix + 'retreat', label: '退回：', color: COLOR.faint }),
-    ...back.map(a => (a.isBoxed ? a : { ...a, isLead: false, isDim: true })),
-  ]
 }
