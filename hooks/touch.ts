@@ -68,8 +68,8 @@ export function specOkCards(call: ToolTouch, stdout: unknown): string[] {
   return [...stdout.matchAll(SPEC_OK_DONE)].map(m => m[1]!.trim()).filter(Boolean)
 }
 
-/** card.py spec-ok 成功時在卡片寫的兩筆：History「<日期>：規格確認，關卡清為無，可派實作」、Decisions「D-n <日期> <人>：確認規格（…」。 */
-const SPEC_OK_HISTORY = /^- \d{4}-\d{2}-\d{2}：規格確認，關卡清為無，可派實作\s*$/gm
+/** card.py spec-ok 成功時在卡片寫的兩筆：History「<日期 時:分>：規格確認，關卡清為無，可派實作」（舊版只寫日期，時間選填）、Decisions「D-n <日期> <人>：確認規格（…」。 */
+const SPEC_OK_HISTORY = /^- \d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?：規格確認，關卡清為無，可派實作\s*$/gm
 const SPEC_OK_DECISION = /^- D-\d+ \d{4}-\d{2}-\d{2} [^\n]*?：確認規格（/gm
 
 /** 卡片跟 spec-ok 有關的樣子：關卡是不是 spec、spec-ok 寫過的 History 與 Decisions 各幾筆。 */
