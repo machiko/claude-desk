@@ -284,4 +284,5 @@ export const TUTORIAL_INTRO = [
   '  5 合併：先回答驗收建議（a、b 或 c → f；選 c 會改程式並 commit，接著自動退回測試段、重新驗收），再按 t 合併',
   '  6 上線：按 t 打 tag，再按兩次 u 確認上線',
   '結束後輸入 /desk tutorial end 清除沙盒、回到你的任務。',
+  '教學不需要信任資料夾；回自己的專案前，先在那個 repo 根目錄開過一次 claude 並選信任，背景 Agent 才派得出去。',
 ].join('\n')

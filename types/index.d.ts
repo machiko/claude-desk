@@ -152,6 +152,8 @@ declare module 'claude-code' {
       isExpanded: boolean
       /** 正在派工的任務：卡片路徑 → 開始時間；清單還沒看到 agent 前先擋第二次。 */
       launching: Record<string, number>
+      /** 派工因為 repo 還沒信任而開不了的任務：卡片路徑 → 擋下原因（派的是哪一種、是不是自動流程派的）；派工開頭、成功派出、之後又有 Agent 開過時清掉。 */
+      untrusted: Record<string, { kind: 'untrusted'; root: string; at: number; dispatch: 'continue' | 'sync' | 'review' | 'reply' | 'publish' | 'catchup'; auto: boolean }>
       /** 排隊等著跑完成檢查的任務（卡片路徑），依序。 */
       checkQueue: string[]
       /** 派工隊伍：同時執行的 Agent 達上限時排的派工（卡片路徑，依序）。 */

@@ -7,7 +7,7 @@ import { hhmm, keepFeed, liveCases, plain, rawAgents } from './model'
 import { logTail } from './probes'
 import type { DeskPaths } from './probes'
 import { CONFIRM_MS, confirmStep } from './extras'
-import { confirmLaunch, launchArgs, parseLaunchToken } from './dispatch'
+import { LaunchError, confirmLaunch, isUntrustedLaunch, launchArgs, parseLaunchToken } from './dispatch'
 import type { RootJobs } from './dispatch'
 import { stageLabel } from './pipeline'
 import { SUMMARY_SYSTEM, cleanSummary, summaryPrompt, textKey } from './digest-status'
@@ -238,7 +238,7 @@ export async function launch($: any, c: Case, prompt: string, o: { model: string
   const beforeOut = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
   const before = beforeOut && beforeOut.exitCode === 0 ? rawAgents(beforeOut.stdout) : []
   const r = await $.process.run(launchArgs(prompt, { model: o.model, effort: o.effort, sessionId: o.sessionId, launchName: o.name, mcp: o.mcp }), { cwd: c.root, timeoutMs: LAUNCH_TIMEOUT_MS })
-  if (r.exitCode !== 0) throw new Error(String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || `claude --bg 失敗（exit ${r.exitCode}）`)
+  if (r.exitCode !== 0) throw new LaunchError(String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || `claude --bg 失敗（exit ${r.exitCode}）`, isUntrustedLaunch(`${r.stderr ?? ''}\n${r.stdout ?? ''}`))
   const token = parseLaunchToken(r.stdout)
   if (!token) throw new Error('claude --bg 沒有回傳可辨識的 id')
   const afterOut = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 })

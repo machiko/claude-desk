@@ -6,7 +6,8 @@ import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './ca
 import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
-import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext } from './dispatch'
+import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext, untrustedSteps } from './dispatch'
+import type { DispatchKind, UntrustedHold } from './dispatch'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './next-words'
 import { ACTION_ORDER, HOTKEY } from './actions'
 import type { ActionId } from './actions'
@@ -27,9 +28,9 @@ type BaseTurn = Omit<Turn, 'key'>
 
 /**
  * 畫面上才知道的事：完成檢查執行中、排隊中、派工中、派工排第幾位（1 起，沒排是 undefined）、決策送出了沒、現在是不是教學模式，
- * 以及現在幾點（判斷卡片落後）。
+ * 以及現在幾點（判斷卡片落後）、上次派工有沒有被擋下（hold）。
  */
-export type TurnCtx = { verifying?: boolean; queued?: boolean; launching?: boolean; agentQueued?: number; tutorial?: boolean; sent?: SentState; now?: number }
+export type TurnCtx = { /** 上次派工因為 repo 還沒信任而開不了：派的是哪一種、是不是自動流程派的；沒有更要緊的事時改說三步。 */ hold?: Pick<UntrustedHold, 'dispatch' | 'auto'>; verifying?: boolean; queued?: boolean; launching?: boolean; agentQueued?: number; tutorial?: boolean; sent?: SentState; now?: number }
 
 /** waiting：送出了、對話還在處理；unwritten：回合結束了，卡片的「等你」卻沒改。 */
 export type SentState = 'waiting' | 'unwritten'
@@ -145,6 +146,53 @@ function reviewTurnText(c: Case): string {
   return `${head}；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
 }
 
+/** 重新派工的動作：③ 只說這幾種的鍵，別的（開卡片、執行測試）不算。 */
+const DISPATCH_ACTIONS: ReadonlySet<ActionId> = new Set<ActionId>(['continue', 'review', 'sync', 'reply', 'open-pr', 'push'])
+/** 只用來算鍵：把還在走的流程當成已暫停，不寫回卡片也不顯示。 */
+const UNTRUSTED_STOP = 'repo 還沒信任'
+/** 手動派工遇到還沒信任：剛按的那個動作（推送看現在是開 PR 還是 push）。 */
+const HOLD_ACTION: Partial<Record<DispatchKind, ActionId>> = { continue: 'continue', review: 'review', sync: 'sync', reply: 'reply' }
+const heldAction = (c: Case, kind: DispatchKind): ActionId | undefined => kind === 'publish' ? (needsPr(c) ? 'open-pr' : needsPush(c) ? 'push' : undefined) : HOLD_ACTION[kind]
+/** 派工鍵派得出去：dispatchable 列了它；等你有決策時不派繼續（先回答決策）。列上與 ③ 用同一個判斷。 */
+function mayDispatch(c: Case, k: 'continue' | 'review' | 'sync' | 'reply'): boolean {
+  return dispatchable(c).includes(k) && !(k === 'continue' && c.state === 'ask' && parseDecisions(c.ask).length > 0)
+}
+/** 手動派的那個動作此刻還在列上（派得出去）才算；失敗後卡片改成派不出去就不算（推送兩顆鍵照原本的條件）。 */
+const heldOnRow = (c: Case, kind: DispatchKind): ActionId | undefined => {
+  const a = heldAction(c, kind)
+  return a && (a === 'open-pr' || a === 'push' || mayDispatch(c, a as 'continue' | 'review' | 'sync' | 'reply')) ? a : undefined
+}
+
+/**
+ * 還沒信任時 ③ 要按的動作：手動派的就是剛按的那個，前提是它還派得出去（actionsFor 用同一個 heldOnRow 列它）；
+ * 失敗後卡片改成派不出去了，跟自動流程派的一樣照「輪到你」取派工動作，沒有就說重新派工。
+ * 自動流程派的照「這一步沒派出去」時的「輪到你」取派工動作：派工當下的快照還說「接著自動驗收」（沒有動作），所以算的時候把流程當成已停下；
+ * 檢查失敗後派修正那種，state 是 failed，停下時一樣是繼續（g）。c 要是快照裡這件的樣子（跟面板同一份），不是派工用的 state 改成 ready 的複本。
+ */
+function untrustedAction(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx): ActionId | undefined {
+  const held = hold.auto ? undefined : heldOnRow(c, hold.dispatch)
+  if (held) return held
+  const { hold: _, ...rest } = ctx
+  const paused = c.chain && !c.chain.stopped ? { ...c, chain: { ...c.chain, stopped: UNTRUSTED_STOP } } : c
+  const action = turnOf(paused, rest).action
+  return action && DISPATCH_ACTIONS.has(action) ? action : undefined
+}
+
+/** ③ 要按的鍵：「輪到你」與派工當下的 toast、動態共用，兩邊說同一個鍵；沒有就說重新派工。 */
+export function untrustedKey(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx = {}): string | undefined {
+  const action = untrustedAction(c, hold, ctx)
+  return action ? HOTKEY(action) : undefined
+}
+
+/**
+ * 還沒信任：說三步，③ 是回面板要再按的鍵。排在執行中、等你、等回覆、等批准之後：那些比重派要緊，
+ * 紀錄是這個對話自己的，別的對話派出 Agent 它不知道。
+ */
+function untrustedTurn(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnCtx): BaseTurn {
+  const action = untrustedAction(c, hold, ctx)
+  return { who: 'you', text: untrustedSteps(c.root, action ? HOTKEY(action) : undefined), ...(action ? { action } : {}) }
+}
+
 /** 帶上動作的單鍵。 */
 const keyed = (t: BaseTurn): Turn => (t.action ? { ...t, key: HOTKEY(t.action) } : t)
 
@@ -183,6 +231,7 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
   // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
   if (isBusy(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
+  if (ctx.hold) return untrustedTurn(c, ctx.hold, ctx)
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', ...(!ctx.tutorial && canArchive(c) ? archiveTurn(c) : { text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }) }
   const hold = checkHold(c)
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
@@ -300,6 +349,8 @@ export function isHandling(c: Case, ctx: TurnCtx = {}): boolean {
   if (c.state === 'ask') return ctx.sent === 'waiting'
   if (c.state === 'reply' || c.state === 'approve') return false
   if (ctx.verifying || ctx.queued || isBusy(c)) return true
+  // 還沒信任的三步是輪到你（排在執行中之後，跟 baseTurn 同順序）。
+  if (ctx.hold && !c.manual) return false
   if (c.manual || c.state === 'done' || c.state === 'failed') return false
   if (quotaHeld(c.chain) && isQuotaHold(c.chain?.stopped)) return false
   const gate = parseGate(c.gate)
@@ -338,6 +389,9 @@ function actionsFor(c: Case, ctx: TurnCtx, isAi: boolean): Set<ActionId> {
     if (canStop(c)) out.add('stop')
     return handling(out, isAi, ctx)
   }
+  // 手動派工遇到還沒信任：剛按的那個留在列上，照三步回來才按得到（派不出去的照樣不列，③ 也不說它）。
+  const held = ctx.hold && !ctx.hold.auto ? heldOnRow(c, ctx.hold.dispatch) : undefined
+  if (held) out.add(held)
   if (!merged) {
     if (ctx.now !== undefined && cardBehind(c, ctx.now) && may('sync')) out.add('sync')
     const idleBuild = current === 'build' && !!idleNext(c.next)
