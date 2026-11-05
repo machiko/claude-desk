@@ -4,7 +4,7 @@ import { historyEntries } from '../hooks/extras'
 import { issueOf, hhmm } from '../hooks/model'
 import type { Case, FeedEvent } from '../types'
 
-// 面板的「最近」改成「歷程」：顯示現在這件卡片的 History（預設最新 3 筆，x 展開全部）；
+// 面板的「最近」改成「歷程」：顯示現在這件卡片的全部 History（每筆「MM-DD HH:MM」一行，x 換行看全文）；
 // desk 自己的動態只在最新一筆是錯誤或警告時，在歷程上方多一行說原因。
 const ALPHA = '/home/u/wt/alpha'
 const CARD_OLD = '/home/u/wt/delta/.console/STATUS.md'
@@ -79,13 +79,87 @@ async function issueRow(ui: any, pattern: RegExp) {
   return (await ui.findAll({ type: 'Text' })).find((n: any) => pattern.test(String(n.text ?? '')) && (n.props?.color === 'error' || n.props?.color === 'warning'))
 }
 
-test('test_history_section_shows_latest_three_entries_newest_first', async ($, on) => {
+/** 把 Alpha 的 History 換成給定的幾行（其他段落照舊）。 */
+function withHistory(data: any, lines: string[]) {
+  data.files[CARD_A] = data.files[CARD_A]!.replace(HISTORY, ['## History', '', '- YYYY-MM-DD HH:MM：', ...lines, '', '## 備註', '', '- 這行不是歷程'].join('\n'))
+}
+
+/** 歷程時間欄：畫面上那個淡色、開頭是「MM-DD」的 Text（含補齊的空白）。 */
+async function stamps(ui: any): Promise<string[]> {
+  return (await ui.findAll({ type: 'Text' })).map((n: any) => String(n.text ?? '')).filter((t: string) => /^\d{2}-\d{2}( \d{2}:\d{2})? +$/.test(t))
+}
+
+test('test_history_shows_date_and_time_newest_first', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  // 同一天三筆，卡片裡故意不照時間順序寫
+  withHistory(data, [
+    '- 2026-11-04 23:50：前一天最後一筆',
+    '- 2026-11-05 09:05：早上開卡',
+    '- 2026-11-05 14:32：下午規格確認',
+    '- 2026-11-05 11:20：中午補記的實作',
+  ])
+  await helpers($, clock).refresh()
+  const ui = await $.ui.mount(PANE(100))
+  await ui.press({ key: `row-${CARD_A}` })
+  const shown = await screen(ui)
+  const at = (s: string) => shown.indexOf(flat(s))
+
+  expect(at('11-05 14:32  下午規格確認')).toBeGreaterThan(-1)
+  expect(at('11-05 11:20  中午補記的實作')).toBeGreaterThan(at('11-05 14:32  下午規格確認'))
+  expect(at('11-05 09:05  早上開卡')).toBeGreaterThan(at('11-05 11:20  中午補記的實作'))
+  expect(at('11-04 23:50  前一天最後一筆')).toBeGreaterThan(at('11-05 09:05  早上開卡'))
+  expect(await stamps(ui)).toEqual(['11-05 14:32  ', '11-05 11:20  ', '11-05 09:05  ', '11-04 23:50  '])
+  expect(shown).not.toContain('YYYY')
+  expect(shown).not.toContain('HH:MM')
+  await ui.unmount()
+})
+
+test('test_history_keeps_date_only_entries_aligned', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  // 舊卡只寫日期，後來改寫成帶時間：新舊格式混在一起
+  withHistory(data, [
+    '- 2026-11-03：舊格式的開卡',
+    '- 2026-11-05：舊格式同一天先寫的',
+    '- 2026-11-05 10:15：新格式的規格確認',
+    '- 2026-11-05：舊格式寫在後面的',
+    '- 沒有日期的一筆',
+  ])
+  await helpers($, clock).refresh()
+  const ui = await $.ui.mount(PANE(100))
+  await ui.press({ key: `row-${CARD_A}` })
+  const shown = await screen(ui)
+  const at = (s: string) => shown.indexOf(flat(s))
+
+  // 只有日期的照常顯示內容，排在同一天裡它在卡片中的位置，不會被當成沒日期丟到最後
+  expect(at('11-05  舊格式寫在後面的')).toBeGreaterThan(-1)
+  expect(at('11-05 10:15  新格式的規格確認')).toBeGreaterThan(at('11-05  舊格式寫在後面的'))
+  expect(at('11-05  舊格式同一天先寫的')).toBeGreaterThan(at('11-05 10:15  新格式的規格確認'))
+  expect(at('11-03  舊格式的開卡')).toBeGreaterThan(at('11-05  舊格式同一天先寫的'))
+  expect(at('沒有日期的一筆')).toBeGreaterThan(at('11-03  舊格式的開卡'))
+  // 時間位置留白：每筆的時間欄一樣寬，內容從同一欄開始
+  const cols = await stamps(ui)
+  expect(cols).toEqual(['11-05        ', '11-05 10:15  ', '11-05        ', '11-03        '])
+  expect(new Set(cols.map(c => c.length)).size).toBe(1)
+  const undated = (await ui.findAll({ type: 'Text' })).findIndex((n: any) => n.text === '沒有日期的一筆')
+  const texts = (await ui.findAll({ type: 'Text' })).map((n: any) => String(n.text ?? ''))
+  expect(texts[undated - 1]).toBe(' '.repeat(cols[0]!.length))
+  await ui.unmount()
+})
+
+test('test_history_section_lists_every_entry', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)
   setup(data, clock)
+  const tenth = '第十筆：PR 已開，' + '把審查意見、測試數字與檔案清單都塞了進來，'.repeat(6) + '最後一句是結尾'
+  withHistory(data, [
+    ...Array.from({ length: 9 }, (_, i) => `- 2030-01-${String(i + 1).padStart(2, '0')} 0${i}:30：第${'一二三四五六七八九'[i]}筆`),
+    `- 2030-01-10 09:30：${tenth}`,
+  ])
   const h = helpers($, clock)
   await h.refresh()
-  // 一般事件：檢查通過、派繼續、開始執行（都有記進動態，面板不顯示）
+  // 一般事件：檢查通過、派繼續（都有記進動態，面板不顯示）
   await h.run('verify Alpha')
   await h.later()
   await h.run('go Alpha')
@@ -97,29 +171,35 @@ test('test_history_section_shows_latest_three_entries_newest_first', async ($, o
     const ui = await $.ui.mount(PANE(columns))
     await ui.press({ key: `row-${CARD_A}` })
     const shown = await screen(ui)
-    // 標題「歷程」，不再有「最近」；右邊寫還有幾筆
+    // 標題「歷程」，旁邊不再寫「還有 n 筆」
     expect(shown, `${columns}`).toContain(flat('歷程'))
     expect(shown, `${columns}`).not.toContain('最近')
-    expect(shown, `${columns}`).toContain(flat('還有 2 筆（x 展開）'))
-    // 最新 3 筆、新的在前，每筆「月-日  內容」
+    expect(shown, `${columns}`).not.toContain(flat('還有'))
+    // 10 筆全部列出、新的在前
     const at = (s: string) => shown.indexOf(flat(s))
-    expect(at('01-05  第五筆：PR 已開'), `${columns}`).toBeGreaterThan(-1)
-    expect(at('01-04  第四筆：審查有 HIGH，修正')).toBeGreaterThan(at('01-05  第五筆'))
-    expect(at('01-03  第三筆：實作第一版')).toBeGreaterThan(at('01-04  第四筆'))
-    expect(shown).not.toContain(flat('第二筆'))
-    expect(shown).not.toContain(flat('第一筆'))
-    // 太長就截斷成一行；模板佔位與別的段落都不顯示
+    expect(at('01-10 09:30  第十筆：PR 已開'), `${columns}`).toBeGreaterThan(-1)
+    const order = ['第十筆', '01-09 08:30  第九筆', '01-08 07:30  第八筆', '01-07 06:30  第七筆', '01-06 05:30  第六筆',
+      '01-05 04:30  第五筆', '01-04 03:30  第四筆', '01-03 02:30  第三筆', '01-02 01:30  第二筆', '01-01 00:30  第一筆']
+    for (let i = 1; i < order.length; i++) expect(at(order[i]!), `${columns} ${order[i]}`).toBeGreaterThan(at(order[i - 1]!))
+    expect(await stamps(ui)).toHaveLength(10)
+    // 每筆一行：太長的截斷
     expect(shown).not.toContain(flat('最後一句是結尾'))
-    const row = (await ui.findAll({ type: 'Text' })).find((n: any) => String(n.text ?? '').startsWith('第五筆'))
+    const row = (await ui.findAll({ type: 'Text' })).find((n: any) => String(n.text ?? '').startsWith('第十筆'))
     expect(row?.text).toMatch(/…$/)
     expect(shown).not.toContain('YYYY')
     expect(shown).not.toContain(flat('這行不是歷程'))
     // 一般事件不出現在面板
     expect(shown).not.toContain(flat('Alpha 測試通過'))
     expect(shown).not.toContain(flat('Alpha 派繼續'))
-    expect(shown).not.toContain(flat('Alpha 開始執行'))
     await ui.unmount()
   }
+
+  // 面板矮、放不下全部：最舊那筆在畫面外，捲動到底就看得到
+  const short = await $.ui.mount(PANE(72, 'inline', 16))
+  expect(await short.find({ type: 'Text', text: '第一筆' })).toBeUndefined()
+  await $.ui.scroll({ component: 'Pane', requestId: 'desk', offset: 0, by: 100, bodyRows: 16, contentRows: 16, origin: { kind: 'person' } } as any)
+  expect(await short.find({ type: 'Text', text: '第一筆' })).toBeDefined()
+  await short.unmount()
 })
 
 test('test_expanded_history_shows_every_entry_in_full', async ($, on) => {
@@ -138,16 +218,16 @@ test('test_expanded_history_shows_every_entry_in_full', async ($, on) => {
   expect(at('01-03  第三筆')).toBeGreaterThan(at('01-04  第四筆'))
   expect(at('01-02  第二筆：規格確認')).toBeGreaterThan(at('01-03  第三筆'))
   expect(at('01-01  第一筆：開卡')).toBeGreaterThan(at('01-02  第二筆'))
-  expect(shown).not.toContain(flat('還有 2 筆'))
+  expect(shown).not.toContain(flat('還有'))
   const longRows = (await ui.findAll({ type: 'Text' })).filter((n: any) => LONG.includes(String(n.text ?? '')) && String(n.text ?? '').length > 4)
   expect(longRows.length).toBeGreaterThan(1)
   expect(longRows.every((n: any) => !String(n.text).endsWith('…'))).toBe(true)
 
-  // 再按 x：回到 3 筆
+  // 再按 x：照樣全部列出，長的那筆回到一行截斷
   await ui.press({ key: 'expand' })
   shown = await screen(ui)
-  expect(shown).toContain(flat('還有 2 筆（x 展開）'))
-  expect(shown).not.toContain(flat('第二筆'))
+  expect(at('01-01  第一筆：開卡')).toBeGreaterThan(at('01-02  第二筆'))
+  expect(shown).not.toContain(flat('還有'))
   expect(shown).not.toContain(flat('最後一句是結尾'))
 
   // 舊格式卡：照日期由新到舊，同一天照卡片裡由後往前；日期欄「10-29」、內容去掉日期
@@ -156,7 +236,8 @@ test('test_expanded_history_shows_every_entry_in_full', async ($, on) => {
   expect(at('10-29  rev 43 執行者更新：同日最後寫的')).toBeGreaterThan(-1)
   expect(at('10-29  同日較早寫的')).toBeGreaterThan(at('10-29  rev 43'))
   expect(at('10-28  中間的一筆')).toBeGreaterThan(at('10-29  同日較早寫的'))
-  expect(shown).toContain(flat('還有 1 筆（x 展開）'))
+  expect(at('10-27  最舊的一筆')).toBeGreaterThan(at('10-28  中間的一筆'))
+  expect(shown).not.toContain(flat('還有'))
   await ui.press({ key: 'expand' })
   shown = await screen(ui)
   expect(at('10-27  最舊的一筆')).toBeGreaterThan(at('10-28  中間的一筆'))
@@ -362,7 +443,7 @@ test('test_history_reads_only_the_focused_card_and_never_writes_it', async ($, o
 
 // ── 純函式 ──
 
-test('history entries: placeholder, continuation lines, old mixed format and undated entries', () => {
+test('history entries: placeholder, continuation lines, old mixed format, times and undated entries', () => {
   expect(historyEntries(null)).toEqual([])
   expect(historyEntries('- 狀態：沒有歷程段')).toEqual([])
   const card = [
@@ -374,10 +455,16 @@ test('history entries: placeholder, continuation lines, old mixed format and und
     '- 沒有日期的一筆',
     '- 2030-01-01: 半形冒號',
     '- 2030-01-03 rev 7 執行者更新：舊寫法',
+    '- 2030-01-04 08:15：帶時間的',
+    '- 2030-01-04：同一天只寫日期、寫在後面的',
+    '- 2030-01-04 07:00：同一天較早的時間',
     '## Decisions',
     '- 2030-01-09：不是歷程',
   ].join('\r\n')
   expect(historyEntries(card)).toEqual([
+    { date: '2030-01-04', text: '同一天只寫日期、寫在後面的' },
+    { date: '2030-01-04', time: '08:15', text: '帶時間的' },
+    { date: '2030-01-04', time: '07:00', text: '同一天較早的時間' },
     { date: '2030-01-03', text: 'rev 7 執行者更新：舊寫法' },
     { date: '2030-01-02', text: '第一行 接著的續行' },
     { date: '2030-01-01', text: '半形冒號' },

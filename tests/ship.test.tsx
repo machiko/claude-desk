@@ -10,8 +10,8 @@ test('confirming ship clears only the release gate and logs it; an old card bump
   expect(desk).toContain('- 關卡：無')
   expect(desk).toContain('- 狀態：v0.2.0 已上線（工作桌確認）')
   expect(desk).toContain('- 下一步：可歸檔：/desk:card archive a')
-  expect(desk.trimEnd().endsWith('- 2026-10-18：使用者在工作桌確認 v0.2.0 已上線，release 關卡清為無')).toBe(true)
-  expect(confirmShip(DESK, '2026-10-18', '21:30', 'v0.2.0', 'x', 'Alex')!.trimEnd().endsWith('- 2026-10-18：Alex 在工作桌確認 v0.2.0 已上線，release 關卡清為無')).toBe(true)
+  expect(desk.trimEnd().endsWith('- 2026-10-18 21:30：使用者在工作桌確認 v0.2.0 已上線，release 關卡清為無')).toBe(true)
+  expect(confirmShip(DESK, '2026-10-18', '21:30', 'v0.2.0', 'x', 'Alex')!.trimEnd().endsWith('- 2026-10-18 21:30：Alex 在工作桌確認 v0.2.0 已上線，release 關卡清為無')).toBe(true)
   const card = confirmShip(CARD, '2026-10-18', '21:30', 'v1.4.0', '等下一版開發')!
   expect(card).toContain('- 下一步：等下一版開發')
   expect(card).toContain('- 關卡：無')
@@ -44,6 +44,27 @@ test('the ship button shows only when a tag holds the commit and the gate is rel
   expect(await ui.find({ type: 'Text', text: /✓ 已上線 v0\.2\.0/ })).toBeDefined()
   expect(await ui.find({ key: `case-${CARD_B}-continue` })).toBeUndefined()
   expect(await ui.find({ key: `case-${CARD_B}-ship` })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('test_confirm_ship_history_line_has_time', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.agents = []
+  data.files[CARD_B] = data.files[CARD_B]!.replace('- 關卡：無', '- 關卡：release：v0.2.0 待上線確認')
+  data.git['/home/u/wt/beta'] = { branch: 'feature/b', head: 'h1', tag: 'v0.2.0' }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(72))
+  await ui.press({ key: `row-${CARD_B}` })
+  const key = `case-${CARD_B}-ship`
+  await ui.press({ key })
+  await ui.press({ key })
+  const at = new Date(clock.now())
+  await clock.settle()
+  // 本機時間「YYYY-MM-DD HH:MM」：跟面板按 u 那一刻同一分鐘
+  const two = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}:${two(at.getMinutes())}`
+  const history = data.files[CARD_B]!.slice(data.files[CARD_B]!.indexOf('## History'))
+  expect(history).toContain(`- ${stamp}：使用者在工作桌確認 v0.2.0 已上線，release 關卡清為無`)
   await ui.unmount()
 })
 

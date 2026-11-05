@@ -111,7 +111,8 @@ export type Snapshot = {
 }
 
 /** 卡片 History 的一筆：date 是 YYYY-MM-DD，沒寫日期就沒有。 */
-export type HistoryEntry = { date?: string; text: string }
+/** date 是 YYYY-MM-DD；time 是 HH:MM（舊卡只寫日期時沒有）。 */
+export type HistoryEntry = { date?: string; time?: string; text: string }
 
 /** 一筆動態；card：屬於哪件（卡片路徑），版本更新這類不屬於任何一件的不填。 */
 /** whileState：描述卡片狀態的警告（等你、等回覆、等批准、關卡）；卡片離開這個狀態後，問題列就不再顯示它。 */

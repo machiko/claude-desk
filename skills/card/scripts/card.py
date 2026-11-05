@@ -184,6 +184,11 @@ def card_root(path):
     return path
 
 
+def stamp():
+    """History 行開頭的本機時間「YYYY-MM-DD HH:MM」（面板歷程顯示成「MM-DD HH:MM」）。"""
+    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+
+
 def read(path):
     with open(path, encoding='utf-8') as f:
         return f.read()
@@ -505,15 +510,16 @@ def cmd_spec_ok(arg):
     set_gate(path, '無', fields)
     text = read(path)
     today = datetime.date.today().isoformat()
+    now = stamp()
     n = len(re.findall(r'^- D-\d+', text, re.M)) + 1
     text = append_line(text, '## Decisions', f'- D-{n:02d} {today} {USER}：確認規格（{span}，共 {len(ids)} 條）與實作計畫（{len(plan)} 項）')
-    text = append_line(text, '## History', f'- {today}：規格確認，關卡清為無，可派實作')
+    text = append_line(text, '## History', f'- {now}：規格確認，關卡清為無，可派實作')
     # 跟其他進行中的卡同檔：只預警，不擋確認。
     found = overlaps(path)
     warnings = overlap_lines(found)
     if found:
         said = '；'.join(f'{f} 也在「{name}」的實作計畫' for f, name, _ in found)
-        text = append_line(text, '## History', f'- {today}：同檔預警：{said}')
+        text = append_line(text, '## History', f'- {now}：同檔預警：{said}')
     write(path, text)
     print(f'規格已確認（{span}），關卡清為「無」：{path}')
     for line in warnings:
@@ -619,7 +625,7 @@ def cmd_done(arg, status):
     next_step = (DONE_NEXT_RECHECK if committed_after_review(root) else DONE_NEXT_MERGE) if review_passed(gate) else DONE_NEXT
     set_fields(path, {'狀態': status, '下一步': next_step}, required=('狀態', '下一步'))
     note = f'；有 {len(dirty)} 個檔未提交' if dirty else ''
-    line = f'- {datetime.date.today().isoformat()}：{CMD} done（{branch} {sha}）：{status}{note}'
+    line = f'- {stamp()}：{CMD} done（{branch} {sha}）：{status}{note}'
     write(path, append_line(read(path), '## History', line))
     print(f'已寫回卡片：{path}')
     print(f'  狀態：{status}')

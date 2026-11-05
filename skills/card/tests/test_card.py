@@ -327,7 +327,7 @@ class CardScriptTest(unittest.TestCase):
         text = read(card)
         self.assertIn('- 關卡：無', text)
         self.assertRegex(text, r'(?m)^- D-\d+ \d{4}-\d{2}-\d{2} .+：確認規格（AC-1，共 1 條）與實作計畫（1 項）$')
-        self.assertRegex(text, r'(?m)^- \d{4}-\d{2}-\d{2}：規格確認，關卡清為無，可派實作$')
+        self.assertRegex(text, r'(?m)^- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：規格確認，關卡清為無，可派實作$')
 
     def test_done_refuses_trivial_card_before_spec_confirmed(self):
         """AC-5：剛開好的瑣事卡還沒確認規格，done 拒絕並提示先確認、卡片不變（預填的驗收情境不算已確認）。"""
@@ -411,6 +411,42 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('- 下一步：先做 CSV 匯出', text)
         self.assertNotIn('依規格與實作計畫實作', text)
 
+    def history_stamps(self, text, suffix):
+        """History 段裡以 suffix 結尾的行，開頭的「YYYY-MM-DD HH:MM」。"""
+        history = text[text.index('## History'):]
+        return re.findall(rf'(?m)^- (\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}})：{re.escape(suffix)}$', history)
+
+    def test_spec_ok_history_line_has_time(self):
+        """AC-5：spec-ok 寫進 History 的行是「- YYYY-MM-DD HH:MM：…」，時間是執行當下的本機時間。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        self.run_card('gate', 'order-export', 'spec：待確認規格')
+        self.fill_spec(card)
+        self.fill_plan(card)
+        before = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        r = self.run_card('spec-ok', 'order-export')
+
+        after = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        stamps = self.history_stamps(read(card), '規格確認，關卡清為無，可派實作')
+        self.assertEqual(len(stamps), 1)
+        self.assertIn(stamps[0], (before, after))
+
+    def test_done_history_line_has_time(self):
+        """AC-5：done 寫進 History 的行是「- YYYY-MM-DD HH:MM：…」，時間是執行當下的本機時間。"""
+        card, wt = self.confirmed_card_with_commit()
+        sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=wt, capture_output=True, text=True).stdout.strip()
+        before = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        r = self.run_card('done', 'order-export', '匯出做完')
+
+        after = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        stamps = self.history_stamps(read(card), f'/desk:card done（feature/order-export {sha}）：匯出做完')
+        self.assertEqual(len(stamps), 1)
+        self.assertIn(stamps[0], (before, after))
+
     def confirmed_card_with_commit(self):
         """規格已確認、分支有一個新 commit 的卡；回傳 (卡片路徑, worktree)。"""
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
@@ -454,8 +490,7 @@ class CardScriptTest(unittest.TestCase):
             line = re.search(rf'^- {name}：.*$', block(before), re.M).group(0)
             self.assertIn(line, block(text), name)
         history = text[text.index('## History'):]
-        today = datetime.date.today().isoformat()
-        self.assertIn(f'- {today}：/desk:card done（feature/order-export {sha}）：CSV 匯出做完，測試綠\n', history)
+        self.assertRegex(history, rf'- \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}：/desk:card done（feature/order-export {sha}）：CSV 匯出做完，測試綠\n')
         self.assertNotIn('未提交', history)
 
     def test_done_after_passed_review_says_the_flow_rechecks(self):
@@ -479,8 +514,7 @@ class CardScriptTest(unittest.TestCase):
         for name in ('等你', '關卡', '檢查'):
             line = re.search(rf'^- {name}：.*$', block(before), re.M).group(0)
             self.assertIn(line, block(text), name)
-        today = datetime.date.today().isoformat()
-        self.assertIn(f'- {today}：/desk:card done（feature/order-export {sha}）：修好審查提到的 MEDIUM\n', text[text.index('## History'):])
+        self.assertRegex(text[text.index('## History'):], rf'- \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}：/desk:card done（feature/order-export {sha}）：修好審查提到的 MEDIUM\n')
 
     def test_done_after_passed_review_without_new_commit_points_to_merge(self):
         # done-next-step AC-5：審查過關但審查檔之後沒有新 commit，或沒有審查檔（關卡是對話自己寫的）：面板停在合併段，不會重新檢查。
@@ -564,7 +598,7 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         text = read(card)
         self.assertIn('- 狀態：匯出做一半\n', text)
-        self.assertRegex(text[text.index('## History'):], r'- \d{4}-\d{2}-\d{2}：/desk:card done（feature/order-export [0-9a-f]+）：匯出做一半；有 2 個檔未提交\n')
+        self.assertRegex(text[text.index('## History'):], r'- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：/desk:card done（feature/order-export [0-9a-f]+）：匯出做一半；有 2 個檔未提交\n')
 
     def test_old_card_gate_bumps_rev(self):
         os.makedirs(os.path.join(self.t, 'old', '.console'))
@@ -1451,14 +1485,13 @@ class OverlapTest(unittest.TestCase):
         self.add_card('card-b', 'B', ['`hooks/dispatch.ts`', '`README.md`'])
         c = self.add_card('card-c', 'C', ['`docs/c.md`'])
         self.write_registry()
-        today = datetime.date.today().isoformat()
 
         r = self.run_card('spec-ok', 'card-a')
 
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('- 關卡：無', read(a))
         self.assertEqual(r.stdout.strip().split('\n')[-1], '同檔預警：hooks/dispatch.ts 也在「B」的實作計畫（card-b）')
-        self.assertIn(f'- {today}：同檔預警：hooks/dispatch.ts 也在「B」的實作計畫\n', read(a))
+        self.assertRegex(read(a), r'- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：同檔預警：hooks/dispatch.ts 也在「B」的實作計畫\n')
         # 沒同檔：照常確認、不印預警、不加 History
         r = self.run_card('spec-ok', 'card-c')
         self.assertEqual(r.returncode, 0, r.stderr)

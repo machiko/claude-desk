@@ -69,4 +69,4 @@
 
 ## History
 
-- YYYY-MM-DD：
+- YYYY-MM-DD HH:MM：
