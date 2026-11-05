@@ -248,8 +248,8 @@ export function rawAgents(json: string): any[] {
 
 /**
  * `claude agents --json --all`：每個根目錄留一個「真的在動」的背景 agent（status busy，或 waiting 停在權限提示）。
- * 一個轉完回合的 agent 會 status idle 而 state 還是 working／blocked，那不算在跑；
- * 它是不是「停下來等你」要看它是不是工作桌派出去的那一次（`asksFor`）。
+ * 一個轉完回合的 agent 會 status idle 而 state 還是 working／blocked，那不算在跑，也不算停下來等你：
+ * blocked 是做完一輪的正常結束狀態，Agent 要問人寫進卡片「等你」；只有 status waiting 才是停下來等。
  */
 export const parseAgents = (json: string): Record<string, AgentInfo> => agentsByRoot(rawAgents(json))
 
@@ -293,18 +293,19 @@ export function supersede(list: readonly any[], last: Readonly<Record<string, La
     : { list: [...acc.list, a], superseded: acc.superseded }, { list: [], superseded: [] })
 }
 
-/** 做完（done／failed）但程序還活著的工作桌 Agent。 */
+/** 做完（done／failed，或做完一輪的 blocked）但程序還活著的工作桌 Agent。 */
 export type EndedAlive = { root: string; id: string; name: string; startedAt: number | null }
 
 /**
- * 挑出做完、程序還活著的 Agent：工作桌派的（desk- 開頭）、state done／failed、不在跑（status 不是 busy／waiting）、
- * JSON 有數字的 pid（程序早已退出的沒有 pid）、有 id。不看根目錄在不在工作桌上（歸檔後留下的也算）；停在提問（blocked）的不算。
+ * 挑出做完、程序還活著的 Agent：工作桌派的（desk- 開頭）、state done／failed／blocked、不在跑（status 不是 busy／waiting）、
+ * JSON 有數字的 pid（程序早已退出的沒有 pid）、有 id。不看根目錄在不在工作桌上（歸檔後留下的也算）。
+ * blocked 是做完一輪的正常結束狀態（要問人寫進卡片「等你」）；真的停下來等的（status waiting、或還停在權限提示）不會被挑到。
  */
 export function endedAlive(list: readonly any[]): EndedAlive[] {
   return list.flatMap(a => {
     const status = String(a?.status ?? '').toLowerCase()
     const state = String(a?.state ?? '').toLowerCase()
-    const alive = a?.kind === 'background' && isDeskLaunch(String(a?.name ?? '')) && (state === 'done' || state === 'failed')
+    const alive = a?.kind === 'background' && isDeskLaunch(String(a?.name ?? '')) && (state === 'done' || state === 'failed' || blockedDone(a))
       && status !== 'busy' && status !== 'waiting' && typeof a.pid === 'number' && typeof a.id === 'string' && !!a.id
     return alive ? [{ root: cwdOf(a), id: a.id as string, name: plain(String(a.name)), startedAt: typeof a.startedAt === 'number' ? a.startedAt : null }] : []
   })
@@ -315,10 +316,13 @@ export function agentInfo(a: any): AgentInfo {
   return { ...(typeof a.id === 'string' ? { id: a.id } : {}), name: plain(String(a.name ?? a.id ?? '')), ...(typeof a.sessionId === 'string' ? { sessionId: a.sessionId } : {}), state: String(a.state ?? ''), status: String(a.status ?? ''), ...(a.waitingFor ? { waitingFor: plain(String(a.waitingFor)) } : {}), ...(waitsFor ? { waitsFor } : {}), ...(typeof a.startedAt === 'number' ? { startedAt: a.startedAt } : {}) }
 }
 
-/** 停下來的 Agent 在等什麼：waitingFor 提到 permission 是權限提示；其他停下來的（blocked 或 status waiting）當成提問。 */
+/**
+ * 停下來的 Agent 在等什麼：waitingFor 提到 permission 是權限提示；其他 status waiting 的當成提問。
+ * state blocked 本身不算：那是做完一輪的正常結束狀態，Agent 要問人寫進卡片「等你」。
+ */
 function waitsOf(a: any): AgentInfo['waitsFor'] {
   if (/permission/i.test(String(a?.waitingFor ?? ''))) return 'permission'
-  return String(a?.state ?? '').toLowerCase() === 'blocked' || String(a?.status ?? '').toLowerCase() === 'waiting' ? 'question' : undefined
+  return String(a?.status ?? '').toLowerCase() === 'waiting' ? 'question' : undefined
 }
 
 /** Agent 停在權限提示：要到終端機的 claude agents 批准，面板代替不了。 */
@@ -327,24 +331,37 @@ export const approvalWait = (a: AgentInfo | undefined) => a?.waitsFor === 'permi
 /** 等權限批准時給人看的那句：現在卡最上方、摘要列與列表都用它。 */
 export const approveText = (c: Pick<Case, 'agent'>) => `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准；批准後面板會自動更新`
 
-/** 工作桌派出去的那一次（按啟動名）做完後停在提問：state blocked 且不再 busy。 */
-export function asksFor(list: any[], launchName: string | undefined): AgentInfo | null {
-  if (!launchName) return null
-  const a = list.find(x => x?.name === launchName && x?.kind === 'background')
+const isBlocked = (a: any): boolean => String(a?.state ?? '').toLowerCase() === 'blocked'
+
+/** 做完一輪的 blocked：不在跑（status 不是 busy／waiting），也不是停在權限提示（那個還在等批准，見 asksFor）。 */
+const blockedDone = (a: any): boolean => {
+  const status = String(a?.status ?? '').toLowerCase()
+  return isBlocked(a) && status !== 'busy' && status !== 'waiting' && waitsOf(a) !== 'permission'
+}
+
+const launchOf = (list: readonly any[], launchName: string | undefined): any =>
+  launchName ? list.find(x => x?.name === launchName && x?.kind === 'background') : undefined
+
+/**
+ * 工作桌派出去的那一次（按啟動名）不在跑（不是 busy／waiting）、卻還停在權限提示（state blocked、waitingFor 提到 permission）：
+ * 補成停下來的 Agent，面板才說等權限批准。其他 blocked 是做完一輪的正常結束狀態（要問人寫進卡片「等你」），回 null、不補 Agent；
+ * status waiting 的已經在 agentsByRoot 挑到，也回 null。
+ */
+export function asksFor(list: readonly any[], launchName: string | undefined): AgentInfo | null {
+  const a = launchOf(list, launchName)
   if (!a) return null
   const status = String(a.status ?? '').toLowerCase()
   if (status === 'busy' || status === 'waiting') return null
-  return String(a.state ?? '').toLowerCase() === 'blocked' ? { ...agentInfo(a), asks: true } : null
+  return isBlocked(a) && waitsOf(a) === 'permission' ? { ...agentInfo(a), asks: true } : null
 }
 
-/** 工作桌派出去的那一次（按啟動名）停在提問：做完後 blocked、不在跑（同 asksFor），或 status waiting 但不是等權限批准。 */
+/**
+ * 工作桌派出去的那一次（按啟動名）停在提問：status waiting 但不是等權限批准。
+ * state blocked 本身不算：那是做完一輪的正常結束狀態，Agent 要問人寫進卡片「等你」。
+ */
 export function asksQuestion(list: readonly any[], launchName: string | undefined): boolean {
-  if (!launchName) return false
-  const a = list.find(x => x?.name === launchName && x?.kind === 'background')
-  if (!a) return false
-  const status = String(a.status ?? '').toLowerCase()
-  if (status === 'waiting') return waitsOf(a) === 'question'
-  return status !== 'busy' && String(a.state ?? '').toLowerCase() === 'blocked'
+  const a = launchOf(list, launchName)
+  return !!a && String(a.status ?? '').toLowerCase() === 'waiting' && waitsOf(a) === 'question'
 }
 
 /**
@@ -355,18 +372,17 @@ export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'>
   !!last?.cardAsked && (!!last.answered || saysNone(ask))
 
 /**
- * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑（busy／waiting）、停在提問（blocked）、清單裡找不到都是 null；
+ * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑或停下來等（busy／waiting）、清單裡找不到都是 null；
  * `claude stop` 停掉的是 stopped（清單裡 state 是 stopped、沒有 status），其他算 finished。找不到不算結束：剛派出去的那次可能還沒出現在這份清單。
+ * blocked（status 不是 busy／waiting）算 finished：那是做完一輪的正常結束狀態，要問人寫進卡片「等你」；還停在權限提示的不算（null）。
  */
 export function endedHow(list: readonly any[], launchName: string | undefined): 'finished' | 'stopped' | null {
-  if (!launchName) return null
-  const a = list.find(x => x?.name === launchName && x?.kind === 'background')
+  const a = launchOf(list, launchName)
   if (!a) return null
   const status = String(a.status ?? '').toLowerCase()
   if (status === 'busy' || status === 'waiting') return null
-  const state = String(a.state ?? '').toLowerCase()
-  if (state === 'blocked') return null
-  return state === 'stopped' ? 'stopped' : 'finished'
+  if (isBlocked(a) && !blockedDone(a)) return null
+  return String(a.state ?? '').toLowerCase() === 'stopped' ? 'stopped' : 'finished'
 }
 
 /** 停下來等人的 agent：權限提示，或工作桌派出去的那次停在提問。 */

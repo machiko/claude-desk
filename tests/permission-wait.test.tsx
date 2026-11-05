@@ -74,9 +74,10 @@ test('permission wait: a permission prompt asks you to approve in claude agents,
   }
 })
 
+/** blocked-reply-loop AC-3：只有 status waiting（等的不是權限）才是停下來提問；做完一輪的 blocked／idle 不在這裡（見 blocked-ends）。 */
 test('permission wait: a blocked agent waiting on anything else still asks you to reply', async ($, on) => {
   const { data } = fixture(on)
-  for (const agent of [{ status: 'waiting', waitingFor: 'input needed' }, { status: 'idle' }]) {
+  for (const agent of [{ status: 'waiting', waitingFor: 'input needed' }]) {
     blocked(data, agent)
 
     await $.command.run({ command: 'desk', args: 'refresh' } as any)

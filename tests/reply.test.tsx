@@ -10,13 +10,13 @@ const KEY = `case-${CARD_B}-reply`
 const MISMATCH = '這個階段不能'
 const prompt = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
 
-/** 只留 Beta 一件：工作桌派出去的那次做完後停在提問（blocked、不再 busy）。 */
+/** 只留 Beta 一件：工作桌派出去的那次停下來提問（status waiting、等的不是權限；做完一輪的 blocked／idle 不算提問）。 */
 function waiting(data: any, gate = '無') {
   data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
   data.files[CARD_B] = setFields(data.files[CARD_B]!, { 關卡: gate })
   data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git' }
   data.gh = []
-  data.agents = [{ id: 'bbbbbbbb', kind: 'background', cwd: BETA, name: LAUNCH, sessionId: SID, state: 'blocked', status: 'idle', startedAt: NOW - 60_000 }]
+  data.agents = [{ id: 'bbbbbbbb', kind: 'background', cwd: BETA, name: LAUNCH, sessionId: SID, state: 'blocked', status: 'waiting', waitingFor: 'input needed', startedAt: NOW - 60_000 }]
   data.logs = { bbbbbbbb: '要先跑整套測試嗎？\n' }
   data.store.jobs = { [BETA]: { sessionId: SID, last: { launchName: LAUNCH, nativeId: 'bbbbbbbb', sessionId: SID, kind: 'continue', startedAt: NOW - 60_000, fresh: false } } }
   data.launch = async (e: any) => {
@@ -28,7 +28,7 @@ function waiting(data: any, gate = '無') {
 async function pressReply($: any, data: any, clock: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
-  expect(flat(text(await ui.drawn()))).toContain(flat('Agent 提問'))
+  expect(flat(text(await ui.drawn()))).toContain(flat('按 y 回覆 Agent 的提問'))
   expect((await ui.find({ key: KEY }))?.text).toBe('↩ 回覆')
   await ui.press({ key: KEY })
   await clock.settle()
@@ -92,12 +92,12 @@ test('reply is refused with a reason when no agent is waiting', async ($, on) =>
 
   // Agent 仍在執行
   waiting(data)
-  data.agents = [{ ...data.agents[0], state: 'working', status: 'busy' }]
+  data.agents = [{ ...data.agents[0], state: 'working', status: 'busy', waitingFor: undefined }]
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await refused('reply Beta 好', 'Agent 處理中')
 
   // Agent 已經結束、沒有在問
-  data.agents = [{ ...data.agents[0], state: 'done', status: 'idle' }]
+  data.agents = [{ ...data.agents[0], state: 'done', status: 'idle', waitingFor: undefined }]
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await refused('reply Beta 好', '沒有在等你回覆')
 

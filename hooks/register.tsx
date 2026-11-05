@@ -134,6 +134,7 @@ export async function refresh($: any, options: PluginOptions) {
       const cleared = askClearedOnCard(last, base.ask)
       const { agent: found, ...rest } = base
       let agent: AgentInfo | undefined = cleared && found?.name === last?.launchName && found?.waitsFor === 'question' ? undefined : found
+      // 清單沒挑到時補上最後一次派工還停在權限提示的那個；提問只剩 status waiting（清單已挑到），做完一輪的 blocked 回 null、不補。
       if (!agent && last && !last.answered && !cleared) agent = asksFor(list, last.launchName) ?? undefined
       if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy', ...(launchKinds[row.statusPath] ? { kind: launchKinds[row.statusPath] } : {}) }
       if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) agent = { ...agent, last: await lastLine($, agent.id) }
