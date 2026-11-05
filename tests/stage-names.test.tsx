@@ -3,7 +3,7 @@ import { fixture, feedLog, PANE, BAND, CARD_A, CARD_B, CARD_C, REGISTRY, result,
 import { buildCase, displayWidth } from '../hooks/model'
 import { STAGES, pipeline, stageLabel } from '../hooks/pipeline'
 import { turnOf } from '../hooks/turn'
-import { dispatchRefusal, idleNext, reviewNext } from '../hooks/dispatch'
+import { IDLE_WHY, REVIEW_WHY, refusalOf, idleNext, reviewNext } from '../hooks/dispatch'
 import { TUTORIAL_INTRO } from '../hooks/tutorial'
 import { passWords } from '../hooks/auto-pr'
 import { nextStep } from '../hooks/chain'
@@ -191,7 +191,7 @@ test('test_v_and_w_buttons_and_help_use_new_names', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await $.command.run({ command: 'desk', args: 'review Beta' } as any)
   await clock.settle()
-  expect(data.toasts).toContain('Beta：目前無法驗收（Agent 處理中）')
+  expect(data.toasts).toContain('Beta：無法驗收（Agent 處理中）；等 Agent 做完再按一次；要中途停掉按 k')
 
   // 說明頁
   await ui.press({ key: 'help' })
@@ -268,8 +268,8 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
   // 測試段的一般情況（完成檢查還沒跑、不是驗收後的新 commit）
   expect(turnOf({ ...caseOf('- 關卡：無', {}), pipeline: { stages: [], current: 'check', note: '' } } as Case).text).toBe('按 v 執行測試；通過後按 w 派驗收')
   // 下一步寫派審查時按 g：被拒的提示
-  expect(dispatchRefusal(caseOf('- 關卡：無', {}, undefined, '派驗收（按 w）'), 'continue')).toBe('下一步是驗收：先按 v 執行測試，再按 w 派驗收（g 派的是繼續，不會驗收）')
-  expect(dispatchRefusal(caseOf('- 關卡：無', {}, ok('b1'), '派審查（按 w）'), 'continue')).toBe('下一步是驗收：按 w 派驗收（g 派的是繼續，不會驗收）')
+  expect(refusalOf(caseOf('- 關卡：無', {}, undefined, '派驗收（按 w）'), 'continue')).toEqual({ why: REVIEW_WHY, next: '先按 v 執行測試，通過後照「輪到你」派驗收' })
+  expect(refusalOf(caseOf('- 關卡：無', {}, ok('b1'), '派審查（按 w）'), 'continue')).toEqual({ why: REVIEW_WHY, next: '按 w 派驗收' })
   for (const hint of hints) expect(hint).not.toMatch(OLD_HINT)
 
   // /desk tutorial 開場：第 3、4 段
@@ -316,7 +316,7 @@ test('測試結果的動態與通知用新詞', async ($, on) => {
   void $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
   await clock.settle()
   await $.command.run({ command: 'desk', args: 'verify Alpha' } as any)
-  expect(data.toasts).toContain('Alpha：測試在跑')
+  expect(data.toasts).toContain('Alpha：測試在跑；跑完結果會列在測試列')
   release!()
   await clock.settle()
 
@@ -377,8 +377,8 @@ test('done 的新舊下一步都不派 Agent', () => {
     for (const next of [now, old]) {
       const c = caseOf('- 關卡：無', {}, undefined, next)
       expect(reviewNext(next)).toBe(false)
-      expect(idleNext(next)).toBe('下一步只剩等測試／驗收／開 PR，沒有要 Agent 做的事；要改程式先把下一步寫成要做的事')
-      expect(dispatchRefusal(c, 'continue')).not.toBe('')
+      expect(idleNext(next)).toBe(IDLE_WHY)
+      expect(refusalOf(c, 'continue')?.why).toBe(IDLE_WHY)
       expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', action: 'verify', key: 'v' })
     }
   }
@@ -389,7 +389,7 @@ test('狀態詞只有處理中與已上線', async ($, on) => {
   expect(STATE.running.label).toBe('處理中')
   expect(WORD.busyLocked).toBe('（處理中，完成後可用）')
   expect(WORD.busyRefused).toBe('Agent 處理中，完成後再')
-  expect(dispatchRefusal(caseOf('- 關卡：無', { state: 'running' }), 'continue')).toBe('Agent 處理中')
+  expect(refusalOf(caseOf('- 關卡：無', { state: 'running' }), 'continue')?.why).toBe('Agent 處理中')
   expect(stageLabel(caseOf('- 關卡：無', {}, ok('b1')).pipeline!)).not.toMatch(/執行中|進行中/)
   const done = caseOf(PASSED, {}, ok('b1'))
   expect(stageLabel({ ...done.pipeline!, current: null, note: '' })).toBe('已上線')

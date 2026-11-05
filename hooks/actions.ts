@@ -1,6 +1,6 @@
 // 動作表：footer 上每個動作的單鍵、圖示與標籤只寫在這裡；保留鍵、「▶ 輪到你」的鍵與 footer 的按鈕都由它導出。
 // 新加動作先登記在這張表（tests/turn-actions-gate.test.tsx 會檢查「輪到你」那句與 footer 一致）。
-import { KIND_LABEL } from './dispatch'
+import { KIND_LABEL } from './kind-label'
 import { WORD } from './theme'
 
 export type ActionId = 'fill' | 'unqueue' | 'continue' | 'review' | 'sync' | 'reply' | 'stop' | 'logs' | 'review-file' | 'pr' | 'open-pr' | 'push' | 'verify' | 'ship' | 'open' | 'spec-ok' | 'archive' | 'release' | 'tutorial'

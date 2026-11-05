@@ -85,9 +85,10 @@ test('test_general_launch_failure_keeps_old_message_without_steps', async ($, on
   await ui.press({ key: `row-${CARD_A}` })
   await h.pressGo(ui)
 
-  expect(data.toasts).toContain('Alpha：繼續失敗，network down')
+  // 一般失敗照 refusal-next-step 的格式：原因＋怎麼重試，不帶信任步驟
+  expect(data.toasts).toContain('Alpha：無法派繼續（network down）；再按一次重試，一直失敗就到終端機跑 claude agents 看原因')
   expect(data.toasts.some(t => t.includes('還沒信任'))).toBe(false)
-  expect(log.has('Alpha 繼續失敗：network down')).toBe(true)
+  expect(log.has('Alpha 無法派繼續（network down）；再按一次重試，一直失敗就到終端機跑 claude agents 看原因')).toBe(true)
   expect(log.list.some(e => e.text.includes('還沒信任'))).toBe(false)
   expect(await screen(ui)).not.toContain(flat('還沒信任'))
   await ui.unmount()

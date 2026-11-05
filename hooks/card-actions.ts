@@ -4,12 +4,12 @@
 // 跨檔傳 $ 的函式一律用 function 宣告；atom 位址同 register.tsx，各自宣告。
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
-import type { Case, Snapshot } from '../types'
+import type { Case, SentRecord, Snapshot } from '../types'
 import { parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
-import { errorLine, quotaHeld, reasonLine, slugOf } from './model'
+import { errorLine, errorText, quotaHeld, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
-import { afterSpecRefusal, dispatchRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, replyRefusal } from './dispatch'
+import { afterSpecRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, refusalOf, refusalText } from './dispatch'
 import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
 import { AGENT_STOPPED, CHAIN_CHANGED, paused, revOf } from './chain'
 import { picksKey } from './pane'
@@ -46,9 +46,10 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   const resume = run?.resume
   if (!run?.stopped || !resume || resume.dispatch !== 'review') return null
   const what = resume.security ? '資安驗收' : '驗收'
-  const refusal = dispatchRefusal(c, 'review') || (tutorial ? '' : markRefusal(await worktreeMark($, c.root), (await loadJobs($))[key]))
-  if (refusal) {
-    const text = `${c.name}：目前無法${what}（${refusal}）`
+  const refused = refusalOf(c, 'review')
+  const foreign = (refused || tutorial) ? '' : markRefusal(await worktreeMark($, c.root), (await loadJobs($))[key])
+  if (refused || foreign) {
+    const text = refused ? refusalText(c.name, what, refused) : `${c.name}：無法${what}（${foreign}）`
     $.ui.toast(text, { timeoutMs: 10_000 })
     return text
   }
@@ -67,7 +68,10 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗；排進隊伍 dispatch 回 true）：流程照原本的原因停著，下次 g 再來。
   if (!sent) {
     await saveChain($, key, r => r ? paused(r, reason, false, resume) : r)
-    return `${c.name}：${what}沒有派出，流程照原本的原因停著`
+    const text = `${c.name}：${what}沒派出（啟動中或啟動失敗）；流程照原因停著，稍後再按 g`
+    // 面板按 g 時沒有地方回這句：跟拒絕一樣也跳提示（啟動失敗本身另有一則「無法派…」）。
+    $.ui.toast(text, { timeoutMs: 10_000 })
+    return text
   }
   await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 額度煞車後按 g 重開：直接派${what}，不多派實作`, tone: 'suggestion', card: c.statusPath }])
   return isAgentQueued(c.statusPath) ? `${c.name}：額度煞車後接續，${what}排隊中。` : `${c.name}：額度煞車後接續，已派${what}。`
@@ -83,8 +87,8 @@ function chainChanged($: any, c: Case): string {
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 export async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const why = replyRefusal(c)
-  if (why) { $.ui.toast(`${c.name}：目前無法回覆（${why}）`); return }
+  const refused = refusalOf(c, 'reply')
+  if (refused) { $.ui.toast(refusalText(c.name, '回覆', refused)); return }
   let answer = text?.trim() ?? ''
   if (!answer) {
     // 停在提問（status waiting）的 Agent 重新整理時不讀輸出：回覆這時才讀它最後一句。
@@ -150,12 +154,26 @@ async function decisionFill($: any, name: string, text: string): Promise<{ input
   return { input: { text: draft.endsWith('\n') ? text : `\n${text}`, mode: 'append' }, how: '已接在輸入框原本的字後面' }
 }
 
+/**
+ * 按 f 填入決策被擋下的那句（含任務名）；null 代表可以填。示範任務、還有決策沒選、決策已送出還在等對話寫回，依序檢查。
+ * 已送出時送出後面板就收掉 f，只有按下時面板還沒重畫才會走到；回合結束沒寫回時 prompt-sync 會再提示（「決策已送出，但卡片的「等你」沒有改」）。
+ */
+export function decisionRefusal(
+  c: Pick<Case, 'demo' | 'name' | 'ask' | 'statusPath' | 'state'>,
+  picks: Readonly<Record<string, string>>,
+  sent: Readonly<Record<string, SentRecord>>,
+): string | null {
+  if (c.demo) return DEMO_ONLY
+  if (!allPicked(parseDecisions(c.ask), picks)) return `${c.name}：請先完成每個決策的選擇（點選項或按選項字母；多題時用點的）`
+  if (sentState(sent, c) === 'waiting') return `${c.name}：決策已送出，等對話寫回卡片；這一回合結束沒寫回會再提示（可按 o 自己改「等你」）`
+  return null
+}
+
 export async function fillDecision($: any, c: Case) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const decisions = parseDecisions(c.ask)
   const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
-  if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按選項字母；多題時用點的）`); return }
-  if (sentState(await readSent($), c) === 'waiting') { $.ui.toast(`${c.name}：決策已送出，等對話寫回卡片`); return }
+  const refusal = decisionRefusal(c, picks, await readSent($))
+  if (refusal) { $.ui.toast(refusal); return }
+  const decisions = parseDecisions(c.ask)
   const answer = decisionAnswer(decisions, picks)
   if (tutorial) { await tutorialDecision($, c, answer); return }
   const text = decisionPrompt(c.name, answer)
@@ -185,7 +203,7 @@ const RELEASE_FILLED = '發版請求已填入（已確認照慣例版號），�
 
 export async function openCard($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (!(await openWith($, c.statusPath))) $.ui.toast(`${c.name}：無法開啟 ${c.statusPath}`)
+  if (!(await openWith($, c.statusPath))) $.ui.toast(`${c.name}：無法開啟卡片（${c.statusPath}）；用編輯器自己開，或核對登錄表的路徑`)
 }
 
 /** 上線確認：重讀卡片，關卡還是 release 才清成「無」並記 History；desk 只在這裡寫卡。 */
@@ -201,8 +219,13 @@ export async function confirmShipped($: any, c: Case) {
     await tellPanel($, now, '確認上線沒有改動：卡片關卡已不是 release', { name: c.name, skip: tutorial })
     void refresh($, optionsRef!); return
   }
-  const ok = await $.fs.write(c.statusPath, next).then(() => true).catch(() => false)
-  if (!ok) { $.ui.toast(`${c.name}：寫入卡片失敗`); await tellPanel($, now, '確認上線失敗：寫入卡片失敗', { name: c.name, skip: tutorial }); return }
+  const failed = await $.fs.write(c.statusPath, next).then(() => null, (e: unknown) => errorText(e))
+  if (failed !== null) {
+    const text = `無法確認上線（寫入卡片失敗：${failed}）；關卡沒清，修好檔案後再按 u`
+    $.ui.toast(`${c.name}：${text}`)
+    await tellPanel($, now, text, { name: c.name, skip: tutorial })
+    return
+  }
   const shipped = `已確認上線${c.tag ? `（${c.tag}）` : ''}`
   await feedPush($, [{ at: now, text: `${c.name} ${shipped}`, tone: 'success', card: c.statusPath }])
   await tellPanel($, now, shipped, { name: c.name, skip: tutorial })
@@ -277,8 +300,8 @@ export async function dispatchAfterSpec($: any, options: PluginOptions, statusPa
   // 重讀到的關卡還是 spec（腳本失敗、重讀失敗）：沒有確認，不派也不出聲。
   if (!c || c.demo || parseGate(c.gate)?.kind === 'spec') return false
   await trustCheck($, c)
-  const why = afterSpecRefusal(c)
-  if (why) { await notDispatched($, c, `規格已確認；沒有自動派實作（${why}）`); return false }
+  const refused = afterSpecRefusal(c)
+  if (refused) { await notDispatched($, c, `規格已確認；無法自動派實作（${refused.why}）${refused.next ? `；${refused.next}` : ''}`); return false }
   return dispatch($, options, c, 'continue')
 }
 
@@ -293,7 +316,8 @@ async function notDispatched($: any, c: Case, text: string) {
 /** 停止 desk 自己派出去、正在跑的那個背景 agent（名字要對得上這件任務最後一次派工），流程一併暫停。 */
 export async function stopAgent($: any, c: Case) {
   const last = (await loadJobs($))[normalizeRoot(c.root)]?.last
-  if (!c.agent?.id || !last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：只能停止 desk 派出去的 Agent`); return }
+  if (!c.agent?.id) { $.ui.toast(`${c.name}：無法停止（找不到在跑的 Agent）；按 r 重新整理後再看`); return }
+  if (!last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：無法停止（${c.agent.name || c.agent.id} 不是 desk 派的）；到終端機跑 claude stop ${c.agent.id}`); return }
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) {

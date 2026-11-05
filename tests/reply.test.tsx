@@ -6,7 +6,8 @@ const BETA = '/home/u/wt/beta'
 const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
 const LAUNCH = 'desk-launch-1'
 const KEY = `case-${CARD_B}-reply`
-const MISMATCH = '卡片狀態不符'
+/** 拒絕原因的通稱（原本的「卡片狀態不符」）：等你的 Agent 不該落到這句。 */
+const MISMATCH = '這個階段不能'
 const prompt = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
 
 /** 只留 Beta 一件：工作桌派出去的那次做完後停在提問（blocked、不再 busy）。 */
@@ -47,7 +48,7 @@ test('replying from the footer resumes the waiting agent instead of saying the c
   expect(argv[argv.indexOf('--resume') + 1]).toBe(SID)
   expect(data.launches[0].init.cwd).toBe(BETA)
   expect(prompt(data)).toContain('照卡片的下一步繼續：依審核修正')
-  expect(data.toasts.some(t => t.includes('目前無法回覆') || t.includes(MISMATCH))).toBe(false)
+  expect(data.toasts.some(t => t.includes('無法回覆') || t.includes(MISMATCH))).toBe(false)
   expect(data.toasts.some(t => t.includes('Beta：回覆已派出'))).toBe(true)
   // 動態紀錄記一筆派工（一般事件，面板不顯示）
   expect(log.has('Beta 派回覆')).toBe(true)
@@ -67,7 +68,7 @@ test('a waiting agent can be answered whatever the card gate says', async ($, on
     const argv = data.launches[0].argv
     expect(argv[argv.indexOf('--resume') + 1]).toBe(SID)
     expect(prompt(data)).toContain('的回覆：先跑整套再說')
-    expect(data.toasts.some(t => t.includes('目前無法回覆') || t.includes(MISMATCH))).toBe(false)
+    expect(data.toasts.some(t => t.includes('無法回覆') || t.includes(MISMATCH))).toBe(false)
     await ui.unmount()
   }
 })
@@ -136,7 +137,7 @@ test('a failed reply launch keeps the reply button so it can be retried', async 
   data.launch = async () => result(1, '', 'network down')
   let ui = await pressReply($, data, clock)
   expect(data.launches).toHaveLength(1)
-  expect(data.toasts.some(t => t.includes('回覆失敗'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('Beta：無法派回覆（'))).toBe(true)
   await ui.unmount()
   // 重新整理後 Agent 仍被認成在等你，回覆按鈕還在
   await $.command.run({ command: 'desk', args: 'refresh' } as any)

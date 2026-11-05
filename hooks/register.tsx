@@ -4,14 +4,14 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
-import { parseRegistry, saysNone } from './card'
+import { CARD_CMD, parseRegistry, saysNone } from './card'
 import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, plain, errorText, quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
 import { archiveReview, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToFix, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
-import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, replyRefusal, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
+import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
@@ -44,7 +44,7 @@ import { autoPrApplies, autoPrPlan, passWords } from './auto-pr'
 import type { AutoPrPlan } from './auto-pr'
 
 const PANE = 'desk'
-/** 自動派解衝突卻沒派出（不是排進隊伍）時流程停下的原因；失敗原因在動態「解衝突失敗：…」那筆。 */
+/** 自動派解衝突卻沒派出（不是排進隊伍）時流程停下的原因；失敗原因在動態「無法派解衝突（…）」那筆。 */
 const CATCHUP_NOT_SENT = '解衝突沒派出（失敗原因見動態），排除後在對話合併基準分支、解衝突'
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const isPaneOpen = atom({ plugin: 'desk', key: 'isPaneOpen' } as const, false)
@@ -576,6 +576,12 @@ export async function refreshAfterWrite($: any, options: PluginOptions) {
 
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
 
+/** /desk 指令的任務名對不到：列出可用的任務名（示範任務只能看，不列）；一件都沒有就叫你開卡。 */
+function unknownTask(s: Snapshot | null, name: string): string {
+  const names = (s?.cases ?? []).filter(c => !c.demo).map(c => c.name)
+  return names.length ? `找不到任務「${name}」；可用：${names.join('、')}（任務名或其中一段）` : `目前沒有任務，先用 ${CARD_CMD} new 開卡`
+}
+
 export const register: Register = (on, options) => {
   optionsRef = options
   on('session.start', async ($, e, next) => {
@@ -640,7 +646,7 @@ export const register: Register = (on, options) => {
       const s = await read($, snapshot) ?? (await refresh($, options), await read($, snapshot))
       // 回覆示範任務要說清楚是示範任務，不只是找不到。
       const c = caseNamed(s, m[2]!) ?? (m[1] === 'reply' ? s?.cases.find(x => x.demo && x.name.includes(m[2]!)) ?? null : null)
-      if (!c) return { text: `找不到任務「${m[2]}」。` }
+      if (!c) return { text: unknownTask(s, m[2]!) }
       // 沒核准的檢查不跑、也不派實作（做完會自動跑它），不彈框：說去面板按兩次。
       if ((m[1] === 'verify' || KIND_ARG[m[1]!] === 'continue') && !isApproved(await trustedChecks($), c)) return { text: unapprovedText(c) }
       if (m[1] === 'verify') {
@@ -651,8 +657,8 @@ export const register: Register = (on, options) => {
       }
       if (m[1] === 'open') { await openCard($, c); return { text: `${c.name}：已開啟 ${c.statusPath}` } }
       if (m[1] === 'reply') {
-        const why = replyRefusal(c)
-        if (why) return { text: `${c.name}：目前無法回覆（${why}）。` }
+        const refused = refusalOf(c, 'reply')
+        if (refused) return { text: refusalText(c.name, '回覆', refused) }
         void reply($, options, c, m[3])
         return { text: `${c.name}：回覆派送中。` }
       }

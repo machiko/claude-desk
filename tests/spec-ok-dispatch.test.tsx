@@ -177,7 +177,7 @@ test('test_spec_ok_records_trust_even_when_dispatch_is_refused', { timeoutMs: 15
   expect(data.files[CARD_B]).toContain('- 關卡：無')
   expect(data.launches).toHaveLength(0)
   expect(data.asks).toHaveLength(0)
-  expect(data.toasts).toContain('Beta：規格已確認；沒有自動派實作（卡片「等你」還有要你決定的事）')
+  expect(data.toasts).toContain('Beta：規格已確認；無法自動派實作（卡片「等你」還有要你決定的事）；開卡片（o）處理「等你」的決定')
   expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
 
   data.files[CARD_B] = setFields(data.files[CARD_B]!, { 等你: '無' })
@@ -237,7 +237,7 @@ test('test_spec_ok_does_not_trust_a_placeholder_check', { timeoutMs: 15000 }, as
   expect(data.launches).toHaveLength(0)
   expect(data.asks).toHaveLength(0)
   expect(data.store.trustedVerify).toBeUndefined()
-  for (const name of ['Beta', 'Gamma']) expect(data.toasts).toContain(`${name}：規格已確認；沒有自動派實作（卡片還沒有測試指令，規格未通過）`)
+  for (const name of ['Beta', 'Gamma']) expect(data.toasts).toContain(`${name}：規格已確認；無法自動派實作（卡片還沒有測試指令）；開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令`)
   await ui.unmount()
 })
 
@@ -287,9 +287,9 @@ test('test_spec_confirm_dispatches_nothing_when_card_asks_or_is_manual_or_worktr
   // 都沒有派 Agent，也沒有問核准
   expect(data.launches).toHaveLength(0)
   expect(data.asks).toHaveLength(0)
-  expect(data.toasts).toContain('Alpha：規格已確認；沒有自動派實作（卡片「等你」還有要你決定的事）')
-  expect(data.toasts).toContain('Beta：規格已確認；沒有自動派實作（登錄表設為 manual，只追蹤不派工）')
-  expect(data.toasts.some(t => t.startsWith('Gamma：目前無法繼續（worktree 有未提交的改動（2 個檔），不是上一個 Agent 留下的'))).toBe(true)
+  expect(data.toasts).toContain('Alpha：規格已確認；無法自動派實作（卡片「等你」還有要你決定的事）；開卡片（o）處理「等你」的決定')
+  expect(data.toasts).toContain('Beta：規格已確認；無法自動派實作（登錄表設為 manual，只追蹤不派工）；在這個對話自己做；開卡片（o）看下一步')
+  expect(data.toasts.some(t => t.startsWith('Gamma：無法繼續（worktree 有未提交的改動（2 個檔），不是上一個 Agent 留下的'))).toBe(true)
   await ui.unmount()
 })
 
@@ -377,7 +377,7 @@ test('conversation spec ok follows the t rules at turn end: refusal reason and q
   expect(data.toasts.some(t => t.startsWith('Alpha：') || t.startsWith('Beta：'))).toBe(false)
   await $.turn.complete(turnDone())
   await clock.settle()
-  expect(data.toasts).toContain('Alpha：規格已確認；沒有自動派實作（卡片「等你」還有要你決定的事）')
+  expect(data.toasts).toContain('Alpha：規格已確認；無法自動派實作（卡片「等你」還有要你決定的事）；開卡片（o）處理「等你」的決定')
   expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
   expect(data.launches).toHaveLength(0)
   await ui.press({ key: `row-${CARD_B}` })
@@ -669,11 +669,11 @@ test('test_spec_ok_verdict_confirms_only_when_gate_clears_with_new_history_and_d
 
 test('afterSpecRefusal blocks open decisions on top of the g rules', () => {
   const ready: any = { name: 'Beta', root: BETA, statusPath: CARD_B, state: 'ready', ask: '無', next: '依規格與實作計畫實作', verify: 'npm test', gate: '無', pipeline: { current: 'build', stages: [], note: '' } }
-  expect(afterSpecRefusal(ready)).toBe('')
-  expect(afterSpecRefusal({ ...ready, ask: '匯出要含稅嗎？A) 含 B) 不含', state: 'ask' })).toBe('卡片「等你」還有要你決定的事')
-  expect(afterSpecRefusal({ ...ready, manual: true })).toBe('登錄表設為 manual，只追蹤不派工')
-  expect(afterSpecRefusal({ ...ready, state: 'running' })).toBe('Agent 處理中')
-  expect(afterSpecRefusal({ ...ready, verify: '' })).toBe('卡片還沒有測試指令，規格未通過')
+  expect(afterSpecRefusal(ready)).toBeNull()
+  expect(afterSpecRefusal({ ...ready, ask: '匯出要含稅嗎？A) 含 B) 不含', state: 'ask' })).toEqual({ why: '卡片「等你」還有要你決定的事', next: '開卡片（o）處理「等你」的決定' })
+  expect(afterSpecRefusal({ ...ready, manual: true })?.why).toBe('登錄表設為 manual，只追蹤不派工')
+  expect(afterSpecRefusal({ ...ready, state: 'running' })?.why).toBe('Agent 處理中')
+  expect(afterSpecRefusal({ ...ready, verify: '' })).toEqual({ why: '卡片還沒有測試指令', next: '開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令' })
 })
 
 test('specOkTarget reads the target of card.py spec-ok only', () => {

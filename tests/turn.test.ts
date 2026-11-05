@@ -177,7 +177,7 @@ test('a review next step with a failed PR CI still lets g fix it', () => {
 test('at the review stage a review next step refuses g and points to w only', () => {
   const c = mk({ next: '派審查' }, {}, passed)
   expect(c.pipeline?.current).toBe('review')
-  expect(dispatchRefusal(c, 'continue')).toBe('下一步是驗收：按 w 派驗收（g 派的是繼續，不會驗收）')
+  expect(dispatchRefusal(c, 'continue')).toBe('下一步是驗收，g 派的是繼續、不會驗收；按 w 派驗收')
 })
 
 /** AC-4 */

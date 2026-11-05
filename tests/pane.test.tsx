@@ -233,7 +233,7 @@ test('a running case offers no dispatch, and a failed launch is reported without
   await $.command.run({ command: 'desk', args: 'go Beta' } as any)
   await clock.settle()
   expect(data.launches.length).toBe(0)
-  expect(data.toasts.some(t => t.includes('目前無法繼續'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('Beta：無法繼續（'))).toBe(true)
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
   await clock.settle()
   expect(data.launches.length).toBe(1)

@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, runningDeskAgents, untrustedSteps } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
@@ -51,7 +51,7 @@ export const PRESS_AGENTS_MS = 10_000
  * 「啟動中」佔位要等幾個 await 之後才寫，只看它的話，同時派好幾件會都看到有空位。
  */
 export const slots = new Set<string>()
-export const LAUNCHING = '上一次派工仍在啟動'
+export const LAUNCHING = '上一次派工還在啟動；等幾秒、面板出現 Agent 後再按'
 
 /** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，流程派審查的那一刻六段不退回實作。 */
 export let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
@@ -119,6 +119,17 @@ async function refuseStarting($: any, c: Case, kind: DispatchKind, opts: QueueOp
   else $.ui.toast(`${c.name}：${LAUNCHING}`)
 }
 
+/** 啟動失敗的錯誤只留最後一行、截到這麼多字（多的換成「…」）。 */
+export const LAUNCH_ERROR_MAX = 80
+
+/** 派工沒做成：「無法派<種類>（<錯誤最後一行>）；<怎麼重試>」；toast、動態與下一則對話提示共用。 */
+export function launchFailed(label: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const last = message.split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? '沒有錯誤訊息'
+  const shown = [...last].length > LAUNCH_ERROR_MAX ? `${[...last].slice(0, LAUNCH_ERROR_MAX).join('')}…` : last
+  return `無法派${label}（${shown}）；再按一次重試，一直失敗就到終端機跑 claude agents 看原因`
+}
+
 /** 同一件已經排著時，手動派工回的那句（額度煞車後的接續也用）。 */
 export const alreadyQueued = (c: Case) => `${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`
 
@@ -133,8 +144,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   const text = opts.text ?? ''
   const fromQueue = opts.fromQueue !== undefined
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
-  const refusal = opts.auto ? '' : dispatchRefusal(c, kind)
-  if (refusal) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${refusal}）`); return false }
+  const refusal = opts.auto ? null : refusalOf(c, kind)
+  if (refusal) { $.ui.toast(refusalText(c.name, KIND_LABEL[kind], refusal)); return false }
   if (await starting($, c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
   if (!fromQueue && isAgentQueued(c.statusPath)) { if (!opts.auto) $.ui.toast(alreadyQueued(c)); return false }
   // 派實作要先核准完成檢查（面板第二次按 g 就核准）；從隊伍派出的排隊前已核准過，排隊期間檢查改了的在隊伍那邊就擋下。
@@ -148,7 +159,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   // 同步不改程式、推送只推已 commit 的，不擋；自動流程在派之前已經看過。
   if (kind !== 'sync' && kind !== 'publish' && !opts.auto && !tutorial) {
     const foreign = markRefusal(await worktreeMark($, c.root), own)
-    if (foreign) { $.ui.toast(`${c.name}：目前無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return false }
+    if (foreign) { $.ui.toast(`${c.name}：無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return false }
   }
   const now = await $.clock.now()
   // 同時在跑的工作桌 Agent 已達上限（教學與 maxAgents 0 不限）：排進隊伍；隊伍裡已經有人在等時也排，先來先派。
@@ -213,10 +224,10 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     return true
   } catch (error) {
     if (error instanceof LaunchError && error.untrusted) { await holdUntrusted($, c, kind, now, !!opts.auto, !!opts.auto || tutorial); return false }
-    const message = error instanceof Error ? error.message : String(error)
-    await feedPush($, [{ at: now, text: `${c.name} ${KIND_LABEL[kind]}失敗：${message}`, tone: 'error', card: c.statusPath }])
-    await tellPanel($, now, `${KIND_LABEL[kind]}失敗：${message}`, { name: c.name, skip: opts.auto || tutorial })
-    $.ui.toast(`${c.name}：${KIND_LABEL[kind]}失敗，${message}`, { timeoutMs: 8000 })
+    const failed = launchFailed(KIND_LABEL[kind], error)
+    await feedPush($, [{ at: now, text: `${c.name} ${failed}`, tone: 'error', card: c.statusPath }])
+    await tellPanel($, now, failed, { name: c.name, skip: opts.auto || tutorial })
+    $.ui.toast(`${c.name}：${failed}`, { timeoutMs: 8000 })
     return false
   } finally {
     slots.delete(c.statusPath)

@@ -705,7 +705,7 @@ test('test_manual_dispatch_ignores_quota_threshold — /desk go resume is refuse
   await clock.settle()
 
   expect(data.launches).toHaveLength(0)
-  expect(String((go as any)?.text)).toContain('Beta：目前無法驗收（')
+  expect(String((go as any)?.text)).toContain('Beta：無法驗收（')
   expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
   expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0 })
 })

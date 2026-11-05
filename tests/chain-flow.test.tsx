@@ -300,6 +300,6 @@ test('idle next: the chain never dispatches a waiting-only next step', async ($,
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
   await clock.settle()
   expect(data.launches.length).toBe(4)
-  expect(data.toasts.some(t => t.includes('目前無法繼續') && t.includes('沒有要 Agent 做的事'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('無法繼續（') && t.includes('沒有要 Agent 做的事'))).toBe(true)
   expect(prompts().some(p => p.startsWith('依卡片的下一步繼續：等'))).toBe(false)
 })

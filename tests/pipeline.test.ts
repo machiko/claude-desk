@@ -164,7 +164,7 @@ test('later evidence is not pulled back by empty spec', () => {
   const shipped = flow(withSpec(TEMPLATE_SPEC, { 關卡: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可' }, { tag: 'v1.4.0' }))
   expect(shipped.pipeline.current).toBeNull()
   expect(dispatchable(shipped)).toContain('continue')
-  expect(dispatchRefusal({ ...shipped, state: 'done' }, 'continue')).toBe('卡片狀態不符')
+  expect(dispatchRefusal({ ...shipped, state: 'done' }, 'continue')).toBe('已上線；輸入 /desk:card archive a 歸檔')
   expect(dispatchRefusal({ ...shipped, state: 'done' }, 'review')).not.toContain('/desk:card spec')
 })
 

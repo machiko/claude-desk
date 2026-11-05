@@ -300,7 +300,7 @@ test('concurrent dispatches in one conversation never exceed the limit', async (
   expect(data.toasts.filter((t: string) => t.endsWith('同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）'))).toHaveLength(1)
 })
 
-/** 審查 MEDIUM：同一件連派兩次、第一次佔到最後一個名額還在啟動：第二次說「上一次派工仍在啟動」，不排進隊伍，之後也不會再派。 */
+/** 審查 MEDIUM：同一件連派兩次、第一次佔到最後一個名額還在啟動：第二次說「上一次派工還在啟動」與等多久再按（refusal-next-step AC-4），不排進隊伍，之後也不會再派。 */
 test('a second dispatch of a card that is still starting is refused, not queued', async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data, clock)
@@ -316,7 +316,7 @@ test('a second dispatch of a card that is still starting is refused, not queued'
   await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
   await clock.settle()
   expect(data.launches).toHaveLength(1)
-  expect(data.toasts).toContain('Gamma：上一次派工仍在啟動')
+  expect(data.toasts).toContain('Gamma：上一次派工還在啟動；等幾秒、面板出現 Agent 後再按')
   expect(data.toasts.some((t: string) => t.includes('已排隊'))).toBe(false)
 
   // 空出名額、第一次派工啟動完成：都只有那一個
