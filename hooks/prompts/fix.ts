@@ -33,7 +33,7 @@ export function manualFixHead(c: Case, ci: boolean): string {
   if (stopped === AGENT_STOPPED) return '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。'
   // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
   if (isQuotaHold(stopped)) return quotaRestartHead(c)
-  if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_DECIDE}）。${FIX_WHOLE_CLASS}commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
+  if (stopped) return `修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_DECIDE}），${FIX_WHOLE_CLASS}commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`
   // 審查結論還要修（CRITICAL＋HIGH，加上流程這輪要修的 MEDIUM）：檢查是過的，依審查檔修。
   const verdict = parseVerdict(c.gate)
   if (verdict && toFix(c, verdict) > 0) return `修正：${reviewFixStep(REVIEW_FILE)}`

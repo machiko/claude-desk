@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps, writesCode } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
@@ -183,7 +183,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     let review: ReviewOpts | undefined
     const probed = kind === 'review' ? (await gitProbe($, c.root)).git : undefined
     // 常犯錯誤清單：審查與會改程式的派工（繼續、回覆、修正）都讀；檔案不在就不給。
-    const writes = !!opts.fix || kind === 'continue' || kind === 'reply'
+    const writes = writesCode(kind, opts.fix)
     const paths = kind === 'review' || writes ? await deskPaths($, options) : undefined
     const pitfallsPath = paths ? pitfallsFor(settings, paths.pitfalls, await home($)) : ''
     const pitfalls = pitfallsPath && (await $.fs.exists(pitfallsPath).catch(() => false)) ? pitfallsPath : ''

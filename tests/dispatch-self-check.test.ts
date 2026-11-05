@@ -1,10 +1,11 @@
 // build-like-review：會改程式的派工（實作、回覆、修正）交出前先做審查會做的檢查；同步、審查、推送、解衝突不帶。
 import { expect, test } from 'claude-code/testing'
-import { buildPrompt, pushRequest } from '../hooks/dispatch'
+import { buildPrompt, pushRequest, writesCode } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
 import type { Case, Verify } from '../types'
-import { fixture, result, CARD_A, CARD_B, PROJECT_DIR } from './fixture'
+import { fixture, result, CARD_A, CARD_B, NOW, PROJECT_DIR, REGISTRY } from './fixture'
+import { setFields } from '../hooks/tutorial'
 
 const card = (next: string) => `<!-- DESK -->\n- 狀態：ok\n- 驗證：\`true\`\n- 等你：無\n- 下一步：${next}\n- 關卡：無\n<!-- /DESK -->`
 const mk = (next: string) => buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card(next), 1, {}, undefined)
@@ -56,6 +57,60 @@ test('test_writing_prompts_include_pitfalls_when_list_exists', async ($, on) => 
   expect(withList).toContain(PITFALLS_LINE(PITFALLS_FILE))
 })
 
+/** AC-1：派工端算清單路徑與 buildPrompt 加規則用同一份「會改程式的派工」條件。 */
+test('test_writing_prompts_include_pitfalls_when_list_exists: writes code covers continue, reply and every fix', () => {
+  expect(writesCode('continue')).toBe(true)
+  expect(writesCode('reply')).toBe(true)
+  expect(writesCode('continue', { from: 'check', round: 1 })).toBe(true)
+  expect(writesCode('continue', { from: 'review', round: 2, security: true })).toBe(true)
+  for (const kind of ['sync', 'review', 'publish', 'catchup'] as const) expect(writesCode(kind)).toBe(false)
+})
+
+/** AC-1：真的派回覆（Agent 停在提問、/desk reply）：清單在就帶路徑。 */
+test('test_writing_prompts_include_pitfalls_when_list_exists: reply dispatch', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const BETA = '/home/u/wt/beta'
+  const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[PITFALLS_FILE] = '# 清單'
+  data.git[BETA] = { branch: 'feature/b', head: 'g1', remote: 'git@github.com:acme/shop.git' }
+  data.gh = []
+  data.agents = [{ id: 'bbbbbbbb', kind: 'background', cwd: BETA, name: 'desk-launch-1', sessionId: SID, state: 'blocked', status: 'waiting', waitingFor: 'input needed', startedAt: NOW - 60_000 }]
+  data.logs = { bbbbbbbb: '要先跑整套測試嗎？\n' }
+  data.store.jobs = { [BETA]: { sessionId: SID, last: { launchName: 'desk-launch-1', nativeId: 'bbbbbbbb', sessionId: SID, kind: 'continue', startedAt: NOW - 60_000, fresh: false } } }
+  data.launch = async () => result(0, 'cccccccc\n')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.command.run({ command: 'desk', args: 'reply Beta 先跑整套' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  const p = String(data.launches[0].argv.at(-1))
+  expect(p).toContain('的回覆：先跑整套')
+  expect(p).toContain(PITFALLS_LINE(PITFALLS_FILE))
+})
+
+/** AC-1：自動流程的修正輪（審查有 HIGH）真的派出去：清單在就帶路徑。 */
+test('test_writing_prompts_include_pitfalls_when_list_exists: auto fix round dispatch', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const ALPHA = '/home/u/wt/alpha'
+  data.agents = []
+  data.files[PITFALLS_FILE] = '# 清單'
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '無', 關卡: 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核' })
+  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [HIGH][稽核] a.ts:1 — 漏寫稽核紀錄'
+  // 派審查前的完成檢查在這個 HEAD 通過過；這個對話的流程在第 0 輪、剛審完這個 HEAD
+  data.store.verifies = { [CARD_A]: { command: 'node test.mjs', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'h1' } }
+  data.store.chains = { [ALPHA]: { owner: 'fixture-session', startedAt: 0, round: 0, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
+  data.store.jobs = { [ALPHA]: { sessionId: 'a0000001-0000-4000-8000-000000000000', last: { launchName: 'desk-rv-0', nativeId: 'r0000001', sessionId: 'r0000001-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session' } } }
+  data.launch = async () => result(0, 'f0000001')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  const p = String(data.launches[0].argv.at(-1))
+  expect(p.startsWith('修正第 1／2 輪：')).toBe(true)
+  expect(p).toContain(PITFALLS_LINE(PITFALLS_FILE))
+})
+
 /** build-like-review AC-2：實作、回覆與修正的提示要求交出前自我檢查（突變檢查、對照 main 跑相鄰路徑、寫進歷程），有沒有清單都要。 */
 test('test_writing_prompts_require_self_check_before_push', () => {
   const c = mk('依規格實作')
@@ -63,6 +118,7 @@ test('test_writing_prompts_require_self_check_before_push', () => {
     for (const p of Object.values(writingPrompts(c, pitfalls))) {
       expect(p).toContain(SELF_CHECK)
       expect(p).toContain('把對應改動拿掉要會紅')
+      expect(p).toContain('拿掉改動在暫存複本做，或 commit 後才在 worktree 做、做完用 git diff 確認已還原，不要用 git stash')
       expect(p).toContain(ADJACENT)
       expect(p).toContain('做了什麼寫進歷程')
     }

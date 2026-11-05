@@ -91,7 +91,6 @@ class SpecSkillTest(unittest.TestCase):
         trivial = step(self.body, '2c.')
         self.assertIn('跳過 2b 規格前審', trivial)
 
-
     def test_spec_skill_requires_unchanged_behavior_rows(self):
         """build-like-review AC-5：改到自動流程、狀態旗標或解析器的卡，寫驗收情境時要列「維持現狀」的相鄰路徑或真實輸出樣本，各一列。"""
         write = step(self.body, '5.')

@@ -161,7 +161,7 @@ function parseKinds(v: unknown): DispatchSettings['kinds'] {
 
 export const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
 
-/** 審查要讀的常犯錯誤清單：專案 dispatch.json 的 review.pitfalls（展開 ~）優先；空白用 fallback（plugin 選項 → 專案資料夾 review-pitfalls.md）。 */
+/** 審查與會改程式的派工要讀的常犯錯誤清單：專案 dispatch.json 的 review.pitfalls（展開 ~）優先；空白用 fallback（plugin 選項 → 專案資料夾 review-pitfalls.md）。 */
 export function pitfallsFor(settings: DispatchSettings, fallback: string, home: string): string {
   const own = settings.review.pitfalls ?? ''
   return own ? expandHome(own, home) : fallback
@@ -271,6 +271,9 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
 
 export type FixReason = { from: 'check' | 'review'; round: number; tail?: string[]; /** 審查修正接在資安審查之後：依 SECURITY.md 修，不是 REVIEW.md。 */ security?: boolean }
 
+/** 會改程式的派工（繼續、回覆、修正）：多帶規格、CHANGELOG、測試、常犯錯誤清單與自我檢查的規則。派工端算清單路徑也用這一份。 */
+export const writesCode = (kind: DispatchKind, fix?: FixReason): boolean => !!fix || kind === 'continue' || kind === 'reply'
+
 /**
  * `self`：這次派出去的啟動名；Agent 查同一個 worktree 有沒有別的 Agent 時，才不會把自己當成別人。
  * `pitfalls`：常犯錯誤清單路徑（呼叫端確認檔案存在才給）；只有會改程式的派工用得到，審查的清單照舊放在 `review`。
@@ -284,7 +287,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : kind === 'publish' ? publishHead(text)
     : kind === 'catchup' ? catchupHead(text)
     : `${named(settings.user).trimStart()}的回覆：${text}`
-  const writes = !!fix || kind === 'continue' || kind === 'reply'
+  const writes = writesCode(kind, fix)
   const publishing = !fix && kind === 'publish'
   const catchup = !fix && kind === 'catchup'
   // 解衝突改程式但不 push：合併 commit 由流程重新檢查、審查後，照合併段的 ⇡ push 推上去。
