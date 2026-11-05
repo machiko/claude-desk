@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, REGISTRY, TRUSTED, result, text, flat, feedLog } from './fixture'
 import { setFields, tutorialPaths, TUTORIAL_NAME } from '../hooks/tutorial'
-import { decisionWaitingText } from '../hooks/card-actions'
+import { DEMO_ONLY, decisionRefusal } from '../hooks/card-actions'
 
 // 拒絕訊息寫原因與下一步（refusal-next-step）：面板按鍵、/desk 指令被拒或派工沒做成時，提示說為什麼、接著怎麼做。
 
@@ -132,10 +132,7 @@ test('card action refusals end with a next step', async ($, on) => {
   await ui.unmount()
 })
 
-/**
- * AC-6：決策已送出、還在等對話寫回時又按 f。送出後面板立刻收掉 f，只有按下時面板還沒重畫才走得到，
- * fixture 重現不了那個時間差：這裡核對送出後 f 確實收掉，以及那句的字面。
- */
+/** AC-6：決策已送出後面板收掉 f（按下時面板還沒重畫才會走到拒絕句，句子由下一支測試核對）。 */
 test('card action refusals end with a next step — decision already sent', async ($, on) => {
   const { data, clock } = fixture(on)
   await run($, clock, 'refresh')
@@ -146,8 +143,20 @@ test('card action refusals end with a next step — decision already sent', asyn
   await clock.settle()
   expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeUndefined()
   expect(await ui.find({ key: `case-${CARD_A}-open` })).toBeDefined()
-  expect(decisionWaitingText('Alpha')).toBe('Alpha：決策已送出，等對話寫回卡片；這一回合結束沒寫回會再提示（可按 o 自己改「等你」）')
   await ui.unmount()
+})
+
+/** AC-6：按 f 被擋下的三種，從送出決策後記下的那筆（同一個「等你」、還沒寫回）算出整句。 */
+test('card action refusals end with a next step — decision refusals', () => {
+  const ask = '要不要加快取：A) 加 B) 不加'
+  const c = { demo: false, name: 'Alpha', ask, statusPath: '/w/a/.desk/CARD.md', state: 'ask' as const }
+  const sent = { [c.statusPath]: { ask, during: 't1' } }
+  expect(decisionRefusal(c, { 0: 'A' }, sent)).toBe('Alpha：決策已送出，等對話寫回卡片；這一回合結束沒寫回會再提示（可按 o 自己改「等你」）')
+  expect(decisionRefusal(c, {}, {})).toBe('Alpha：請先完成每個決策的選擇（點選項或按選項字母；多題時用點的）')
+  expect(decisionRefusal({ ...c, demo: true }, { 0: 'A' }, {})).toBe(DEMO_ONLY)
+  // 回合結束已記下沒寫回（done）、或「等你」換了：不再擋，可以重新填入
+  expect(decisionRefusal(c, { 0: 'A' }, { [c.statusPath]: { ask, done: true } })).toBeNull()
+  expect(decisionRefusal(c, { 0: 'A' }, { [c.statusPath]: { ask: '舊的問題：A) 是 B) 否' } })).toBeNull()
 })
 
 /** AC-6：上線確認寫卡片失敗。 */

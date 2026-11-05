@@ -13,6 +13,8 @@ import type { Case, Verify } from '../types'
 
 const card = (next: string, extra = '') => `<!-- DESK -->\n- 狀態：ok\n- 驗證：\`true\`\n- 等你：無\n- 下一步：${next}\n- 關卡：無\n${extra}<!-- /DESK -->`
 const mk = (next: string, agents: any = {}) => buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card(next), 1, agents, undefined)
+/** 跟面板一樣算好六段：拒絕的下一步看這一刻列著的鍵。 */
+const staged = (c: Case): Case => ({ ...c, pipeline: pipeline(c, undefined) })
 const TEMPLATE_SPEC = '\n## 規格\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | <前提> | <操作> | <看得到的結果> | `<測試名稱>` |\n'
 
 test('settings: global, project override and sync model; fresh sync is the default once a sync model is set', () => {
@@ -366,7 +368,7 @@ test('idle next: waiting-only next steps refuse continue and say what to do', ()
   // feed-current、spec-gate 實際派出去的句子，與幾種常見寫法
   for (const next of ['等自動檢查與審查；過了開 PR', '等完成檢查與審查', '等檢查', '等審查', '等合併', '等 PR', '開 PR', '等你確認', '等 Reyes 確認', '待合併', '等 CI 通過', '等你', '等審查結果；通過後開 PR', '到面板按 v 執行完成檢查', '按 v', '按 v 跑檢查；等審查', '等自動重新檢查與審查；沒動靜就到面板按 v', '到面板照「輪到你」開 PR 或合併']) {
     expect(idleNext(next)).toBe(IDLE_WHY)
-    const c = mk(next)
+    const c = staged(mk(next))
     expect(dispatchable(c)).toEqual(['review', 'sync'])
     expect(refusalOf(c, 'continue')).toEqual({ why: IDLE_WHY, next: '按 v 執行測試；要改程式先開卡片（o）把下一步寫成要做的事' })
     expect(dispatchRefusal(c, 'sync')).toBe('')
@@ -376,7 +378,7 @@ test('idle next: waiting-only next steps refuse continue and say what to do', ()
 /** AC-3 */
 test('a review next step refuses continue and points to v and w', () => {
   for (const next of ['審查', '派審查：/desk review 更多動作自動收回', '派獨立審查（w）', '按 w 派審查', '重新審查']) {
-    const c = mk(next)
+    const c = staged(mk(next))
     expect(idleNext(next)).toBe(REVIEW_WHY)
     expect(dispatchable(c)).toEqual(['review', 'sync'])
     // 還沒過測試：w 要通過後才列（或流程自動驗收），所以下一步只叫你先按 v

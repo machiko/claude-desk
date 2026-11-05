@@ -11,8 +11,8 @@ import { PUBLISH_CARD_RULE, publishHead } from './prompts/publish'
 import { reviewPrompt, reviewTask } from './prompts/review'
 import type { ReviewOpts } from './prompts/review'
 import { fixHead, manualFixHead } from './prompts/fix'
-import { IDLE_WHY, MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext, reviewNext } from './next-words'
-import { shipTurn } from './turn'
+import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext } from './next-words'
+import { shipTurn, stageActions } from './turn'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
 export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
@@ -306,12 +306,28 @@ export function replyRefusal(c: Case): string {
 function stageRefusal(c: Case, kind: DispatchKind): Refusal {
   if (c.state === 'reply') return { why: 'Agent 停著在等你回覆', next: '按 y 回覆它' }
   if (c.state === 'approve') return { why: APPROVAL_WAIT, next: APPROVE_NEXT }
-  if (c.state === 'done') return { why: '已上線', next: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
+  // 發版線不歸檔（canArchive 排除它），照「輪到你」等下一版。
+  if (c.state === 'done') return { why: '已上線', next: isReleaseLine(c) ? FOLLOW_TURN : `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }
   if (reviewTask(c) && kind === 'continue') return { why: '這張是驗收任務卡，只派驗收、不派實作', next: FOLLOW_TURN }
   if (isReleaseLine(c) && kind === 'review') return { why: '發版線不派驗收，只跑測試', next: FOLLOW_TURN }
   if (kind === 'continue' && !c.next) return { why: '下一步空白', next: '開卡片（o）寫下一步' }
   if (c.state === 'idle') return { why: '卡片閒置（下一步寫「無」）', next: '開卡片（o）寫狀態與下一步' }
   return { why: `這個階段不能${KIND_LABEL[kind]}`, next: FOLLOW_TURN }
+}
+
+const STATE_FIRST = new Set<Case['state']>(['reply', 'approve', 'done'])
+
+/**
+ * 下一步只剩等待時，g 被拒的下一步：只叫你按這一刻面板列著的鍵（stageActions），沒列的就照「輪到你」做。
+ * 還沒過測試時，通過後流程可能自動驗收，w 也要那時才列，所以只叫你先按 v。
+ */
+function idleRefusalNext(c: Case, idle: string): string {
+  const actions = stageActions(c)
+  if (idle === REVIEW_WHY && actions.has('review')) return '按 w 派驗收'
+  if (!actions.has('verify')) return FOLLOW_TURN
+  return idle === REVIEW_WHY
+    ? '先按 v 執行測試，通過後照「輪到你」派驗收'
+    : '按 v 執行測試；要改程式先開卡片（o）把下一步寫成要做的事'
 }
 
 /** 手動派工不能派的原因與下一步；null 代表可以派。回覆看 Agent 是否在等你，其他看 dispatchable。 */
@@ -327,13 +343,10 @@ export function refusalOf(c: Case, kind: DispatchKind): Refusal | null {
   if (parseGate(c.gate)?.kind === 'spec') return { why: '規格還沒確認', next: `看過規格（o）後按 t 確認，或輸入 ${CARD_CMD} spec ${slugOf(c)} ok` }
   // 走到這裡規格已過：只差檢查欄。
   if (!c.verify) return { why: MISSING_CHECK_WHY, next: MISSING_CHECK_NEXT }
-  if (kind === 'continue') {
-    // 審查段（檢查已通過）：「輪到你」已經是按 w，不再叫你先按 v。
-    if (reviewNext(c.next) && c.pipeline?.current === 'review') return { why: REVIEW_WHY, next: '按 w 派驗收' }
-    // 還沒過測試：通過後流程可能自動驗收，w 也要那時才列，所以不在這裡叫你按 w。
+  // 等回覆、等批准、已上線先講卡片狀態：下一步寫什麼都不是這時該按的鍵。
+  if (kind === 'continue' && !STATE_FIRST.has(c.state)) {
     const idle = idleNext(c.next)
-    if (idle === REVIEW_WHY) return { why: REVIEW_WHY, next: '先按 v 執行測試，通過後照「輪到你」派驗收' }
-    if (idle === IDLE_WHY) return { why: IDLE_WHY, next: '按 v 執行測試；要改程式先開卡片（o）把下一步寫成要做的事' }
+    if (idle) return { why: idle, next: idleRefusalNext(c, idle) }
   }
   return stageRefusal(c, kind)
 }

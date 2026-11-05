@@ -4,7 +4,7 @@
 // 跨檔傳 $ 的函式一律用 function 宣告；atom 位址同 register.tsx，各自宣告。
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
-import type { Case, Snapshot } from '../types'
+import type { Case, SentRecord, Snapshot } from '../types'
 import { parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
 import { errorLine, errorText, quotaHeld, reasonLine, slugOf } from './model'
@@ -155,17 +155,25 @@ async function decisionFill($: any, name: string, text: string): Promise<{ input
 }
 
 /**
- * 決策已送出、還在等對話寫回時又按 f：送出後面板就收掉 f，只有按下時面板還沒重畫才會走到這裡。
- * 回合結束沒寫回時 prompt-sync 會再提示（「決策已送出，但卡片的「等你」沒有改」）。
+ * 按 f 填入決策被擋下的那句（含任務名）；null 代表可以填。示範任務、還有決策沒選、決策已送出還在等對話寫回，依序檢查。
+ * 已送出時送出後面板就收掉 f，只有按下時面板還沒重畫才會走到；回合結束沒寫回時 prompt-sync 會再提示（「決策已送出，但卡片的「等你」沒有改」）。
  */
-export const decisionWaitingText = (name: string): string => `${name}：決策已送出，等對話寫回卡片；這一回合結束沒寫回會再提示（可按 o 自己改「等你」）`
+export function decisionRefusal(
+  c: Pick<Case, 'demo' | 'name' | 'ask' | 'statusPath' | 'state'>,
+  picks: Readonly<Record<string, string>>,
+  sent: Readonly<Record<string, SentRecord>>,
+): string | null {
+  if (c.demo) return DEMO_ONLY
+  if (!allPicked(parseDecisions(c.ask), picks)) return `${c.name}：請先完成每個決策的選擇（點選項或按選項字母；多題時用點的）`
+  if (sentState(sent, c) === 'waiting') return `${c.name}：決策已送出，等對話寫回卡片；這一回合結束沒寫回會再提示（可按 o 自己改「等你」）`
+  return null
+}
 
 export async function fillDecision($: any, c: Case) {
-  if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  const decisions = parseDecisions(c.ask)
   const picks = (await read($, picksAtom))[picksKey(c)] ?? {}
-  if (!allPicked(decisions, picks)) { $.ui.toast(`${c.name}：請先完成每個決策的選擇（點選項或按選項字母；多題時用點的）`); return }
-  if (sentState(await readSent($), c) === 'waiting') { $.ui.toast(decisionWaitingText(c.name)); return }
+  const refusal = decisionRefusal(c, picks, await readSent($))
+  if (refusal) { $.ui.toast(refusal); return }
+  const decisions = parseDecisions(c.ask)
   const answer = decisionAnswer(decisions, picks)
   if (tutorial) { await tutorialDecision($, c, answer); return }
   const text = decisionPrompt(c.name, answer)

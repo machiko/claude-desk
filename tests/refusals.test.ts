@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { buildCase } from '../hooks/model'
 import { finalState, pipeline } from '../hooks/pipeline'
 import { refusalOf } from '../hooks/dispatch'
-import type { DispatchKind } from '../hooks/dispatch'
+import type { DispatchKind, Refusal } from '../hooks/dispatch'
 import { shipTurn, stageActions } from '../hooks/turn'
 import type { ActionId } from '../hooks/turn'
 import type { AgentInfo, Case, Verify } from '../types'
@@ -36,6 +36,7 @@ const KEY_OF: Record<ActionId, string> = {
 }
 /** 全域鍵：開卡片、更多、展開、說明、重新整理。 */
 const GLOBAL_KEYS = ['o', 'm', 'x', 'i', 'r']
+const FOLLOW_TURN = '照「輪到你」做'
 
 /** 下一步裡提到的鍵：「按 X」與「（X）」。 */
 const keysIn = (next: string): string[] => [...next.matchAll(/按\s*([a-z])(?![a-z])|（([a-z])）/g)].map(m => (m[1] ?? m[2])!)
@@ -64,24 +65,27 @@ const CASES: [string, Case, DispatchKind][] = [
   ['其他（手動派解衝突）', mk({}), 'catchup'],
 ]
 
+/** 被拒、有原因與下一步，下一步提到的鍵此刻面板都列著；沒提鍵就要是指令或照「輪到你」做。回傳拒絕。 */
+function expectOfferedNext(label: string, c: Case, kind: DispatchKind): Refusal {
+  const r = refusalOf(c, kind)
+  expect([label, r === null]).toEqual([label, false])
+  expect([label, r!.why.length > 0, (r!.next ?? '').length > 0]).toEqual([label, true, true])
+  const next = r!.next!
+  const offered = new Set([...[...stageActions(c)].map(id => KEY_OF[id]), ...GLOBAL_KEYS])
+  const keys = keysIn(next)
+  for (const k of keys) expect([label, k, offered.has(k)]).toEqual([label, k, true])
+  if (keys.length === 0) {
+    const ok = next.includes('/desk') || next.includes('claude ') || next === FOLLOW_TURN || next === shipTurn(c).text
+    expect([label, next, ok]).toEqual([label, next, true])
+  }
+  return r!
+}
+
 /** AC-3 */
 test('every dispatch refusal has a next step the panel offers', () => {
   expect(CASES).toHaveLength(19)
   const whys = new Set<string>()
-  for (const [label, c, kind] of CASES) {
-    const r = refusalOf(c, kind)
-    expect([label, r === null]).toEqual([label, false])
-    expect([label, r!.why.length > 0, (r!.next ?? '').length > 0]).toEqual([label, true, true])
-    whys.add(r!.why)
-    const next = r!.next!
-    const offered = new Set([...[...stageActions(c)].map(id => KEY_OF[id]), ...GLOBAL_KEYS])
-    const keys = keysIn(next)
-    for (const k of keys) expect([label, k, offered.has(k)]).toEqual([label, k, true])
-    if (keys.length === 0) {
-      const ok = next.includes('/desk') || next.includes('claude ') || next === '照「輪到你」做' || next === shipTurn(c).text
-      expect([label, next, ok]).toEqual([label, next, true])
-    }
-  }
+  for (const [label, c, kind] of CASES) whys.add(expectOfferedNext(label, c, kind).why)
   // 每一種都有自己的原因，沒有被併成同一句通稱
   expect(whys.size).toBe(CASES.length - 1)
 })
@@ -99,4 +103,29 @@ test('refusal cases sit at their typical stage', () => {
   expect(at('Agent 在等權限批准').state).toBe('approve')
   expect(at('已上線').state).toBe('done')
   expect(at('卡片閒置').state).toBe('idle')
+})
+
+/** AC-3：下一步只剩等待的卡停在各段、或卡片狀態先擋下時，被拒的下一步只叫你按那一刻列著的鍵。 */
+test('waiting next steps are refused with keys the stage lists', () => {
+  const waitingAtReview = mk({ next: '等審查' }, { v: passed })
+  const openPrAtMerge = mk({ next: '開 PR' }, { extra: { chain: { round: 0, passed: true } as Case['chain'] } })
+  const approveWaiting = mk({ next: '等審查' }, { agent: PERMISSION })
+  const replyWaiting = mk({ next: '等審查' }, { agent: ASKS })
+  expect(waitingAtReview.pipeline?.current).toBe('review')
+  expect(openPrAtMerge.pipeline?.current).toBe('merge')
+  expect(approveWaiting.state).toBe('approve')
+  expect(replyWaiting.state).toBe('reply')
+
+  expect(expectOfferedNext('驗收段等審查', waitingAtReview, 'continue')).toEqual({ why: '下一步只剩等待，沒有要 Agent 做的事', next: FOLLOW_TURN })
+  expect(expectOfferedNext('合併段開 PR', openPrAtMerge, 'continue')).toEqual({ why: '下一步只剩等待，沒有要 Agent 做的事', next: FOLLOW_TURN })
+  // 卡片狀態先講：等批准、等回覆時下一步寫什麼都不是該按的鍵
+  expect(expectOfferedNext('等批准', approveWaiting, 'continue').next).toBe('到終端機跑 claude agents 批准它')
+  expect(expectOfferedNext('等回覆', replyWaiting, 'continue')).toEqual({ why: 'Agent 停著在等你回覆', next: '按 y 回覆它' })
+})
+
+/** AC-3：發版線上線後不歸檔，被拒時不叫你輸入歸檔指令。 */
+test('a shipped release line is not told to archive', () => {
+  const shipped = mk({ next: '等下一版' }, { extra: { git: { branch: 'release/v1.4', head: 'h1' }, tag: 'v1.4.0' } })
+  expect(shipped.state).toBe('done')
+  expect(expectOfferedNext('發版線已上線', shipped, 'continue')).toEqual({ why: '已上線', next: FOLLOW_TURN })
 })
