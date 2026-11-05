@@ -133,3 +133,39 @@ test('test_stop_done_includes_blocked_desk_agents', async ($, on) => {
   expect(log.has('Beta Agent 已完成')).toBe(true)
   expect((data.store.jobs as any)[BETA].last.ended).toEqual({ how: 'finished' })
 })
+
+/** AC-6：實作做完時把要你決定的事寫進「等你」：流程停著等你，不跑測試、不派驗收；在對話處理完（清成無）後也不自動接著派。 */
+test('test_auto_chain_waits_when_agent_ends_with_question_on_card', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+
+  // 實作 Agent 把題目寫進「等你」後結束（blocked／idle）
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 等你：.*$/m, '- 等你：快取要用哪種：A) 記憶體 B) Redis')
+  data.agents = data.agents.map((a: any) => ({ ...a, state: 'blocked', status: 'idle' }))
+  await h.refresh()
+  await h.step(); await h.step(); await h.step()
+
+  // 停著等你：不跑測試、不派驗收；面板照卡片說「等你」
+  expect(sh(data)).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  const ui = await $.ui.mount(PANE(120))
+  expect(await screen(ui)).toContain(flat('▶ 輪到你 按選項字母'))
+  await ui.unmount()
+
+  // 在對話處理完：「等你」清成無。流程不替那次派工接著跑測試或派工，動態說一聲
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 等你：.*$/m, '- 等你：無')
+  await h.refresh()
+  await h.step(); await h.step(); await h.step()
+  expect(sh(data)).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  expect(log.has('Alpha 「等你」已在對話處理，流程不替那次派工接著跑；照「輪到你」繼續')).toBe(true)
+})

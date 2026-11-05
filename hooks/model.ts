@@ -371,6 +371,14 @@ export function asksQuestion(list: readonly any[], launchName: string | undefine
 export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'> | undefined, ask: string): boolean =>
   !!last?.cardAsked && (!!last.answered || saysNone(ask))
 
+/** 會改程式的派工（繼續、修正、回覆）做完一輪：Agent 要問人只能寫進卡片「等你」，所以它結束時「等你」有內容就是在等你決定。 */
+export const codeJobEnded = (last: Pick<JobRecord, 'kind' | 'ended'> | undefined): boolean =>
+  !!last && (last.kind === 'continue' || last.kind === 'reply') && last.ended?.how === 'finished'
+
+/** 做完一輪時把要你決定的事寫進了「等你」、還沒處理：自動流程停著等，不替它跑測試、派驗收或修正。 */
+export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended'> | undefined, ask: string): boolean =>
+  codeJobEnded(last) && !saysNone(ask)
+
 /**
  * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑或停下來等（busy／waiting）、清單裡找不到都是 null；
  * `claude stop` 停掉的是 stopped（清單裡 state 是 stopped、沒有 status），其他算 finished。找不到不算結束：剛派出去的那次可能還沒出現在這份清單。
