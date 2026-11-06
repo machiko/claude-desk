@@ -16,6 +16,17 @@ export const STAGES: readonly { id: StageId; label: string }[] = [
 export const STAGE_GLYPH: Record<StageStatus, string> = { done: '●', active: '◉', wait: '◆', fail: '✕', todo: '○', na: '·' }
 /** 這條分支審查過一次、修正或新 commit 只跑測試就過關（沒有複審）：驗收段過了之後，合併段的註記帶著這句。 */
 export const UNREVIEWED_NOTE = '已修正・未複審'
+/** 依審查修完的關卡結論（修正提示叫 Agent 寫「review：CRITICAL 0、HIGH 0、MEDIUM …、LOW …；」接這句）。 */
+export const UNREVIEWED_GATE = '已依審查修正、未複審（發版時整版審查）'
+
+/**
+ * 卡片上讀到的關卡：依審查修完寫的「review：…；已依審查修正、未複審」不是審查結論（沒有人審過修完的程式），讀的時候當成「無」，
+ * 跟修正提示以前叫 Agent「改回 無」一樣：停下的流程照舊算未通過、按 g 派修正，檢查沒跑、沒過關前六段不跳到合併段。
+ * 是不是未複審過關由流程紀錄（chain.unreviewed）判斷，不看這行字。
+ */
+export function gateAsRead(gate: string): string {
+  return parseGate(gate)?.kind === 'review' && gate.includes(UNREVIEWED_GATE) ? '無' : gate
+}
 const INDEX = Object.fromEntries(STAGES.map((s, i) => [s.id, i])) as Record<StageId, number>
 
 /** 審查結論：關卡寫成 `review：CRITICAL 0、HIGH 1、MEDIUM 2、LOW 0；…`。四個數字缺任何一個就讀不出。 */

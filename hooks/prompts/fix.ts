@@ -2,18 +2,16 @@
 import type { Case } from '../../types'
 import { AGENT_STOPPED, MAX_FIX_ROUNDS, MEDIUM_FIX_NOT_SENT } from '../chain'
 import type { FixReason } from '../dispatch'
-import { parseVerdict, toFix } from '../pipeline'
+import { UNREVIEWED_GATE, parseVerdict, toFix } from '../pipeline'
 import { REVIEW_FILE, SECURITY_FILE } from './review'
 import { isQuotaHold } from '../quota-words'
 
 /** 要改規格才能修的 MEDIUM：不改，交給你決定。修正提示共用。 */
 const MEDIUM_DECIDE = `要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。`
-const FIX_DONE = '修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。'
-/** 依審查修正的關卡結論：每張卡只審查一次，修完只跑測試、不複審（高風險照舊複審，會覆寫這句）。 */
-export const UNREVIEWED_GATE = '已依審查修正、未複審（發版時整版審查）'
 /**
  * 依審查檔修完的收尾：關卡寫成擋不住的分級（CRITICAL、HIGH 修掉了是 0）加上未複審的結論，History 列修了哪幾條。
- * 不改回 無：面板與發版看得到這張卡是修完沒複審的；數字留著原本的 CRITICAL、HIGH 會被當成還要修。`medium` 說 MEDIUM 那格怎麼填。
+ * 不改回 無：卡片與發版看得到這張卡是修完沒複審的（工作桌讀的時候當成「無」，見 pipeline.ts 的 gateAsRead）；
+ * 數字留著原本的 CRITICAL、HIGH 會被當成還要修。高風險照舊複審，會覆寫這句。`medium` 說 MEDIUM 那格怎麼填。
  */
 const reviewFixDone = (medium: string) => `修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM ${medium}、LOW <原數>；${UNREVIEWED_GATE}」，History 加一行列出依審查修了哪幾條，狀態寫一句修了什麼。`
 /** 依審查檔修時不只修舉的例子：先列出同一類的所有情況，每種都修、補測試。修正提示共用。 */
@@ -30,7 +28,7 @@ const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL�
  * 你在「等你」對審查 MEDIUM 題選了修掉：照卡片 Decisions 修那幾條 MEDIUM（你主動要的，不受自動修正上限擋）。
  * `file` 是要看的審查檔：這次流程有跑資安審查時兩份都寫（那題可能是程式碼審查問的、資安審查問的或兩份合成的），否則只有 REVIEW.md。
  */
-const mediumPickedStep = (file: string) => `你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 ${file} 修正標「（等你決定）」、卡片 Decisions 記著你選修掉的那幾條 MEDIUM（其他 MEDIUM 與 LOW 不用修）。${FIX_WHOLE_CLASS}${FIX_DONE}`
+const mediumPickedStep = (file: string) => `你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 ${file} 修正標「（等你決定）」、卡片 Decisions 記著你選修掉的那幾條 MEDIUM（其他 MEDIUM 與 LOW 不用修）。${FIX_WHOLE_CLASS}${reviewFixDone('<沒修的條數>')}`
 
 /** 回答 B 的修正要看的審查檔：這次流程跑過資安審查就兩份都看。 */
 const mediumFiles = (security?: boolean) => security ? `${REVIEW_FILE} 與 ${SECURITY_FILE}` : REVIEW_FILE

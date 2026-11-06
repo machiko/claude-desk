@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { buildCase } from '../hooks/model'
-import { finalState, pipeline } from '../hooks/pipeline'
+import { buildCase, stateOf, summary } from '../hooks/model'
+import { UNREVIEWED_GATE, finalState, pipeline } from '../hooks/pipeline'
 import { AGENT_STOPPED } from '../hooks/chain'
 import { buildPrompt, dispatchable, dispatchRefusal } from '../hooks/dispatch'
 import { shipTurn, stageActions, turnOf } from '../hooks/turn'
@@ -304,4 +304,56 @@ test('turn: a passed review with only recorded MEDIUM goes straight to open PR o
   const asked = mk({ gate, ask: '審查 MEDIUM 2 條（漏處理空清單）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格' })
   expect(turnOf(asked)).toMatchObject({ who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' })
   expect(stageActions(asked).has('fill')).toBe(true)
+})
+
+/** 跟 register 一樣：流程紀錄疊上去之後才算 state（stateOf 要看 chain），再算六段。 */
+function mkRun(f: Parameters<typeof card>[0], extra: Partial<Case>, v?: Verify): Case {
+  const read = { ...buildCase({ name: 'A', statusPath: '/w/age-group/.desk/CARD.md' }, card(f), 1, {}, v), git: { branch: 'feature/a', head: 'h2' }, ...extra }
+  const base = { ...read, state: stateOf(read, v) }
+  const piped = { ...base, pipeline: pipeline(base as Case, v) }
+  return { ...piped, state: finalState(piped) } as Case
+}
+
+/**
+ * 審查 HIGH（本卡）：依審查修完照提示寫的關卡「review：CRITICAL 0、HIGH 0、…；已依審查修正、未複審」不是審查結論，
+ * 工作桌讀起來跟以前叫 Agent「改回 無」一模一樣：修正輪用完停下、Agent 被停止時照舊未通過、按 g 派修正；沒有判定 HEAD、檢查沒跑時不跳到合併段。
+ */
+test('a gate written after a review fix reads like none until the chain passes', () => {
+  const written = `review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；${UNREVIEWED_GATE}`
+  const limit = '整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格'
+  const red = { ...passed, head: 'h2', ok: false, exitCode: 1 }
+  const view = (c: Case) => ({ gate: c.gate, state: c.state, stage: c.pipeline?.current, summary: summary(c), turn: turnOf(c), ids: ids(c), prompt: buildPrompt(c, 'continue').split('\n')[0] })
+  const cases: [Partial<Case>, Verify | undefined, string][] = [
+    // 修正輪用完停下（測試沒過）：未通過，摘要寫停下原因，按 g 派修正提示
+    [{ chain: { round: 2, fixTotal: 2, lastKind: 'fix', stopped: limit, reviewed: true } }, red, 'failed'],
+    // 下一個 Agent 被停止
+    [{ chain: { round: 1, fixTotal: 1, lastKind: 'fix', stopped: AGENT_STOPPED, reviewed: true } }, undefined, 'failed'],
+    // 卡片上的審查結論不是工作桌派的（沒有流程紀錄、沒有判定 HEAD），按 g 修完、測試還沒跑
+    [{}, undefined, 'ready'],
+    // 同上，測試跑出紅的
+    [{}, red, 'failed'],
+  ]
+  for (const next of ['等自動驗收', '補 AC-3 的測試']) {
+    for (const [extra, v, state] of cases) {
+      const now = mkRun({ next, gate: written }, extra, v)
+      const none = mkRun({ next, gate: '無' }, extra, v)
+      expect(now.gate).toBe('無')
+      expect(now.state).toBe(state)
+      expect(now.pipeline?.current).not.toBe('merge')
+      expect(summary(now)).not.toBe('驗收通過，可開 PR')
+      expect(view(now)).toEqual(view(none))
+    }
+  }
+  // 停下的那兩種：輪到你叫你按 g，派出去的是修正
+  const halted = mkRun({ next: '等自動驗收', gate: written }, cases[0]![0], red)
+  expect(summary(halted)).toBe(limit)
+  expect(turnOf(halted).key).toBe('g')
+  expect(dispatchRefusal(halted, 'continue')).toBe('')
+  expect(buildPrompt(halted, 'continue').startsWith(`修正：流程已暫停（${limit}）`)).toBe(true)
+  // 流程過關、未複審：照流程紀錄走到合併段
+  const shipped = mkRun({ gate: written }, { chain: { round: 1, passed: true, unreviewed: true, reviewed: true } }, { ...passed, head: 'h2' })
+  expect(shipped.pipeline?.current).toBe('merge')
+  expect(summary(shipped)).toBe('已修正・未複審，可開 PR')
+  // 審查寫的結論照舊讀得到（例如高風險複審覆寫成真的結論）
+  expect(mkRun({ gate: 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核' }, {}).gate).toBe('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
 })

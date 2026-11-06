@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, feedLog, flat, text, PANE, CARD_A, result } from './fixture'
 import { AGENT_STOPPED } from '../hooks/chain'
 import { buildCase, summary } from '../hooks/model'
-import { pipeline, stageLabel } from '../hooks/pipeline'
+import { UNREVIEWED_GATE, pipeline, stageLabel } from '../hooks/pipeline'
 import { PUBLISH_PR_TURN, turnOf } from '../hooks/turn'
 import type { Case } from '../types'
 
@@ -526,6 +526,9 @@ test('test_fix_after_review_still_retries_failing_check', async ($, on) => {
 test('test_fix_after_review_still_retries_failing_check stops when rounds run out', async ($, on) => {
   const { data, clock } = fixture(on)
   const f = await fixAfterFirstReview($, data, clock)
+  // 修正 Agent 照提示寫回關卡（修掉的 CRITICAL、HIGH 歸零、結論寫未複審），下一步寫成等待句
+  f.setGate(`review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；${UNREVIEWED_GATE}`)
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 下一步：.*$/m, '- 下一步：等自動驗收')
   data.run = async () => result(1, '', 'FAIL test_audit')
   data.git[f.root]!.head = 'h2'
   await f.finish()
@@ -533,8 +536,20 @@ test('test_fix_after_review_still_retries_failing_check stops when rounds run ou
   data.git[f.root]!.head = 'h3'
   await f.finish()
   expect(data.launches.length).toBe(4)
-  expect(f.chain().stopped).toBe('整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格')
+  const limit = '整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格'
+  expect(f.chain().stopped).toBe(limit)
   expect(f.chain().passed).toBeUndefined()
+  // 停下原因叫你按 g：卡片算未通過、六段不跳到合併段，按 g 派得出修正（不被「下一步只剩等待」擋下）
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  const screen = flat(text(await ui.drawn()))
+  await ui.unmount()
+  expect(screen).toContain(flat(limit))
+  expect(screen).not.toContain(flat('開 PR 派 Agent push'))
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(5)
+  expect(f.prompt(4).startsWith(`修正：流程已暫停（${limit}）`)).toBe(true)
 })
 
 /** AC-3（本卡）：過關後分支又有新 commit：只重跑完成檢查，過了照舊過關、沒過照舊派修正；不派審查 */
