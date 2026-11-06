@@ -587,3 +587,33 @@ test('test_answer_b_during_security_review_dispatches_fix_after_security_passes'
   expect(run.mediumFixAt).toBeUndefined()
   expect(run.fixTotal).toBe(1)
 })
+
+/** 過關後才派、自動流程不會標成已處理的派工（推送／開 PR、同步）做完後回答 B：照樣派修正（不會一直卡著沒動靜） */
+async function answerBAfterPassedJob($: any, data: any, clock: any, kind: 'publish' | 'sync') {
+  const h = helpers($, data, clock)
+  data.agents = []
+  launchOneAtATime(data, clock)
+  passedWithMediumAsk(data, { owner: ME })
+  const jobs = data.store.jobs as any
+  const { handled: _, ...done } = jobs[ALPHA].last
+  data.store.jobs = { ...jobs, [ALPHA]: { ...jobs[ALPHA], last: { ...done, kind, launchName: `desk-${kind}-0` } } }
+  await h.refresh()
+  await answerB($, data)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  await h.refresh(); await h.step()
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉')).toBe(true)
+  const run = (data.store.chains as any)[ALPHA]
+  expect(run.mediumFixAt).toBeUndefined()
+  expect(run.fixTotal).toBe(1)
+}
+
+test('test_answer_b_after_publish_still_dispatches_fix', async ($, on) => {
+  const { data, clock } = fixture(on)
+  await answerBAfterPassedJob($, data, clock, 'publish')
+})
+
+test('test_answer_b_after_sync_still_dispatches_fix', async ($, on) => {
+  const { data, clock } = fixture(on)
+  await answerBAfterPassedJob($, data, clock, 'sync')
+})
