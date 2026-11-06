@@ -1,1 +1,0 @@
-- 調整面板「歷程」：每筆顯示日期與時間（MM-DD HH:MM），並列出全部歷程、不再只列最新 3 筆，比畫面高時捲動看；`/desk:card spec ok`、`/desk:card done`、上線確認與卡片範本寫的 History 行改成帶時間
