@@ -1,6 +1,7 @@
 // build-like-review：會改程式的派工（實作、回覆、修正）交出前先做審查會做的檢查；同步、審查、推送、解衝突不帶。
 import { expect, test } from 'claude-code/testing'
 import { buildPrompt, pushRequest, writesCode } from '../hooks/dispatch'
+import { MEDIUM_FIX_NOT_SENT } from '../hooks/chain'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
 import type { Case, Verify } from '../types'
@@ -134,6 +135,10 @@ test('test_fix_prompts_require_fixing_the_whole_class', () => {
     buildPrompt(c, 'continue', '', { from: 'review', round: 2, security: true }),
     buildPrompt({ ...blocked, state: 'failed' }, 'continue'),
     buildPrompt({ ...blocked, state: 'failed', chain: { round: 2, lastKind: 'fix', stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' } } as Case, 'continue'),
+    // 你在等你對審查 MEDIUM 選了修掉：自動派的修正（流程跑過資安審查時兩份都看），與沒派出停下後按 g 重派
+    buildPrompt(c, 'continue', '', { from: 'medium', round: 3 }),
+    buildPrompt(c, 'continue', '', { from: 'medium', round: 3, security: true }),
+    buildPrompt({ ...blocked, state: 'failed', chain: { round: 0, passed: true, stopped: MEDIUM_FIX_NOT_SENT } } as Case, 'continue'),
   ]
   for (const p of fixes) {
     expect(p.split('\n')[0]).toContain('修正')

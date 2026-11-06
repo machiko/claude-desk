@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, CARD_A, result } from './fixture'
+import { AGENT_STOPPED } from '../hooks/chain'
 
 test('continue → auto check → auto review → fix round 1 on HIGH → check → review → pass, Bitbucket read only', async ($, on) => {
   const { data, clock } = fixture(on)
@@ -74,8 +75,8 @@ test('two rounds of HIGH stop the chain and say why', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   expect(data.launches.length).toBe(0)
-  expect(data.toasts.some(t => t.includes('修了 2 輪仍有 CRITICAL 0、HIGH 2'))).toBe(true)
-  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('修了 2 輪仍有 CRITICAL 0、HIGH 2')
+  expect(data.toasts.some(t => t.includes('整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 2：開 PR、按 g 再修一輪，或改規格'))).toBe(true)
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 2：開 PR、按 g 再修一輪，或改規格')
 })
 
 test('high risk: code review passes → security review → pass but waits for you; reviews archived; re-review is diff-only', async ($, on) => {
@@ -302,4 +303,139 @@ test('idle next: the chain never dispatches a waiting-only next step', async ($,
   expect(data.launches.length).toBe(4)
   expect(data.toasts.some(t => t.includes('無法繼續（') && t.includes('沒有要 Agent 做的事'))).toBe(true)
   expect(prompts().some(p => p.startsWith('依卡片的下一步繼續：等'))).toBe(false)
+})
+
+/** 整張卡用完自動修正上限後停下的那句（AC-3、AC-4 共用）。 */
+const limitStop = (high: number) => `整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH ${high}：開 PR、按 g 再修一輪，或改規格`
+
+/** 這張卡（Alpha）只留最新派出去的 Agent 在跑；回傳做完、重新整理、看提示的小工具。 */
+function alphaFlow($: any, data: any, clock: any) {
+  const root = '/home/u/wt/alpha'
+  data.agents = []
+  let n = 0
+  data.launch = async (e: any) => {
+    n++
+    const id = `c000000${n}`
+    data.agents = [{ id, kind: 'background', cwd: root, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, id)
+  }
+  const step = async () => { await clock.advance(2500); await clock.settle() }
+  const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
+  const finish = async () => {
+    data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
+    await refresh(); await step(); await step(); await step()
+  }
+  const setGate = (g: string) => { data.files[CARD_A] = data.files[CARD_A]!.replace(/- 關卡：.*$/m, `- 關卡：${g}`) }
+  const prompt = (i: number) => String(data.launches[i].argv.at(-1))
+  const chain = () => (data.store.chains as any)[root]
+  return { root, step, refresh, finish, setGate, prompt, chain }
+}
+
+/** AC-3：這張卡已自動修 2 輪，之後重新驗收、按 w 重開都不歸零：審查又有 HIGH 就停下，不再自動派修正 */
+test('test_fix_round_total_counts_across_restarts', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h2' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  // 上一輪流程：自動修了 2 輪後在 h1 過關；之後你又改了，分支多了 h2
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 2, fixTotal: 2, fixBranch: 'feature/alpha', passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha' } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+
+  // 重新驗收：開新一輪流程（round 歸零），累計修正數照帶
+  await f.refresh(); await f.step(); await f.step(); await f.step()
+  expect(data.launches.length).toBe(1)
+  expect(f.prompt(0)).toContain('審查通過後又有新 commit 的重新審查')
+  expect(f.chain().round).toBe(0)
+  expect(f.chain().fixTotal).toBe(2)
+
+  // 重新審查有 HIGH：不派修正，流程停下，面板寫整張卡已修 2 輪
+  f.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  await f.finish()
+  expect(data.launches.length).toBe(1)
+  expect(f.chain().stopped).toBe(limitStop(1))
+  expect(data.toasts).toContain(`Alpha：流程已暫停，${limitStop(1)}`)
+
+  // 你按 w 重開（手動派審查）：一樣帶著累計數，審查還有 HIGH 就再停，不自動修
+  await $.command.run({ command: 'desk', args: 'review Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(2)
+  expect(f.prompt(1).startsWith('程式碼審查')).toBe(true)
+  expect(f.chain().stopped).toBeUndefined()
+  expect(f.chain().fixTotal).toBe(2)
+  f.setGate('review：CRITICAL 0、HIGH 2、MEDIUM 0、LOW 0；還有 bug')
+  await f.finish()
+  expect(data.launches.length).toBe(2)
+  expect(data.launches.every((l: any) => !String(l.argv.at(-1)).startsWith('修正第'))).toBe(true)
+  expect(f.chain().stopped).toBe(limitStop(2))
+})
+
+/** AC-4：上限用完後你按 g：照樣派修正（算一輪）、修完照常檢查與審查；之後再有 HIGH 又停，不自動多修 */
+test('test_manual_fix_after_limit_is_dispatched_once', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h1' }
+  // 停下後下一步只剩派審查：按 g 派的是修正（說明流程為什麼停、要修什麼）
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace('- 下一步：push', '- 下一步：派審查')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  f.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 2, fixTotal: 2, fixBranch: 'feature/alpha', stopped: limitStop(1), reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha' } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  await f.refresh()
+
+  // 你按 g：上限不擋，派出修正；這一輪也算進整張卡的總數
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(1)
+  expect(f.prompt(0).startsWith(`修正：流程已暫停（${limitStop(1)}）`)).toBe(true)
+  expect(f.chain().stopped).toBeUndefined()
+  expect(f.chain().fixTotal).toBe(3)
+
+  // 修完：照常自動檢查、派審查
+  f.setGate('無')
+  data.git[f.root]!.head = 'h2'
+  await f.finish()
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(1)
+  expect(data.launches.length).toBe(2)
+  expect(f.prompt(1).startsWith('程式碼審查')).toBe(true)
+
+  // 審查又有 HIGH：不自動派修正，又停下
+  f.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；還有一條')
+  await f.finish()
+  expect(data.launches.length).toBe(2)
+  expect(f.chain().stopped).toBe(limitStop(1))
+  expect(f.chain().fixTotal).toBe(3)
+})
+
+/** 審查 HIGH：Agent 被停掉後按 g 重開是接著把那件事做完，不是修正：累計修正數不加；之後的自動修正照實際派出的輪數算 */
+test('test_restart_after_stopped_agent_is_not_counted_as_fix', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  // 已自動修過 1 輪；之後的實作 Agent 被你停掉
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, fixTotal: 1, fixBranch: 'feature/alpha', stopped: AGENT_STOPPED } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'continue', startedAt: 0, fresh: false, owner: 'fixture-session', handled: true, ended: { how: 'stopped' } } } }
+  await f.refresh()
+
+  // 按 g 重開：派出去了，累計數照帶、不加
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(1)
+  expect(f.chain().stopped).toBeUndefined()
+  expect(f.chain().fixTotal).toBe(1)
+
+  // 做完 → 檢查 → 審查有 HIGH：還能自動修第 2 輪（不是直接停）
+  data.git[f.root]!.head = 'h2'
+  await f.finish()
+  expect(data.launches.length).toBe(2)
+  expect(f.prompt(1).startsWith('程式碼審查')).toBe(true)
+  f.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  await f.finish()
+  expect(data.launches.length).toBe(3)
+  expect(f.prompt(2).startsWith('修正第 2／2 輪：')).toBe(true)
+  expect(f.chain().fixTotal).toBe(2)
+  expect(f.chain().stopped).toBeUndefined()
 })

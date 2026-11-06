@@ -149,7 +149,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
         else set('wait', '尚缺測試指令')
         break
       case 'build':
-        if (coding) set('active', c.chain?.round ? `修正第 ${c.chain.round} 輪` : 'Agent 處理中')
+        if (coding) set('active', c.chain?.round ? `修正第 ${c.chain.fixTotal ?? c.chain.round} 輪` : 'Agent 處理中')
         else if (c.state === 'reply') set('wait', 'Agent 等待你回覆')
         else if (c.state === 'approve') set('wait', 'Agent 等你批准權限')
         else if (c.chain?.stopped) set('fail', c.chain.stopped)

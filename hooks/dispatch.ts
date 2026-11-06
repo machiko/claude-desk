@@ -2,7 +2,7 @@
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, expandHome, isPlaceholder, named, parseGate, saysNone } from './card'
-import { shownStopped } from './chain'
+import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, shownStopped } from './chain'
 import type { ChainRun } from './chain'
 import { agentWaits, approvalWait, slugOf } from './model'
 import { DONE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
@@ -303,10 +303,13 @@ export function isUntrustedLaunch(text: string): boolean {
 /** 啟動失敗：訊息是輸出的最後一行；untrusted 是整段輸出看得出 repo 還沒信任。 */
 export class LaunchError extends Error {
   readonly untrusted: boolean
-  constructor(message: string, untrusted: boolean) {
+  /** 已經啟動、只是 agents 清單還沒列出來：Agent 可能正在跑，不能當成沒派出去重派。 */
+  readonly unconfirmed: boolean
+  constructor(message: string, untrusted: boolean, unconfirmed = false) {
     super(message)
     this.name = 'LaunchError'
     this.untrusted = untrusted
+    this.unconfirmed = unconfirmed
   }
 }
 
@@ -347,7 +350,7 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
   return hits.length === 1 ? hits[0]! : null
 }
 
-export type FixReason = { from: 'check' | 'review'; round: number; tail?: string[]; /** 審查修正接在資安審查之後：依 SECURITY.md 修，不是 REVIEW.md。 */ security?: boolean }
+export type FixReason = { /** medium：你在「等你」對審查 MEDIUM 題選了修掉。 */ from: 'check' | 'review' | 'medium'; round: number; tail?: string[]; /** 審查修正接在資安審查之後：依 SECURITY.md 修，不是 REVIEW.md。你選修掉 MEDIUM（from medium）時是這次流程跑過資安審查：兩份都看。 */ security?: boolean }
 
 /** 會改程式的派工（繼續、回覆、修正）：多帶規格、CHANGELOG、測試、常犯錯誤清單與自我檢查的規則。派工端算清單路徑也用這一份。 */
 export const writesCode = (kind: DispatchKind, fix?: FixReason): boolean => !!fix || kind === 'continue' || kind === 'reply'
@@ -359,7 +362,7 @@ export const writesCode = (kind: DispatchKind, fix?: FixReason): boolean => !!fi
 export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = '', pitfalls = ''): string {
   const head = fix ? fixHead(c, fix)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
-    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : (fixByG(c) && idleNext(c.next) ? manualFixHead(c, ciFailed(c)) : '') || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
+    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : (fixByG(c) && (idleNext(c.next) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT) ? manualFixHead(c, ciFailed(c)) : '') || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : kind === 'publish' ? publishHead(text)
@@ -381,6 +384,11 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
 export const ciFailed = (c: Case): boolean => c.pipeline?.current === 'merge' && c.pr?.state === 'OPEN' && c.pr.ci === 'fail' && !needsPush(c)
 /** 「輪到你」叫你按 g 修的時候（檢查失敗、流程停下、Agent 被停掉、PR 的 CI 失敗）：下一步寫什麼，g 都要派得出去。 */
 export const fixByG = (c: Case): boolean => c.state === 'failed' || ciFailed(c)
+/**
+ * 按 g 派出去的真的是修正（算進整張卡的修正輪數，不受上限擋）：fixByG 裡扣掉不是修東西的兩種——
+ * Agent 被停掉後重開（接著把那件事做完）、停在檢查段（測試沒跑成，不是沒過）。
+ */
+export const fixesByG = (c: Case): boolean => fixByG(c) && c.chain?.stopped !== AGENT_STOPPED && !c.chain?.heldAtCheck
 
 /** 已合併、停在上線段（還沒上線）：分支已進基準分支，不派實作、審查，也不跑檢查。發版線沒有合併段，不算。 */
 export const mergedUnshipped = (c: Case): boolean => c.pipeline?.current === 'ship' && isMerged(c)

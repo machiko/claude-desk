@@ -1,6 +1,5 @@
 // 審查（review）派工的提示詞：程式碼審查、資安審查、修正後的複審與重新審查。
 import type { Case } from '../../types'
-import { MAX_FIX_ROUNDS } from '../chain'
 import type { ReviewWords } from '../dispatch'
 
 export const REVIEW_FILE = '.task/REVIEW.md'
@@ -20,15 +19,14 @@ const MEDIUM_RECORD = 'MEDIUM 分兩種：只關於規格紀錄、文件、命�
 const MEDIUM_ASK = '在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」'
 const MEDIUM_COUNT = '都算進關卡的 MEDIUM 數。'
 /**
- * 還有修正輪數（工作桌派的審查都由流程接手）：可能影響行為的 MEDIUM 不加註記、不問，工作桌跟 CRITICAL／HIGH 一起自動派修正；
- * 要你決定才能處理的才標「（等你決定）」並問。輪數用完：這次不會自動修，可能影響行為的照舊標「（等你決定）」並問。
+ * 重新審查遇到標「（等你決定）」而沒被改到的 MEDIUM：你已回答不修或改規格的（卡片 Decisions 有記）不再問，
+ * 還沒回答、或選了修掉卻沒被改到的照原樣再列。審查檔整份覆寫，不再列就等於把「等你」那題清掉。
  */
-function mediumRule(round: number): string {
-  const decide = `審查檔那條結尾標「（等你決定）」並${MEDIUM_ASK}`
-  return round < MAX_FIX_ROUNDS
-    ? `${MEDIUM_RECORD}其他 MEDIUM（拿不準的也算可能影響行為）不加註記、不寫進 等你，工作桌會跟 CRITICAL／HIGH 一起自動派修正；要你決定才能處理的（驗收情境無法驗證、要改規格才能修）才${decide}。${MEDIUM_COUNT}`
-    : `${MEDIUM_RECORD}其他 MEDIUM（拿不準的也算可能影響行為）這次不會自動修（修正輪數已用完）：${decide}。${MEDIUM_COUNT}`
-}
+const RECHECK_ASKED = '標「（等你決定）」而沒被改到的：卡片 Decisions 已記你對那條選了不修或改規格的，改標「（不修，見 Decisions）」、不在 等你 再問；還沒回答、或選了修掉卻沒被改到的，照原樣再列（過關時要在 等你 問）。'
+/** 資安審查接在程式碼審查之後：等你可能已有程式碼審查問的 MEDIUM 題，不能因為這份沒有就清掉。 */
+const SECURITY_KEEP_ASK = '卡片 等你 已有程式碼審查問的 MEDIUM 題就保留；這份也有標「（等你決定）」的 MEDIUM 就跟它合成一題（摘要兩份都寫到），不要因為這份沒有就把 等你 寫成 無。'
+/** 工作桌只自動修 CRITICAL／HIGH：可能影響行為的 MEDIUM 不分第幾輪，一律標「（等你決定）」並在 等你 問一題。 */
+const MEDIUM_RULE = `${MEDIUM_RECORD}其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並${MEDIUM_ASK}（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。${MEDIUM_COUNT}`
 
 /**
  * 重新審查的那段含把基準分支併進來的 merge commit（例如自動解衝突）時：基準分支帶進來的改動不審，
@@ -51,12 +49,10 @@ function preflightRule(cmd: string, vars: { root: string; base: string }, file: 
 
 export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
-  // 「MEDIUM 不加註記」只在還有修正輪數時說：輪數用完時 mediumRule 要可能影響行為的標「（等你決定）」，兩句不能相反。
-  const relist = r && r.round < MAX_FIX_ROUNDS ? '沒修好的照原樣再列（MEDIUM 不加註記）' : '沒修好的照原樣再列'
   const scope = r?.base && r.recheck
-    ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。${mergedBase(r.base, r.target)}先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 MEDIUM／LOW 不要再提。`
+    ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。${mergedBase(r.base, r.target)}先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 LOW 與標「不修」的項目不要再提；${RECHECK_ASKED}`
     : r?.base && r.round > 0
-    ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 與沒加註記的 MEDIUM 有沒有修好、這段新 diff 有沒有新問題；${relist}，卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」「等你決定」的項目不要再提。`
+    ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列，卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」的項目不要再提，標「（等你決定）」的照原樣再列（過關時要在 等你 問）。`
     : r?.target ? `看這個分支相對 ${r.target} 的 diff（從 git merge-base 起算）。` : '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。'
   return [
     `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續 Agent、不參考 Agent 的結論。`,
@@ -66,7 +62,8 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
     ...(r?.pitfalls ? [`先讀專案常犯錯誤清單 ${r.pitfalls}，逐條對照這次的改動。`] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
     `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
-    mediumRule(r?.round ?? 0),
+    MEDIUM_RULE,
+    ...(r?.security ? [SECURITY_KEEP_ASK] : []),
     '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>',
     ...(r?.pitfalls && r.history ? [`審完後看 ${r.history} 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 ${r.pitfalls} 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。`] : []),
     '不改程式、不 commit。',

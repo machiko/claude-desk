@@ -175,6 +175,26 @@ export function decisionAnswer(decisions: Decision[], picks: Record<string, stri
 export const allPicked = (decisions: Decision[], picks: Record<string, string>) =>
   decisions.length > 0 && decisions.every((d, i) => d.options.length === 0 || !!picks[String(i)])
 
+/** 答案 `A`（只有一題可選）或 `1A 2B`／`1-12` 各選了哪一題的哪個選項（題目序號從 0 起算，跟 picks 同一種寫法）。 */
+export function picksOf(decisions: Decision[], answer: string): Record<string, string> {
+  const tokens = answer.trim().split(/\s+/).filter(Boolean)
+  if (choiceCount(decisions) === 1) {
+    const index = decisions.findIndex(d => d.options.length > 0)
+    return tokens[0] ? { [String(index)]: tokens[0].toUpperCase() } : {}
+  }
+  return Object.fromEntries(tokens.map(t => t.match(/^(\d+)-?([A-Za-z]|\d{1,2})$/)).filter((m): m is RegExpMatchArray => !!m).map(m => [String(Number(m[1]) - 1), m[2]!.toUpperCase()]))
+}
+
+/** 審查寫進「等你」的 MEDIUM 題：「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」。 */
+const REVIEW_MEDIUM_ASK = /^審查 MEDIUM \d+ 條/
+
+/** 這次送出的答案裡，審查 MEDIUM 那題選的是「修掉」：工作桌要在你清掉「等你」後自動派修正。 */
+export function picksMediumFix(ask: string, answer: string): boolean {
+  const decisions = parseDecisions(ask)
+  const picks = picksOf(decisions, answer)
+  return decisions.some((d, i) => REVIEW_MEDIUM_ASK.test(d.title) && !!d.options.find(o => o.key === picks[String(i)])?.text.startsWith('修掉'))
+}
+
 /** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件任務的決策。 */
 export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`
 
@@ -211,6 +231,12 @@ const DECISION_LINE = /^[ \t]*「(.+?)」決策：/
  * 送出的提示裡是哪幾件任務的決策：每一行以「「任務名」決策：」開頭的都算（填入時輸入框有草稿，決策接在草稿後面；
  * 兩件先後按 f 就是兩行）。依出現順序、不重複；沒有就是空陣列。
  */
+/** 送出的提示裡這件任務那一行決策的答案（「「任務名」決策：」後面的字）；沒有這一行回空字串。 */
+export function decisionAnswerOf(text: string, name: string): string {
+  const line = String(text ?? '').split(/\r?\n/).find(l => l.match(DECISION_LINE)?.[1] === name)
+  return line ? line.replace(DECISION_LINE, '').trim() : ''
+}
+
 export function decisionNames(text: string): string[] {
   const names = String(text ?? '').split(/\r?\n/).map(line => line.match(DECISION_LINE)?.[1]).filter((n): n is string => !!n)
   return [...new Set(names)]

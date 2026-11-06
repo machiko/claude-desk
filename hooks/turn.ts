@@ -5,7 +5,7 @@ import { agentWaits, approvalWait, approveText, isQuotaHold, QUOTA_RESTART, quot
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
-import { AGENT_STOPPED, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
+import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext, untrustedSteps } from './dispatch'
 import type { DispatchKind, UntrustedHold } from './dispatch'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './next-words'
@@ -140,10 +140,10 @@ function checkTurnText(c: Case): string {
   return `按 v 執行測試；${willAutoReview(c) ? '通過後自動驗收' : '通過後按 w 派驗收'}`
 }
 
-/** 審查段：按 w，以及審查之後會怎樣：擋的（含影響行為的 MEDIUM）自動修正，過關後合併開著的 PR，沒有 PR 就開 PR。 */
+/** 審查段：按 w，以及審查之後會怎樣：CRITICAL／HIGH 自動修正、影響行為的 MEDIUM 寫進「等你」，過關後合併開著的 PR，沒有 PR 就開 PR。 */
 function reviewTurnText(c: Case): string {
   const head = c.chain?.stale ? '驗收後有新 commit：按 w 重新驗收（新對話）' : '按 w 派驗收（新對話）'
-  return `${head}；有 CRITICAL／HIGH 或影響行為的 MEDIUM 會自動修正，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
+  return `${head}；有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
 }
 
 /** 重新派工的動作：③ 只說這幾種的鍵，別的（開卡片、執行測試）不算。 */
@@ -237,6 +237,7 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
   // Agent 被停掉：原因本身就說了要做什麼，不是修一輪。
   if (c.state === 'failed' && c.chain?.stopped === AGENT_STOPPED) return { who: 'you', text: AGENT_STOPPED, action: 'continue' }
+  if (c.state === 'failed' && c.chain?.stopped === MEDIUM_FIX_NOT_SENT) return { who: 'you', text: MEDIUM_FIX_NOT_SENT, action: 'continue' }
   // 額度煞車：原因已寫了額度、重置時間與接下來要做什麼，照原句；只有「按 g 重開」那種才標 g（解衝突被擋的叫你在對話處理）。
   if ((c.state === 'failed' || quotaHeld(c.chain)) && isQuotaHold(c.chain?.stopped)) return { who: 'you', text: c.chain!.stopped!, ...(c.chain!.stopped!.endsWith(QUOTA_RESTART) ? { action: 'continue' as const } : {}) }
   if (c.state === 'failed') return c.chain?.stopped

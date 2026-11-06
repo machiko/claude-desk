@@ -4,8 +4,9 @@
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
 import type { Case, PanelAction, SentRecord } from '../types'
-import { decisionNames, parseGate } from './card'
-import { cardContext, cardKey, cardReminder, decisionContext, feedPush, panelActionsContext, tellPanel } from './desk-io'
+import { decisionAnswerOf, decisionNames, parseGate, picksMediumFix } from './card'
+import { cardContext, cardKey, cardReminder, decisionContext, feedPush, loadChains, loadJobs, me, panelActionsContext, saveChain, tellPanel } from './desk-io'
+import { normalizeRoot } from './dispatch'
 import type { Timer } from './desk-io'
 import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
 import type { SpecOkMarks } from './touch'
@@ -235,6 +236,40 @@ const rowText = (message: any) => typeof message?.content === 'string' ? message
   : Array.isArray(message?.content) ? message.content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : ''
 
 
+/**
+ * 審查 MEDIUM 題選了修掉的那幾件裡，工作桌派得了修正的：有流程紀錄、知道 HEAD。沒有流程紀錄（例如不是工作桌派的審查）就派不了，
+ * 決策提示不叫對話別修、照舊由對話處理。
+ */
+async function mediumFixable($: any, cases: readonly Case[]): Promise<Case[]> {
+  if (!cases.length) return []
+  const chains = await loadChains($)
+  return cases.filter(d => !!d.git?.head && !!chains[normalizeRoot(d.root)])
+}
+
+/**
+ * 審查 MEDIUM 題選了修掉、決策真的送出了：在那件的流程紀錄記下送出時的 HEAD（結構化欄位，不從原因句認），
+ * 並把流程改成這個對話的（跟按 g 一樣接手：開流程的對話可能已經不在），等「等你」清掉後由這個對話的自動流程派修正。
+ * 一起記下這次流程有沒有跑資安審查：送出時這件最後一次派工是資安審查就記 mediumFixSecurity（高風險卡過關前最後一定是資安審查，
+ * 那題可能是程式碼審查問的），修正提示 REVIEW.md 與 SECURITY.md 兩份都寫。
+ */
+async function noteMediumFix($: any, cases: readonly Case[]) {
+  if (!cases.length) return
+  const mine = await me($)
+  const jobs = await loadJobs($)
+  for (const d of cases) {
+    const head = d.git?.head
+    if (!head) continue
+    const key = normalizeRoot(d.root)
+    const last = jobs[key]?.last
+    const security = last?.kind === 'review' && !!last.security
+    await saveChain($, key, r => {
+      if (!r) return r
+      const { mediumFixSecurity: _, ...rest } = r
+      return { ...rest, owner: mine, mediumFixAt: head, ...(security ? { mediumFixSecurity: true } : {}) }
+    })
+  }
+}
+
 export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   // 選取的任務是對話的主角：每次送出都附上它（卡片變了附全文，沒變附一句提醒），取消選取在現在卡上方的區段標題列或「更多動作」裡。
   // 從面板填入的決策送出時記下來：面板鎖住那題，等對話寫回卡片。
@@ -252,13 +287,16 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
     if (!c && !decided.length && !actions.length) return next(e)
     const key = c ? cardKey(c) : ''
     // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
-    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c))]
+    // 審查 MEDIUM 題選了修掉：提示叫對話別自己修，送出後記下當時的 HEAD，「等你」清掉後由工作桌派修正。
+    const fixMedium = new Set((await mediumFixable($, decided.filter(d => picksMediumFix(d.ask, decisionAnswerOf(String(e.text ?? ''), d.name))))).map(d => d.statusPath))
+    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c, fixMedium.has(d.statusPath)))]
     const sentPaths = new Set(decided.map(d => d.statusPath))
     if (decided.length) await update($, sentAtom, v => ({ ...v, ...Object.fromEntries(decided.map(d => [d.statusPath, { ask: d.ask, ...(e.turnId ? { during: e.turnId } : {}) }])) }))
     const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })
     if (result.drop) { if (decided.length) await update($, sentAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => !sentPaths.has(k)))) }
     // 斜線指令（skill 等）附了卡也不算附過：有些指令不進模型，下一則照樣附全文，最多重複一次。
     else {
+      await noteMediumFix($, decided.filter(d => fixMedium.has(d.statusPath)))
       if (c && !e.command) lastAttached = key
       // 只拿掉這次附上的那幾筆：送出途中面板又做的，留給下一則。
       const sent = new Set(actions.map(actionKey))

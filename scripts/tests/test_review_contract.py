@@ -1,4 +1,4 @@
-"""templates/review.md（審查契約）與流程文件的測試：不影響行為的 MEDIUM 直接記錄、不問；可能影響行為的自動修，輪數用完或要你決定的才在「等你」問一題。
+"""templates/review.md（審查契約）與流程文件的測試：不影響行為的 MEDIUM 直接記錄、不問；可能影響行為的不自動修，一律在「等你」問一題；自動修正只修 CRITICAL／HIGH。
 
 執行：python3 -m unittest discover -s scripts/tests
 """
@@ -66,24 +66,29 @@ class ReviewContractTest(unittest.TestCase):
             self.assertIn('等你', part, path)
             self.assertIn('不影響行為', part, path)
 
-    def test_review_contract_auto_fixes_behavior_medium_until_rounds_run_out(self):
-        """auto-fix-medium AC-4：可能影響行為的 MEDIUM 還有修正輪數時自動修；要你決定的標「（等你決定）」並問；流程文件寫明會自動修。"""
+    def test_review_contract_asks_behavior_medium_and_counts_fix_rounds_per_card(self):
+        """修正輪收斂：可能影響行為的 MEDIUM 不分第幾輪一律標「（等你決定）」並在「等你」問、不自動修；自動修正只修 CRITICAL／HIGH，上限算整張卡；複審把等你決定的照原樣再列。"""
         text = read(CONTRACT)
 
-        self.assertIn('（等你決定）', text)
-        self.assertIn('自動派修正', text)
-        self.assertIn('修正輪數', text)
         self.assertIn(ASK, text)
         self.assertRegex(text, r'驗收情境無法驗證、要改規格才能修[^\n]*（等你決定）')
-        self.assertRegex(text, r'這次不會自動修[^\n]*（等你決定）')
-        self.assertRegex(text, r'審查檔也沒有不帶註記的 MEDIUM 就過關')
-        # 複審會確認上一輪沒加註記的 MEDIUM，記錄、不修的照舊不再提
-        self.assertIn('沒加註記的 MEDIUM 修好沒', text)
+        self.assertRegex(text, r'工作桌不會自動修，不分第幾輪，一律在審查檔那條結尾標「（等你決定）」')
+        self.assertRegex(text, r'CRITICAL＋HIGH 為 0 就過關（MEDIUM 交給「等你」）')
+        self.assertIn('只修 CRITICAL／HIGH', text)
+        self.assertIn('整張卡（同一條分支）最多兩輪', text)
+        self.assertNotIn('這次不會自動修', text)
+        self.assertNotIn('不加註記', text)
+        self.assertNotIn('沒加註記的 MEDIUM', text)
+        # 複審：只確認 CRITICAL／HIGH；記錄、不修的不再提，等你決定的照原樣再列（過關時要問）
+        self.assertIn('只判斷上次的 CRITICAL／HIGH 修好沒', text)
         self.assertIn('「記錄、不修」的不要再提', text)
-        for path, heading in ((WORKFLOW, '自動流程'), (FLOW, '驗收')):
-            part = section(read(path), heading)
-            self.assertRegex(part, r'可能影響行為的 MEDIUM[^\n]*自動派', path)
-            self.assertIn('最多兩輪', part, path)
+        self.assertIn('標「（等你決定）」的照原樣再列', text)
+        # /desk:flow 驗收段跟著新規則（docs/WORKFLOW.md 是待補文件，發版時補）
+        part = section(read(FLOW), '驗收')
+        self.assertIn('只修 CRITICAL／HIGH', part)
+        self.assertIn('最多自動修兩輪', part)
+        self.assertRegex(part, r'可能影響行為的 MEDIUM[^\n]*不自動修[^\n]*「等你」')
+        self.assertNotRegex(part, r'可能影響行為的 MEDIUM 時，流程會自動派')
 
     def test_unverifiable_ac_line_is_marked_your_decision_when_review_cannot_verify_spec(self):
         """審查 MEDIUM 第 4 條：規格對照「無法判斷」的範本行帶「（等你決定）」，照抄也不會被當成要自動修；MEDIUM 分三點後寫「都算進」。"""

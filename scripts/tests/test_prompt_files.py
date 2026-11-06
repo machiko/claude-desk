@@ -14,8 +14,8 @@ PROMPT_HOME = {
     'rules.ts': ['SPEC_RULE', 'DONE_RULE', 'PUSH_RULE', 'NO_PUSH_RULE', 'changelogRule', 'testRule', 'cardRules'],
     'catchup.ts': ['CATCHUP_CARD_RULE', 'catchupHead'],
     'publish.ts': ['PUBLISH_CARD_RULE', 'publishHead'],
-    'review.ts': ['REVIEW_FILE', 'SECURITY_FILE', 'MEDIUM_RECORD', 'MEDIUM_ASK', 'MEDIUM_COUNT', 'mediumRule', 'mergedBase', 'reviewPrompt'],
-    'fix.ts': ['MEDIUM_DECIDE', 'reviewFixStep', 'manualFixHead'],
+    'review.ts': ['REVIEW_FILE', 'SECURITY_FILE', 'MEDIUM_RECORD', 'MEDIUM_ASK', 'MEDIUM_COUNT', 'MEDIUM_RULE', 'mergedBase', 'reviewPrompt'],
+    'fix.ts': ['MEDIUM_DECIDE', 'reviewFixStep', 'autoReviewFixStep', 'manualFixHead'],
 }
 # 搬到 hooks/next-words.ts、hooks/worktree-mark.ts 的判斷，dispatch.ts 只 re-export
 MOVED_LOGIC = ['idleNext', 'reviewNext', 'markOf', 'markRefusal']

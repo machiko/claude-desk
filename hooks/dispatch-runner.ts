@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case } from '../types'
 import { DEMO_ONLY } from './card-actions'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, addRunTime, dispatchRunMs, SECURITY_FILE, buildPrompt, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps, writesCode } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, addRunTime, dispatchRunMs, SECURITY_FILE, buildPrompt, fixesByG, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps, writesCode } from './dispatch'
 import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
@@ -15,6 +15,7 @@ import { isBusy, untrustedKey } from './turn'
 import { WORD } from './theme'
 import { lastLaunches } from './stale-agents'
 import { restage, spin, tutorial, lastAgents } from './register'
+import { carriedFix, countedFix } from './chain'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
@@ -60,8 +61,12 @@ let launchSeq = 0
 /** 這個對話正在啟動中的派工有幾件。 */
 export const launchingCount = (): number => slots.size
 
+/** 最近一次派工「已啟動、但 agents 清單還沒列出」的那幾件（卡片路徑）：Agent 可能已經在跑，自動重派前要看這裡。派出成功時拿掉。 */
+export const unconfirmed = new Set<string>()
+
 export function resetDispatchState() {
   slots.clear()
+  unconfirmed.clear()
   launchKinds = {}
   launchSeq = 0
 }
@@ -218,13 +223,18 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const mcp = settings.mcp || (kind === 'publish' && !settings.prOpen && (await originRemote($, c.root))?.host === 'bitbucket')
     const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp })
     const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
-    // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。
-    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
+    // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。同一條分支累計的修正數照帶（不歸零）；
+    // 你按 g 派的修正不受上限擋，但照樣算一輪；Agent 被停掉後重開、停在檢查段時按 g 不是修正，不算（fixesByG）。
+    const fixed = kind === 'continue' && fixesByG(c)
+    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...carriedFix(r, c.git?.branch, fixed), ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
+    // 自動流程的修正（含從隊伍派出的）真的派出去了才算一輪：排隊後被額度煞車或別的原因丟掉的不算。
+    if (opts.auto && opts.fix) await saveChain($, rootKey, r => r ? { ...r, ...countedFix(r, c.git?.branch) } : r)
     // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。
     if (kind === 'review' && probed) await saveChain($, rootKey, r => r ? { ...r, ...(opts.security ? { securityHead: probed.head, securityBranch: probed.branch } : { reviewHead: probed.head, reviewBranch: probed.branch }) } : r)
     // 自動派的解衝突真的派出去了，才記這個 HEAD 試過（同一個 HEAD 只自動試一次）。
     const tried = c.git?.head
     if (kind === 'catchup' && opts.auto && tried) await saveChain($, rootKey, r => r ? { ...r, catchupHead: tried } : r)
+    unconfirmed.delete(c.statusPath)
     // 派工一開始讀的紀錄已經過了好幾秒（算指紋、派出）：重讀一次，這段時間別處記下的結束、檢查時間、指紋才不會被蓋掉。
     const latest = await loadJobs($)
     const next: RootJobs = { ...carriedJobs(latest[rootKey], now, runGraceMs(options), c.git?.branch), sessionId: fresh ? latest[rootKey]?.sessionId : confirmed.sessionId!, last: record }
@@ -239,6 +249,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
     return true
   } catch (error) {
+    if (error instanceof LaunchError && error.unconfirmed) unconfirmed.add(c.statusPath)
+    else unconfirmed.delete(c.statusPath)
     if (error instanceof LaunchError && error.untrusted) { await holdUntrusted($, c, kind, now, !!opts.auto, !!opts.auto || tutorial); return false }
     const failed = launchFailed(KIND_LABEL[kind], error)
     await feedPush($, [{ at: now, text: `${c.name} ${failed}`, tone: 'error', card: c.statusPath }])
