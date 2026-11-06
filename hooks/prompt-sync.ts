@@ -4,8 +4,9 @@
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
 import type { Case, PanelAction, SentRecord } from '../types'
-import { decisionAnswerOf, decisionNames, parseGate, picksMediumFix } from './card'
+import { decisionAnswerOf, decisionNames, parseGate, picksMediumFix, picksMediumFollowUp } from './card'
 import { cardContext, cardKey, cardReminder, decisionContext, feedPush, loadChains, loadJobs, me, panelActionsContext, saveChain, tellPanel } from './desk-io'
+import type { MediumPick } from './desk-io'
 import { normalizeRoot } from './dispatch'
 import type { Timer } from './desk-io'
 import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
@@ -288,8 +289,12 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
     const key = c ? cardKey(c) : ''
     // 決策的那件不是選取的主角：卡片內容跟著決策附上，但不把它設成主角。
     // 審查 MEDIUM 題選了修掉：提示叫對話別自己修，送出後記下當時的 HEAD，「等你」清掉後由工作桌派修正。
-    const fixMedium = new Set((await mediumFixable($, decided.filter(d => picksMediumFix(d.ask, decisionAnswerOf(String(e.text ?? ''), d.name))))).map(d => d.statusPath))
-    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c, fixMedium.has(d.statusPath)))]
+    // 選了另開卡修：提示叫對話開後續卡、原卡不改程式；不記 HEAD、工作桌不派修正。
+    const answerOf = (d: Case) => decisionAnswerOf(String(e.text ?? ''), d.name)
+    const fixMedium = new Set((await mediumFixable($, decided.filter(d => picksMediumFix(d.ask, answerOf(d))))).map(d => d.statusPath))
+    const followUp = new Set(decided.filter(d => picksMediumFollowUp(d.ask, answerOf(d))).map(d => d.statusPath))
+    const mediumOf = (d: Case): MediumPick | undefined => fixMedium.has(d.statusPath) ? 'fix' : followUp.has(d.statusPath) ? 'followUp' : undefined
+    const extra = [...(actions.length ? [panelActionsContext(actions)] : []), ...(c ? [key === lastAttached ? cardReminder(c) : cardContext(c)] : []), ...decided.map(d => decisionContext(d, d !== c, mediumOf(d)))]
     const sentPaths = new Set(decided.map(d => d.statusPath))
     if (decided.length) await update($, sentAtom, v => ({ ...v, ...Object.fromEntries(decided.map(d => [d.statusPath, { ask: d.ask, ...(e.turnId ? { during: e.turnId } : {}) }])) }))
     const result = await next({ ...e, context: [...(e.context ?? []), ...extra] })

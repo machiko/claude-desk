@@ -10,7 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CONTRACT = os.path.join(ROOT, 'templates', 'review.md')
 WORKFLOW = os.path.join(ROOT, 'docs', 'WORKFLOW.md')
 FLOW = os.path.join(ROOT, 'skills', 'flow', 'SKILL.md')
-ASK = '審查 MEDIUM 1 條（<一句摘要>）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格'
+ASK = '審查 MEDIUM 1 條（<一句摘要>）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格'
 
 
 def read(path):
@@ -99,6 +99,22 @@ class ReviewContractTest(unittest.TestCase):
         self.assertIn('`- [MEDIUM][規格] — AC-n 無法驗證：…（等你決定）`', line)
         self.assertIn('- 都算進關卡的 MEDIUM 數。', text)
         self.assertNotIn('兩種都算進', text)
+
+    def test_medium_ask_offers_follow_up_card_first(self):
+        """lean-fix-loop AC-2：審查契約的 MEDIUM 題選項跟審查、修正提示同一組（B 另開卡修推薦、C 修掉在這張卡修）；/desk:flow 與 WORKFLOW 寫 B 的行為。"""
+        text = read(CONTRACT)
+
+        self.assertIn(ASK, text)
+        self.assertNotIn('B) 修掉', text)
+        self.assertIn('選了不修、另開卡修或改規格的改標「（不修，見 Decisions）」', text)
+        flow = section(read(FLOW), '驗收')
+        self.assertIn('B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格', flow)
+        self.assertIn('/desk:card new feature/<slug>-medium "<原卡名>：審查 MEDIUM" <原分支>', flow)
+        self.assertIn('選 C) 修掉送出時', flow)
+        self.assertNotIn('修完自動重新測試與驗收', flow)
+        workflow = section(read(WORKFLOW), '自動流程')
+        self.assertIn('不修／另開卡修（推薦）／修掉／改規格', workflow)
+        self.assertIn('卡名「<原卡名>：審查 MEDIUM」', workflow)
 
 
 if __name__ == '__main__':

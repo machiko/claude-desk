@@ -16,13 +16,18 @@ export function reviewTask(c: Case): string {
 
 // 專案可以用 review.template 換掉契約檔，換了也要拿得到這條，所以放在提示裡。
 const MEDIUM_RECORD = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；'
-const MEDIUM_ASK = '在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」'
+/**
+ * 審查 MEDIUM 題的寫法與選項：B 另開卡修是推薦（這張先過關、修正在後續卡做），C 修掉是在這張卡多一輪修正。
+ * 審查、修正提示與 templates/review.md 同一組；工作桌照選項開頭認 B（另開卡）與 C（修掉），見 card.ts 的 picksMediumFollowUp／picksMediumFix。
+ */
+export const MEDIUM_ASK_FORM = '審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格'
+const MEDIUM_ASK = `在 等你 寫成「${MEDIUM_ASK_FORM}」`
 const MEDIUM_COUNT = '都算進關卡的 MEDIUM 數。'
 /**
- * 重新審查遇到標「（等你決定）」而沒被改到的 MEDIUM：你已回答不修或改規格的（卡片 Decisions 有記）不再問，
+ * 重新審查遇到標「（等你決定）」而沒被改到的 MEDIUM：你已回答不修、另開卡修或改規格的（卡片 Decisions 有記）不再問，
  * 還沒回答、或選了修掉卻沒被改到的照原樣再列。審查檔整份覆寫，不再列就等於把「等你」那題清掉。
  */
-const RECHECK_ASKED = '標「（等你決定）」而沒被改到的：卡片 Decisions 已記你對那條選了不修或改規格的，改標「（不修，見 Decisions）」、不在 等你 再問；還沒回答、或選了修掉卻沒被改到的，照原樣再列（過關時要在 等你 問）。'
+const RECHECK_ASKED = '標「（等你決定）」而沒被改到的：卡片 Decisions 已記你對那條選了不修、另開卡修或改規格的，改標「（不修，見 Decisions）」、不在 等你 再問；還沒回答、或選了修掉卻沒被改到的，照原樣再列（過關時要在 等你 問）。'
 /** 資安審查接在程式碼審查之後：等你可能已有程式碼審查問的 MEDIUM 題，不能因為這份沒有就清掉。 */
 const SECURITY_KEEP_ASK = '卡片 等你 已有程式碼審查問的 MEDIUM 題就保留；這份也有標「（等你決定）」的 MEDIUM 就跟它合成一題（摘要兩份都寫到），不要因為這份沒有就把 等你 寫成 無。'
 /** 工作桌只自動修 CRITICAL／HIGH：可能影響行為的 MEDIUM 不分第幾輪，一律標「（等你決定）」並在 等你 問一題。 */
