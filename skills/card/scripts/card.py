@@ -15,9 +15,10 @@
                                                實作計畫跟其他進行中的卡同檔時，輸出結尾印 overlap 的預警行、History 也記一筆（不擋確認）
   card.py overlap <slug|任務名|main>            實作計畫跟登錄表上其他進行中的卡（已歸檔段、卡片檔不存在、沒填計畫的不算）同檔時，
                                                每個同檔印一行「同檔預警：<檔> 也在「<卡名>」的實作計畫（<slug>）」；沒有就印「同檔預警：無」
-  card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句；下一步依關卡三選一：驗收已過關、審查檔之後有新 commit 寫
-                                               「等自動重新測試與驗收；沒動靜就到面板按 v」，驗收已過關但之後沒有新 commit（或沒有審查檔）寫
-                                               「到面板照「輪到你」開 PR 或合併」，其他寫「到面板按 v 執行測試」；
+  card.py done <slug|任務名|main> <狀態一句>      主對話告一段落時寫回：狀態改成那句；下一步依關卡四選一：驗收已過關、審查檔之後有新 commit 寫
+                                               「等自動重新測試；沒動靜就到面板按 v」，驗收已過關但之後沒有新 commit（或沒有審查檔）寫
+                                               「到面板照「輪到你」開 PR 或合併」，關卡是依審查修完的未複審結論寫
+                                               「到面板照「輪到你」接著做」，其他寫「到面板按 v 執行測試」；
                                                History 記分支與 HEAD（有未提交的檔就註明幾個）；規格還沒確認就拒絕
   card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
                                                可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
@@ -570,17 +571,30 @@ def cmd_overlap(arg):
 
 
 DONE_NEXT = '到面板按 v 執行測試'
-# 驗收已過關後又有新 commit：開流程的對話開著面板時會自動重新測試與驗收；card.py 看不到是哪個對話開著面板，所以帶「沒動靜就按 v」。
-DONE_NEXT_RECHECK = '等自動重新測試與驗收；沒動靜就到面板按 v'
+# 驗收已過關後又有新 commit：開流程的對話開著面板時會自動重新測試（這條分支審查過就不再驗收，高風險或舊流程紀錄才接著驗收）；
+# card.py 看不到是哪個對話開著面板，所以帶「沒動靜就按 v」。
+DONE_NEXT_RECHECK = '等自動重新測試；沒動靜就到面板按 v'
+# 關卡是依審查修完寫的「…；已依審查修正、未複審」：不是審查結論。流程可能還在重新測試、修正輪用完停下（要按 g），
+# 或已經未複審過關（停在合併段）；card.py 看不到流程紀錄，照面板「輪到你」走（hooks/next-words.ts 認得這句是等待）。
+DONE_NEXT_TURN = '到面板照「輪到你」接著做'
+# 認「依審查修完、還沒人審過」只看這三個字（與 hooks/card.ts 的 UNREVIEWED_MARK 同一個字）：Agent 照抄結論可能少括號、換標點。
+UNREVIEWED_MARK = '未複審'
 # 驗收已過關、之後沒有新 commit（或沒有審查檔）：結論仍算數，面板停在合併段，不會重新測試、也沒有 v。
 DONE_NEXT_MERGE = '到面板照「輪到你」開 PR 或合併'
 REVIEW_FILE = os.path.join('.task', 'REVIEW.md')
 
 
-def review_passed(gate):
-    """關卡是 review：…、四個分級都讀得到數字、CRITICAL 與 HIGH 都是 0（與 hooks/pipeline.ts 的 parseVerdict、blocking 同規則）。"""
+def unreviewed_gate(gate):
+    """關卡是依審查修完寫的 review：…（結論含「未複審」）：不算審查結論（與 hooks/card.ts 的 parseGate、unreviewedGate 同規則）。"""
     m = re.match(r'\s*review\s*[:：]\s*(.*)$', gate or '', re.I | re.S)
-    if not m:
+    return bool(m) and UNREVIEWED_MARK in m.group(1)
+
+
+def review_passed(gate):
+    """關卡是 review：…、四個分級都讀得到數字、CRITICAL 與 HIGH 都是 0（與 hooks/pipeline.ts 的 parseVerdict、blocking 同規則）；
+    依審查修完寫的未複審關卡不算（hooks/card.ts 的 parseGate 當成沒有關卡）。"""
+    m = re.match(r'\s*review\s*[:：]\s*(.*)$', gate or '', re.I | re.S)
+    if not m or unreviewed_gate(gate):
         return False
     def n(name):
         hit = re.search(rf'{name}\s*[:：=]?\s*(\d+)', m.group(1), re.I)
@@ -605,8 +619,8 @@ STATUS_CODES = re.compile(r'(?<![0-9A-Za-z])(?:(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-
 
 
 def cmd_done(arg, status):
-    """主對話告一段落時寫回卡片：狀態改成那句；下一步驗收已過關時，驗收後有新 commit 寫等自動重新測試與驗收（沒動靜就按 v），
-    沒有新 commit 寫照面板開 PR 或合併，其他寫去面板按 v；
+    """主對話告一段落時寫回卡片：狀態改成那句；下一步驗收已過關時，驗收後有新 commit 寫等自動重新測試（沒動靜就按 v），
+    沒有新 commit 寫照面板開 PR 或合併；關卡是依審查修完的未複審結論寫照面板「輪到你」接著做；其他寫去面板按 v；
     History 記分支與 HEAD；等你、關卡、檢查不動。"""
     status = ' '.join(status.split())
     if not status:
@@ -622,7 +636,12 @@ def cmd_done(arg, status):
     branch = git_branch(root) or '（分離 HEAD）'
     sha = git('-C', root, 'rev-parse', '--short', 'HEAD').stdout.strip() or '（沒有 commit）'
     dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.split('\n') if l.strip()]
-    next_step = (DONE_NEXT_RECHECK if committed_after_review(root) else DONE_NEXT_MERGE) if review_passed(gate) else DONE_NEXT
+    if unreviewed_gate(gate):
+        next_step = DONE_NEXT_TURN
+    elif review_passed(gate):
+        next_step = DONE_NEXT_RECHECK if committed_after_review(root) else DONE_NEXT_MERGE
+    else:
+        next_step = DONE_NEXT
     set_fields(path, {'狀態': status, '下一步': next_step}, required=('狀態', '下一步'))
     note = f'；有 {len(dirty)} 個檔未提交' if dirty else ''
     line = f'- {stamp()}：{CMD} done（{branch} {sha}）：{status}{note}'

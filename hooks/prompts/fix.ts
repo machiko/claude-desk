@@ -2,7 +2,8 @@
 import type { Case } from '../../types'
 import { AGENT_STOPPED, MAX_FIX_ROUNDS, MEDIUM_FIX_NOT_SENT } from '../chain'
 import type { FixReason } from '../dispatch'
-import { UNREVIEWED_GATE, parseVerdict, toFix } from '../pipeline'
+import { UNREVIEWED_GATE } from '../card'
+import { parseVerdict, toFix } from '../pipeline'
 import { REVIEW_FILE, SECURITY_FILE } from './review'
 import { isQuotaHold } from '../quota-words'
 
@@ -10,7 +11,7 @@ import { isQuotaHold } from '../quota-words'
 const MEDIUM_DECIDE = `要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。`
 /**
  * 依審查檔修完的收尾：關卡寫成擋不住的分級（CRITICAL、HIGH 修掉了是 0）加上未複審的結論，History 列修了哪幾條。
- * 不改回 無：卡片與發版看得到這張卡是修完沒複審的（工作桌讀的時候當成「無」，見 pipeline.ts 的 gateAsRead）；
+ * 不改回 無：卡片與發版看得到這張卡是修完沒複審的（工作桌只認「未複審」三個字、當成沒有關卡，見 card.ts 的 parseGate）；
  * 數字留著原本的 CRITICAL、HIGH 會被當成還要修。高風險照舊複審，會覆寫這句。`medium` 說 MEDIUM 那格怎麼填。
  */
 const reviewFixDone = (medium: string) => `修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM ${medium}、LOW <原數>；${UNREVIEWED_GATE}」，History 加一行列出依審查修了哪幾條，狀態寫一句修了什麼。`
@@ -39,6 +40,12 @@ export function fixHead(c: Case, fix: FixReason): string {
   return fix.from === 'check'
     ? `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：完成檢查 \`${c.verify}\` 未通過。輸出最後幾行：\n${(fix.tail ?? []).join('\n')}\n修到完成檢查綠，commit 後寫回卡片。`
     : `修正第 ${fix.round}／${MAX_FIX_ROUNDS} 輪：${autoReviewFixStep(fix.security ? SECURITY_FILE : REVIEW_FILE)}`
+}
+
+/** 按 g 派的修正是在修審查結論（審查要修的 CRITICAL、HIGH 還在，或你選修掉的 MEDIUM 沒派出）：那一輪算依審查修正過（chain.reviewFix）。 */
+export function fixesReview(c: Case): boolean {
+  const verdict = parseVerdict(c.gate)
+  return (!!verdict && toFix(c, verdict) > 0) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT
 }
 
 /**

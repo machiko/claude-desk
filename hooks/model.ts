@@ -4,7 +4,7 @@ import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '..
 import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
-import { UNREVIEWED_NOTE, gateAsRead, parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
+import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
 import { RUN_WARN_MS, isDeskLaunch, spanMs } from './dispatch'
 import { MEDIUM_FIX_NOT_SENT } from './chain'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
@@ -482,7 +482,7 @@ export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: n
   const agent = agents[root]
   const base: Omit<Case, 'state'> = {
     name: row.name, statusPath: row.statusPath, root, hasCard: card !== null, ...(row.manual ? { manual: true } : {}),
-    status: plain(card?.['狀態'] ?? ''), verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: gateAsRead(plain(card?.['關卡'] ?? '')),
+    status: plain(card?.['狀態'] ?? ''), verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: plain(card?.['關卡'] ?? ''),
     updatedAt: mtime, ...(agent ? { agent } : {}),
     ...(cardText !== null && hasSpec(cardText) && !filledAc(cardText).length ? { specGap: true as const } : {}),
   }
@@ -539,9 +539,9 @@ export function summary(c: Case): string {
   if (c.state === 'nocard') return '找不到卡片'
   if (c.state === 'failed' && c.chain?.stopped) return c.chain.stopped
   const verdict = standingVerdict(c)
-  // 未複審過關：修完寫的關卡讀起來是「無」（gateAsRead），沒有審查結論可看，照流程紀錄說已過關。
+  // 未複審過關：修完寫的關卡不算審查結論（card.ts 的 parseGate），沒有結論可看，照流程紀錄說已過關。
   const unreviewed = !!c.chain?.passed && !!c.chain.unreviewed && !c.chain.stale
-  if (((verdict && toFix(c, verdict) === 0) || unreviewed) && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : unreviewed ? `${UNREVIEWED_NOTE}，可開 PR` : '驗收通過，可開 PR'
+  if (((verdict && toFix(c, verdict) === 0) || unreviewed) && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : unreviewed ? `${unreviewedNote(c.chain)}，可開 PR` : '驗收通過，可開 PR'
   if (c.state === 'idle') return c.statusShort || c.status || '閒置'
   return c.next
 }

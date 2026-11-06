@@ -30,7 +30,7 @@ export type PassHow = 'reviewed' | 'skipped' | 'unreviewed'
 const PASS_LEAD: Record<PassHow, { feed: string; say: string }> = {
   reviewed: { feed: '驗收通過', say: '驗收通過' },
   skipped: { feed: '只動文件、測試通過，免驗收', say: '只動文件，免驗收' },
-  unreviewed: { feed: '測試通過，未複審（發版時整版審查）', say: '測試通過，未複審' },
+  unreviewed: { feed: '測試通過，未重新驗收（發版時整版審查）', say: '測試通過，未重新驗收' },
 }
 
 /** 過關的動態（feed）與提示、系統通知（say）。沒有 plan（沒開 autoPr）時跟以前一字不差。 */

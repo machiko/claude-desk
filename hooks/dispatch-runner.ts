@@ -16,6 +16,7 @@ import { WORD } from './theme'
 import { lastLaunches } from './stale-agents'
 import { restage, spin, tutorial, lastAgents } from './register'
 import { carriedFix, carriedReview, countedFix } from './chain'
+import { fixesReview } from './prompts/fix'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
@@ -227,7 +228,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     // 「這條分支審查過」也照帶：按 g 改完只跑測試、不複審（按 w 照樣派審查）。
     // 你按 g 派的修正不受上限擋，但照樣算一輪；Agent 被停掉後重開、停在檢查段時按 g 不是修正，不算（fixesByG）。
     const fixed = kind === 'continue' && fixesByG(c)
-    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...carriedFix(r, c.git?.branch, fixed), ...carriedReview(r, c.git?.branch), ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
+    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...carriedFix(r, c.git?.branch, fixed), ...carriedReview(r, c.git?.branch), ...((fixed && fixesReview(c)) || (r?.reviewFix && !r.passed) ? { reviewFix: true } : {}), ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
     // 自動流程的修正（含從隊伍派出的）真的派出去了才算一輪：排隊後被額度煞車或別的原因丟掉的不算。
     if (opts.auto && opts.fix) await saveChain($, rootKey, r => r ? { ...r, ...countedFix(r, c.git?.branch) } : r)
     // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。

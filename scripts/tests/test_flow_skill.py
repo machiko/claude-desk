@@ -42,7 +42,8 @@ class FlowSkillTest(unittest.TestCase):
         self.assertIn('按 `w` 兩次派驗收', text)
         self.assertIn('測試未通過（exit n）', text)
         self.assertIn('到面板按 v 執行測試', text)
-        self.assertIn('等自動重新測試與驗收；沒動靜就到面板按 v', text)
+        self.assertIn('等自動重新測試；沒動靜就到面板按 v', text)
+        self.assertIn('到面板照「輪到你」接著做', text)
         for old in ('完成檢查', '派審查', '重新檢查與審查', '檢查未通過', '審查通過'):
             self.assertNotIn(old, text, old)
 

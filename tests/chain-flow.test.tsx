@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, feedLog, flat, text, PANE, CARD_A, result } from './fixture'
-import { AGENT_STOPPED } from '../hooks/chain'
+import { AGENT_STOPPED, recheckFeed, skipsReview } from '../hooks/chain'
 import { buildCase, summary } from '../hooks/model'
-import { UNREVIEWED_GATE, pipeline, stageLabel } from '../hooks/pipeline'
+import { UNREVIEWED_GATE } from '../hooks/card'
+import { pipeline, stageLabel } from '../hooks/pipeline'
 import { PUBLISH_PR_TURN, turnOf } from '../hooks/turn'
 import type { Case } from '../types'
 
@@ -55,7 +56,7 @@ test('continue → auto check → auto review → fix round 1 on HIGH → check 
   await finish()
   expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(2)
   expect(data.launches.length).toBe(3)
-  expect(data.toasts.some(t => t.includes('測試通過，未複審'))).toBe(true)
+  expect(data.toasts.some(t => t.includes('測試通過，未重新驗收'))).toBe(true)
   expect((data.store.chains as any)['/home/u/wt/alpha'].passed).toBe(true)
 
   expect(data.mcpCalls.length > 0).toBe(true)
@@ -460,7 +461,7 @@ async function fixAfterFirstReview($: any, data: any, clock: any) {
   return f
 }
 
-/** AC-1（本卡）：一般風險的卡依審查修完、完成檢查通過：不派複審，流程過關可開 PR；修正提示叫 Agent 把關卡寫成未複審，六段寫「已修正・未複審」 */
+/** AC-1（本卡）：一般風險的卡依審查修完、完成檢查通過：不派複審，流程過關可開 PR；修正提示叫 Agent 把關卡寫成未複審，六段寫「已修正・未重新驗收」（面板不用「複審」，見 History） */
 test('test_fix_after_review_passes_on_green_check_without_rereview', async ($, on) => {
   const { data, clock } = fixture(on)
   const log = feedLog(on)
@@ -478,27 +479,39 @@ test('test_fix_after_review_passes_on_green_check_without_rereview', async ($, o
   expect(f.chain().unreviewed).toBe(true)
   // 判定的 HEAD 是檢查時的：過關後不會被當成有新 commit 又重新檢查
   expect(f.chain().judgedHead).toBe('h2')
-  expect(log.has('Alpha 測試通過，未複審（發版時整版審查），可開 PR')).toBe(true)
-  expect(data.toasts).toContain('Alpha：測試通過，未複審，可以開 PR')
+  expect(log.has('Alpha 測試通過，未重新驗收（發版時整版審查），可開 PR')).toBe(true)
+  expect(data.toasts).toContain('Alpha：測試通過，未重新驗收，可以開 PR')
+  // 這一輪依審查修正過
+  expect(f.chain().reviewFix).toBe(true)
   await f.step(); await f.step()
   expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(2)
   expect(data.launches.length).toBe(3)
 
-  // 六段：驗收過了，合併段寫「已修正・未複審」，摘要同一句；輪到你照常開 PR
+  // 六段：驗收過了，合併段寫「已修正・未重新驗收」，摘要同一句；輪到你照常開 PR
   await f.refresh()
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_A}` })
-  expect(flat(text(await ui.drawn()))).toContain(flat('按兩次 n 開 PR'))
+  const screen = flat(text(await ui.drawn()))
+  expect(screen).toContain(flat('按兩次 n 開 PR'))
   await ui.unmount()
-  const base = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}, undefined), git: { branch: 'feature/alpha', head: 'h2' }, chain: { round: 1, passed: true, unreviewed: true } } as Case
+  const base = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}, undefined), git: { branch: 'feature/alpha', head: 'h2' }, chain: { round: 1, passed: true, unreviewed: true, reviewFix: true } } as Case
   const c = { ...base, pipeline: pipeline(base, undefined) }
   expect(c.pipeline.stages.find(st => st.id === 'review')!.status).toBe('done')
-  expect(stageLabel(c.pipeline)).toBe('合併・已修正・未複審，可開 PR')
-  expect(summary({ ...c, state: 'ready' })).toBe('已修正・未複審，可開 PR')
+  expect(stageLabel(c.pipeline)).toBe('合併・已修正・未重新驗收，可開 PR')
+  expect(summary({ ...c, state: 'ready' })).toBe('已修正・未重新驗收，可開 PR')
+  // 對照：不是依審查修正的未複審過關（過關後你又 commit、按 g 做新的下一步）不寫「已修正」
+  const plain = { ...base, chain: { round: 0, passed: true, unreviewed: true } }
+  expect(stageLabel(pipeline(plain, undefined))).toBe('合併・測試通過・未重新驗收，可開 PR')
+  expect(summary({ ...plain, pipeline: pipeline(plain, undefined), state: 'ready' })).toBe('測試通過・未重新驗收，可開 PR')
   expect(turnOf(c).text).toBe(PUBLISH_PR_TURN)
   // 對照：審查通過過關（沒有 unreviewed）照舊寫「可開 PR」
   const reviewed = { ...base, chain: { round: 0, passed: true } }
   expect(stageLabel(pipeline(reviewed, undefined))).toBe('合併・可開 PR')
+
+  // 狀態列：Alpha 有對話在跑（例如你開的對話）時照流程紀錄寫「已修正」
+  data.agents = [{ id: 'd0000001', kind: 'background', cwd: f.root, name: 'my-chat', sessionId: 'd0000001-0000-4000-8000-000000000000', state: 'working', status: 'busy', startedAt: clock.now() }]
+  await f.refresh()
+  expect(data.status).toContain('已修正・未重新驗收，可開 PR')
 })
 
 /** AC-2（本卡）：依審查修完後完成檢查沒過：照舊自動派修正（算進整張卡 2 輪上限），測試過了才過關、一樣不複審；用完就停下 */
@@ -520,6 +533,8 @@ test('test_fix_after_review_still_retries_failing_check', async ($, on) => {
   expect(data.launches.every((l: any) => !String(l.argv.at(-1)).startsWith('程式碼審查') || l === data.launches[1])).toBe(true)
   expect(f.chain().passed).toBe(true)
   expect(f.chain().unreviewed).toBe(true)
+  // 接在審查修正後面的測試修正：這一輪照算依審查修正過
+  expect(f.chain().reviewFix).toBe(true)
 })
 
 /** AC-2（本卡）：修正輪用完、測試還是沒過：停下，不派複審也不再修 */
@@ -546,10 +561,14 @@ test('test_fix_after_review_still_retries_failing_check stops when rounds run ou
   await ui.unmount()
   expect(screen).toContain(flat(limit))
   expect(screen).not.toContain(flat('開 PR 派 Agent push'))
+  // 關卡列照卡片原文顯示（不算審查結論，但看得到）
+  expect(screen).toContain(flat(`◆ 驗收  CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；${UNREVIEWED_GATE}`))
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
   await clock.settle()
   expect(data.launches.length).toBe(5)
   expect(f.prompt(4).startsWith(`修正：流程已暫停（${limit}）`)).toBe(true)
+  // 還沒過關就按 g 重開：這一輪照算依審查修正過（過關時寫「已修正」）
+  expect(f.chain().reviewFix).toBe(true)
 })
 
 /** AC-3（本卡）：過關後分支又有新 commit：只重跑完成檢查，過了照舊過關、沒過照舊派修正；不派審查 */
@@ -575,6 +594,8 @@ test('test_new_commit_after_pass_rechecks_without_review', async ($, on) => {
   expect(f.chain().judgedHead).toBe('h2')
   expect(f.chain().reviewedBranch).toBe('feature/alpha')
   expect(f.chain().fixTotal).toBe(1)
+  // 不是依審查修正：面板不寫「已修正」
+  expect(f.chain().reviewFix).toBeUndefined()
 
   // 又有新 commit、這次沒過：照舊派修正（不是審查）
   data.run = async () => result(1, '', 'FAIL')
@@ -607,4 +628,79 @@ test('a manual restart on a reviewed branch keeps the mark and passes on a green
   expect(data.launches.length).toBe(1)
   expect(f.chain().passed).toBe(true)
   expect(f.chain().unreviewed).toBe(true)
+  expect(f.chain().reviewFix).toBeUndefined()
 })
+
+/** 審查 MEDIUM（本卡，D-06 ③）：審查過的分支修改後變成高風險：重新測試的動態不說「通過就過關」，測試過了照舊派驗收 */
+test('a reviewed branch that turned high risk is rechecked and reviewed again, and says so', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h2', files: ['app/Http/Middleware/Admin.php'] }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const log = feedLog(on)
+  f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha', reviewedBranch: 'feature/alpha' } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+
+  await f.refresh(); await f.step(); await f.step(); await f.step()
+  expect(log.has('Alpha 驗收通過後有新 commit，自動重新測試與驗收')).toBe(true)
+  expect(log.has('Alpha 驗收通過後有新 commit，自動重新測試，通過就過關、不重新驗收')).toBe(false)
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(1)
+  expect(data.launches.length).toBe(1)
+  expect(f.prompt(0).startsWith('程式碼審查')).toBe(true)
+  expect(f.chain().passed).toBeUndefined()
+})
+
+/** 審查 MEDIUM（本卡，D-06 ③）：「通過就過關、不再驗收」只在審查過、而且不是高風險時成立（nextStep、輪到你、動態共用） */
+test('skipsReview needs a reviewed branch and not high risk', () => {
+  const run = { reviewedBranch: 'feature/alpha' }
+  expect(skipsReview(run, 'feature/alpha')).toBe(true)
+  expect(skipsReview(run, 'feature/alpha', { level: 'normal' } as any)).toBe(true)
+  expect(skipsReview(run, 'feature/alpha', { level: 'high' } as any)).toBe(false)
+  expect(skipsReview(run, 'feature/beta')).toBe(false)
+  expect(skipsReview({}, 'feature/alpha')).toBe(false)
+  expect(recheckFeed('Alpha', false)).toBe('Alpha 驗收通過後有新 commit，自動重新測試與驗收')
+})
+
+/** 審查 MEDIUM（本卡，D-06 ④）：你選修掉的審查 MEDIUM 修完、只跑測試過關：那一輪算依審查修正過，面板寫「已修正」 */
+test('a picked medium fix that passes without review counts as fixed by review', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  // 上一輪：派出你選修掉的 MEDIUM 修正（mediumFixed），之後過關停在 h1；修正 Agent commit 了 h2
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, mediumFixed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha', reviewedBranch: 'feature/alpha' } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'continue', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  data.git[f.root]!.head = 'h2'
+  await f.refresh(); await f.step(); await f.step(); await f.step()
+  expect(data.launches.length).toBe(0)
+  expect(f.chain().passed).toBe(true)
+  expect(f.chain().unreviewed).toBe(true)
+  expect(f.chain().reviewFix).toBe(true)
+  expect(f.chain().mediumFixed).toBeUndefined()
+})
+
+
+/** 審查 MEDIUM（本卡，D-06 ③）：過關後有新 commit、流程還沒接手時的輪到你：一般風險說「自動過關、不重新驗收」，高風險說會重新驗收 */
+for (const [risk, files] of [['normal', ['src/a.ts']], ['high', ['app/Http/Middleware/Admin.php']]] as const) {
+  test(`turn hint while rechecking a reviewed branch follows risk (${risk})`, async ($, on) => {
+    const { data, clock } = fixture(on)
+    const f = alphaFlow($, data, clock)
+    data.git[f.root] = { branch: 'feature/alpha', head: 'h2', files: [...files] }
+    data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+    data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+    f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+    data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha', reviewedBranch: 'feature/alpha' } }
+    data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+    data.run = async () => new Promise(() => {})
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    const ui = await $.ui.mount(PANE(160))
+    await ui.press({ key: `row-${CARD_A}` })
+    const screen = flat(text(await ui.drawn()))
+    await ui.unmount()
+    expect(screen).toContain(flat(`驗收後有新 commit：按 v 重新執行測試；通過後${risk === 'normal' ? '自動過關、不重新驗收' : '自動重新驗收'}`))
+  })
+}

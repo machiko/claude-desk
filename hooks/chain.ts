@@ -78,8 +78,15 @@ export type ChainRun = {
    * 重新驗收、按 g／w 重開流程都帶著；換了分支就不帶。
    */
   reviewedBranch?: string
-  /** 過關了但沒有複審：依審查修正（或審查後的新 commit）只跑測試就過關；面板寫「已修正・未複審」。 */
+  /** 過關了但沒有複審：依審查修正（或審查後的新 commit）只跑測試就過關；面板依 reviewFix 寫「已修正・未重新驗收」或「測試通過・未重新驗收」。 */
   unreviewed?: boolean
+  /**
+   * 這一輪流程依審查修正過（自動派的審查修正、按 g 修審查結論，或接在它後面的測試修正）：未複審過關時面板才寫「已修正」。
+   * 過關後的新 commit、按 g 做新的下一步開的新一輪不帶；還沒過關就按 g 重開的照帶。
+   */
+  reviewFix?: boolean
+  /** 你選修掉的審查 MEDIUM 派出了修正：修完的 commit 由重新測試接手，那一輪算依審查修正過（reviewFix），帶過去後拿掉。 */
+  mediumFixed?: boolean
   /** 最近一次自動派解衝突時的 HEAD：同一個 HEAD 只自動試一次。 */
   catchupHead?: string
   /** 額度煞車擋下的那一步（派審查、資安審查或修正）：按 g 重開時直接派這一步，不多派實作。 */
@@ -115,8 +122,15 @@ export function carriedFix(run: ChainRun | undefined, branch: string | undefined
 /** 這條分支審查過一次：記下的分支就是現在的分支（沒記、分支不明都不算）。 */
 export const reviewedOn = (run: Pick<ChainRun, 'reviewedBranch'> | undefined, branch: string | undefined): boolean => !!branch && run?.reviewedBranch === branch
 
-/** 過關後又有新 commit、自動開新一輪時的動態：這條分支審查過就只重新測試（高風險照舊會再驗收，之後的動態另外寫）。 */
-export const recheckFeed = (name: string, reviewed: boolean): string => `${name} 驗收通過後有新 commit，${reviewed ? '自動重新測試，通過就過關、不重新驗收' : '自動重新測試與驗收'}`
+/** 過關後又有新 commit、自動開新一輪時的動態：`skip` 是 skipsReview（審查過、不是高風險），只重新測試；其他照舊重新測試與驗收。 */
+export const recheckFeed = (name: string, skip: boolean): string => `${name} 驗收通過後有新 commit，${skip ? '自動重新測試，通過就過關、不重新驗收' : '自動重新測試與驗收'}`
+
+/**
+ * 這次檢查通過後就過關、不再驗收：這條分支審查過，而且不是高風險（高風險照舊複審並跑資安審查）。
+ * nextStep、面板的「輪到你」（ChainInfo.reviewed）與重新測試的動態共用這一個判斷；風險不明（沒有設定）算一般。
+ */
+export const skipsReview = (run: Pick<ChainRun, 'reviewedBranch'> | undefined, branch: string | undefined, risk?: Pick<Risk, 'level'>): boolean =>
+  reviewedOn(run, branch) && risk?.level !== 'high'
 
 /** 開新一輪流程（重新驗收、按 g／w 重開）時要帶上的「這條分支審查過」：只帶同一條分支記的。 */
 export function carriedReview(run: ChainRun | undefined, branch: string | undefined): Pick<ChainRun, 'reviewedBranch'> {
@@ -185,7 +199,7 @@ function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, c
     if (check === null) return trusted ? { kind: 'verify' } : { kind: 'stop', reason: ctx.changed ? CHECK_CHANGED : CHECK_UNAPPROVED, atCheck: true }
     if (check && ctx.risk?.level === 'low') return { kind: 'pass', skipped: true }
     // 每張卡只審查一次：審查過的分支再做完（依審查修正、測試沒過的修正、過關後的新 commit）測試綠就過關；高風險照舊複審與資安審查。
-    if (check && ctx.risk?.level !== 'high' && reviewedOn(run, ctx.branch)) return { kind: 'pass', unreviewed: true }
+    if (check && skipsReview(run, ctx.branch, ctx.risk)) return { kind: 'pass', unreviewed: true }
     if (check) return { kind: 'dispatch', dispatch: 'review', round: run.round }
     return mayFix(run) ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'check' } : { kind: 'stop', reason: `整張卡已自動修 ${MAX_FIX_ROUNDS} 輪仍未通過測試${AFTER_LIMIT}` }
   }

@@ -494,7 +494,8 @@ class CardScriptTest(unittest.TestCase):
         self.assertNotIn('未提交', history)
 
     def test_done_after_passed_review_says_the_flow_rechecks(self):
-        # done-next-step AC-1：審查已過關、審查檔之後有新 commit，流程會自動重新測試與驗收；沒動靜才按 v。
+        # done-next-step AC-1：審查已過關、審查檔之後有新 commit，流程會自動重新測試；沒動靜才按 v。
+        # 每卡審一次（本卡 AC-3）之後這條分支審查過就只重新測試、不再驗收，下一步不寫「與驗收」。
         card, wt = self.confirmed_card_with_commit()
         self.review_file(wt, after_head=False)
         self.run_card('gate', 'order-export', 'review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 1；過關')
@@ -509,8 +510,8 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         text = read(card)
         self.assertIn('- 狀態：修好審查提到的 MEDIUM\n', text)
-        self.assertIn('- 下一步：等自動重新測試與驗收；沒動靜就到面板按 v\n', text)
-        self.assertIn('  下一步：等自動重新測試與驗收；沒動靜就到面板按 v\n', r.stdout)
+        self.assertIn('- 下一步：等自動重新測試；沒動靜就到面板按 v\n', text)
+        self.assertIn('  下一步：等自動重新測試；沒動靜就到面板按 v\n', r.stdout)
         for name in ('等你', '關卡', '檢查'):
             line = re.search(rf'^- {name}：.*$', block(before), re.M).group(0)
             self.assertIn(line, block(text), name)
@@ -532,6 +533,30 @@ class CardScriptTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertIn(f'- 下一步：{merge}\n', read(card))
                 self.assertIn(f'  下一步：{merge}\n', r.stdout)
+
+    def test_done_with_unreviewed_gate_follows_the_panel(self):
+        # 每卡審一次：關卡是依審查修完寫的未複審結論（只認「未複審」三個字，Agent 抄錯標點也一樣），不算審查過關：
+        # 流程可能在重新測試、修正輪用完停下或已未複審過關，card.py 看不到流程紀錄，下一步照面板「輪到你」走；審查檔前後都一樣。
+        turn = '到面板照「輪到你」接著做'
+        card, wt = self.confirmed_card_with_commit()
+        for after_head in (False, True):
+            self.review_file(wt, after_head=after_head)
+            for tail in ('已依審查修正、未複審（發版時整版審查）', '已依審查修正、未複審', '已依審查修正，未複審(發版時整版審查)', '已依審查修正 HIGH 2 條、未複審'):
+                gate = f'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；{tail}'
+                with self.subTest(after_head=after_head, gate=gate):
+                    self.run_card('gate', 'order-export', gate)
+                    r = self.run_card('done', 'order-export', '依審查修完')
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    text = read(card)
+                    self.assertIn(f'- 下一步：{turn}\n', text)
+                    self.assertIn(f'  下一步：{turn}\n', r.stdout)
+                    self.assertIn(f'- 關卡：{gate}\n', text)
+        card_mod = load_card()
+        self.assertFalse(card_mod.review_passed('review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；已依審查修正、未複審'))
+        self.assertTrue(card_mod.review_passed('review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過關'))
+        # 跟 hooks/card.ts 認同一個字
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'hooks', 'card.ts'), encoding='utf-8') as f:
+            self.assertIn(f"export const UNREVIEWED_MARK = '{card_mod.UNREVIEWED_MARK}'", f.read())
 
     def test_done_with_blocking_review_still_says_press_v(self):
         # done-next-step AC-2：審查有擋的、結論缺分級，下一步照舊叫你按 v。

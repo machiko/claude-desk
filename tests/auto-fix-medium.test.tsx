@@ -295,6 +295,8 @@ test('test_answer_b_on_review_medium_dispatches_fix_and_counts', async ($, on) =
   const run = (data.store.chains as any)[ALPHA]
   expect(run.fixTotal).toBe(3)
   expect(run.mediumFixAt).toBeUndefined()
+  // 派出你選修掉的 MEDIUM：記著，修完過關時面板寫「已修正」
+  expect(run.mediumFixed).toBe(true)
   // 再重新整理不重派
   await h.refresh(); await h.step()
   expect(data.launches).toHaveLength(1)
