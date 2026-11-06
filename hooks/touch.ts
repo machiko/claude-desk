@@ -36,8 +36,11 @@ export function touchesDesk(call: ToolTouch, known: readonly string[]): boolean 
 
 /** DESK 格式的卡片檔（舊格式 .console/STATUS.md 沒有卡片規則段，不檢查）。 */
 const DESK_CARD = /(^|\/)\.desk\/CARD\.md$/
-/** Bash 指令裡寫出來的絕對路徑卡片檔。 */
-const DESK_CARD_IN_CMD = /\/[^\s'"`;|&<>()]*\/\.desk\/CARD\.md(?![\w.])/g
+/**
+ * Bash 指令裡寫出來的絕對路徑卡片檔：開頭的 / 要接在行首、空白、引號、= 或指令分隔符號後面，
+ * 才不會把 `~/…`、相對路徑或含空白的路徑從中間截成一條假的絕對路徑。
+ */
+const DESK_CARD_IN_CMD = /(?<=^|[\s'"`=;|&<>(])\/[^\s'"`;|&<>()]*\/\.desk\/CARD\.md(?![\w.])/g
 
 /**
  * 這次工具呼叫可能寫到的 DESK 卡（卡片規則段守門要比對的）：Edit／Write／MultiEdit 取 file_path；
