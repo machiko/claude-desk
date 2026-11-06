@@ -56,12 +56,29 @@ export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo &
 /** 按 u 確認上線後接著歸檔（同 ⌫ 歸檔，不刪 worktree 與分支）：發版線與教學那件照舊只清關卡。 */
 export const archivesOnShip = (c: Pick<Case, 'demo' | 'git'>, tutorial: boolean) => !tutorial && !c.demo && !isReleaseLine(c)
 
+/** 卡片寫著發版進行中、這麼久沒更新就當成發版已經停了：面板回到待辦、可以再按發版。 */
+export const RELEASE_STALE_MS = 10 * 60_000
+/** /desk:release 開始後寫進「狀態」的那句：`發版 v<版號>：進行中（<步驟>）`（skills/release/SKILL.md）；抓出步驟。 */
+export const RELEASING_RE = /^發版 v\S+：進行中（(.+)）/
+
+/** 卡片狀態寫的發版步驟（不管有沒有逾時）；不是進行中就是 null。 */
+export function releaseStep(status: string): string | null {
+  return RELEASING_RE.exec(status)?.[1] ?? null
+}
+
+/** 發版還在跑：狀態寫進行中、卡片 RELEASE_STALE_MS 內更新過；回傳步驟，否則 null（逾時、讀不到更新時間也是 null）。 */
+export function releasingStep(status: string, updatedAt: number | null, now: number): string | null {
+  const step = releaseStep(status)
+  if (!step || updatedAt === null || now - updatedAt > RELEASE_STALE_MS) return null
+  return step
+}
+
 /**
  * 可以從面板按「⚑ 發版」：走到上線段、還沒有 tag 包含它，也不是示範任務。教學模式由呼叫端另外排除（教學照舊按 t 打 tag）。
- * 發版線（release/* 分支本身）不算：它不是「已合併待發版」的卡，打 tag 就是它自己的上線。
+ * 發版線（release/* 分支本身）不算：它不是「已合併待發版」的卡，打 tag 就是它自己的上線。發版正在跑（releasing）也不算，免得同一版做兩次。
  */
-export const canRelease = (c: Pick<Case, 'demo' | 'pipeline' | 'tag' | 'git' | 'pr' | 'mergedInto'>) =>
-  !c.demo && c.pipeline?.current === 'ship' && !c.tag && !isReleaseLine(c) && !shipsWith(c)
+export const canRelease = (c: Pick<Case, 'demo' | 'pipeline' | 'tag' | 'git' | 'pr' | 'mergedInto' | 'releasing'>) =>
+  !c.demo && !c.releasing && c.pipeline?.current === 'ship' && !c.tag && !isReleaseLine(c) && !shipsWith(c)
 
 /**
  * 合併進發版線（release/…）的功能卡隨那條線發版：回傳發版線的分支名，否則 null。

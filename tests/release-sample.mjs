@@ -1,4 +1,4 @@
-// TS 與 Python 共用的發版確認題樣本（integration 是整版審查擋下時的那題）：skills/card/tests/test_release_skill.py 把 skills/release/SKILL.md 的範本照 fill 填好、
+// TS 與 Python 共用的發版確認題樣本（integration 是整版審查擋下時的那題，inProgress 是發版中寫進「狀態」的那句）：skills/card/tests/test_release_skill.py 把 skills/release/SKILL.md 的範本照 fill 填好、
 // 斷言等於 question；tests/release-skill.test.ts 把 question 交給 parseDecisions。「PR #13）」故意貼著全形括號，確認不會被當成選項。
 // 測試環境不能 import .json，所以放在 .mjs；`export default` 之後是純 JSON，Python 去掉前綴後用 json 讀。
 export default {
@@ -10,6 +10,11 @@ export default {
     "<另一個版號>": "0.37.1"
   },
   "confirmed": "已在面板確認：版號照慣例直接做",
+  "inProgress": {
+    "template": "發版 v<版號>：進行中（<步驟>）",
+    "fill": { "<版號>": "0.58.0", "<步驟>": "整版審查" },
+    "status": "發版 v0.58.0：進行中（整版審查）"
+  },
   "integration": {
     "template": "整版審查 CRITICAL n、HIGH n：A) 開修正卡再發 B) 照發 C) 先不發",
     "counts": [0, 2],
