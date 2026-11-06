@@ -1,5 +1,6 @@
 // 面板與對話同步：選取的任務附在每則提示、面板做過的操作附在下一則你打的提示、從面板送出的決策鎖到對話寫回卡片、對話動到卡片時提早重讀、
-// 主對話確認規格（/desk:card spec … ok）的回合結束後自動派實作；desk 自己發版的，派完再自動更新 desk。
+// 主對話確認規格（/desk:card spec … ok）的回合結束後自動派實作；desk 自己發版的，派完再自動更新 desk；
+// 對話或 Agent 寫入卡片後，卡片規則段跟模板不一致就在工具結果附提示、跳 toast（Agent 寫的再記動態）。
 // 開關、登錄表路徑、教學模式與選項由 register 傳進來（PromptSyncDeps），重讀用 register 的 refreshAfterWrite；這裡只管附卡指紋、面板操作紀錄的附加與清除、送出的決策與兩個計時器。
 import { atom, read, update } from 'claude-code'
 import type { On, PluginOptions } from 'claude-code'
@@ -9,7 +10,10 @@ import { cardContext, cardKey, cardReminder, decisionContext, feedPush, loadChai
 import type { MediumPick } from './desk-io'
 import { normalizeRoot } from './dispatch'
 import type { Timer } from './desk-io'
-import { specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
+import { cardWrites, specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
+import { cardTitle, fillNameSlots, rulesDiff, rulesFeedText, rulesHeadline, rulesNotice } from './card-rules'
+import { expandHome } from './card'
+import { home, loadSettings } from './probes'
 import type { SpecOkMarks } from './touch'
 import { slugOf } from './model'
 import { sentState } from './turn'
@@ -33,6 +37,8 @@ export type PromptSyncDeps = {
   options: PluginOptions
 }
 
+/** 每張卡上一次提示卡片規則段不一致時的全文：卡片沒再改（例如只是 cat、grep）就不重複提示。 */
+let rulesWarned = new Map<string, string>()
 /** 上一次附在提示裡的卡片指紋：卡片沒變就只附一句提醒，不重複全文。 */
 let lastAttached = ''
 /** 對話改了卡片、跑了卡片腳本或 git 之後多久重讀：同一串工具呼叫只讀一次。 */
@@ -167,6 +173,7 @@ export async function readSent($: any): Promise<Record<string, SentRecord>> {
 /** 新對話（含 /clear）：下一則重附卡片全文，之前送出的決策不帶著鎖進來。 */
 export async function resetPromptSync($: any) {
   lastAttached = ''
+  rulesWarned = new Map()
   specOks = []
   specOkUnsure = []
   queuedTimer?.cancel(); queuedTimer = undefined
@@ -185,6 +192,39 @@ export function cancelPromptSync() {
 function touchSoon($: any, deps: PromptSyncDeps) {
   touchTimer?.cancel()
   touchTimer = $.clock.after(TOUCH_DELAY_MS, () => { touchTimer = undefined; void refreshAfterWrite($, deps.options) })
+}
+
+/** 這次要比對的模板：dispatch.json 的 card.template（全域疊專案，跟 card.py 同一份），沒設用 plugin 內附的。 */
+async function cardTemplatePath($: any, deps: PromptSyncDeps): Promise<string> {
+  const own = (await loadSettings($, deps.options)).cardTemplate
+  return own ? expandHome(own, await home($)) : `${$.plugin.root}/templates/DESK-template.md`
+}
+
+/**
+ * 工具呼叫寫到 DESK 卡之後：卡片規則段跟模板不一致就回提示（附在工具結果給模型看），同時 toast；Agent（agentId）寫的再記一筆錯誤動態。
+ * 模板或卡片沒有這一段、讀不到檔、卡片沒再改過（同樣內容提示過了）都不提示。不管工作桌開著沒有：派工 Agent 自己的對話也看得到提示。
+ */
+async function cardRulesNotices($: any, deps: PromptSyncDeps, call: any): Promise<string[]> {
+  const paths = cardWrites(call, deps.knownPaths())
+  if (!paths.length) return []
+  const template = await $.fs.read(await cardTemplatePath($, deps)).catch(() => null)
+  if (typeof template !== 'string') return []
+  const s = await read($, snapshot).catch(() => null)
+  const notices: string[] = []
+  for (const path of paths) {
+    const text = await $.fs.read(path).catch(() => null)
+    if (typeof text !== 'string') continue
+    const name = s?.cases.find(c => normPath(c.statusPath) === path)?.name || cardTitle(text) || path.split('/').slice(-3, -2)[0] || path
+    // card.py new 把模板的卡名佔位換成標題的任務名：比對也用標題的。
+    const diff = rulesDiff(text, fillNameSlots(template, cardTitle(text) || name))
+    if (!diff) { rulesWarned.delete(path); continue }
+    if (rulesWarned.get(path) === text) continue
+    rulesWarned.set(path, text)
+    notices.push(rulesNotice(name, diff))
+    $.ui.toast(rulesHeadline(name, diff), { timeoutMs: 10_000 })
+    if (call.agentId) await feedPush($, [{ at: await $.clock.now(), text: rulesFeedText(name), tone: 'error', card: path }])
+  }
+  return notices
 }
 
 /**
@@ -345,6 +385,7 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   on('session.end', async ($, e, next) => { lastAttached = ''; return next(e) })
 
   // 對話（或它派的 subagent）改了卡片、登錄表，跑了卡片腳本或會移動分支的 git：馬上重讀，不等回合結束。
+  // 寫到 DESK 卡的，卡片規則段跟模板不一致就在工具結果附提示（cardRulesNotices）。
   // 主對話（沒有 agentId）跑 card.py spec-ok 確認成功的，記下卡片路徑，回合結束再派：先看腳本印的那一行；印出來的比指令裡 spec-ok 的次數少，
   // 才比對跑之前先讀的、指令裡目標對得上的卡。subagent 跑的、腳本失敗（卡片沒變）的、Bash 跑的期間別處確認的其他卡都不記。
   on('tool.call', async ($, e, next) => {
@@ -354,7 +395,10 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
     try { if (deps.isActive() && touchesDesk(e as any, deps.knownPaths())) touchSoon($, deps) } catch { /* 只是提早重讀，失敗就等定時更新 */ }
     // 判斷本身意外出錯：不知道有沒有確認，回合結束照「可能已確認」提示，不默默略過。
     if (targets.length) await noteSpecOks($, e, result, probes, targets).catch(() => noteUnsure(targetsWho(targets)))
-    return result
+    // 寫壞卡片規則段：提示附在工具結果後面給模型看；檢查本身出錯就不提示，不影響工具結果與重讀。
+    if (result.deny !== undefined || result.isError) return result
+    const notices = await cardRulesNotices($, deps, e).catch(() => [] as string[])
+    return notices.length ? { ...result, context: [...(result.context ?? []), ...notices] } : result
   })
 
   // 輸入框的 ! 指令與斜線指令（例如 ! git commit、/desk:card）：結果記進對話後重讀。

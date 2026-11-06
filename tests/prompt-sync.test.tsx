@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, REGISTRY, NOW, leaves, text, flat } from './fixture'
+import { fixture, deskTemplate, feedLog, PANE, CARD_A, CARD_B, REGISTRY, NOW, leaves, text, flat } from './fixture'
 import { touchesDesk } from '../hooks/touch'
 
 const BETA = '/home/u/wt/beta'
@@ -435,6 +435,46 @@ test('after a compaction the selected card is attached in full again', async ($,
   await $.prompt.submit({ text: '三' } as any)
   expect((data.submitted.at(-1).context ?? []).join('')).toContain('- 下一步：依審核修正')
   await ui.unmount()
+})
+
+/** 卡片規則段守門用的最小模板與照它開的 Beta 卡（卡名佔位換成 Beta）。 */
+const RULES_TEMPLATE = '# <任務名> DESK\n\n<!-- DESK -->\n- 狀態：x\n- 驗證：`npm test`\n- 等你：無\n- 下一步：無\n- 關卡：無\n<!-- /DESK -->\n\n## 卡片規則\n\n- 規則一\n- 規則二\n\n## 規格\n'
+const RULES_CARD = RULES_TEMPLATE.replace('<任務名>', 'Beta')
+
+/** AC-5：subagent 寫壞卡片規則段：面板動態記一筆錯誤，Agent 那邊的工具結果同樣附提示；主對話寫壞的不記動態。 */
+test('card rules guard flags agent writes in feed', async ($, on) => {
+  const { data } = fixture(on)
+  const feed = feedLog(on)
+  deskTemplate(data, RULES_TEMPLATE)
+  tools(on, data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const mine = await $.tool.call({ tool: 'Write', file_path: CARD_B, content: RULES_CARD.replace('- 規則二\n', '') } as any)
+  expect((mine.context ?? []).join('')).toContain('Beta 的卡片規則段跟模板不一致：缺 1 行')
+  expect(feed.has('卡片規則段跟模板不一致')).toBe(false)
+  const agent = await $.tool.call({ tool: 'Write', file_path: CARD_B, content: RULES_CARD.replace('- 規則一\n', ''), agentId: 'sub-1' } as any)
+  expect((agent.context ?? []).join('')).toContain('Beta 的卡片規則段跟模板不一致：缺 1 行')
+  expect(feed.list.filter(e => e.text === 'Beta 卡片規則段跟模板不一致')).toEqual([{ at: NOW, text: 'Beta 卡片規則段跟模板不一致', tone: 'error', card: CARD_B }])
+})
+
+/** K-1：讀不到模板或卡片時，改卡片照樣馬上重讀，也不提示。 */
+test('card rules guard failures do not block the early reread', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const reads = countReads(data)
+  tools(on, data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const before = reads.n
+  // 讀不到模板（沒有這個檔）。
+  const r = await $.tool.call({ tool: 'Write', file_path: CARD_B, content: RULES_CARD.replace('- 規則一\n', '') } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(reads.n).toBe(before + 1)
+  // 有模板、卡片讀不到。
+  deskTemplate(data, RULES_TEMPLATE)
+  data.unreadable.push(CARD_B)
+  await $.tool.call({ tool: 'Bash', command: `sed -i '' 's/x/y/' ${CARD_B}` } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(reads.n).toBe(before + 2)
+  expect(r.context ?? []).toEqual([])
+  expect(data.toasts.filter((t: string) => t.includes('卡片規則段'))).toEqual([])
 })
 
 /** 斜線指令送出時照樣附卡，但不算附過（有些指令不進模型）：下一則一般提示仍附全文。 */
