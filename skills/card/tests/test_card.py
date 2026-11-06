@@ -739,6 +739,15 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn(rule, rules)
         self.assertIn(rule, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'prompts', 'rules.ts')))
 
+    def test_card_template_tells_history_time_comes_from_date_command(self):
+        # history-future-time AC-4：開新卡的「卡片規則」寫明歷程時間用 date 指令取得，跟派工提示（hooks/prompts/rules.ts）同一個指令。
+        command = "date '+%Y-%m-%d %H:%M'"
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        text = read(self.card_path())
+        rules = text[text.index('## 卡片規則'):text.index('## 規格')]
+        self.assertIn(f'- History 每筆的時間一律跑 `{command}` 取得，不要自己估。', rules)
+        self.assertIn(command, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'prompts', 'rules.ts')))
+
     def test_done_notes_uncommitted_files(self):
         card, wt = self.confirmed_card_with_commit()
         write(os.path.join(wt, 'export.py'), 'x = 2\n')

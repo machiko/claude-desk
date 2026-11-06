@@ -84,7 +84,8 @@ let knownPaths: string[] = []
 /** 上一輪重新整理讀到的背景 agent 清單；派工時即時問不到 claude agents 就用它算名額。 */
 export let lastAgents: readonly RawAgent[] | null = null
 export let optionsRef: PluginOptions | undefined
-const cardParseCache = new Map<string, { raw: string; steps: string[]; history: any[] }>()
+/** 卡片解析結果：卡片內容與修改時間都沒變才沿用（歷程的未來時間看修改時間判斷）。 */
+const cardParseCache = new Map<string, { raw: string; mtime: number | null; steps: string[]; history: any[] }>()
 const reviewTextCache = new Map<string, { raw: string; top: any[]; preflight: string | undefined }>()
 
 /** 讀一輪：登錄表 → 每張卡＋檔案時間 → 背景 agent → 快照；差異進動態與 toast。 */
@@ -123,7 +124,8 @@ export async function refresh($: any, options: PluginOptions) {
         $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
         $.fs.stat(row.statusPath).catch(() => null) as Promise<{ mtimeMs?: number } | null>,
       ])
-      const base = buildCase(row, card, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, agents, verifies[row.statusPath], now)
+      const cardMtime = typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null
+      const base = buildCase(row, card, cardMtime, agents, verifies[row.statusPath], now)
       const last = jobs[normalizeRoot(base.root)]?.last
       // 最後一次派工停在提問、題目寫進卡片「等你」後已在對話處理（清成「無」）：那個 Agent 不再代表任務，同一輪就照卡片算。
       const cleared = askClearedOnCard(last, base.ask)
@@ -157,13 +159,13 @@ export async function refresh($: any, options: PluginOptions) {
       let history: any[] = []
       if (card !== null) {
         const cached = cardParseCache.get(row.statusPath)
-        if (cached && cached.raw === card) {
+        if (cached && cached.raw === card && cached.mtime === cardMtime) {
           steps = cached.steps
           history = cached.history
         } else {
           steps = deploySteps(card)
-          history = historyEntries(card)
-          cardParseCache.set(row.statusPath, { raw: card, steps, history })
+          history = historyEntries(card, cardMtime)
+          cardParseCache.set(row.statusPath, { raw: card, mtime: cardMtime, steps, history })
         }
       }
       // 審查檔只讀一次：CRITICAL、HIGH 前幾條與第一行的前置結果。

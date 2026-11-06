@@ -115,6 +115,66 @@ test('test_history_shows_date_and_time_newest_first', async ($, on) => {
   await ui.unmount()
 })
 
+/** 卡片最後修改時間（本地時間）2026-11-06 14:28:30；歷程寫在這之後的時間是 Agent 估錯的。 */
+const CARD_SAVED = new Date(2026, 10, 6, 14, 28, 30).getTime()
+
+/** 掛上面板、選 Alpha，回傳畫面文字與歷程時間欄。 */
+async function shownHistory($: any, clock: any) {
+  await helpers($, clock).refresh()
+  const ui = await $.ui.mount(PANE(100))
+  await ui.press({ key: `row-${CARD_A}` })
+  const shown = await screen(ui)
+  const shownStamps = await stamps(ui)
+  await ui.unmount()
+  return { shown, stamps: shownStamps }
+}
+
+/** history-future-time AC-2：比卡片修改時間晚超過 1 分鐘的那筆只顯示日期，內文照常，排序仍照原時間。 */
+test('history entry later than card mtime shows date only', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  data.mtimes[CARD_A] = CARD_SAVED
+  withHistory(data, [
+    '- 2026-11-06 14:10：開卡',
+    '- 2026-11-06 14:40：估錯時間的實作',
+  ])
+  const { shown, stamps: got } = await shownHistory($, clock)
+
+  expect(got).toEqual(['11-06        ', '11-06 14:10  '])
+  expect(shown).toContain(flat('11-06  估錯時間的實作'))
+  expect(shown).not.toContain('14:40')
+  expect(shown.indexOf(flat('11-06 14:10  開卡'))).toBeGreaterThan(shown.indexOf(flat('估錯時間的實作')))
+})
+
+/** history-future-time AC-3：跟卡片修改時間同一分鐘或晚 1 分鐘內的照常顯示時間。 */
+test('history entry within a minute of card mtime keeps time', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  data.mtimes[CARD_A] = CARD_SAVED
+  withHistory(data, [
+    '- 2026-11-06 14:28：同一分鐘寫的',
+    '- 2026-11-06 14:29：晚一分鐘寫的',
+  ])
+  const { shown, stamps: got } = await shownHistory($, clock)
+
+  expect(got).toEqual(['11-06 14:29  ', '11-06 14:28  '])
+  expect(shown).toContain(flat('11-06 14:29  晚一分鐘寫的'))
+  expect(shown).toContain(flat('11-06 14:28  同一分鐘寫的'))
+})
+
+/** history-future-time K-2：讀不到卡片修改時間時，時間原樣顯示（不當成未來時間）。 */
+test('history keeps time when card mtime unknown', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  delete data.mtimes[CARD_A]
+  withHistory(data, ['- 2099-12-31 23:59：很遠的時間'])
+  const { shown, stamps: got } = await shownHistory($, clock)
+
+  expect(got).toEqual(['12-31 23:59  '])
+  expect(shown).toContain(flat('12-31 23:59  很遠的時間'))
+  expect(historyEntries('## History\n- 2099-12-31 23:59：很遠的時間', null)).toEqual([{ date: '2099-12-31', time: '23:59', text: '很遠的時間' }])
+})
+
 test('test_history_keeps_date_only_entries_aligned', async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data, clock)
@@ -157,6 +217,8 @@ test('test_history_section_lists_every_entry', async ($, on) => {
     ...Array.from({ length: 9 }, (_, i) => `- 2030-01-${String(i + 1).padStart(2, '0')} 0${i}:30：第${'一二三四五六七八九'[i]}筆`),
     `- 2030-01-10 09:30：${tenth}`,
   ])
+  // 卡片在最後一筆之後才存檔：歷程時間都不算未來時間（history-future-time），照原樣顯示
+  data.mtimes[CARD_A] = new Date(2030, 0, 10, 9, 30).getTime()
   const h = helpers($, clock)
   await h.refresh()
   // 一般事件：檢查通過、派繼續（都有記進動態，面板不顯示）
