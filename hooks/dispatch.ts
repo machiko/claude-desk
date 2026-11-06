@@ -62,6 +62,8 @@ export type DispatchSettings = {
   composeDir: string
   /** card.base：分支預設要併進去的分支（例如 origin/main）；沒有 PR 與 release 線時當 diff 與合併判斷的基準。 */
   cardBase: string
+  /** card.template：DESK 卡模板（可用 `~`）；空白用 plugin 內附的 templates/DESK-template.md。寫入卡片後的卡片規則段守門跟 card.py 用同一份。 */
+  cardTemplate: string
   /** updateCheck："off" 不自動檢查 desk 新版本；沒設＝每 24 小時查一次。 */
   updateCheck: '' | 'off'
   /** 同時在跑的工作桌背景 Agent 上限（整台機器一起算）；超過的派工排隊。0＝不限。 */
@@ -182,7 +184,7 @@ export { KIND_LABEL }
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true, chainQuotaStop: DEFAULT_CHAIN_QUOTA_STOP }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', cardTemplate: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true, chainQuotaStop: DEFAULT_CHAIN_QUOTA_STOP }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -206,6 +208,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     }
     out.composeDir = str(d?.composeDir)
     out.cardBase = str(d?.card?.base)
+    out.cardTemplate = str(d?.card?.template)
     out.prOpen = str(d?.pr?.open)
     out.updateCheck = d?.updateCheck === false || str(d?.updateCheck).toLowerCase() === 'off' ? 'off' : ''
     // 非負整數照用（0＝不限）；負數、小數、字串都當沒寫。

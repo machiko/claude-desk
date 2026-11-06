@@ -1,4 +1,4 @@
-// 對話裡的哪些動作會讓面板過期：改了卡片或登錄表、跑了 /desk:card 的腳本、會移動分支的 git。
+// 對話裡的哪些動作會讓面板過期：改了卡片或登錄表、跑了 /desk:card 的腳本、會移動分支的 git；也認出這次可能寫到哪幾張 DESK 卡（卡片規則段守門用）。
 // 純函式；register.tsx 在工具呼叫結束後問它，要不要馬上重讀，不用等回合結束或定時更新。
 import { parseCard, parseGate } from './card'
 
@@ -32,6 +32,27 @@ export function touchesDesk(call: ToolTouch, known: readonly string[]): boolean 
     return CARD_TOUCH.test(cmd) || GIT_TOUCH.test(cmd) || GH_TOUCH.test(cmd) || [...paths].some(p => cmd.includes(p))
   }
   return false
+}
+
+/** DESK 格式的卡片檔（舊格式 .console/STATUS.md 沒有卡片規則段，不檢查）。 */
+const DESK_CARD = /(^|\/)\.desk\/CARD\.md$/
+/** Bash 指令裡寫出來的絕對路徑卡片檔。 */
+const DESK_CARD_IN_CMD = /\/[^\s'"`;|&<>()]*\/\.desk\/CARD\.md(?![\w.])/g
+
+/**
+ * 這次工具呼叫可能寫到的 DESK 卡（卡片規則段守門要比對的）：Edit／Write／MultiEdit 取 file_path；
+ * Bash 取指令裡出現的已知卡片路徑（`known`）與寫出來的絕對路徑。其他工具、舊格式的卡回空陣列。
+ */
+export function cardWrites(call: ToolTouch, known: readonly string[]): string[] {
+  if (EDIT_TOOLS.has(call.tool)) {
+    const file = typeof call.file_path === 'string' ? norm(call.file_path) : ''
+    return file && DESK_CARD.test(file) ? [file] : []
+  }
+  if (call.tool !== 'Bash' || typeof call.command !== 'string') return []
+  const cmd = call.command
+  const named = known.map(norm).filter(p => DESK_CARD.test(p) && cmd.includes(p))
+  const written = [...cmd.matchAll(DESK_CARD_IN_CMD)].map(m => norm(m[0]))
+  return [...new Set([...named, ...written])]
 }
 
 /** Bash 指令裡的 `card.py spec-ok <目標>`（目標可加引號）。 */

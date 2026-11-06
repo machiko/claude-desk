@@ -244,3 +244,12 @@ export async function pressHotkey(ui: any, key: string): Promise<any> {
   await ui.press({ key: bound[0].key })
   return bound[0]
 }
+
+/**
+ * plugin 內附的 DESK 卡模板（`<plugin 根目錄>/templates/DESK-template.md`）讀到的內容：測試裡不知道 plugin 根目錄，
+ * 讓假檔案系統對這個檔名結尾的路徑回 text（寫最小的 fixture 模板，不拿內附模板去改）。要在 fixture 之後、第一次呼叫 $ 之前設。
+ */
+export function deskTemplate(data: { files: Record<string, string> }, text: string) {
+  const files = data.files
+  data.files = new Proxy(files, { get: (t, k) => (typeof k === 'string' && k.endsWith('/templates/DESK-template.md') ? text : Reflect.get(t, k)) })
+}
