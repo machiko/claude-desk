@@ -51,10 +51,32 @@ export function parseCard(text: string): Record<string, string> | null {
 export const saysNone = (value: string) => value.trim() === '' || /^(?:無|沒有|none|n\/a|-)(?:$|[；;，,。\s(（])/i.test(value.trim())
 
 export function parseGate(value: string | undefined): Gate | null {
+  const gate = readGate(value)
+  return gate && isUnreviewed(gate) ? null : gate
+}
+
+/** 依審查修完的關卡結論：修正提示叫 Agent 在 review 關卡的分級後面寫這句。 */
+export const UNREVIEWED_GATE = '已依審查修正、未複審（發版時整版審查）'
+/** 認「依審查修完、還沒人審過」只看這三個字：結論是 Agent 照提示抄的，可能少括號、換標點或插字。card.py 的 UNREVIEWED_MARK 同一個字。 */
+export const UNREVIEWED_MARK = '未複審'
+
+function readGate(value: string | undefined): Gate | null {
   const raw = (value ?? '').trim()
   if (!raw || saysNone(raw)) return null
   const m = raw.match(/^(spec|review|release)\s*[：:]\s*(.*)$/i)
   return m ? { kind: m[1]!.toLowerCase() as Gate['kind'], detail: m[2]!.trim() } : { kind: 'unknown', detail: raw }
+}
+
+const isUnreviewed = (g: Gate) => g.kind === 'review' && g.detail.includes(UNREVIEWED_MARK)
+
+/**
+ * 依審查修完寫的「review：…；已依審查修正、未複審」：不是審查結論（沒有人審過修完的程式），parseGate 當成沒有關卡，
+ * 跟以前叫 Agent「改回 無」一樣判斷（停下的流程照舊未通過、按 g 派修正，檢查沒跑、沒過關前六段不跳到合併段）。
+ * 卡片的關卡欄（c.gate）照原文保留，面板的關卡列用這個函式照樣顯示；是不是未複審過關看流程紀錄（chain.unreviewed）。
+ */
+export function unreviewedGate(value: string | undefined): Gate | null {
+  const gate = readGate(value)
+  return gate && isUnreviewed(gate) ? gate : null
 }
 
 export const GATE_LABEL: Record<Gate['kind'], string> = { spec: '規格', review: '驗收', release: '上線', unknown: '關卡' }

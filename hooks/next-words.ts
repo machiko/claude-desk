@@ -13,7 +13,9 @@ const IDLE_WAIT = '(?:(?:自動|完成)?(?:重新)?(?:檢查|測試)(?:結果|�
 const IDLE_PRESS_V = '(?:沒動靜就\\s*)?(?:到面板\\s*)?按\\s*[vV](?:\\s*(?:執行|跑)?\\s*(?:(?:完成)?檢查|測試))?'
 /** 「開 PR」，與審查過關、之後沒有新 commit 時 `/desk:card done` 寫的「到面板照「輪到你」開 PR 或合併」：照面板走，不派 Agent。 */
 const IDLE_OPEN_PR = '(?:到面板\\s*)?(?:照\\s*「輪到你」\\s*)?開\\s*PR(?:\\s*或\\s*合併)?'
-const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|${IDLE_OPEN_PR}|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
+/** 關卡是依審查修完的未複審結論時 `/desk:card done` 寫的「到面板照「輪到你」接著做」：照面板走，不派 Agent。 */
+const IDLE_FOLLOW_TURN = '(?:到面板\\s*)?照\\s*「輪到你」\\s*接著做'
+const IDLE_CLAUSE = new RegExp(`^(?:${IDLE_PRESS_V}|(?:過了|通過後?)\\s*開\\s*PR|${IDLE_OPEN_PR}|${IDLE_FOLLOW_TURN}|(?:等|待)\\s*${IDLE_WAIT}(?:\\s*(?:與|和|、|及)\\s*${IDLE_WAIT})*)$`)
 
 /**
  * 派審查的寫法（「審查」換成新詞「驗收」一樣）：「（派）（獨立）審查」可接按鍵註記「（w）」或「：/desk review …」；整段是 `/desk review …`；

@@ -14,6 +14,13 @@ export const STAGES: readonly { id: StageId; label: string }[] = [
   { id: 'ship', label: '上線' },
 ]
 export const STAGE_GLYPH: Record<StageStatus, string> = { done: '●', active: '◉', wait: '◆', fail: '✕', todo: '○', na: '·' }
+/** 這條分支審查過一次、依審查修完只跑測試就過關（沒有重新驗收）：驗收段過了之後，合併段的註記與摘要帶著這句。 */
+export const UNREVIEWED_NOTE = '已修正・未重新驗收'
+/** 同上，但這一輪不是依審查修正（過關後你又 commit、按 g 做新的下一步）：沒有「已修正」。 */
+export const UNREVIEWED_PLAIN_NOTE = '測試通過・未重新驗收'
+/** 未複審過關的註記：這一輪依審查修正過才寫「已修正」。 */
+export const unreviewedNote = (chain: Pick<NonNullable<Case['chain']>, 'reviewFix'> | undefined): string => chain?.reviewFix ? UNREVIEWED_NOTE : UNREVIEWED_PLAIN_NOTE
+
 const INDEX = Object.fromEntries(STAGES.map((s, i) => [s.id, i])) as Record<StageId, number>
 
 /** 審查結論：關卡寫成 `review：CRITICAL 0、HIGH 1、MEDIUM 2、LOW 0；…`。四個數字缺任何一個就讀不出。 */
@@ -176,7 +183,7 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
         if (running === 'catchup') set('active', CATCHUP_ACTIVE)
         else if (c.conflict) set('fail', conflictNote(c.conflict.into))
         else if (!c.pr && c.chain?.needsHuman) set('wait', '高風險，請你看過再開 PR')
-        else if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') set('wait', c.pr ? 'PR 已拒絕，需重新開啟' : c.chain?.skippedReview ? '只動文件、免驗收，可開 PR' : '可開 PR')
+        else if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') set('wait', c.pr ? 'PR 已拒絕，需重新開啟' : c.chain?.skippedReview ? '只動文件、免驗收，可開 PR' : c.chain?.unreviewed ? `${unreviewedNote(c.chain)}，可開 PR` : '可開 PR')
         else if (c.pr.ci === 'fail') set('fail', 'CI 失敗')
         else if (c.pr.ci === 'pending') set('active', 'CI 執行中')
         else set('wait', '可合併')

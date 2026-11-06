@@ -385,17 +385,21 @@ async function tryMerge($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: stri
   return { into: remote ?? ref, ref, files }
 }
 
-/** 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 快取。找不到基準就是空清單（算一般風險，不快取）。 */
-export async function riskOf($: any, c: Case, extra: readonly [RegExp, string][] = [], cardBase = ''): Promise<Risk> {
+/**
+ * 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 與選基準用的輸入（PR 目標、card.base）快取：
+ * 沒帶 PR 算的不會蓋掉帶 PR 的（重新整理與自動流程要給同一個 c，見 register.tsx）。找不到基準就是空清單（算一般風險，不快取）。
+ */
+export async function riskOf($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, extra: readonly [RegExp, string][] = [], cardBase = ''): Promise<Risk> {
   const head = c.git?.head
   if (!head) return classify([], extra)
-  const cached = risks.get(`${c.root}\n${head}`)
+  const key = [c.root, head, c.pr?.dest ?? '', cardBase.trim()].join('\n')
+  const cached = risks.get(key)
   if (cached) return cached
   const found = await diffBase($, c, cardBase)
   const files = found ? ((await git($, c.root, ['diff', '--name-only', `${found.base}..HEAD`])) ?? '').split(/\r?\n/) : []
   const risk = classify(files, extra)
   // 找不到基準（例如還沒 fetch）不快取，下次找到了再判斷，免得高風險被當成一般記住。
-  if (found) risks.set(`${c.root}\n${head}`, risk)
+  if (found) risks.set(key, risk)
   return risk
 }
 

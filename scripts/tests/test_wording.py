@@ -23,6 +23,8 @@ ALLOWED = (
      '教學寫進審查檔（.task/REVIEW.md）的本文，跟真的審查檔同格式；審查檔不改名（D-01）'),
     ('hooks/chain.ts', re.compile(r'^const LEGACY_HELD: '),
      '換詞前存進流程紀錄（$.store 的 chain.stopped）的原因句，資料格式：只拿來比對換成新句、不顯示'),
+    ('hooks/card.ts', re.compile(r"^export const UNREVIEWED_(?:GATE|MARK) = '"),
+     '修正 Agent 寫進卡片關卡的結論（規格 AC-1 定的字）與認它的關鍵字，資料格式；面板的說法用「未重新驗收」'),
 )
 # 正規式字面值前面可能接的字元或關鍵字（其餘的「/」是除號）。不含「<」：`</` 是 JSX 收尾標籤；不含「}」：`{a}/{b}` 是 JSX 文字或除號
 # （hooks 裡接在「}」後面的「/」都在樣板字串或正規式裡面）。另外 `/>` 是 JSX 自閉合標籤，也不是正規式。

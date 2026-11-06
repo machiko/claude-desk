@@ -1,6 +1,6 @@
 // 現在卡：一列一個元素（content 會捲動，列數要算得出來），操作按鈕另外列成清單交給常駐的 footer 排。
 import type { Case, Verify } from '../types'
-import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
+import { allPicked, choiceCount, decisionAnswer, parseDecisions, parseGate, splitClauses, unreviewedGate, ARCHIVE_WORD, CARD_CMD, GATE_LABEL } from './card'
 import { ago, displayWidth, elapsedText, fit, hhmm, isRunLong, pad, runTimeText, slugOf, summary, quotaHeld } from './model'
 import { ACTIVE_PULSE, COLOR, EDGE, SPINNER, STATE, WORD } from './theme'
 import { KIND_LABEL, normalizeRoot } from './dispatch'
@@ -222,7 +222,8 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   const choices = choiceCount(parsed)
   const decisions = choices ? parsed : []
   const picks = view.picks[picksKey(c)] ?? {}
-  const gate = parseGate(c.gate)
+  // 依審查修完寫的未複審關卡不算關卡（不影響狀態與六段），但照樣顯示原文。
+  const gate = parseGate(c.gate) ?? unreviewedGate(c.gate)
   const prefix = `case-${c.statusPath}-`
   // 狀態字是反白徽章：前後各多一格。
   // 總執行時間接在狀態標籤後面（已結束的加正在跑的，跟著每秒的重畫動），超過 15 分用警示色。

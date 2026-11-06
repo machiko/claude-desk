@@ -339,7 +339,7 @@ test('測試結果的動態與通知用新詞', async ($, on) => {
 test('驗收結果的動態與通知用新詞', async ($, on) => {
   // 過關的動態與通知
   expect(passWords('Beta', undefined)).toEqual({ feed: 'Beta 驗收通過，可開 PR', say: 'Beta：驗收通過，可以開 PR' })
-  expect(passWords('Beta', undefined, true)).toEqual({ feed: 'Beta 只動文件、測試通過，免驗收，可開 PR', say: 'Beta：只動文件，免驗收，可以開 PR' })
+  expect(passWords('Beta', undefined, 'skipped')).toEqual({ feed: 'Beta 只動文件、測試通過，免驗收，可開 PR', say: 'Beta：只動文件，免驗收，可以開 PR' })
   expect(passWords('Beta', { kind: 'open' })).toEqual({ feed: 'Beta 驗收通過，自動派 Agent 開 PR', say: 'Beta：驗收通過，自動派 Agent 開 PR' })
   // 驗收結論缺分級：流程停下的原因
   expect(nextStep({ owner: 'me', startedAt: 1, round: 0 }, 'review', null, null, true)).toEqual({ kind: 'stop', reason: '驗收結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' })

@@ -4,7 +4,7 @@ import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '..
 import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
-import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
+import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
 import { RUN_WARN_MS, isDeskLaunch, spanMs } from './dispatch'
 import { MEDIUM_FIX_NOT_SENT } from './chain'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
@@ -539,7 +539,9 @@ export function summary(c: Case): string {
   if (c.state === 'nocard') return '找不到卡片'
   if (c.state === 'failed' && c.chain?.stopped) return c.chain.stopped
   const verdict = standingVerdict(c)
-  if (verdict && toFix(c, verdict) === 0 && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : '驗收通過，可開 PR'
+  // 未複審過關：修完寫的關卡不算審查結論（card.ts 的 parseGate），沒有結論可看，照流程紀錄說已過關。
+  const unreviewed = !!c.chain?.passed && !!c.chain.unreviewed && !c.chain.stale
+  if (((verdict && toFix(c, verdict) === 0) || unreviewed) && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : unreviewed ? `${unreviewedNote(c.chain)}，可開 PR` : '驗收通過，可開 PR'
   if (c.state === 'idle') return c.statusShort || c.status || '閒置'
   return c.next
 }

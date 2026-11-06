@@ -315,7 +315,7 @@ test('implementation prompt asks for a changelog fragment instead of CHANGELOG.m
 
 test('idle next: waiting-only next steps refuse continue and say what to do', () => {
   // feed-current、spec-gate 實際派出去的句子，與幾種常見寫法
-  for (const next of ['等自動檢查與審查；過了開 PR', '等完成檢查與審查', '等檢查', '等審查', '等合併', '等 PR', '開 PR', '等你確認', '等 Reyes 確認', '待合併', '等 CI 通過', '等你', '等審查結果；通過後開 PR', '到面板按 v 執行完成檢查', '按 v', '按 v 跑檢查；等審查', '等自動重新檢查與審查；沒動靜就到面板按 v', '到面板照「輪到你」開 PR 或合併']) {
+  for (const next of ['等自動檢查與審查；過了開 PR', '等完成檢查與審查', '等檢查', '等審查', '等合併', '等 PR', '開 PR', '等你確認', '等 Reyes 確認', '待合併', '等 CI 通過', '等你', '等審查結果；通過後開 PR', '到面板按 v 執行完成檢查', '按 v', '按 v 跑檢查；等審查', '等自動重新檢查與審查；沒動靜就到面板按 v', '到面板照「輪到你」開 PR 或合併', '等自動重新測試；沒動靜就到面板按 v', '到面板照「輪到你」接著做']) {
     expect(idleNext(next)).toBe(IDLE_WHY)
     const c = staged(mk(next))
     expect(dispatchable(c)).toEqual(['review', 'sync'])

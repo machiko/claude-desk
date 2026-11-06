@@ -170,7 +170,7 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   expect(data.launches.length).toBe(4)
   expect(h.prompt(3)).toContain('修正第 2／2 輪')
 
-  // 三、檢查中斷：修完自動檢查跑到一半記不下結果 → 暫停；按 v → 通過 → 自動派審查
+  // 三、檢查中斷：修完自動檢查跑到一半記不下結果 → 暫停；按 v → 通過 → 這條分支審查過，過關、不重新驗收
   data.git[ROOT]!.head = 'h3'
   data.run = async () => result(0, 'all green\n')
   breakNext = true
@@ -180,8 +180,9 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   expect(data.launches.length).toBe(4)
   await h.verify()
   expect(chain().stopped).toBeUndefined()
-  expect(data.launches.length).toBe(5)
-  expect(h.prompt(4)).toContain('程式碼審查')
+  expect(data.launches.length).toBe(4)
+  expect(chain().passed).toBe(true)
+  expect(chain().unreviewed).toBe(true)
   expect(chain().round).toBe(2)
   expect(data.asks.length).toBe(0)
 })

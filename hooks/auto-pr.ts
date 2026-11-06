@@ -25,9 +25,17 @@ export function autoPrPlan(c: Pick<Case, 'pr' | 'gitState'>, needsHuman?: string
   return (c.gitState?.ahead ?? 0) > 0 ? { kind: 'push', pr: pr.id } : { kind: 'skip', why: `PR #${pr.id} 已是最新，等 CI 與合併` }
 }
 
-/** 過關的動態（feed）與提示、系統通知（say）。沒有 plan（沒開 autoPr）時跟以前一字不差；skipped 是只動文件、免審查過關。 */
-export function passWords(name: string, plan: AutoPrPlan | undefined, skipped = false): { feed: string; say: string } {
-  const lead = skipped ? { feed: '只動文件、測試通過，免驗收', say: '只動文件，免驗收' } : { feed: '驗收通過', say: '驗收通過' }
+/** 怎麼過關的：審查通過、只動文件免審查、這條分支審查過而修正或新 commit 只跑測試（未複審）。 */
+export type PassHow = 'reviewed' | 'skipped' | 'unreviewed'
+const PASS_LEAD: Record<PassHow, { feed: string; say: string }> = {
+  reviewed: { feed: '驗收通過', say: '驗收通過' },
+  skipped: { feed: '只動文件、測試通過，免驗收', say: '只動文件，免驗收' },
+  unreviewed: { feed: '測試通過，未重新驗收（發版時整版審查）', say: '測試通過，未重新驗收' },
+}
+
+/** 過關的動態（feed）與提示、系統通知（say）。沒有 plan（沒開 autoPr）時跟以前一字不差。 */
+export function passWords(name: string, plan: AutoPrPlan | undefined, how: PassHow = 'reviewed'): { feed: string; say: string } {
+  const lead = PASS_LEAD[how]
   const tail = !plan || (plan.kind === 'skip' && !plan.why) ? { feed: '，可開 PR', say: '，可以開 PR' }
     : plan.kind === 'open' ? '，自動派 Agent 開 PR'
     : plan.kind === 'push' ? `，自動派 Agent push 到 PR #${plan.pr}`

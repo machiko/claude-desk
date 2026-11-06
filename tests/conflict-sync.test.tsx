@@ -319,7 +319,7 @@ test('test_background_fetch_never_prompts_for_credentials', { timeoutMs: SLOW_MS
 
 /**
  * 專案設了 autoPr、審查剛過關時就跟 main 有衝突：過關當下照 autoPr 先派推送（開 PR），推送 Agent 做完才派解衝突，
- * 同一個 worktree 一次只派一個；合併 commit 重新審查過關後再照 autoPr 自動 push 到已開的 PR。
+ * 同一個 worktree 一次只派一個；合併 commit 重新測試過關後（這條分支審查過，不重新驗收）再照 autoPr 自動 push 到已開的 PR。
  */
 test('test_auto_pr_goes_first_and_conflict_agent_follows_when_review_passes_with_conflict', { timeoutMs: SLOW_MS }, async ($, on) => {
   const { data, clock } = fixture(on)
@@ -352,16 +352,13 @@ test('test_auto_pr_goes_first_and_conflict_agent_follows_when_review_passes_with
   expect(promptOf(data, 1)).toContain('合併基準分支、解衝突')
   expect(log.list.filter(e => e.text === 'Beta 與 main 有衝突（2 個檔），自動派 Agent 合併 main、解衝突').length).toBe(1)
 
-  // 解衝突做完（h1 → h2、不再衝突、領先遠端）→ 重新檢查與審查 → 過關後照 autoPr 只 push 到 PR #12
+  // 解衝突做完（h1 → h2、不再衝突、領先遠端）→ 重新檢查（這條分支審查過，不重新驗收）→ 過關後照 autoPr 只 push 到 PR #12
   data.git[BETA] = { ...data.git[BETA]!, head: 'h2', conflicts: undefined, ahead: 1 }
   finish(data, BETA)
   await refresh($, clock, 3)
   expect(data.launches.length).toBe(3)
-  expect(promptOf(data, 2)).toContain('審查通過後又有新 commit 的重新審查')
-  finish(data, BETA)
-  await refresh($, clock, 3)
-  expect(data.launches.length).toBe(4)
-  expect(promptOf(data, 3).split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開')
+  expect(promptOf(data, 2).split('\n')[0]).toContain('推送：只 push feature/b（PR #12 已開')
+  expect(data.launches.every((l: any) => !String(l.argv.at(-1)).includes('程式碼審查'))).toBe(true)
 })
 
 /** AC-5 */

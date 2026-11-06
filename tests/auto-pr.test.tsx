@@ -527,8 +527,8 @@ test('autoPrApplies: not on a release line, a detached HEAD or without git', () 
 
 test('passWords: without autoPr the words are unchanged', () => {
   expect(passWords('Beta', undefined)).toEqual({ feed: 'Beta 驗收通過，可開 PR', say: 'Beta：驗收通過，可以開 PR' })
-  expect(passWords('Beta', undefined, true)).toEqual({ feed: 'Beta 只動文件、測試通過，免驗收，可開 PR', say: 'Beta：只動文件，免驗收，可以開 PR' })
-  expect(passWords('Beta', { kind: 'open' }, true).say).toBe('Beta：只動文件，免驗收，自動派 Agent 開 PR')
+  expect(passWords('Beta', undefined, 'skipped')).toEqual({ feed: 'Beta 只動文件、測試通過，免驗收，可開 PR', say: 'Beta：只動文件，免驗收，可以開 PR' })
+  expect(passWords('Beta', { kind: 'open' }, 'skipped').say).toBe('Beta：只動文件，免驗收，自動派 Agent 開 PR')
   expect(passWords('Beta', { kind: 'push', pr: 12 }).feed).toBe('Beta 驗收通過，自動派 Agent push 到 PR #12')
 })
 

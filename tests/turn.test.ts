@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { buildCase } from '../hooks/model'
+import { buildCase, stateOf, summary } from '../hooks/model'
+import { UNREVIEWED_GATE, parseGate, unreviewedGate } from '../hooks/card'
 import { finalState, pipeline } from '../hooks/pipeline'
 import { AGENT_STOPPED } from '../hooks/chain'
 import { buildPrompt, dispatchable, dispatchRefusal } from '../hooks/dispatch'
@@ -155,7 +156,7 @@ test('a blocking review verdict without a chain sends a review fix, not a check 
     expect(c.state).toBe('failed')
     expect(dispatchable(c)).toContain('continue')
     const head = buildPrompt(c, 'continue').split('\n')[0]!
-    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進歷程。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
+    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進歷程。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM <沒修的條數>、LOW <原數>；已依審查修正、未複審（發版時整版審查）」，History 加一行列出依審查修了哪幾條，狀態寫一句修了什麼。')
     expect(head).not.toContain('未通過')
   }
 })
@@ -237,6 +238,12 @@ test('a stale check the chain will pick up by itself says the re-review is autom
 
   for (const t of auto) expect(t).toEqual({ who: 'you', text: '驗收後有新 commit：按 v 重新執行測試；通過後自動重新驗收', action: 'verify', key: 'v' })
   expect(turnOf(mk({}, { chain: stopped })).text).not.toContain('自動重新驗收')
+  // 這條分支審查過（每張卡只審查一次）：流程接手時通過就過關，不說會重新驗收
+  for (const chain of [rechecked, fixed]) expect(turnOf(mk({}, { chain: { ...chain, reviewed: true } })).text).toBe('驗收後有新 commit：按 v 重新執行測試；通過後自動過關、不重新驗收')
+  expect(turnOf(mk({}, { chain: { ...stopped, reviewed: true } })).text).not.toContain('自動過關')
+  const fixing = { round: 1, lastKind: 'fix' as const, autoReview: true, reviewed: true }
+  expect(turnOf(mk({ next: '等審查' }, { chain: fixing })).text).toBe('下一步只剩等測試／驗收：按 v 執行測試，流程接著過關、不重新驗收；要改程式先把下一步寫成要做的事')
+  expect(turnOf(mk({ next: '派審查' }, { chain: fixing })).text).toBe('下一步是驗收：按 v 執行測試，通過後自動過關、不重新驗收')
 })
 
 /** one-next-step AC-2：合併段與上線段也寫出下一步之後是什麼；部署步驟列「全部做完後：」接同一句。 */
@@ -298,4 +305,66 @@ test('turn: a passed review with only recorded MEDIUM goes straight to open PR o
   const asked = mk({ gate, ask: '審查 MEDIUM 2 條（漏處理空清單）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格' })
   expect(turnOf(asked)).toMatchObject({ who: 'you', text: '按選項字母 → f 填入 → Enter 送出', key: 'f' })
   expect(stageActions(asked).has('fill')).toBe(true)
+})
+
+/** 跟 register 一樣：流程紀錄疊上去之後才算 state（stateOf 要看 chain），再算六段。 */
+function mkRun(f: Parameters<typeof card>[0], extra: Partial<Case>, v?: Verify): Case {
+  const read = { ...buildCase({ name: 'A', statusPath: '/w/age-group/.desk/CARD.md' }, card(f), 1, {}, v), git: { branch: 'feature/a', head: 'h2' }, ...extra }
+  const base = { ...read, state: stateOf(read, v) }
+  const piped = { ...base, pipeline: pipeline(base as Case, v) }
+  return { ...piped, state: finalState(piped) } as Case
+}
+
+/**
+ * 審查 HIGH（本卡）：依審查修完照提示寫的關卡「review：CRITICAL 0、HIGH 0、…；已依審查修正、未複審」不是審查結論，
+ * 工作桌讀起來跟以前叫 Agent「改回 無」一模一樣：修正輪用完停下、Agent 被停止時照舊未通過、按 g 派修正；沒有判定 HEAD、檢查沒跑時不跳到合併段。
+ */
+test('a gate written after a review fix reads like none until the chain passes', () => {
+  // 修正 Agent 照提示抄的結論：整句、少了括號那段、半形括號、「、」換「，」、中間插字，都只認「未複審」三個字
+  const conclusions = [UNREVIEWED_GATE, '已依審查修正、未複審', '已依審查修正、未複審(發版時整版審查)', '已依審查修正，未複審（發版時整版審查）', '已依審查修正 HIGH 2 條、未複審（發版時整版審查）']
+  const limit = '整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格'
+  const red = { ...passed, head: 'h2', ok: false, exitCode: 1 }
+  const view = (c: Case) => ({ state: c.state, stage: c.pipeline?.current, summary: summary(c), turn: turnOf(c), ids: ids(c), prompt: buildPrompt(c, 'continue').split('\n')[0] })
+  const cases: [Partial<Case>, Verify | undefined, string][] = [
+    // 修正輪用完停下（測試沒過）：未通過，摘要寫停下原因，按 g 派修正提示
+    [{ chain: { round: 2, fixTotal: 2, lastKind: 'fix', stopped: limit, reviewed: true } }, red, 'failed'],
+    // 下一個 Agent 被停止
+    [{ chain: { round: 1, fixTotal: 1, lastKind: 'fix', stopped: AGENT_STOPPED, reviewed: true } }, undefined, 'failed'],
+    // 卡片上的審查結論不是工作桌派的（沒有流程紀錄、沒有判定 HEAD），按 g 修完、測試還沒跑
+    [{}, undefined, 'ready'],
+    // 同上，測試跑出紅的
+    [{}, red, 'failed'],
+  ]
+  for (const written of conclusions.map(t => `review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；${t}`)) for (const next of ['等自動驗收', '補 AC-3 的測試']) {
+    for (const [extra, v, state] of cases) {
+      const now = mkRun({ next, gate: written }, extra, v)
+      const none = mkRun({ next, gate: '無' }, extra, v)
+      // 卡片的關卡照原文保留（主對話看到的卡片內容、面板的關卡列跟卡片檔一樣）
+      expect(now.gate).toBe(written)
+      expect(now.state).toBe(state)
+      expect(now.pipeline?.current).not.toBe('merge')
+      expect(summary(now)).not.toBe('驗收通過，可開 PR')
+      expect(view(now)).toEqual(view(none))
+    }
+  }
+  // 停下的那兩種：輪到你叫你按 g，派出去的是修正
+  const written = `review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；${UNREVIEWED_GATE}`
+  const halted = mkRun({ next: '等自動驗收', gate: written }, cases[0]![0], red)
+  expect(summary(halted)).toBe(limit)
+  expect(turnOf(halted).key).toBe('g')
+  expect(dispatchRefusal(halted, 'continue')).toBe('')
+  expect(buildPrompt(halted, 'continue').startsWith(`修正：流程已暫停（${limit}）`)).toBe(true)
+  // 流程過關、未複審：照流程紀錄走到合併段
+  const shipped = mkRun({ gate: written }, { chain: { round: 1, passed: true, unreviewed: true, reviewFix: true } }, { ...passed, head: 'h2' })
+  expect(shipped.pipeline?.current).toBe('merge')
+  expect(summary(shipped)).toBe('已修正・未重新驗收，可開 PR')
+  // 審查寫的結論照舊讀得到（例如高風險複審覆寫成真的結論）
+  const real = mkRun({ gate: 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核' }, {})
+  expect(parseGate(real.gate)?.kind).toBe('review')
+  expect(real.state).not.toBe(mkRun({ gate: '無' }, {}).state)
+  // 顯示用：未複審的關卡另外讀得到原文；真的審查結論與其他關卡不算
+  expect(unreviewedGate(written)).toEqual({ kind: 'review', detail: `CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；${UNREVIEWED_GATE}` })
+  expect(parseGate(written)).toBeNull()
+  expect(unreviewedGate(real.gate)).toBeNull()
+  expect(unreviewedGate('spec：未複審')).toBeNull()
 })
