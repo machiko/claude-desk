@@ -75,6 +75,12 @@ export type Case = {
   history?: HistoryEntry[]
   /** 審查檔的 CRITICAL、HIGH 前三條。 */
   reviewTop?: string[]
+  /** 這條分支已結束的派工與自動檢查總共跑了幾毫秒，加上還沒結束那次派工停下等人前收起來的幾段（不含現在這段）；沒派過工就沒有。 */
+  runMs?: number
+  /** 最後一次派工現在這段從何時開始在跑；停下等人或已結束就沒有。畫面上加 min(now, runUntil) - runFrom。 */
+  runFrom?: number
+  /** 現在這段最多算到這時（最後看到它在跑＋寬限），跟存進去的總數封頂一樣；有 runFrom 才有。 */
+  runUntil?: number
   /** 審查檔第一行的前置結果（「成功，候選 n 條，採用 m 條」或「失敗（原因）」）。 */
   preflight?: string
 }

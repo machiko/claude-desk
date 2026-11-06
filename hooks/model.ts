@@ -5,7 +5,7 @@ import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
 import { parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
-import { isDeskLaunch } from './dispatch'
+import { RUN_WARN_MS, isDeskLaunch, spanMs } from './dispatch'
 import { MEDIUM_FIX_NOT_SENT } from './chain'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
 import type { Limit } from './quota-words'
@@ -192,6 +192,33 @@ export function elapsedText(ms: number): string {
   const m = Math.floor(s / 60)
   if (m < 60) return `${m} 分 ${s % 60} 秒`
   return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+}
+
+/** 總執行時間只到分：不到 1 分、13 分、1 小時 3 分。 */
+export function runMinutesText(ms: number): string {
+  const m = Math.floor(Math.max(0, ms) / 60_000)
+  if (m < 1) return '不到 1 分'
+  if (m < 60) return `${m} 分`
+  return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+}
+
+/**
+ * 這件的總執行時間：已結束的派工與自動檢查、還沒結束那次派工收起來的幾段（c.runMs），加上它現在這段在跑的時間
+ * （min(now, c.runUntil) - c.runFrom）。跟存進去的累計同一套紀錄、同樣的封頂算（見 dispatch.ts 的 runOf）。
+ */
+export function totalRunMs(c: Case, now: number): number {
+  const running = c.runFrom !== undefined ? spanMs({ from: c.runFrom, until: c.runUntil ?? Infinity }, now) : 0
+  return (c.runMs ?? 0) + running
+}
+
+/** 總執行時間超過門檻（15 分鐘）：用畫面上寫的整分數比，「15 分」不會被標成超過。 */
+export const isRunLong = (c: Case, now: number): boolean => Math.floor(totalRunMs(c, now) / 60_000) > RUN_WARN_MS / 60_000
+
+/** 卡片頭一列的「總執行 13 分」；超過 15 分加「（超過 15 分）」（hasNote 為 false 時不加，窄畫面用）；沒派過工是空字串。 */
+export function runTimeText(c: Case, now: number, hasNote = true): string {
+  const ms = totalRunMs(c, now)
+  if (ms <= 0) return ''
+  return `總執行 ${runMinutesText(ms)}${hasNote && isRunLong(c, now) ? `（超過 ${RUN_WARN_MS / 60_000} 分）` : ''}`
 }
 
 export const hhmm = (t: number) => {
@@ -398,6 +425,16 @@ export function endedHow(list: readonly any[], launchName: string | undefined): 
   if (status === 'busy' || status === 'waiting') return null
   if (isBlocked(a) && !blockedDone(a)) return null
   return String(a.state ?? '').toLowerCase() === 'stopped' ? 'stopped' : 'finished'
+}
+
+/**
+ * 工作桌派出去的那一次（按啟動名）還沒結束時的樣子：busy 在跑；停在提問、權限提示或還沒做完的 blocked 是 waiting（等人，不算時間）；
+ * 不在清單裡（還在啟動）是 null。已經結束的由 endedHow 判斷，這裡不管。
+ */
+export function runSeen(list: readonly any[], launchName: string | undefined): 'busy' | 'waiting' | null {
+  const a = launchOf(list, launchName)
+  if (!a) return null
+  return String(a.status ?? '').toLowerCase() === 'busy' && !a.waitingFor ? 'busy' : 'waiting'
 }
 
 /** 停下來等人的 agent：權限提示，或工作桌派出去的那次停在提問。 */
