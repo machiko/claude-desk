@@ -123,8 +123,11 @@ const SETUP: Record<'ask' | 'gate' | 'failed' | 'running', (data: any) => void> 
   failed: data => { data.files[CARD_A] = data.files[CARD_A].replace(ASK, '無').replace('- 關卡：無', '- 關卡：review：CRITICAL 1、HIGH 0、MEDIUM 0、LOW 0；要修') },
   running: data => { data.files[CARD_A] = data.files[CARD_A].replace(ASK, '無') },
 }
-/** 改動前（fad1c6f）同樣情境下現在卡的列數，依 40、72、120 欄：邊條與徽章不能多出任何一列。 */
-const ROWS_BEFORE: Record<keyof typeof SETUP, number[]> = { ask: [11, 10, 10], gate: [10, 9, 9], failed: [11, 8, 9], running: [7, 7, 7] }
+/**
+ * 改動前（fad1c6f）同樣情境下現在卡的列數，依 40、72、120 欄：邊條與徽章不能多出任何一列。
+ * ask 在 120 欄（清單並排、現在卡較窄）是 11：plain-pm-wording 把「輪到你」改成白話範本後那句長了，多換一行，不是邊條多出來的。
+ */
+const ROWS_BEFORE: Record<keyof typeof SETUP, number[]> = { ask: [11, 10, 11], gate: [10, 9, 9], failed: [11, 8, 9], running: [7, 7, 7] }
 const WIDTHS = [40, 72, 120]
 
 /**

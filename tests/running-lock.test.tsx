@@ -241,7 +241,7 @@ test('test_turn_line_says_processing_while_agent_runs_on_gated_case', async ($, 
   const ui = await mount($, clock)
   const pane = await screen(ui)
   expect(pane).toContain(flat('處理中'))  // 前面的圖示會轉，不比對字形
-  expect(pane).not.toContain(flat('按 u 確認上線'))
+  expect(pane).not.toContain(flat('u 確認上線（'))
   const band = await $.ui.mount(BAND(120))
   const top = flat(text(await band.drawn()))
   expect(top).toContain(flat('處理中'))

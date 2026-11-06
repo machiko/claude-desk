@@ -28,7 +28,7 @@ function waiting(data: any, gate = '無') {
 async function pressReply($: any, data: any, clock: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
-  expect(flat(text(await ui.drawn()))).toContain(flat('按 y 回覆 Agent 的提問'))
+  expect(flat(text(await ui.drawn()))).toContain(flat('y 回覆 Agent 的提問'))
   expect((await ui.find({ key: KEY }))?.text).toBe('↩ 回覆')
   await ui.press({ key: KEY })
   await clock.settle()

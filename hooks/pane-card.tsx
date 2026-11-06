@@ -281,10 +281,10 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   const toShip = !!c.tag && parseGate(c.gate)?.kind === 'release' && !isDone
   const waitAgent = isBusy(c) && !c.releasing && (isDone || !!c.tag) ? `Agent 處理中，完成後再${toShip ? '確認上線' : '歸檔'}` : ''
   const afterDeploy = waitAgent || (isDone ? archive : ship.text)
-  // 上線段那句是「要做的事；做完之後」兩段：下一步列兩段都列出來，不收成「還有 1 項」。
+  // 上線段那句是白話範本一句（做完之後寫在句尾括號裡）：下一步列換行列出全句，不截掉做完之後要做的事。
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
     ? kvRows(ui, '部署', c.deploySteps.map((x, i) => `${i + 1}. ${x}`).join('；') + `；全部做完後：${afterDeploy}`, width, true, COLOR.attention)
-    : kvRows(ui, '下一步', waitAgent || (isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text), width, false, COLOR.attention, 2)))
+    : kvRows(ui, '下一步', waitAgent || (isDone ? `已合併，${ARCHIVE_WORD}：${archive}` : ship.text), width, true, COLOR.attention)))
 
   // 決策送出了、對話還在處理：選項只顯示（標出選了哪個），不能再點，免得以為還沒送。
   const isSent = turnCtx(view, c).sent === 'waiting'

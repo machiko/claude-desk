@@ -157,7 +157,7 @@ test('test_fix_prompts_require_fixing_the_whole_class', () => {
     expect(p.split('\n')[0]).toContain('修正')
     expect(p).toContain(WHOLE_CLASS)
     expect(p).toContain('每種都修並補測試，不只修審查舉的例子')
-    expect(p).toContain('列了哪些情況寫進歷程')
+    expect(p).toContain('列了哪些情況寫進 .task/REPORT.md')
   }
   // 檢查沒過的修正輪不是依審查檔修：沒有這句
   expect(buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: ['boom'] })).not.toContain(WHOLE_CLASS)

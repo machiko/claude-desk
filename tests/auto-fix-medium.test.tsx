@@ -92,11 +92,11 @@ test('test_behavior_medium_alone_passes_and_asks_instead_of_auto_fix', async ($,
   const beta = (data.store.chains as any)[BETA]
   expect(beta.passed).toBe(true)
   expect(beta.needsHuman).toContain('認證／中介層')
-  // 卡片「等你」那題還在，輪到你：按選項字母 → f 填入 → Enter 送出
+  // 卡片「等你」那題還在，輪到你：f 填入決策（先按選項字母，填入後按 Enter 送出）
   expect(data.files[CARD_A]).toContain(`- 等你：${ASK}`)
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_A}` })
-  expect(await screen(ui)).toContain(flat('按選項字母 → f 填入 → Enter 送出'))
+  expect(await screen(ui)).toContain(flat('f 填入決策（先按選項字母，填入後按 Enter 送出）'))
   await ui.unmount()
 })
 
@@ -232,7 +232,7 @@ test('test_no_medium_fix_is_sent_when_this_conversation_does_not_own_the_review'
   const gamma = await screen(ui)
   expect(gamma).toContain(flat('● 規格 ● 實作 ● 測試 ● 驗收 ◆ 合併'))
   expect(gamma).toContain(flat('◆ 驗收  CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0（自審）'))
-  expect(gamma).toContain(flat('按兩次 n 開 PR 派 Agent push 並開 PR（驗收是自審，可按 w 派獨立驗收）'))
+  expect(gamma).toContain(flat('n 開 PR（按兩次，派 Agent push 並開 PR，驗收是自審，可按 w 派獨立驗收）'))
   expect(await ui.find({ key: `case-${CARD_C}-open-pr` })).toBeTruthy()
   await ui.unmount()
 })

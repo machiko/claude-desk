@@ -27,18 +27,18 @@ test('a merged case without a tag shows the same next step in the pane and the b
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   expect(await ui.find({ type: 'Text', text: /PR #12 → main/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '按兩次 z 發版，再按 Enter 送出' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^z 發版（按兩次，再按 Enter 送出/ })).toBeDefined()
   const screen = JSON.stringify(await ui.drawn())
   expect(screen).not.toContain('可歸檔')
   expect(screen).not.toContain('archive')
   expect(screen).not.toContain('合併後打 tag')
   // 「▶ 輪到你」那一句與「下一步」列是同一句
-  expect((await ui.findAll({ type: 'Text', text: '按兩次 z 發版，再按 Enter 送出' })).length).toBe(2)
-  expect((await ui.findAll({ type: 'Text', text: '打了 tag 之後歸檔' })).length).toBe(2)
+  expect((await ui.findAll({ type: 'Text', text: 'z 發版（按兩次，再按 Enter 送出，打了 tag 之後歸檔）' })).length).toBe(2)
   await ui.unmount()
   const band = await bandText($)
   // 只說打了 tag 之後才歸檔，不叫你現在歸檔
-  expect(band).toContain('輪到你：按兩次 z 發版，再按 Enter 送出；打了 tag 之後歸檔')
+  // 摘要列放不下時截掉句尾的括號，打了 tag 之後歸檔照樣看得到
+  expect(band).toContain('輪到你：z 發版（按兩次，再按 Enter 送出，打了 tag 之後歸檔')
   expect(band).not.toContain('可歸檔')
   expect(band).not.toContain('archive')
 })
@@ -50,7 +50,7 @@ test('the pane next step follows the ship stage and offers archive only once the
   data.gh = PR_MERGED
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   let ui = await $.ui.mount(PANE(80))
-  expect((await ui.findAll({ type: 'Text', text: '部署 v0.19.0 後按 u 確認上線' })).length).toBe(2)
+  expect((await ui.findAll({ type: 'Text', text: 'u 確認上線（部署 v0.19.0 後按，確認後歸檔）' })).length).toBe(2)
   expect(JSON.stringify(await ui.drawn())).not.toContain('可歸檔')
   await ui.unmount()
   // (b) 關卡不是 release：六段全綠，下一步與輪到你都指向歸檔
@@ -60,7 +60,7 @@ test('the pane next step follows the ship stage and offers archive only once the
   // 完成的任務不搶「現在」，點它的列看詳情
   await ui.press({ key: `row-${CARD_B}` })
   expect(await ui.find({ type: 'Text', text: /✓ 已上線 v0\.19\.0/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '按兩次 q 歸檔（或輸入 /desk:card archive beta）' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'q 歸檔（按兩次，或輸入 /desk:card archive beta）' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '已合併，可歸檔：/desk:card archive beta' })).toBeDefined()
   await ui.unmount()
 })
@@ -77,7 +77,7 @@ test('a tag containing an unreviewed, unmerged branch head does not mark the cas
   expect(screen).not.toContain('已上線')
   expect(screen).not.toContain('可歸檔')
   expect(screen).not.toContain('archive beta')
-  expect(await ui.find({ type: 'Text', text: /看過規格（o 開卡片）後按 t 確認/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^t 確認規格並派實作（先按 o 看過規格/ })).toBeDefined()
   await ui.unmount()
   const band = await bandText($)
   expect(band).not.toContain('歸檔')
@@ -92,7 +92,7 @@ test('after the merge the next step stays the ship step while an Agent runs on t
   data.files[CARD_B] += '\n## 部署步驟（合併後）\n1. php artisan migrate\n'
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
-  expect(await ui.find({ type: 'Text', text: '全部做完後：按兩次 z 發版，再按 Enter 送出' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '全部做完後：z 發版（按兩次，再按 Enter 送出' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /全部做完後：.*Agent/ })).toBeUndefined()
   await ui.unmount()
 })

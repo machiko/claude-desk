@@ -10,13 +10,13 @@ import { isQuotaHold } from '../quota-words'
 /** 要改規格才能修的 MEDIUM：不改，交給你決定。修正提示共用。 */
 const MEDIUM_DECIDE = `要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「${MEDIUM_ASK_FORM}」，其他照修。`
 /**
- * 依審查檔修完的收尾：關卡寫成擋不住的分級（CRITICAL、HIGH 修掉了是 0）加上未複審的結論，History 列修了哪幾條。
+ * 依審查檔修完的收尾：關卡寫成擋不住的分級（CRITICAL、HIGH 修掉了是 0）加上未複審的結論，History 照白話範本記一筆修了哪幾條。
  * 不改回 無：卡片與發版看得到這張卡是修完沒複審的（工作桌只認「未複審」三個字、當成沒有關卡，見 card.ts 的 parseGate）；
  * 數字留著原本的 CRITICAL、HIGH 會被當成還要修。高風險照舊複審，會覆寫這句。`medium` 說 MEDIUM 那格怎麼填。
  */
-const reviewFixDone = (medium: string) => `修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM ${medium}、LOW <原數>；${UNREVIEWED_GATE}」，History 加一行列出依審查修了哪幾條，狀態寫一句修了什麼。`
+const reviewFixDone = (medium: string) => `修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM ${medium}、LOW <原數>；${UNREVIEWED_GATE}」，History 加一筆「Agent：依審查修好 <哪幾條> → 待測試（commit <頂端 commit 前 7 碼>）」，狀態寫一句修了什麼。`
 /** 依審查檔修時不只修舉的例子：先列出同一類的所有情況，每種都修、補測試。修正提示共用。 */
-export const FIX_WHOLE_CLASS = '每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進歷程。'
+export const FIX_WHOLE_CLASS = '每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進 .task/REPORT.md。'
 /**
  * 你按 g 修審查結論：依審查檔修 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM（你主動要修的照修，不受自動修正上限擋）。
  * `file` 是要依的那一份審查檔（接在資安審查之後是 SECURITY.md，其他是 REVIEW.md），提示只寫這一份，修正的 Agent 不用猜。

@@ -26,7 +26,7 @@ function scriptOk(data: any) {
   data.run = async (e: any) => {
     if (!e.argv.includes('spec-ok')) return result(0, '')
     const withGate = setFields(data.files[CARD_B]!, { 關卡: '無', 狀態: CONFIRMED })
-    data.files[CARD_B] = appendTo(appendTo(withGate, '## Decisions', '- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）'), '## History', '- 2030-01-05：規格確認，關卡清為無，可派實作')
+    data.files[CARD_B] = appendTo(appendTo(withGate, '## Decisions', '- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）'), '## History', '- 2030-01-05 12:00：Alex：確認規格 → 可派實作')
     return result(0, `規格已確認（AC-1～AC-2），關卡清為「無」：${CARD_B}\n`)
   }
 }
@@ -41,7 +41,7 @@ test('a real case waiting on its spec offers t to confirm it', async ($, on) => 
   expect(button?.props?.hotkey).toBe('t')
   expect(button?.props?.variant).toBe('primary')
   expect(await screen(ui)).toContain(flat('▶ 輪到你'))
-  expect(await screen(ui)).toContain(flat('看過規格（o 開卡片）後按 t 確認並派實作（或輸入 /desk:card spec beta ok）'))
+  expect(await screen(ui)).toContain(flat('t 確認規格並派實作（先按 o 看過規格，或輸入 /desk:card spec beta ok）'))
   await ui.unmount()
 })
 
@@ -97,7 +97,7 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
   expect(data.files[CARD_B]).toContain('- 關卡：無')
   expect(data.files[CARD_B]).toContain(`- 狀態：${CONFIRMED}`)
   expect(data.files[CARD_B]).toContain('- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）')
-  expect(data.files[CARD_B]).toContain('- 2030-01-05：規格確認，關卡清為無，可派實作')
+  expect(data.files[CARD_B]).toContain('- 2030-01-05 12:00：Alex：確認規格 → 可派實作')
 
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
@@ -107,7 +107,7 @@ test('pressing t twice confirms the spec like /desk:card spec ok', async ($, on)
   expect(data.asks).toHaveLength(0)
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
-  expect(await screen(ui)).not.toContain(flat('按 g 派 Agent：依審核修正'))
+  expect(await screen(ui)).not.toContain(flat('g 派 Agent 做下一步（依審核修正）'))
   expect(await ui.find({ key: KEY })).toBeUndefined()
   await ui.unmount()
 })
@@ -213,6 +213,6 @@ test('help lists t for confirming the spec in real mode and for the tutorial ste
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(120))
   await ui.press({ key: 'help' })
-  expect(await screen(ui)).toContain(flat('確認規格（按兩次）；教學模式的下一步'))
+  expect(await screen(ui)).toContain(flat('確認規格（規格看過、要派實作時按兩次，教學模式裡是確認規格／合併／打 tag 的下一步）'))
   await ui.unmount()
 })

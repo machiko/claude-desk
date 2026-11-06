@@ -226,11 +226,11 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
 
   // 面板上的「▶ 輪到你」
   const alpha = flat(await pick(ui, CARD_A))
-  expect(alpha).toContain(flat('▶ 輪到你  驗收後有新 commit：按 v 重新執行測試；通過後按 w 重新驗收'))
+  expect(alpha).toContain(flat('▶ 輪到你  v 重新執行測試（驗收後有新 commit，通過後按 w 重新驗收）'))
   const beta = flat(await pick(ui, CARD_B))
-  expect(beta).toContain(flat('▶ 輪到你  按 w 派驗收（新對話）；有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後開 PR'))
+  expect(beta).toContain(flat('▶ 輪到你  w 派驗收（新對話，有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後開 PR'))
   const gamma = flat(await pick(ui, CARD_C))
-  expect(gamma).toContain(flat('（驗收是自審，可按 w 派獨立驗收）'))
+  expect(gamma).toContain(flat('，驗收是自審，可按 w 派獨立驗收）'))
   for (const shown of [alpha, beta, gamma]) expect(shown).not.toMatch(OLD_HINT)
 
   // 檢查沒核准時按一次 v：不跳對話框，按鈕與檢查列說「測試」
@@ -257,16 +257,16 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
     turnOf(caseOf('- 關卡：無', { chain: { round: 0, lastKind: 'continue', autoReview: true } }, undefined, '派審查（按 w）')).text,
   ]
   expect(hints).toEqual([
-    '驗收後有新 commit：按 v 重新執行測試；通過後自動重新驗收',
-    '驗收後有新 commit：按 v 重新執行測試；通過後按 w 重新驗收',
-    '按 w 派驗收（新對話）；有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後開 PR',
+    'v 重新執行測試（驗收後有新 commit，通過後自動重新驗收）',
+    'v 重新執行測試（驗收後有新 commit，通過後按 w 重新驗收）',
+    'w 派驗收（新對話，有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後開 PR）',
     '接著自動驗收',
-    '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事',
-    '下一步是驗收：按 v 執行測試，通過後按 w 派驗收',
-    '下一步是驗收：按 v 執行測試，通過後自動驗收',
+    'v 執行測試（下一步只剩等測試，通過後按 w 派驗收，要改程式先把下一步寫成要做的事）',
+    'v 執行測試（下一步是驗收，通過後按 w 派驗收）',
+    'v 執行測試（下一步是驗收，通過後自動驗收）',
   ])
   // 測試段的一般情況（完成檢查還沒跑、不是驗收後的新 commit）
-  expect(turnOf({ ...caseOf('- 關卡：無', {}), pipeline: { stages: [], current: 'check', note: '' } } as Case).text).toBe('按 v 執行測試；通過後按 w 派驗收')
+  expect(turnOf({ ...caseOf('- 關卡：無', {}), pipeline: { stages: [], current: 'check', note: '' } } as Case).text).toBe('v 執行測試（通過後按 w 派驗收）')
   // 下一步寫派審查時按 g：被拒的提示
   expect(refusalOf(caseOf('- 關卡：無', {}, undefined, '派驗收（按 w）'), 'continue')).toEqual({ why: REVIEW_WHY, next: '先按 v 執行測試，通過後照「輪到你」派驗收' })
   expect(refusalOf(caseOf('- 關卡：無', {}, ok('b1'), '派審查（按 w）'), 'continue')).toEqual({ why: REVIEW_WHY, next: '按 w 派驗收' })
@@ -379,7 +379,7 @@ test('done 的新舊下一步都不派 Agent', () => {
       expect(reviewNext(next)).toBe(false)
       expect(idleNext(next)).toBe(IDLE_WHY)
       expect(refusalOf(c, 'continue')?.why).toBe(IDLE_WHY)
-      expect(turnOf(c)).toEqual({ who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', action: 'verify', key: 'v' })
+      expect(turnOf(c)).toEqual({ who: 'you', text: 'v 執行測試（下一步只剩等測試，通過後按 w 派驗收，要改程式先把下一步寫成要做的事）', action: 'verify', key: 'v' })
     }
   }
 })

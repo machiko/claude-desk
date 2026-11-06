@@ -5,6 +5,8 @@ import { AGENT_STOPPED } from '../hooks/chain'
 
 // 完成檢查的核准：按兩次 g 開始一輪流程時就核准（第一次列出指令）；流程停在檢查段時說得出為什麼，排除後按 v 就接著走。
 const CHANGED = '測試指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
+/** 流程停在指令改過時「▶ 輪到你」那句（白話範本）。 */
+const CHANGED_TURN = 'v 核准並執行測試（測試指令改過、還沒經你核准，按兩次，流程接著走）'
 const COMPOSE = { options: { composeDir: '/home/u/app' } }
 const IN_APP = 'docker compose exec -T app php artisan test'
 const svc = (Service: string, State = 'running') => JSON.stringify({ Service, State, Health: '' })
@@ -99,7 +101,7 @@ test('a check command changed by the agent pauses the chain with a reason you ca
   // 「▶ 輪到你」說原因，按鍵是 v
   const ui = await $.ui.mount(PANE(160))
   const shown = flat(text(await ui.drawn()))
-  expect(shown).toContain(flat(`▶ 輪到你  ${CHANGED}`))
+  expect(shown).toContain(flat(`▶ 輪到你  ${CHANGED_TURN}`))
   const v = await ui.find({ key: `${PREFIX}verify` })
   expect(leaves(v, 'Text').some((t: any) => t.props?.bold)).toBe(true)
   // 動態、提示、系統通知說同一件事，沒有「尚未授權」
@@ -307,7 +309,7 @@ test('stopping an agent on a chain paused at the check drops the pause so v only
   ui = await $.ui.mount(PANE(160))
   const before = flat(text(await ui.drawn()))
   await ui.unmount()
-  expect(before).not.toContain(flat('排除後按 v 重跑檢查，流程接著走'))
+  expect(before).not.toContain(flat('v 重跑測試（流程已暫停'))
 
   await h.verify()
   expect(sh(data)).toBe(1)
@@ -326,20 +328,20 @@ test('a chain paused at the check by another conversation says where it resumes 
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs', '/elsewhere': 'x' }
   const h = helpers($, data, clock)
   const screen = async () => { const ui = await $.ui.mount(PANE(160)); const s = flat(text(await ui.drawn())); const go = await ui.find({ key: `${PREFIX}continue` }); await ui.unmount(); return { s, go } }
-  const ELSEWHERE = '：這個流程是別的對話開的，到那個對話按 v 才會接著走；或在這裡按 g 重開一輪'
+  const ELSEWHERE = (why: string) => `g 在這裡重開一輪（流程已暫停：${why}，這個流程是別的對話開的，也可到那個對話按 v 接著走）`
 
   data.store.chains = { [ROOT]: { owner: 'other-session', startedAt: 0, round: 0, stopped: HELD, heldAtCheck: true } }
   await h.refresh()
   let shown = await screen()
-  expect(shown.s).toContain(flat(`▶ 輪到你  流程已暫停（${HELD}）${ELSEWHERE}`))
-  expect(shown.s).not.toContain(flat('排除後按 v 重跑檢查，流程接著走'))
+  expect(shown.s).toContain(flat(`▶ 輪到你  ${ELSEWHERE(HELD)}`))
+  expect(shown.s).not.toContain(flat('v 重跑測試（流程已暫停'))
   expect(leaves(shown.go, 'Text').some((t: any) => t.props?.bold)).toBe(true)
 
   data.store.chains = { [ROOT]: { owner: 'other-session', startedAt: 0, round: 0, stopped: CHANGED, heldAtCheck: true } }
   await h.refresh()
   shown = await screen()
-  expect(shown.s).toContain(flat(`▶ 輪到你  流程已暫停（測試指令改過、還沒經你核准）${ELSEWHERE}`))
-  expect(shown.s).not.toContain(flat(`▶ 輪到你  ${CHANGED}`))
+  expect(shown.s).toContain(flat(`▶ 輪到你  ${ELSEWHERE('測試指令改過、還沒經你核准')}`))
+  expect(shown.s).not.toContain(flat(`▶ 輪到你  ${CHANGED_TURN}`))
 })
 
 /** 流程停在檢查段後，Agent 把卡片的檢查整條清掉：不能再說「按兩次 v 核准」（按 v 只會說卡片尚缺完成檢查），改叫你填檢查。 */
@@ -358,8 +360,9 @@ test('a chain paused at the check whose check was then cleared asks for a check,
   const o = await ui.find({ key: `${PREFIX}open` })
   await ui.unmount()
 
-  expect(shown).toContain(flat('▶ 輪到你  卡片還沒有測試指令：開卡片（o）'))
+  expect(shown).toContain(flat('▶ 輪到你  o 開卡片填測試指令（卡片還沒有測試指令'))
   expect(shown).not.toContain(flat('按兩次 v 核准'))
+  expect(shown).not.toContain(flat('v 核准並執行測試'))
   expect(leaves(o, 'Text').some((t: any) => t.props?.bold)).toBe(true)
 })
 
@@ -378,7 +381,7 @@ test('a chain paused at the check before the wording change still reads as held,
   data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: LEGACY_CHANGED, heldAtCheck: true } }
   await h.refresh()
   let shown = await screen()
-  expect(shown).toContain(flat(`▶ 輪到你  ${CHANGED}`))
+  expect(shown).toContain(flat(`▶ 輪到你  ${CHANGED_TURN}`))
   expect(shown).toContain(flat('改過的指令（按兩次 v 核准並執行）：node test.mjs'))
   expect(shown).not.toContain('完成檢查')
 
@@ -387,7 +390,7 @@ test('a chain paused at the check before the wording change still reads as held,
   data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, stopped: LEGACY_UNAPPROVED, heldAtCheck: true } }
   await h.refresh()
   shown = await screen()
-  expect(shown).toContain(flat('▶ 輪到你  測試指令還沒經你核准：按兩次 v 核准並執行，流程接著走'))
+  expect(shown).toContain(flat('▶ 輪到你  v 核准並執行測試（測試指令還沒經你核准，按兩次，流程接著走）'))
   expect(shown).toContain(flat('還沒核准的指令（按兩次 v 核准並執行）：node test.mjs'))
   expect(shown).not.toContain('完成檢查')
 
@@ -395,6 +398,6 @@ test('a chain paused at the check before the wording change still reads as held,
   data.store.chains = { [ROOT]: { owner: 'other-session', startedAt: 0, round: 0, stopped: LEGACY_CHANGED, heldAtCheck: true } }
   await h.refresh()
   shown = await screen()
-  expect(shown).toContain(flat('▶ 輪到你  流程已暫停（測試指令改過、還沒經你核准）：這個流程是別的對話開的'))
+  expect(shown).toContain(flat('▶ 輪到你  g 在這裡重開一輪（流程已暫停：測試指令改過、還沒經你核准，這個流程是別的對話開的'))
   expect(shown).not.toContain('完成檢查')
 })

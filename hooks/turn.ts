@@ -8,7 +8,7 @@ import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext, untrustedSteps } from './dispatch'
 import type { DispatchKind, UntrustedHold } from './dispatch'
-import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './next-words'
+import { MISSING_CHECK_WHY } from './next-words'
 import { ACTION_ORDER, HOTKEY } from './actions'
 import type { ActionId } from './actions'
 import { CATCHUP_RUNNING, catchupAutoTurn, catchupHandTurn, catchupHold } from './catchup'
@@ -60,22 +60,81 @@ export type { ActionId }
 const isRunning = (c: Case) => c.state === 'running'
 const hasChoice = (c: Case) => choiceCount(parseDecisions(c.ask)) > 0
 /** Agent 在跑時，依最後一次派的是什麼說它在做什麼。 */
-const RUNNING_TEXT: Partial<Record<string, string>> = {
+export const RUNNING_TEXT: Partial<Record<string, string>> = {
   continue: 'Agent 在寫程式（l 看輸出）', reply: 'Agent 在寫程式（l 看輸出）', fix: 'Agent 在修正（l 看輸出）',
   sync: 'Agent 在同步卡片（l 看輸出）', review: 'Agent 在驗收（新對話）', verify: '測試在跑',
   publish: 'Agent 在 push、開 PR（l 看輸出）', catchup: CATCHUP_RUNNING,
 }
 
-/** 發版在對話裡跑（卡片寫進行中、還沒逾時）時「輪到你」那句。 */
-export const releasingText = (step: string) => `發版中（${step}），等它跑完`
-/** 卡片寫發版進行中、超過 RELEASE_STALE_MS 沒更新（當成停了）時「輪到你」那句。 */
-export const releaseStoppedText = (step: string) => `上次發版停在${step}，按兩次 z 重來`
+/** 白話範本的一句：`<鍵> <動作>（<補充>）`；補充有好幾件用「，」接在同一個括號裡，沒有補充就不帶括號。 */
+const say = (head: string, ...notes: string[]): string => {
+  const shown = notes.filter(Boolean)
+  return shown.length ? `${head}（${shown.join('，')}）` : head
+}
+/** 範本句再加一件補充：接進句尾的括號裡（不另開第二個括號），沒有括號就補一個。 */
+const addNote = (text: string, note: string): string => text.endsWith('）') ? `${text.slice(0, -1)}，${note}）` : `${text}（${note}）`
 
-const runningText = (c: Case) => c.releasing ? releasingText(c.releasing) : RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
+/** 合併段驗收是自審時，「輪到你」那句加的補充。 */
+const SELF_REVIEW = '驗收是自審，可按 w 派獨立驗收'
 
-const SELF_REVIEW = '（驗收是自審，可按 w 派獨立驗收）'
-/** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
-const MISSING_CHECK = `${MISSING_CHECK_WHY}：${MISSING_CHECK_NEXT}`
+/**
+ * 「輪到你」的每一句（白話範本）：`<鍵> <動作>（<補充：按幾次、做完之後>）`，一句話、不用「；」接第二件事，括號外 30 字內；
+ * 有鍵的句子以那顆鍵開頭，跟 Turn.action 的鍵相同。動態內容（下一步、停下原因、關卡字）放在括號裡。
+ * 別的模組給的句子（批准、還沒信任、解衝突、額度、教學、等你原文）照原句。tests/plain-wording.test.ts 逐句列舉檢查。
+ */
+export const TURN_TEXT = {
+  demo: () => say('示範任務只能看', '照教學那件的指示操作'),
+  noCard: () => say('找不到卡片', '確認登錄表裡的路徑'),
+  launching: () => '派工中，等 Agent 啟動',
+  agentQueued: (n: number) => say('派工排隊中', `排第 ${n} 位，同時執行的 Agent 已達上限，有空位會自動派出`),
+  sentWaiting: () => '決策已送出，等對話處理並寫回卡片',
+  sentUnwritten: () => say('o 開卡片改掉「等你」', '決策送出了卡片卻沒改，也可重新選擇後按 f 再送一次'),
+  pickChoice: () => say('f 填入決策', '先按選項字母，填入後按 Enter 送出'),
+  reply: () => 'y 回覆 Agent 的提問',
+  verifying: () => '測試在跑',
+  verifyQueued: () => '測試排隊中',
+  manual: () => say('手動任務不派工', '工作桌只追蹤'),
+  shipped: () => '已上線，等下一版開發',
+  agentStopped: () => say('g 重開', 'Agent 被停止、沒做完，先看過 worktree'),
+  mediumFixNotSent: () => say('g 重派修正', '你選了修掉的審查 MEDIUM 沒派出去'),
+  checkApprove: (why: string) => say('v 核准並執行測試', why, '按兩次', '流程接著走'),
+  checkPaused: (why: string) => say('v 重跑測試', `流程已暫停：${why}`, '排除後再按，流程接著走'),
+  checkForeign: (why: string) => say('g 在這裡重開一輪', `流程已暫停：${why}`, '這個流程是別的對話開的，也可到那個對話按 v 接著走'),
+  checkStageFailed: (why: string) => say('v 重跑測試', `流程已暫停：${why}`),
+  fixPaused: (why: string) => say('g 再修一輪', `流程已暫停：${why}`, '先看審查檔 e'),
+  checkFailed: () => say('g 讓 Agent 修正', '測試未通過，也可自己修好後按 v 重跑'),
+  unknownGate: (detail: string) => say('o 開卡片處理關卡', `關卡寫「${detail}」`),
+  specOk: (cmd: string) => say('t 確認規格並派實作', `先按 o 看過規格，或輸入 ${cmd}`),
+  specGap: (cmd: string) => say('輸入指令寫驗收情境與實作計畫', cmd),
+  missingCheck: () => say('o 開卡片填測試指令', `${MISSING_CHECK_WHY}，在「檢查」欄填一條修之前會紅、修好會綠的指令`),
+  idle: () => say('閒置', '卡片沒有下一步'),
+  continue: (next: string) => say('g 派 Agent 做下一步', next),
+  verify: (after: string) => say('v 執行測試', `通過後${after}`),
+  reverify: (after: string) => say('v 重新執行測試', '驗收後有新 commit', `通過後${after}`),
+  verifyThenReview: (after: string) => say('v 執行測試', '下一步是驗收', `通過後${after}`),
+  verifyIdle: (after: string) => say('v 執行測試', `下一步只剩等測試，通過後${after}`, '要改程式先把下一步寫成要做的事'),
+  verdict: () => '驗收有結論，接著自動修正或過關',
+  autoReview: () => '接著自動驗收',
+  review: (stale: boolean, after: string) => say(stale ? 'w 重新驗收' : 'w 派驗收', '新對話', stale ? '驗收後有新 commit' : '', '有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你', `過關後${after}`),
+  nothing: () => '沒有待辦',
+  publishPr: () => say('n 開 PR', '按兩次，派 Agent push 並開 PR'),
+  publishPrRisky: () => say('n 開 PR', '高風險改動，先看過審查檔 e 再按兩次，派 Agent push 並開 PR'),
+  publishPush: () => say('n 派 Agent push', 'PR 開著又有新 commit，按兩次，CI 過了再合併'),
+  ciPending: () => 'PR 的 CI 在跑',
+  ciFailed: () => say('p 開 PR 看 CI 失敗原因', '看完按 g 修正'),
+  merge: (id: number) => say(`p 合併 PR #${id}`, '在瀏覽器開啟，合併後打 tag 發版'),
+  releasing: (step: string) => say('發版中，等它跑完', `目前在${step}`),
+  releaseStopped: (step: string) => say('z 重新發版', `按兩次，上次停在${step}`),
+  release: (isRelease: boolean) => say('z 發版', '按兩次，再按 Enter 送出', isRelease ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'),
+  shipConfirm: (tag: string) => say('u 確認上線', `部署 ${tag} 後按，確認後歸檔`),
+  taggedArchive: (tag: string, cmd: string) => say('輸入指令歸檔', `${tag} 已打，${cmd}`),
+  shipsWith: (line: string, isRelease: boolean) => say(`隨 ${line} 發版`, isRelease ? '發版線打 tag 後部署並按 u 確認上線' : '發版線打 tag 後歸檔'),
+  tagRelease: (isRelease: boolean) => say('打 tag 發版', isRelease ? '打了之後部署並按 u 確認上線' : '打了之後歸檔'),
+  archive: (cmd: string) => say('q 歸檔', `按兩次，或輸入 ${cmd}`),
+  archiveCmd: (cmd: string) => say('輸入指令歸檔', cmd),
+} as const
+
+const runningText = (c: Case) => c.releasing ? TURN_TEXT.releasing(c.releasing) : RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
 
 // 派工（dispatch.ts）也要用，放在 pipeline.ts；這裡照舊匯出。
 export { needsPr, needsPush }
@@ -93,13 +152,13 @@ function checkHold(c: Case): BaseTurn | null {
   const why = c.chain?.heldAtCheck ? c.chain.stopped : undefined
   if (!why) return null
   // 停下之後卡片的檢查被整條清掉：按 v 跑不了（只會說尚缺檢查），不再承諾核准；先叫你填檢查。
-  if (!c.verify) return { who: 'you', text: MISSING_CHECK, action: 'open' }
+  if (!c.verify) return { who: 'you', text: TURN_TEXT.missingCheck(), action: 'open' }
   // 別的對話開的流程：這裡按 v 只會跑檢查、接不下去；說去哪裡接，或在這裡重開一輪。
   if (c.chain!.foreign) {
     const short = why === CHECK_CHANGED ? CHECK_CHANGED_WHY : why === CHECK_UNAPPROVED ? CHECK_UNAPPROVED_WHY : why
-    return { who: 'you', text: `流程已暫停（${short}）：這個流程是別的對話開的，到那個對話按 v 才會接著走；或在這裡按 g 重開一輪`, action: 'continue' }
+    return { who: 'you', text: TURN_TEXT.checkForeign(short), action: 'continue' }
   }
-  const text = why === CHECK_CHANGED || why === CHECK_UNAPPROVED ? why : `流程已暫停（${why}）：排除後按 v 重跑測試，流程接著走`
+  const text = why === CHECK_CHANGED ? TURN_TEXT.checkApprove(CHECK_CHANGED_WHY) : why === CHECK_UNAPPROVED ? TURN_TEXT.checkApprove(CHECK_UNAPPROVED_WHY) : TURN_TEXT.checkPaused(why)
   return { who: 'you', text, action: 'verify' }
 }
 
@@ -125,38 +184,37 @@ export const shipTurn = (c: Case, tutorial = false): Turn => keyed(shipBase(c, t
 
 function shipBase(c: Case, tutorial: boolean): BaseTurn {
   // 發版在對話裡跑：打 tag、歸檔都由它做，不叫你動手。
-  if (c.releasing) return { who: 'ai', text: releasingText(c.releasing) }
+  if (c.releasing) return { who: 'ai', text: TURN_TEXT.releasing(c.releasing) }
   const release = parseGate(c.gate)?.kind === 'release'
-  if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, action: 'ship' }
-  if (c.tag) return { who: 'you', ...(!tutorial && canArchive(c) ? archiveTurn(c) : { text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }) }
+  if (c.tag && release) return { who: 'you', text: TURN_TEXT.shipConfirm(c.tag), action: 'ship' }
+  if (c.tag) return { who: 'you', ...(!tutorial && canArchive(c) ? archiveTurn(c) : { text: TURN_TEXT.taggedArchive(c.tag, archiveCmd(c)) }) }
   // 合併進發版線的卡：發版線打 tag 就是它的上線，沒有自己的發版鍵；不帶鍵。
   const line = tutorial ? null : shipsWith(c)
-  if (line) return { who: 'you', text: `隨 ${line} 發版；${release ? '發版線打 tag 後部署並按 u 確認上線' : '發版線打 tag 後歸檔'}` }
-  if (tutorial || !canRelease(c)) return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
+  if (line) return { who: 'you', text: TURN_TEXT.shipsWith(line, release) }
+  if (tutorial || !canRelease(c)) return { who: 'you', text: TURN_TEXT.tagRelease(release) }
   // 卡片還寫著進行中、卻超過 10 分鐘沒更新：當成停了，說停在哪步，按兩次 z 重來。
   const stopped = releaseStep(c.status)
-  if (stopped) return { who: 'you', text: releaseStoppedText(stopped), action: 'release' }
-  return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}`, action: 'release' }
+  if (stopped) return { who: 'you', text: TURN_TEXT.releaseStopped(stopped), action: 'release' }
+  return { who: 'you', text: TURN_TEXT.release(release), action: 'release' }
 }
 
-export const RELEASE_TURN = '按兩次 z 發版，再按 Enter 送出'
-
+/** 對話裡歸檔這件的指令。 */
+const archiveCmd = (c: Case) => `${CARD_CMD} archive ${slugOf(c)}`
 /** 可以從面板歸檔：按兩次 q（⌫ 歸檔），或在對話輸入歸檔指令。 */
-const archiveTurn = (c: Case) => ({ text: `按兩次 q 歸檔（或輸入 ${CARD_CMD} archive ${slugOf(c)}）`, action: 'archive' as const })
+const archiveTurn = (c: Case) => ({ text: TURN_TEXT.archive(archiveCmd(c)), action: 'archive' as const })
 
 /**
  * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關（register 會排 recheck），
  * 或流程已經會自己接手（recheck 排好的新一輪、修正輪剛做完：willAutoReview），都是自動重新審查。
  */
 function checkTurnText(c: Case): string {
-  if (c.chain?.stale) return `驗收後有新 commit：按 v 重新執行測試；${(c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? `通過後${autoAfterCheck(c, true)}` : '通過後按 w 重新驗收'}`
-  return `按 v 執行測試；${willAutoReview(c) ? `通過後${autoAfterCheck(c)}` : '通過後按 w 派驗收'}`
+  if (c.chain?.stale) return TURN_TEXT.reverify((c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? autoAfterCheck(c, true) : '按 w 重新驗收')
+  return TURN_TEXT.verify(willAutoReview(c) ? autoAfterCheck(c) : '按 w 派驗收')
 }
 
 /** 審查段：按 w，以及審查之後會怎樣：CRITICAL／HIGH 自動修正、影響行為的 MEDIUM 寫進「等你」，過關後合併開著的 PR，沒有 PR 就開 PR。 */
 function reviewTurnText(c: Case): string {
-  const head = c.chain?.stale ? '驗收後有新 commit：按 w 重新驗收（新對話）' : '按 w 派驗收（新對話）'
-  return `${head}；有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後${c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR'}`
+  return TURN_TEXT.review(!!c.chain?.stale, c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR')
 }
 
 /** 重新派工的動作：③ 只說這幾種的鍵，別的（開卡片、執行測試）不算。 */
@@ -224,79 +282,76 @@ export function turnOf(c: Case, ctx: TurnCtx = {}): Turn {
 }
 
 function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
-  if (c.demo) return { who: 'none', text: '示範任務：只能看，照教學那件的指示操作' }
-  if (c.state === 'nocard') return { who: 'none', text: '找不到卡片：確認登錄表裡的路徑' }
-  if (ctx.launching) return { who: 'ai', text: '派工中，等 Agent 啟動' }
-  if (ctx.agentQueued) return { who: 'ai', text: `派工排隊中（第 ${ctx.agentQueued} 位）：同時執行的 Agent 已達上限，有空位會自動派出` }
+  if (c.demo) return { who: 'none', text: TURN_TEXT.demo() }
+  if (c.state === 'nocard') return { who: 'none', text: TURN_TEXT.noCard() }
+  if (ctx.launching) return { who: 'ai', text: TURN_TEXT.launching() }
+  if (ctx.agentQueued) return { who: 'ai', text: TURN_TEXT.agentQueued(ctx.agentQueued) }
   // 教學：規格確認、合併、打 tag 用 t，決策寫回卡片；同時說實際使用時怎麼做。執行中、檢查中照一般的說法。
   const lesson = ctx.tutorial && !isRunning(c) && !ctx.verifying && !ctx.queued ? tutorialTurn(c) : null
   if (lesson) return { who: 'you', text: lesson.text, ...(lesson.key && LESSON_ACTION[lesson.key] ? { action: LESSON_ACTION[lesson.key] } : {}) }
   // 決策從面板送出了：等對話寫回卡片，不要再叫你按字母；回合結束卻沒寫回，說清楚怎麼辦。
-  if (c.state === 'ask' && ctx.sent === 'waiting') return { who: 'ai', text: '決策已送出，等對話處理並寫回卡片' }
-  if (c.state === 'ask' && ctx.sent === 'unwritten') return { who: 'you', text: '決策已送出，但卡片的「等你」沒有改：按 o 開卡片改掉，或重新選擇後按 f 再送一次', action: 'open' }
+  if (c.state === 'ask' && ctx.sent === 'waiting') return { who: 'ai', text: TURN_TEXT.sentWaiting() }
+  if (c.state === 'ask' && ctx.sent === 'unwritten') return { who: 'you', text: TURN_TEXT.sentUnwritten(), action: 'open' }
   // 等你沒有選項（例如請你登入）：直接說那句話，沒有字母可按、也沒有東西可填。
-  if (c.state === 'ask') return hasChoice(c) ? { who: 'you', text: '按選項字母 → f 填入 → Enter 送出', action: 'fill' } : { who: 'you', text: c.ask }
-  if (c.state === 'reply') return { who: 'you', text: '按 y 回覆 Agent 的提問', action: 'reply' }
+  if (c.state === 'ask') return hasChoice(c) ? { who: 'you', text: TURN_TEXT.pickChoice(), action: 'fill' } : { who: 'you', text: c.ask }
+  if (c.state === 'reply') return { who: 'you', text: TURN_TEXT.reply(), action: 'reply' }
   if (c.state === 'approve') return { who: 'you', text: approveText(c), action: 'logs' }
   // 處理中：標籤已經說了「不用動手」，這句只講誰在做什麼。
-  if (ctx.verifying) return { who: 'ai', text: '測試在跑' }
-  if (ctx.queued) return { who: 'ai', text: '測試排隊中' }
+  if (ctx.verifying) return { who: 'ai', text: TURN_TEXT.verifying() }
+  if (ctx.queued) return { who: 'ai', text: TURN_TEXT.verifyQueued() }
   // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
   if (isBusy(c)) return { who: 'ai', text: runningText(c) }
-  if (c.manual) return { who: 'none', text: '手動任務：工作桌只追蹤，不派工' }
+  if (c.manual) return { who: 'none', text: TURN_TEXT.manual() }
   if (ctx.hold) return untrustedTurn(c, ctx.hold, ctx)
-  if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: '已上線，等下一版開發' } : { who: 'you', ...(!ctx.tutorial && canArchive(c) ? archiveTurn(c) : { text: `輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }) }
+  if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: TURN_TEXT.shipped() } : { who: 'you', ...(!ctx.tutorial && canArchive(c) ? archiveTurn(c) : { text: TURN_TEXT.archiveCmd(archiveCmd(c)) }) }
   const hold = checkHold(c)
   if (hold && (c.state === 'failed' || c.pipeline?.current === 'check')) return hold
   // Agent 被停掉：原因本身就說了要做什麼，不是修一輪。
-  if (c.state === 'failed' && c.chain?.stopped === AGENT_STOPPED) return { who: 'you', text: AGENT_STOPPED, action: 'continue' }
-  if (c.state === 'failed' && c.chain?.stopped === MEDIUM_FIX_NOT_SENT) return { who: 'you', text: MEDIUM_FIX_NOT_SENT, action: 'continue' }
+  if (c.state === 'failed' && c.chain?.stopped === AGENT_STOPPED) return { who: 'you', text: TURN_TEXT.agentStopped(), action: 'continue' }
+  if (c.state === 'failed' && c.chain?.stopped === MEDIUM_FIX_NOT_SENT) return { who: 'you', text: TURN_TEXT.mediumFixNotSent(), action: 'continue' }
   // 額度煞車：原因已寫了額度、重置時間與接下來要做什麼，照原句；只有「按 g 重開」那種才標 g（解衝突被擋的叫你在對話處理）。
   if ((c.state === 'failed' || quotaHeld(c.chain)) && isQuotaHold(c.chain?.stopped)) return { who: 'you', text: c.chain!.stopped!, ...(c.chain!.stopped!.endsWith(QUOTA_RESTART) ? { action: 'continue' as const } : {}) }
   if (c.state === 'failed') return c.chain?.stopped
-    ? { who: 'you', text: `流程已暫停（${c.chain.stopped}）：看審查檔（e）後按 g 再修一輪`, action: 'continue' }
-    : { who: 'you', text: '測試未通過：按 g 讓 Agent 修正，或自己修好後按 v 重跑', action: 'continue' }
+    ? { who: 'you', text: TURN_TEXT.fixPaused(c.chain.stopped), action: 'continue' }
+    : { who: 'you', text: TURN_TEXT.checkFailed(), action: 'continue' }
   const gate = parseGate(c.gate)
-  if (gate?.kind === 'unknown') return { who: 'you', text: `關卡「${gate.detail}」：開卡片（o）處理`, action: 'open' }
+  if (gate?.kind === 'unknown') return { who: 'you', text: TURN_TEXT.unknownGate(gate.detail), action: 'open' }
   switch (c.pipeline?.current) {
     case 'spec':
       if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
       // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
-      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: `看過規格（o 開卡片）後按 t 確認並派實作（或輸入 ${CARD_CMD} spec ${slugOf(c)} ok）`, action: 'spec-ok' }
-      if (c.specGap) return { who: 'you', text: `輸入 ${CARD_CMD} spec ${slugOf(c)} 寫驗收情境與實作計畫` }
+      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: TURN_TEXT.specOk(`${CARD_CMD} spec ${slugOf(c)} ok`), action: 'spec-ok' }
+      if (c.specGap) return { who: 'you', text: TURN_TEXT.specGap(`${CARD_CMD} spec ${slugOf(c)}`) }
       // 規格沒問題（或舊卡沒有規格段），停在這段只因為檢查欄空白、還是 `<…>` 範本佔位或說明文字：請人填一條真的指令。
-      return { who: 'you', text: MISSING_CHECK, action: 'open' }
+      return { who: 'you', text: TURN_TEXT.missingCheck(), action: 'open' }
     case 'build':
-      if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
+      if (saysNone(c.next)) return { who: 'none', text: TURN_TEXT.idle() }
       // 流程會自動接審查（autoReview）：檢查通過就派審查。不會（主對話開發、done 寫的下一步、別的對話開的流程）：v 只記結果，審查要再按 w。
       // 下一步是派審查：g 派的是繼續，不會審查；先 v 檢查，通過後 w（或流程自動接）。
-      if (reviewNext(c.next)) return { who: 'you', text: `下一步是驗收：按 v 執行測試，通過後${willAutoReview(c) ? autoAfterCheck(c) : '按 w 派驗收'}`, action: 'verify' }
+      if (reviewNext(c.next)) return { who: 'you', text: TURN_TEXT.verifyThenReview(willAutoReview(c) ? autoAfterCheck(c) : '按 w 派驗收'), action: 'verify' }
       if (idleNext(c.next)) return willAutoReview(c)
-        ? { who: 'you', text: `下一步只剩等測試／驗收：按 v 執行測試，流程接著${c.chain?.reviewed ? '過關、不重新驗收' : '驗收'}；要改程式先把下一步寫成要做的事`, action: 'verify' }
-        : { who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', action: 'verify' }
-      return { who: 'you', text: `按 g 派 Agent：${c.next}`, action: 'continue' }
+        ? { who: 'you', text: TURN_TEXT.verifyIdle(`流程接著${c.chain?.reviewed ? '過關、不重新驗收' : '驗收'}`), action: 'verify' }
+        : { who: 'you', text: TURN_TEXT.verifyIdle('按 w 派驗收'), action: 'verify' }
+      return { who: 'you', text: TURN_TEXT.continue(c.next), action: 'continue' }
     case 'check':
-      if (checkStageFailed(c)) return { who: 'you', text: `流程已暫停（${c.chain!.stopped}）`, action: 'verify' }
+      if (checkStageFailed(c)) return { who: 'you', text: TURN_TEXT.checkStageFailed(c.chain!.stopped!), action: 'verify' }
       return { who: 'you', text: checkTurnText(c), action: 'verify' }
     case 'review':
-      if (standingVerdict(c)) return { who: 'ai', text: '驗收有結論，接著自動修正或過關' }
+      if (standingVerdict(c)) return { who: 'ai', text: TURN_TEXT.verdict() }
       // 檢查剛通過、流程還沒派出審查（約兩秒）：不用你按 w。
-      if (willAutoReview(c)) return { who: 'ai', text: '接著自動驗收' }
+      if (willAutoReview(c)) return { who: 'ai', text: TURN_TEXT.autoReview() }
       return { who: 'you', text: reviewTurnText(c), action: 'review' }
     case 'merge': {
       const t = mergeTurn(c)
-      return c.chain?.selfReview && t.who === 'you' ? { ...t, text: t.text + SELF_REVIEW } : t
+      return c.chain?.selfReview && t.who === 'you' ? { ...t, text: addNote(t.text, SELF_REVIEW) } : t
     }
     case 'ship':
       return shipBase(c, !!ctx.tutorial)
     default:
-      return { who: 'none', text: '沒有待辦' }
+      return { who: 'none', text: TURN_TEXT.nothing() }
   }
 }
 
-export const PUBLISH_PR_TURN = '按兩次 n 開 PR 派 Agent push 並開 PR'
-export const PUBLISH_PR_RISKY_TURN = '高風險改動：看過審查檔（e）後按兩次 n 開 PR 派 Agent push 並開 PR'
-export const PUBLISH_PUSH_TURN = 'PR 開著又有新 commit：按兩次 n 派 Agent push，CI 過了再合併'
 
 function mergeTurn(c: Case): BaseTurn {
   // 跟基準分支有衝突：先解衝突。這個對話的流程會自動派 Agent；不自動派的寫原因，在對話處理。
@@ -305,14 +360,14 @@ function mergeTurn(c: Case): BaseTurn {
     return why ? { who: 'you', text: catchupHandTurn(c.conflict.into, why) } : { who: 'ai', text: catchupAutoTurn(c.conflict.into) }
   }
   // 帶開 PR：帶頭的是「⇡ 開 PR」，e 留在列上但變淡。
-  if (needsPrConfirm(c)) return { who: 'you', text: PUBLISH_PR_RISKY_TURN, action: 'open-pr' }
+  if (needsPrConfirm(c)) return { who: 'you', text: TURN_TEXT.publishPrRisky(), action: 'open-pr' }
   // push、開 PR 由 Agent 做（按兩次 n）。
-  if (needsPr(c)) return { who: 'you', text: PUBLISH_PR_TURN, action: 'open-pr' }
+  if (needsPr(c)) return { who: 'you', text: TURN_TEXT.publishPr(), action: 'open-pr' }
   // PR 開著、分支又有新 commit：先 push，CI 才會跑在新 commit 上；這時叫你合併會合到舊的。
-  if (needsPush(c)) return { who: 'you', text: PUBLISH_PUSH_TURN, action: 'push' }
-  if (c.pr!.ci === 'pending') return { who: 'ai', text: 'PR 的 CI 在跑' }
-  if (c.pr!.ci === 'fail') return { who: 'you', text: 'CI 失敗：開 PR（p）看原因後按 g 修正', action: 'pr' }
-  return { who: 'you', text: `合併 PR #${c.pr!.id}（p 在瀏覽器開啟）；合併後打 tag 發版`, action: 'pr' }
+  if (needsPush(c)) return { who: 'you', text: TURN_TEXT.publishPush(), action: 'push' }
+  if (c.pr!.ci === 'pending') return { who: 'ai', text: TURN_TEXT.ciPending() }
+  if (c.pr!.ci === 'fail') return { who: 'you', text: TURN_TEXT.ciFailed(), action: 'pr' }
+  return { who: 'you', text: TURN_TEXT.merge(c.pr!.id), action: 'pr' }
 }
 
 /**

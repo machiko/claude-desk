@@ -53,7 +53,7 @@ test('stale ask: a superseded waiting agent does not hold the task', async ($, o
   expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
   expect(shown).toContain(flat('▶ 輪到你'))
   expect(shown).toContain(flat('可按 w 派獨立驗收'))
-  expect(shown).not.toContain(flat('按 y 回覆'))
+  expect(shown).not.toContain(flat('y 回覆 Agent 的提問'))
   expect(shown).not.toContain(flat('Agent 等待'))
   await ui.unmount()
 })
@@ -86,7 +86,7 @@ test('stale ask: a failed stop still lets the card lead and is not retried', asy
   expect(shown).not.toContain(flat(STOPPED))
   expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
   expect((await ui.find({ key: `${PREFIX}review` }))?.props?.hotkey).toBe('w')
-  expect(shown).not.toContain(flat('按 y 回覆'))
+  expect(shown).not.toContain(flat('y 回覆 Agent 的提問'))
   await ui.unmount()
 })
 
@@ -273,7 +273,7 @@ test('stale ask: a question cleared from the card no longer holds an unmerged ta
     expect(await ui.find({ key: `${PREFIX}reply` }), how).toBeUndefined()
     expect(shown, how).toContain(flat('▶ 輪到你'))
     expect(shown, how).toContain(flat('合併 PR #12'))
-    expect(shown, how).not.toContain(flat('按 y 回覆'))
+    expect(shown, how).not.toContain(flat('y 回覆 Agent 的提問'))
     await ui.unmount()
 
     await refresh($)

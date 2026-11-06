@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, leaves, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, pressHotkey } from './fixture'
+import { fixture, flat, leaves, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, pressHotkey, text } from './fixture'
 import { buildCase } from '../hooks/model'
 import { canRelease, finalState, pipeline } from '../hooks/pipeline'
 import { stageActions, turnOf } from '../hooks/turn'
@@ -13,7 +13,7 @@ const KEY = `case-${CARD_B}-release`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
 const RELEASE_GATE = '- 關卡：release：待上線'
 const GITHUB = 'git@github.com:acme/shop.git'
-const LEAD = '按兩次 z 發版，再按 Enter 送出'
+const LEAD = 'z 發版（按兩次，再按 Enter 送出'
 const AFTER_ARCHIVE = '打了 tag 之後歸檔'
 const AFTER_DEPLOY = '打了 tag 之後部署並按 u 確認上線'
 /** 按兩次「⚑ 發版」填的那行：`/desk:release` 接卡名與 PR，括號裡是清理對象，最後一段是面板確認；規則在 skills/release/SKILL.md，不在請求裡。 */
@@ -65,7 +65,8 @@ async function mountBeta($: any) {
   return ui
 }
 
-const texts = async (ui: any, t: string) => (await ui.findAll({ type: 'Text', text: t })).length
+/** 含這段字的文字列有幾列（「輪到你」與「下一步」各一列；白話範本是一整句，比對句中的一段）。 */
+const texts = async (ui: any, t: string) => (await ui.findAll({ type: 'Text', text: new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).length
 
 test('a merged untagged case leads with the release button', async ($, on) => {
   const { data } = fixture(on)
@@ -85,7 +86,8 @@ test('a merged untagged case leads with the release button', async ($, on) => {
   // 對照組：關卡是 release 的那張，做完之後是部署並按 u
   await ui.press({ key: `row-${CARD_C}` })
   expect(await texts(ui, LEAD)).toBe(2)
-  expect(await texts(ui, AFTER_DEPLOY)).toBe(2)
+  // 這句較長、會換行：接在後面的「部署並按 u」照樣看得到
+  expect(flat(text(await ui.drawn()))).toContain(flat(AFTER_DEPLOY))
   expect(isLead(await ui.find({ key: `case-${CARD_C}-release` }))).toBe(true)
   expect(JSON.stringify(await ui.drawn())).not.toContain('打 tag 發版')
   await ui.unmount()
@@ -161,7 +163,7 @@ test('按兩次 z 填入已確認的發版請求', async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data)
   const ui = await mountBeta($)
-  expect(await texts(ui, '按兩次 z 發版，再按 Enter 送出')).toBe(2)
+  expect(await texts(ui, 'z 發版（按兩次，再按 Enter 送出')).toBe(2)
   const pressed = await pressHotkey(ui, 'z')
   await clock.settle()
   expect(pressed.key).toBe(KEY)
@@ -314,13 +316,13 @@ test('a case merged into a release line ships with that line and gets no release
   const merged = mk('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過', { pr: { id: 12, state: 'MERGED', ci: 'none', dest: LINE } })
   expect(merged.pipeline?.current).toBe('ship')
   expect(merged.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
-  expect(turnOf(merged)).toEqual({ who: 'you', text: `${WITH_LINE}；${AFTER_LINE_TAG}` })
+  expect(turnOf(merged)).toEqual({ who: 'you', text: `${WITH_LINE}（${AFTER_LINE_TAG}）` })
 
   // 關卡是 release 的：做完之後是部署並按 u
   const gated = mk('release：待上線', { pr: { id: 12, state: 'MERGED', ci: 'none', dest: LINE } })
   expect(gated.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
   expect(canRelease(gated)).toBe(false)
-  expect(turnOf(gated).text).toBe(`${WITH_LINE}；發版線打 tag 後部署並按 u 確認上線`)
+  expect(turnOf(gated).text).toBe(`${WITH_LINE}（發版線打 tag 後部署並按 u 確認上線）`)
   expect(turnOf(gated).key).toBeUndefined()
   expect(stageActions(gated).has('release')).toBe(false)
   // 合併進 main 的照舊有發版鍵
@@ -342,7 +344,7 @@ test('a case merged into a release line through git alone also ships with that l
   expect(merged.pipeline?.current).toBe('ship')
   expect(merged.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
   expect(canRelease(merged)).toBe(false)
-  expect(turnOf(merged)).toEqual({ who: 'you', text: `${WITH_LINE}；${AFTER_LINE_TAG}` })
+  expect(turnOf(merged)).toEqual({ who: 'you', text: `${WITH_LINE}（${AFTER_LINE_TAG}）` })
 })
 
 /** AC-2：PR 還開著（目標 main）、被拒絕或被取代，分支卻用 git 併進 origin/release/v26.2.7：一樣隨發版線發版，不給「⚑ 發版」。 */
@@ -353,6 +355,6 @@ test('a case whose PR is not merged but git merged into a release line also ship
     expect(c.pipeline?.current).toBe('ship')
     expect(c.pipeline?.note).toBe(`${WITH_LINE}，待打 tag`)
     expect(canRelease(c)).toBe(false)
-    expect(turnOf(c)).toEqual({ who: 'you', text: `${WITH_LINE}；${AFTER_LINE_TAG}` })
+    expect(turnOf(c)).toEqual({ who: 'you', text: `${WITH_LINE}（${AFTER_LINE_TAG}）` })
   }
 })

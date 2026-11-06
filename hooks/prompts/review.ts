@@ -23,7 +23,7 @@ export function reviewTask(c: Case): string {
 }
 
 // 專案可以用 review.template 換掉契約檔，換了也要拿得到這條，所以放在提示裡。
-const MEDIUM_RECORD = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；'
+const MEDIUM_RECORD = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查：MEDIUM n 條記錄不修 → 見審查檔」；'
 /**
  * 審查 MEDIUM 題的寫法與選項：B 另開卡修是推薦（這張先過關、修正在後續卡做），C 修掉是在這張卡多一輪修正。
  * 審查、修正提示與 templates/review.md 同一組；工作桌照選項開頭認 B（另開卡）與 C（修掉），見 card.ts 的 picksMediumFollowUp／picksMediumFix。

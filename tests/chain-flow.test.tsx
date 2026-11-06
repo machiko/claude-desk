@@ -4,7 +4,7 @@ import { AGENT_STOPPED, recheckFeed, skipsReview } from '../hooks/chain'
 import { buildCase, summary } from '../hooks/model'
 import { UNREVIEWED_GATE } from '../hooks/card'
 import { pipeline, stageLabel } from '../hooks/pipeline'
-import { PUBLISH_PR_TURN, turnOf } from '../hooks/turn'
+import { TURN_TEXT, turnOf } from '../hooks/turn'
 import type { Case } from '../types'
 
 test('continue → auto check → auto review → fix round 1 on HIGH → check → pass without re-review, Bitbucket read only', async ($, on) => {
@@ -467,7 +467,7 @@ test('test_fix_after_review_passes_on_green_check_without_rereview', async ($, o
   const log = feedLog(on)
   const f = await fixAfterFirstReview($, data, clock)
   expect(f.prompt(2)).toContain('卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM <原數>、LOW <原數>；已依審查修正、未複審（發版時整版審查）」')
-  expect(f.prompt(2)).toContain('History 加一行列出依審查修了哪幾條')
+  expect(f.prompt(2)).toContain('History 加一筆「Agent：依審查修好 <哪幾條> → 待測試（commit <頂端 commit 前 7 碼>）」')
 
   // 修正 Agent 照提示寫回關卡、commit；完成檢查通過
   f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；已依審查修正、未複審（發版時整版審查）')
@@ -492,7 +492,7 @@ test('test_fix_after_review_passes_on_green_check_without_rereview', async ($, o
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_A}` })
   const screen = flat(text(await ui.drawn()))
-  expect(screen).toContain(flat('按兩次 n 開 PR'))
+  expect(screen).toContain(flat('n 開 PR（按兩次'))
   await ui.unmount()
   const base = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}, undefined), git: { branch: 'feature/alpha', head: 'h2' }, chain: { round: 1, passed: true, unreviewed: true, reviewFix: true } } as Case
   const c = { ...base, pipeline: pipeline(base, undefined) }
@@ -503,7 +503,7 @@ test('test_fix_after_review_passes_on_green_check_without_rereview', async ($, o
   const plain = { ...base, chain: { round: 0, passed: true, unreviewed: true } }
   expect(stageLabel(pipeline(plain, undefined))).toBe('合併・測試通過・未重新驗收，可開 PR')
   expect(summary({ ...plain, pipeline: pipeline(plain, undefined), state: 'ready' })).toBe('測試通過・未重新驗收，可開 PR')
-  expect(turnOf(c).text).toBe(PUBLISH_PR_TURN)
+  expect(turnOf(c).text).toBe(TURN_TEXT.publishPr())
   // 對照：審查通過過關（沒有 unreviewed）照舊寫「可開 PR」
   const reviewed = { ...base, chain: { round: 0, passed: true } }
   expect(stageLabel(pipeline(reviewed, undefined))).toBe('合併・可開 PR')
@@ -701,7 +701,7 @@ for (const [risk, files] of [['normal', ['src/a.ts']], ['high', ['app/Http/Middl
     await ui.press({ key: `row-${CARD_A}` })
     const screen = flat(text(await ui.drawn()))
     await ui.unmount()
-    expect(screen).toContain(flat(`驗收後有新 commit：按 v 重新執行測試；通過後${risk === 'normal' ? '自動過關、不重新驗收' : '自動重新驗收'}`))
+    expect(screen).toContain(flat(`v 重新執行測試（驗收後有新 commit，通過後${risk === 'normal' ? '自動過關、不重新驗收' : '自動重新驗收'}`))
   })
 }
 

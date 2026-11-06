@@ -232,13 +232,13 @@ test('between a passing check and the auto review the turn line does not ask you
   expect(stages).toBe('● 規格 ● 實作 ● 測試 ◆ 驗收 ○ 合併 ○ 上線')
   expect(card).toContain('◐ 處理中')
   expect(card).toContain('接著自動驗收')
-  expect(card).not.toContain('按 w 派驗收')
+  expect(card).not.toContain('w 派驗收')
   expect(strip).toContain('接著自動驗收')
-  expect(strip).not.toContain('按 w 派驗收')
+  expect(strip).not.toContain('w 派驗收')
   // 流程隨後派出審查
   expect(data.launches.length).toBe(2)
   // 沒有流程在等（手動按 v 通過的）：照舊請你按 w
-  expect(turnOf({ ...betaCase(), pipeline: pipeline(betaCase(), passedAt('b1')) }).text).toContain('按 w 派驗收')
+  expect(turnOf({ ...betaCase(), pipeline: pipeline(betaCase(), passedAt('b1')) }).text).toContain('w 派驗收（')
   await ui.unmount()
 })
 

@@ -3,7 +3,7 @@ import { fixture, feedLog, PANE, BAND, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGI
 import { buildPrompt, NO_PUSH_RULE, PUSH_RULE } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { catchupHold, parseMergeTree } from '../hooks/catchup'
-import { PUBLISH_PUSH_TURN } from '../hooks/turn'
+import { TURN_TEXT } from '../hooks/turn'
 
 const ALPHA = '/home/u/wt/alpha'
 const BETA = '/home/u/wt/beta'
@@ -155,7 +155,7 @@ test('test_recheck_and_merge_aware_review_run_when_conflict_agent_commits_the_me
   expect((data.store.chains as any)[BETA].judgedHead).toBe('h2')
   expect(data.launches.length).toBe(2)
   const ui = await $.ui.mount(PANE(100))
-  expect(await screen(ui)).toContain(flat(PUBLISH_PUSH_TURN))
+  expect(await screen(ui)).toContain(flat(TURN_TEXT.publishPush()))
   await ui.unmount()
 })
 
@@ -172,7 +172,7 @@ test('test_conflict_agent_is_not_retried_when_head_is_unchanged_after_an_attempt
   finish(data, BETA)
   await refresh($, clock, 3)
   const ui = await $.ui.mount(PANE(100))
-  expect(await screen(ui)).toContain(flat('按選項字母 → f 填入 → Enter 送出'))
+  expect(await screen(ui)).toContain(flat('f 填入決策（先按選項字母，填入後按 Enter 送出）'))
   expect(data.launches.length).toBe(1)
 
   // 在對話處理、等你清成無；HEAD 沒變、衝突還在：按 r 也不再派

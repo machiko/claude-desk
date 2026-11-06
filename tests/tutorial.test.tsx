@@ -78,7 +78,7 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(data.files[P.card]).toContain(`關卡：release：${TUTORIAL_TAG} 待上線確認`)
   data.git[P.wt]!.tag = TUTORIAL_TAG
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
-  await turn(ui, '部署 v1.0.0 後按 u 確認上線')
+  await turn(ui, 'u 確認上線（部署 v1.0.0 後按')
   await ui.press({ key: KEY('ship') })
   await ui.press({ key: KEY('ship') })
   await clock.settle()

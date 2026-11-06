@@ -38,7 +38,7 @@ function atSpec(data: any, clock: any, cards: string[], opts: { trusted?: boolea
 /** /desk:card spec-ok 是真的腳本（skills/card/tests 驗它）；這裡照它的效果改那張卡（History 行跟腳本一樣帶時間）。 */
 function confirmCard(data: any, card: string) {
   const withGate = setFields(data.files[card]!, { 關卡: '無', 狀態: CONFIRMED })
-  data.files[card] = appendTo(appendTo(withGate, '## Decisions', '- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）'), '## History', '- 2030-01-05 12:00：規格確認，關卡清為無，可派實作')
+  data.files[card] = appendTo(appendTo(withGate, '## Decisions', '- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）'), '## History', '- 2030-01-05 12:00：Alex：確認規格 → 可派實作')
 }
 
 function scriptOk(data: any) {
@@ -100,13 +100,13 @@ test('test_spec_confirm_dispatches_build_agent_when_card_is_ready', { timeoutMs:
   const h = helpers($, clock)
   await h.refresh()
   const ui = await $.ui.mount(PANE(120))
-  expect(await screen(ui)).toContain(flat('看過規格（o 開卡片）後按 t 確認並派實作（或輸入 /desk:card spec beta ok）'))
+  expect(await screen(ui)).toContain(flat('t 確認規格並派實作（先按 o 看過規格，或輸入 /desk:card spec beta ok）'))
 
   await h.pressT(ui, CARD_B)
   // 卡片跟 /desk:card spec beta ok 一樣：關卡清掉、Decisions 與 History 各一筆
   expect(data.files[CARD_B]).toContain('- 關卡：無')
   expect(data.files[CARD_B]).toContain('- D-02 2030-01-05 Alex：確認規格（AC-1～AC-2，共 2 條）')
-  expect(data.files[CARD_B]).toContain('- 2030-01-05 12:00：規格確認，關卡清為無，可派實作')
+  expect(data.files[CARD_B]).toContain('- 2030-01-05 12:00：Alex：確認規格 → 可派實作')
   // 同一次就派出實作（派繼續），不用再按 g；檢查早就核准過，不再問
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(BETA)
@@ -116,7 +116,7 @@ test('test_spec_confirm_dispatches_build_agent_when_card_is_ready', { timeoutMs:
   await h.refresh()
   const shown = await screen(ui)
   expect(shown).toContain(flat('Agent 在寫程式'))
-  expect(shown).not.toContain(flat('按 g 派 Agent'))
+  expect(shown).not.toContain(flat('g 派 Agent 做下一步'))
   await ui.unmount()
 
   // 教學：說明第 2 步改成確認後自動派；按一次 t，模擬 Agent 直接開始寫
@@ -257,7 +257,7 @@ test('test_spec_confirm_queues_build_with_position_when_agents_are_full', { time
   expect(data.files[CARD_B]).toContain('- 關卡：無')
   expect(data.launches).toHaveLength(0)
   expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
-  expect(await screen(ui)).toContain(flat('派工排隊中（第 1 位）'))
+  expect(await screen(ui)).toContain(flat('派工排隊中（排第 1 位'))
 
   // 一個 Agent 結束：自動派出 Beta 的實作
   data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
@@ -351,7 +351,7 @@ test('test_conversation_spec_ok_dispatches_after_turn_ends_without_asking', { ti
   expect(data.store.trustedVerify).toEqual({ [CARD_B]: 'npm test' })
   await ui.press({ key: `row-${CARD_C}` })
   await h.refresh()
-  expect(await screen(ui)).toContain(flat('按 g 派 Agent：'))
+  expect(await screen(ui)).toContain(flat('g 派 Agent 做下一步（'))
   await ui.unmount()
 })
 
@@ -381,7 +381,7 @@ test('conversation spec ok follows the t rules at turn end: refusal reason and q
   expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
   expect(data.launches).toHaveLength(0)
   await ui.press({ key: `row-${CARD_B}` })
-  expect(await screen(ui)).toContain(flat('派工排隊中（第 1 位）'))
+  expect(await screen(ui)).toContain(flat('派工排隊中（排第 1 位'))
   await ui.unmount()
 })
 

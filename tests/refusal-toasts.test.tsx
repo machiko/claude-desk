@@ -61,7 +61,7 @@ test('missing check refusal reads the same for g and v', async ($, on) => {
   for (const t of data.toasts) expect(t).not.toContain('規格未通過')
   // 下一步跟「輪到你」那句冒號後半一字不差
   const ui = await $.ui.mount(PANE(100))
-  expect(await screen(ui)).toContain(flat(`卡片還沒有測試指令：${MISSING_NEXT}`))
+  expect(await screen(ui)).toContain(flat('▶ 輪到你  o 開卡片填測試指令（卡片還沒有測試指令，在「檢查」欄填一條修之前會紅、修好會綠的指令）'))
   await ui.unmount()
   expect(data.launches).toHaveLength(0)
   expect(sh(data)).toHaveLength(0)

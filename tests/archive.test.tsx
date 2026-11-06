@@ -55,7 +55,7 @@ test('a done case offers an archive button on q', async ($, on) => {
   expect(button?.props?.hotkey).toBe('q')
   // 輪到你寫按兩次 q（或指令）；下一步列照卡片寫指令
   expect(await screen(ui)).toContain(flat('▶ 輪到你'))
-  expect(await screen(ui)).toContain(flat('按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
+  expect(await screen(ui)).toContain(flat('q 歸檔（按兩次，或輸入 /desk:card archive beta）'))
   expect(await screen(ui)).toContain(flat('已合併，可歸檔：/desk:card archive beta'))
   expect(archiveRuns(data)).toHaveLength(0)
   await ui.unmount()
@@ -67,7 +67,7 @@ test('按 q 兩次才歸檔，輪到你與按鈕看得到 q', async ($, on) => {
   only(data)
   scriptOk(data)
   const ui = await mountBeta($)
-  expect(await screen(ui)).toContain(flat('▶ 輪到你 按兩次 q 歸檔'))
+  expect(await screen(ui)).toContain(flat('▶ 輪到你 q 歸檔（按兩次'))
   expect((await ui.find({ key: KEY }))?.props?.hotkey).toBe('q')
   // 第一次：只待確認，不跑腳本、不改檔
   const before = JSON.stringify(data.files)
@@ -140,7 +140,7 @@ test('pressing archive twice archives the case like /desk:card archive and keeps
   expect(await ui.find({ key: `row-${CARD_B}` })).toBeUndefined()
   expect(await ui.find({ key: KEY })).toBeUndefined()
   expect(await screen(ui)).not.toContain(flat('✓ 已上線 v0.19.0'))
-  expect(await screen(ui)).not.toContain(flat('按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
+  expect(await screen(ui)).not.toContain(flat('q 歸檔（按兩次，或輸入 /desk:card archive beta）'))
   // worktree 與分支仍在：沒有任何刪除的指令
   expect(all.some((e: any) => /worktree remove|branch -[dD]|rm -rf/.test(e.argv.join(' ')))).toBe(false)
   expect(data.files[CARD_B]).toBeDefined()
@@ -187,7 +187,7 @@ test('a failed archive shows the error and keeps the case', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   expect(await screen(ui)).toContain(flat('✓ 已上線 v0.19.0'))
-  expect(await screen(ui)).toContain(flat('按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
+  expect(await screen(ui)).toContain(flat('q 歸檔（按兩次，或輸入 /desk:card archive beta）'))
   expect((await ui.find({ key: KEY }))?.text).toBe('⌫ 歸檔')
   await ui.unmount()
 })
@@ -205,7 +205,7 @@ test('no archive button before the case is done or on tutorial and sample cases'
   only(data, PASSED, {})
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   let ui = await $.ui.mount(PANE(80))
-  expect(await screen(ui)).toContain(flat('按兩次 z 發版'))
+  expect(await screen(ui)).toContain(flat('z 發版（按兩次'))
   await noArchive(ui)
   await ui.unmount()
 
@@ -214,7 +214,7 @@ test('no archive button before the case is done or on tutorial and sample cases'
   data.git[BETA] = { ...data.git[BETA]!, tag: 'v0.19.0' }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   ui = await $.ui.mount(PANE(80))
-  expect(await screen(ui)).toContain(flat('部署 v0.19.0 後按 u 確認上線'))
+  expect(await screen(ui)).toContain(flat('u 確認上線（部署 v0.19.0 後按'))
   await noArchive(ui)
   await ui.unmount()
 
@@ -278,7 +278,7 @@ async function expectArchivable(ui: any) {
   expect(await labelShown(ui, '等回覆')).toBe(false)
   const shown = await screen(ui)
   expect(shown).toContain(flat(`✓ 已上線 ${TAG}`))
-  expect(shown).toContain(flat('▶ 輪到你 按兩次 q 歸檔（或輸入 /desk:card archive beta）'))
+  expect(shown).toContain(flat('▶ 輪到你 q 歸檔（按兩次，或輸入 /desk:card archive beta）'))
   expect(shown).not.toContain(flat('Agent 等待你回覆'))
   expect((await ui.find({ key: KEY }))?.text).toBe('⌫ 歸檔')
   expect(await ui.find({ key: `case-${CARD_B}-reply` })).toBeUndefined()
@@ -317,7 +317,7 @@ test('an unmerged case still waits for the reply of a blocked agent', async ($, 
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   expect(await labelShown(ui, '等回覆')).toBe(false)
-  expect(await screen(ui)).not.toContain(flat('按 y 回覆 Agent 的提問'))
+  expect(await screen(ui)).not.toContain(flat('y 回覆 Agent 的提問'))
   expect(await ui.find({ key: `case-${CARD_B}-reply` })).toBeUndefined()
   expect(await ui.find({ key: KEY })).toBeUndefined()
   await ui.unmount()

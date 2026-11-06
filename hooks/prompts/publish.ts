@@ -23,21 +23,23 @@ export function prHowOf(remote: OriginRemote, open = ''): PrHow {
   return { host: 'other' }
 }
 
+/** 開了 PR 之後歷程記的那一筆（白話範本：誰：做了什麼 → 結果（代號））。 */
+const PR_HISTORY = '歷程記一筆「Agent：push 並開 PR → 等 CI（PR #<編號>）」'
 /** 開不了 PR 時的收尾：push 完把網址留給人開。 */
 const LEAVE_URL = 'push 完把開 PR 的網址寫進 等你 後結束'
 
 /** 開 PR 那一段（不含 push）：依 host 給工具與查重複的指令；沒給 how 就是舊的通用寫法。 */
 export function openPrSteps(branch: string, target: string, how?: PrHow): string {
   const fill = (s: string) => s.replace(/\{branch\}/g, branch).replace(/\{target\}/g, target)
-  if (how?.open?.trim()) return `開 PR 用 \`${fill(how.open.trim())}\`，PR 網址寫進歷程；指令失敗時${LEAVE_URL}`
+  if (how?.open?.trim()) return `開 PR 用 \`${fill(how.open.trim())}\`，${PR_HISTORY}；指令失敗時${LEAVE_URL}`
   if (how?.host === 'github') {
-    return `開 PR 用 gh：先 \`gh pr list --head ${branch} --state open\` 確認沒有開著的 PR，再 \`gh pr create${target ? ` --base ${target}` : ''} --head ${branch}\`（標題用分支 commit 的主旨，內文寫改了什麼、怎麼測），PR 網址寫進歷程；沒有 gh 或 gh 沒登入時，${LEAVE_URL}`
+    return `開 PR 用 gh：先 \`gh pr list --head ${branch} --state open\` 確認沒有開著的 PR，再 \`gh pr create${target ? ` --base ${target}` : ''} --head ${branch}\`（標題用分支 commit 的主旨，內文寫改了什麼、怎麼測），${PR_HISTORY}；沒有 gh 或 gh 沒登入時，${LEAVE_URL}`
   }
   if (how?.host === 'bitbucket') {
     const path = `/repositories/${how.repo || '<workspace>/<repo>'}/pullrequests`
-    return `開 PR 用 Bitbucket MCP：先 \`bb_get ${path}\`（queryParams q=source.branch.name="${branch}" AND state="OPEN"）確認沒有開著的 PR，再 \`bb_post ${path}\`（body：title 用分支 commit 的主旨、source.branch.name=${branch}${target ? `、destination.branch.name=${target}` : ''}、description 寫改了什麼與怎麼測、close_source_branch=true），PR 網址寫進歷程；沒有 bb_post 工具時，${LEAVE_URL}`
+    return `開 PR 用 Bitbucket MCP：先 \`bb_get ${path}\`（queryParams q=source.branch.name="${branch}" AND state="OPEN"）確認沒有開著的 PR，再 \`bb_post ${path}\`（body：title 用分支 commit 的主旨、source.branch.name=${branch}${target ? `、destination.branch.name=${target}` : ''}、description 寫改了什麼與怎麼測、close_source_branch=true），${PR_HISTORY}；沒有 bb_post 工具時，${LEAVE_URL}`
   }
-  return `開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR 時，${LEAVE_URL}`
+  return `開 PR，${PR_HISTORY}；沒有 gh 或平台開不了 PR 時，${LEAVE_URL}`
 }
 
 /** 「⇡ 開 PR」要推送 Agent 做的事；`target` 是基準分支（可帶 origin/），找不到就空白。`how` 見 PrHow，沒給就通用寫法。 */
@@ -47,6 +49,6 @@ export const openPrRequest = (branch: string, target: string, how?: PrHow) => {
 }
 /** 「⇡ push」要推送 Agent 做的事：PR 已開，只 push、不開新 PR。 */
 export const pushRequest = (branch: string, prId?: number) =>
-  `只 push ${branch}（PR${prId ? ` #${prId}` : ''} 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程`
+  `只 push ${branch}（PR${prId ? ` #${prId}` : ''} 已開，不開新 PR），push 後歷程記一筆「Agent：push 新 commit → 等 CI（commit <頂端 commit 前 7 碼>）」`
 /** 推送的提示頭；`text` 是 openPrRequest 或 pushRequest 組好的那句。 */
 export const publishHead = (text: string) => `推送：${text || openPrRequest('這個分支', '')}。只推已 commit 的：不 commit、不改程式、不 rebase。`

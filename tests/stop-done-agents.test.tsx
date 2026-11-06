@@ -83,7 +83,7 @@ test('stop done: exited, foreign, busy and blocked agents are left alone', async
   expect(beta.stop).toBeDefined()
   expect(alpha.reply).toBeUndefined()
   expect(alpha.stop).toBeUndefined()
-  expect(alpha.shown).not.toContain(flat('按 y 回覆'))
+  expect(alpha.shown).not.toContain(flat('y 回覆 Agent 的提問'))
   await ui.unmount()
 })
 

@@ -13,6 +13,7 @@ export function cardRules(user: string, projectRules: string[], canPush = false,
     '卡片在 .desk/CARD.md（或 .console/STATUS.md）；結束這一輪前把五欄寫回，每欄一行。保留卡片既有的欄位名，不要改名：舊卡用「驗證」「等使用者」，新卡用「檢查」「等你」，工作桌兩種都讀得懂。',
     '寫入前重讀卡片；內容與你開始時讀到的不同就停止並回報衝突，不要覆寫。',
     HISTORY_TIME_RULE,
+    HISTORY_FORMAT_RULE,
     '檢查欄只放一條可執行的完成檢查（反引號），exit 0 代表做完；發現寫在 狀態 或 .task/REPORT.md。',
     `要${named(user)}決定的事寫進 等你（有選項寫成 問題：A) … B) …）後結束這一輪，不要提問等待；只在對話結尾問的問題工作桌看不到。`,
     doneRule,
@@ -37,10 +38,18 @@ export const SELF_CHECK_RULE = '交出前自我檢查：每條驗收情境挑一
 /** 每次派工都附：歷程時間查系統時間，Agent 自己估的常比實際晚（面板遇到比卡片修改時間還晚的只顯示日期）。 */
 export const HISTORY_TIME_RULE = "歷程時間一律跑 `date '+%Y-%m-%d %H:%M'` 取得，不要自己估。"
 
+/**
+ * 歷程一筆的白話範本（面板歷程給 PM 看）：卡片模板的「卡片規則」段寫同一段（開頭換成「- History 」），
+ * skills/card/tests 的 Python 測試比對兩邊都有 HISTORY_FORMAT。
+ */
+export const HISTORY_FORMAT = '每筆寫成「<誰>：<做了什麼> → <結果>」，白話一句 40 字內，例如「Agent：補上匯出測試 → 待測試（commit abc1234）」；commit、PR 編號這類代號最多一個、放句尾括號；不寫指令、檔名、Agent 啟動名，技術細節寫 .task/REPORT.md。'
+/** 每次派工都附：歷程照白話範本寫。 */
+export const HISTORY_FORMAT_RULE = `歷程${HISTORY_FORMAT}`
+
 export const DONE_RULE = '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。'
 
 /** 會改程式的派工（繼續、回覆、修正）與推送可以 push 自己的分支、開 PR；寫遠端的範圍只到這裡。 */
-export const PUSH_RULE = '可以 push 這件任務自己的分支（git push -u origin \u003c分支\u003e）並對基準分支開 PR；不 force push、不 push 到其他分支（main、release/* 等）、不合併 PR、不打 tag。push 或開 PR 後把分支頂端 commit 與 PR 網址寫進歷程。'
+export const PUSH_RULE = '可以 push 這件任務自己的分支（git push -u origin \u003c分支\u003e）並對基準分支開 PR；不 force push、不 push 到其他分支（main、release/* 等）、不合併 PR、不打 tag。push 或開 PR 後在歷程記一筆，例如「Agent：push 並開 PR → 等 CI（PR #12）」或「Agent：push 新 commit → 等 CI（commit abc1234）」。'
 /** 同步與審查只讀不寫遠端。 */
 export const NO_PUSH_RULE = '不 push、不開 PR。'
 
