@@ -125,7 +125,7 @@ test('spec template without AC stays at spec stage', () => {
   expect(p.current).toBe('spec')
   expect(p.note).toBe('尚缺驗收情境')
   expect(glyphs(c)).toBe('◆○○○○○')
-  expect(turnOf(flow(c))).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+  expect(turnOf(flow(c))).toEqual({ who: 'you', text: '輸入指令寫驗收情境與實作計畫（/desk:card spec a）' })
   // 完成檢查通過、失敗或審查後有新 commit，都不能讓它跳過規格段
   expect(pipeline(c, ok()).current).toBe('spec')
   expect(pipeline(c, { ...ok(), ok: false }).current).toBe('spec')
@@ -138,7 +138,7 @@ test('spec template without AC stays at spec stage', () => {
   for (const x of [stopped, red]) {
     expect(x.pipeline.current).toBe('spec')
     expect(x.state).toBe('ready')
-    expect(turnOf(x)).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+    expect(turnOf(x)).toEqual({ who: 'you', text: '輸入指令寫驗收情境與實作計畫（/desk:card spec a）' })
     expect(dispatchable(x)).toEqual(['sync'])
   }
 })
@@ -148,12 +148,12 @@ test('filled AC or no spec section passes spec stage', () => {
   expect(filled.specGap).toBeUndefined()
   expect(pipeline(filled, undefined).current).toBe('build')
   expect(glyphs(filled)).toBe('●◆○○○○')
-  expect(turnOf(flow(filled))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', action: 'continue', key: 'g' })
+  expect(turnOf(flow(filled))).toEqual({ who: 'you', text: 'g 派 Agent 做下一步（做事）', action: 'continue', key: 'g' })
   // 沒有「## 規格」段的舊卡：跟現在一樣
   const old = mk()
   expect(old.specGap).toBeUndefined()
   expect(pipeline(old, undefined).current).toBe('build')
-  expect(turnOf(flow(old))).toEqual({ who: 'you', text: '按 g 派 Agent：做事', action: 'continue', key: 'g' })
+  expect(turnOf(flow(old))).toEqual({ who: 'you', text: 'g 派 Agent 做下一步（做事）', action: 'continue', key: 'g' })
 })
 
 test('later evidence is not pulled back by empty spec', () => {
@@ -172,7 +172,7 @@ test('spec gate without AC asks to write the spec, not confirm', () => {
   const c = flow(withSpec(TEMPLATE_SPEC, { 關卡: 'spec：待確認規格' }))
   expect(c.pipeline.current).toBe('spec')
   expect(c.pipeline.note).toBe('尚缺驗收情境')
-  expect(turnOf(c)).toEqual({ who: 'you', text: '輸入 /desk:card spec a 寫驗收情境與實作計畫' })
+  expect(turnOf(c)).toEqual({ who: 'you', text: '輸入指令寫驗收情境與實作計畫（/desk:card spec a）' })
   expect(awaitsSpecOk(c)).toBe(false)
   expect(stageActions(c).has('spec-ok')).toBe(false)
   expect(dispatchable(c)).toEqual(['sync'])

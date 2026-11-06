@@ -453,7 +453,7 @@ class CardScriptTest(unittest.TestCase):
         text = read(card)
         self.assertIn('- 關卡：無', text)
         self.assertRegex(text, r'(?m)^- D-\d+ \d{4}-\d{2}-\d{2} .+：確認規格（AC-1，共 1 條）與實作計畫（1 項）$')
-        self.assertRegex(text, r'(?m)^- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：規格確認，關卡清為無，可派實作$')
+        self.assertRegex(text, r'(?m)^- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：使用者：確認規格 → 可派實作$')
 
     def test_done_refuses_trivial_card_before_spec_confirmed(self):
         """AC-5：剛開好的瑣事卡還沒確認規格，done 拒絕並提示先確認、卡片不變（預填的驗收情境不算已確認）。"""
@@ -555,7 +555,7 @@ class CardScriptTest(unittest.TestCase):
 
         after = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
         self.assertEqual(r.returncode, 0, r.stderr)
-        stamps = self.history_stamps(read(card), '規格確認，關卡清為無，可派實作')
+        stamps = self.history_stamps(read(card), '使用者：確認規格 → 可派實作')
         self.assertEqual(len(stamps), 1)
         self.assertIn(stamps[0], (before, after))
 
@@ -569,7 +569,7 @@ class CardScriptTest(unittest.TestCase):
 
         after = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
         self.assertEqual(r.returncode, 0, r.stderr)
-        stamps = self.history_stamps(read(card), f'/desk:card done（feature/order-export {sha}）：匯出做完')
+        stamps = self.history_stamps(read(card), f'使用者：匯出做完 → 待測試（commit {sha}）')
         self.assertEqual(len(stamps), 1)
         self.assertIn(stamps[0], (before, after))
 
@@ -616,7 +616,7 @@ class CardScriptTest(unittest.TestCase):
             line = re.search(rf'^- {name}：.*$', block(before), re.M).group(0)
             self.assertIn(line, block(text), name)
         history = text[text.index('## History'):]
-        self.assertRegex(history, rf'- \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}：/desk:card done（feature/order-export {sha}）：CSV 匯出做完，測試綠\n')
+        self.assertRegex(history, rf'- \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}：使用者：CSV 匯出做完，測試綠 → 待測試（commit {sha}）\n')
         self.assertNotIn('未提交', history)
 
     def test_done_after_passed_review_says_the_flow_rechecks(self):
@@ -641,7 +641,7 @@ class CardScriptTest(unittest.TestCase):
         for name in ('等你', '關卡', '檢查'):
             line = re.search(rf'^- {name}：.*$', block(before), re.M).group(0)
             self.assertIn(line, block(text), name)
-        self.assertRegex(text[text.index('## History'):], rf'- \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}：/desk:card done（feature/order-export {sha}）：修好審查提到的 MEDIUM\n')
+        self.assertRegex(text[text.index('## History'):], rf'- \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}：使用者：修好審查提到的 MEDIUM → 待重新測試（commit {sha}）\n')
 
     def test_done_after_passed_review_without_new_commit_points_to_merge(self):
         # done-next-step AC-5：審查過關但審查檔之後沒有新 commit，或沒有審查檔（關卡是對話自己寫的）：面板停在合併段，不會重新檢查。
@@ -748,6 +748,35 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn(f'- History 每筆的時間一律跑 `{command}` 取得，不要自己估。', rules)
         self.assertIn(command, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'prompts', 'rules.ts')))
 
+    def test_dispatch_prompt_and_card_template_carry_plain_history_format(self):
+        # plain-pm-wording AC-1 的模板那半：開新卡的「卡片規則」寫歷程範本那段，跟派工提示（hooks/prompts/rules.ts 的 HISTORY_FORMAT）同一段。
+        rule = ('每筆寫成「<誰>：<做了什麼> → <結果>」，白話一句 40 字內，例如「Agent：補上匯出測試 → 待測試（commit abc1234）」；'
+                'commit、PR 編號這類代號最多一個、放句尾括號；不寫指令、檔名、Agent 啟動名，技術細節寫 .task/REPORT.md。')
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        text = read(self.card_path())
+        rules = text[text.index('## 卡片規則'):text.index('## 規格')]
+        self.assertIn(f'- History {rule}', rules)
+        self.assertIn(rule, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'prompts', 'rules.ts')))
+
+    def test_card_script_history_lines_follow_plain_format(self):
+        # plain-pm-wording AC-5：spec-ok 與 done 寫的歷程是「<人>：<做了什麼> → <結果>（代號）」，不寫指令與分支名。
+        plain = r'^- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：[^：「」→]+：[^→（）]+ → [^→（）]+(?:（(?:commit|PR) [^（）]+）)?$'
+        self.write_settings({'user': 'Alex'})
+        card, wt = self.confirmed_card_with_commit()
+        sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=wt, capture_output=True, text=True).stdout.strip()
+
+        r = self.run_card('done', 'order-export', '匯出做完')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        history = read(card)[read(card).index('## History'):]
+        lines = [l for l in history.split('\n') if l.startswith('- ')]
+        self.assertRegex(lines[-2], r'：Alex：確認規格 → 可派實作$')
+        self.assertRegex(lines[-1], rf'：Alex：匯出做完 → 待測試（commit {sha}）$')
+        for line in lines[-2:]:
+            self.assertRegex(line, plain)
+            self.assertNotIn('/desk:card', line)
+            self.assertNotIn('feature/order-export', line)
+
     def test_done_notes_uncommitted_files(self):
         card, wt = self.confirmed_card_with_commit()
         write(os.path.join(wt, 'export.py'), 'x = 2\n')
@@ -758,7 +787,7 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         text = read(card)
         self.assertIn('- 狀態：匯出做一半\n', text)
-        self.assertRegex(text[text.index('## History'):], r'- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：/desk:card done（feature/order-export [0-9a-f]+）：匯出做一半；有 2 個檔未提交\n')
+        self.assertRegex(text[text.index('## History'):], r'- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：使用者：匯出做一半 → 待測試，有 2 個檔未提交（commit [0-9a-f]+）\n')
 
     def test_old_card_gate_bumps_rev(self):
         os.makedirs(os.path.join(self.t, 'old', '.console'))
@@ -1651,13 +1680,13 @@ class OverlapTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('- 關卡：無', read(a))
         self.assertEqual(r.stdout.strip().split('\n')[-1], '同檔預警：hooks/dispatch.ts 也在「B」的實作計畫（card-b）')
-        self.assertRegex(read(a), r'- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：同檔預警：hooks/dispatch.ts 也在「B」的實作計畫\n')
+        self.assertRegex(read(a), r'- \d{4}-\d{2}-\d{2} \d{2}:\d{2}：工作桌：比對實作計畫 → 跟「B」改到同一個檔\n')
         # 沒同檔：照常確認、不印預警、不加 History
         r = self.run_card('spec-ok', 'card-c')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('- 關卡：無', read(c))
         self.assertNotIn('同檔預警', r.stdout)
-        self.assertNotIn('同檔預警', read(c))
+        self.assertNotIn('比對實作計畫', read(c))
 
     def test_overlap_normalizes_plan_file_cells(self):
         self.add_card('card-a', 'A', [

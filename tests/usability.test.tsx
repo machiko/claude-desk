@@ -116,7 +116,7 @@ test('help lists the keys', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   const ui = await $.ui.mount(PANE(80))
   await ui.press({ key: 'help' })
-  expect(await ui.find({ type: 'Text', text: '停止 Agent（按兩次確認）' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^停止 Agent（按兩次確認/ })).toBeDefined()
   await ui.unmount()
 })
 

@@ -22,7 +22,7 @@
                                                「等自動重新測試；沒動靜就到面板按 v」，驗收已過關但之後沒有新 commit（或沒有審查檔）寫
                                                「到面板照「輪到你」開 PR 或合併」，關卡是依審查修完的未複審結論寫
                                                「到面板照「輪到你」接著做」，其他寫「到面板按 v 執行測試」；
-                                               History 記分支與 HEAD（有未提交的檔就註明幾個）；規格還沒確認就拒絕
+                                               History 記一筆「<人>：<狀態> → <結果>（commit <HEAD>）」（有未提交的檔就註明幾個）；規格還沒確認就拒絕
   card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
                                                可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
                                                移除已併入主 repo 目前分支、沒有未提交改動的 worktree（git worktree remove）與分支（git branch -d），
@@ -560,6 +560,12 @@ def cmd_gate(arg, value):
     print(f'關卡已改為「{value}」（{fmt}）：{path}')
 
 
+# History 一筆的白話範本：「<誰>：<做了什麼> → <結果>（代號）」，代號最多一個、放句尾括號（見 hooks/prompts/rules.ts 的 HISTORY_FORMAT）。
+def spec_ok_history(now):
+    """spec-ok 在 History 記的那一筆；面板的 spec-ok 偵測（hooks/touch.ts 的 SPEC_OK_HISTORY）認這個寫法與舊寫法。"""
+    return f'- {now}：{USER}：確認規格 → 可派實作'
+
+
 def cmd_spec_ok(arg):
     _, path, _ = resolve(arg)
     text = read(path)
@@ -584,13 +590,13 @@ def cmd_spec_ok(arg):
     now = stamp()
     n = len(re.findall(r'^- D-\d+', text, re.M)) + 1
     text = append_line(text, '## Decisions', f'- D-{n:02d} {today} {USER}：確認規格（{span}，共 {len(ids)} 條）與實作計畫（{len(plan)} 項）')
-    text = append_line(text, '## History', f'- {now}：規格確認，關卡清為無，可派實作')
-    # 跟其他進行中的卡同檔：只預警，不擋確認。
+    text = append_line(text, '## History', spec_ok_history(now))
+    # 跟其他進行中的卡同檔：只預警，不擋確認。History 照白話範本只寫跟哪幾張同檔，檔名在輸出的預警行。
     found = overlaps(path)
     warnings = overlap_lines(found)
     if found:
-        said = '；'.join(f'{f} 也在「{name}」的實作計畫' for f, name, _ in found)
-        text = append_line(text, '## History', f'- {now}：同檔預警：{said}')
+        names = ''.join(f'「{name}」' for name in dict.fromkeys(name for _, name, _ in found))
+        text = append_line(text, '## History', f'- {now}：工作桌：比對實作計畫 → 跟{names}改到同一個檔')
     write(path, text)
     print(f'規格已確認（{span}），關卡清為「無」：{path}')
     for line in warnings:
@@ -688,10 +694,26 @@ def committed_after_review(root):
 STATUS_CODES = re.compile(r'(?<![0-9A-Za-z])(?:(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}|(?:AC|D)[-－]\d+)(?![0-9A-Za-z])', re.I)
 
 
+# done 的 History 那筆「→」後面的結果：跟寫進下一步的那句對應。
+DONE_RESULT = {
+    DONE_NEXT: '待測試',
+    DONE_NEXT_RECHECK: '待重新測試',
+    DONE_NEXT_MERGE: '待開 PR 或合併',
+    DONE_NEXT_TURN: '照面板接著做',
+}
+
+
+def done_history(now, status, result, dirty, sha):
+    """done 在 History 記的那一筆：「<人>：<狀態> → <結果>（commit <HEAD>）」；有未提交的檔接在結果後面，沒有 commit 就不帶括號。"""
+    note = f'，有 {dirty} 個檔未提交' if dirty else ''
+    code = f'（commit {sha}）' if sha else ''
+    return f'- {now}：{USER}：{status} → {result}{note}{code}'
+
+
 def cmd_done(arg, status):
     """主對話告一段落時寫回卡片：狀態改成那句；下一步驗收已過關時，驗收後有新 commit 寫等自動重新測試（沒動靜就按 v），
     沒有新 commit 寫照面板開 PR 或合併；關卡是依審查修完的未複審結論寫照面板「輪到你」接著做；其他寫去面板按 v；
-    History 記分支與 HEAD；等你、關卡、檢查不動。"""
+    History 照白話範本記一筆「<人>：<狀態> → <結果>（commit <HEAD>）」；等你、關卡、檢查不動。"""
     status = ' '.join(status.split())
     if not status:
         fail(f'用法：{CMD} done <slug> <狀態一句>')
@@ -703,8 +725,7 @@ def cmd_done(arg, status):
         fail(f'先確認規格（按 t 或 {CMD} spec {arg} ok），卡片未動')
     if STATUS_CODES.search(status):
         fail(f'狀態不放 commit／AC／D 編號（寫在 History），卡片未動：{status}')
-    branch = git_branch(root) or '（分離 HEAD）'
-    sha = git('-C', root, 'rev-parse', '--short', 'HEAD').stdout.strip() or '（沒有 commit）'
+    sha = git('-C', root, 'rev-parse', '--short', 'HEAD').stdout.strip()
     dirty = [l for l in git('-C', root, 'status', '--porcelain').stdout.split('\n') if l.strip()]
     if unreviewed_gate(gate):
         next_step = DONE_NEXT_TURN
@@ -713,8 +734,7 @@ def cmd_done(arg, status):
     else:
         next_step = DONE_NEXT
     set_fields(path, {'狀態': status, '下一步': next_step}, required=('狀態', '下一步'))
-    note = f'；有 {len(dirty)} 個檔未提交' if dirty else ''
-    line = f'- {stamp()}：{CMD} done（{branch} {sha}）：{status}{note}'
+    line = done_history(stamp(), status, DONE_RESULT[next_step], len(dirty), sha)
     write(path, append_line(read(path), '## History', line))
     print(f'已寫回卡片：{path}')
     print(f'  狀態：{status}')

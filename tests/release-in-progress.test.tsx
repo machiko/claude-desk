@@ -14,9 +14,9 @@ const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過
 const IN_REVIEW = '發版 v0.58.0：進行中（整版審查）'
 const AT_TAG = '發版 v0.58.0：進行中（打 tag）'
 const BLOCKED = '發版 v0.58.0：整版審查擋下'
-const RUNNING_TURN = '發版中（整版審查），等它跑完'
-const STOPPED_TURN = '上次發版停在打 tag，按兩次 z 重來'
-const RELEASE_TURN = '按兩次 z 發版，再按 Enter 送出'
+const RUNNING_TURN = '發版中，等它跑完（目前在整版審查）'
+const STOPPED_TURN = 'z 重新發版（按兩次，上次停在打 tag）'
+const RELEASE_TURN = 'z 發版（按兩次，再按 Enter 送出'
 const RUNNING_TOAST = '發版中，等它跑完'
 
 /** 只有 Beta：PR #12 已合併、審查過、沒打 tag（走到上線段）；狀態寫 status，卡片 agoMs 前更新。 */
@@ -123,7 +123,7 @@ test('release status other than in progress keeps existing behavior', async ($, 
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 等你：無', '- 等你：整版審查 CRITICAL 0、HIGH 2：A) 開修正卡再發 B) 照發 C) 先不發')
   ui = await mount($)
   expect(await badge(ui, '等你')).toBe(true)
-  expect(await count(ui, '按選項字母 → f 填入 → Enter 送出')).toBeGreaterThan(0)
+  expect(await count(ui, 'f 填入決策（先按選項字母，填入後按 Enter 送出）')).toBeGreaterThan(0)
   expect(await count(ui, RUNNING_TURN)).toBe(0)
   await ui.unmount()
 })

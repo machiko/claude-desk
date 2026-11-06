@@ -36,7 +36,9 @@ class ReviewContractTest(unittest.TestCase):
             self.assertIn(word, text, word)
         self.assertIn('改不改程式行為都一樣', text)
         self.assertIn('不寫進卡片「等你」', text)
-        self.assertIn('審查 MEDIUM n 條記錄、不修（<一句摘要>），見 .task/REVIEW.md', text)
+        # plain-pm-wording AC-4：歷程那筆照白話範本「<誰>：<做了什麼> → <結果>」，不寫檔名
+        self.assertIn('`- YYYY-MM-DD HH:MM：審查：MEDIUM n 條記錄不修 → 見審查檔`', text)
+        self.assertNotIn('見 .task/REVIEW.md`', text)
         self.assertRegex(text, r'拿不準[^\n]*可能影響行為')
         self.assertIn('`可開 PR：push 後開 PR`', text)
         self.assertRegex(text, r'「等你」寫 無')

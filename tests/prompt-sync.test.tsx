@@ -170,7 +170,7 @@ test('a turn that ends without writing the card back says so and lets you send a
   expect(data.toasts.filter((t: string) => t.includes('Alpha：決策已送出，但卡片的「等你」沒有改')).length).toBe(1)
   const all = await screen(ui)
   expect(all).toContain(flat('▶ 輪到你'))
-  expect(all).toContain(flat('卡片的「等你」沒有改'))
+  expect(all).toContain(flat('決策送出了卡片卻沒改'))
   expect(await ui.find({ key: `case-${CARD_A}-opt0A` })).toBeDefined()
   expect(await ui.find({ key: `case-${CARD_A}-fill` })).toBeDefined()
   // 再一個回合結束不重複提醒

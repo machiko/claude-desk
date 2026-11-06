@@ -16,6 +16,7 @@
 - `關卡` 只能是 `無` | `spec：…` | `review：CRITICAL n、HIGH n、MEDIUM n、LOW n；結論` | `release：…`。審查結論由工作桌讀數字自動分流；`release` 在你確認上線後清掉（面板按 `u`）。
 - 卡片的新舊看檔案時間，不用手寫時間。
 - History 每筆的時間一律跑 `date '+%Y-%m-%d %H:%M'` 取得，不要自己估。
+- History 每筆寫成「<誰>：<做了什麼> → <結果>」，白話一句 40 字內，例如「Agent：補上匯出測試 → 待測試（commit abc1234）」；commit、PR 編號這類代號最多一個、放句尾括號；不寫指令、檔名、Agent 啟動名，技術細節寫 .task/REPORT.md。
 - 專案有 `changelog.d/` 時，CHANGELOG 條目寫在 `changelog.d/<slug>.md`（`- ` 開頭、動詞開頭的條目，沒有標題），不改 CHANGELOG.md；發版時用 `/desk:card changelog <版本>` 合併。
 - `## 規格` 是這件事的唯一依據：確認前 `關卡` 寫 `spec：待確認規格`，工作桌不會派實作；確認後清成 `無`。驗收情境還是範本（認不到填好的 AC-n）時一樣不會派實作。「### 實作計畫」跟規格一起確認，確認後 Agent 照計畫做，不再停下來交計畫。需求中途改了，先改 `## 規格` 並在 Decisions 記一筆，再改程式。
 

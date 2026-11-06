@@ -95,7 +95,7 @@ test('Esc 只回輸入框，回覆與說明不再寫 Esc 收起', async ($, on) 
   await ui.press({ key: 'help' })
   const shown = flat(text(await ui.drawn()))
   expect(shown).toContain(flat('Esc 回輸入框（面板留著）'))
-  expect(shown).toContain(flat('/desk close 收起面板（或點摘要列的 ⌗ desk）'))
+  expect(shown).toContain(flat('/desk close 收起面板（不用時，也可點摘要列的 ⌗ desk）'))
   expect(shown).not.toContain(flat('收起面板 ctrl+x'))
   expect(shown).not.toContain(flat('Esc 收起'))
   await ui.unmount()
@@ -117,7 +117,7 @@ test('band: clicking the now card title keeps it selected', async ($, on) => {
   const lead = picked.slice(0, picked.indexOf('● Alpha'))
   expect(lead).toContain('Beta')
   expect(lead).toContain('● 規格')
-  expect(lead).toContain('輪到你：按 g 派 Agent：依審核修正')
+  expect(lead).toContain('輪到你：g 派 Agent 做下一步（依審核修正）')
   // 選了的那件是對話的主角，前面標「已選」。
   expect(lead).toContain('已選')
   // 點現在卡的標題：標題只是文字，沒有按鈕可按；Beta 仍是現在卡、仍標「已選」，不會被取消選取。

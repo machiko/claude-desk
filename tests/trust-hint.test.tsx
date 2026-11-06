@@ -145,8 +145,8 @@ test('test_empty_and_error_states_say_next_step', async ($, on) => {
   await clock.settle()
   ui = await $.ui.mount(PANE(72))
   const lines = (await ui.findAll({ type: 'Text' })).map((n: any) => String(n.text ?? ''))
-  expect(lines).toContain('第一次用：輸入 /desk tutorial 看教學')
-  expect(lines).toContain('開第一張卡：/desk:card new <分支> <任務名>')
+  expect(lines).toContain('輸入 /desk tutorial 看教學（第一次用時）')
+  expect(lines).toContain('輸入 /desk:card new <分支> <任務名> 開第一張卡（要開始做一件事時）')
   await ui.unmount()
 
   // 登錄表讀不到：紅字下多一行淡色的排除後重讀
@@ -179,9 +179,9 @@ test('test_help_rows_wrap_without_truncation_and_list_i', async ($, on) => {
   const shown = await screen(ui)
   // 長描述完整出現（換行不截字）
   for (const d of [
-    '選任務（數字依清單固定，選了不會換號；取消選取在「現在 · 你選的」那列或「更多動作」裡）',
-    '「⇡ 更新到 <版本>」「⇡ 檢查並更新」把 desk 更新到 GitHub 上的最新版本（用點的，不綁快捷鍵）；已是最新只顯示文字，要重查用 /desk update',
-    '重新整理（在「更多動作」裡；平常每 30 秒、每回合結束、對話改了卡片時自動重讀）',
+    '選任務（要操作某一件時，號碼依清單固定不會換，取消選取在「現在 · 你選的」那列或 m 裡）',
+    '把 desk 更新到 GitHub 上的最新版本（看到「⇡ 更新到 <版本>」「⇡ 檢查並更新」時用點的，已是最新要重查輸入 /desk update）',
+    '重新整理（要馬上重讀時從 m 裡按，平常每 30 秒、每回合結束、對話改了卡片時自動重讀）',
   ]) expect(shown).toContain(flat(d))
   // 說明區沒有截字的「…」；放不下的續列對齊描述欄
   const at = (await ui.findAll({ type: 'Text' })).findIndex((n: any) => n.text === '說明')
@@ -190,8 +190,8 @@ test('test_help_rows_wrap_without_truncation_and_list_i', async ($, on) => {
   expect(help.some((n: any) => String(n.text ?? '').includes('…'))).toBe(false)
   expect((await ui.findAll({ type: 'Box' })).some((b: any) => b.props?.paddingLeft === HELP_INDENT)).toBe(true)
   // i 這份說明；h 只在說明開著時能按，或輸入 /desk bar
-  expect(shown).toContain(flat('i 說明（這份；再按 i 收起）'))
-  expect(shown).toContain(flat('h 隱藏摘要列：只在說明開著時能按，或輸入 /desk bar'))
+  expect(shown).toContain(flat('i 說明（就是這份，再按 i 收起）'))
+  expect(shown).toContain(flat('h 隱藏摘要列（說明開著時才能按，也可輸入 /desk bar）'))
   await ui.unmount()
 })
 
@@ -201,7 +201,7 @@ test('test_help_lists_create_registry_n_only_without_registry', async ($, on) =>
   let ui = await $.ui.mount(PANE(72))
   await ui.press({ key: 'help' })
   let shown = await screen(ui)
-  expect(shown).toContain(flat('⇡ 開 PR／⇡ push：派 Agent 推送（按兩次確認）'))
+  expect(shown).toContain(flat('⇡ 開 PR／⇡ push 派 Agent 推送（要開 PR 或 PR 有新 commit 時，按兩次確認）'))
   expect(shown).not.toContain(flat('建立空的登錄表'))
   await ui.press({ key: 'help' })
   await ui.unmount()
@@ -215,7 +215,7 @@ test('test_help_lists_create_registry_n_only_without_registry', async ($, on) =>
   await ui.press({ key: 'help' })
   shown = await screen(ui)
   expect(shown).toContain(flat('n ＋ 建立空的登錄表（還沒有登錄表時）'))
-  expect(shown).toContain(flat('⇡ 開 PR／⇡ push：派 Agent 推送（按兩次確認）'))
+  expect(shown).toContain(flat('⇡ 開 PR／⇡ push 派 Agent 推送（要開 PR 或 PR 有新 commit 時，按兩次確認）'))
   await ui.unmount()
 })
 
@@ -238,7 +238,7 @@ test('test_untrusted_review_dispatch_says_press_w_and_keeps_w_on_the_row', async
   await h.refresh()
   await h.verify()
   const ui = await $.ui.mount(PANE(96))
-  expect(await screen(ui)).toContain(flat('按 w 派驗收'))
+  expect(await screen(ui)).toContain(flat('w 派驗收（新對話'))
   data.launch = async () => result(1, '', UNTRUSTED_OUTPUT)
   await pressHotkey(ui, 'w'); await clock.settle()
   await pressHotkey(ui, 'w'); await clock.settle()

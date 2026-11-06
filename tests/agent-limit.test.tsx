@@ -59,7 +59,7 @@ test('test_dispatch_queues_with_position_when_three_desk_agents_are_busy', async
   expect(data.launches).toHaveLength(0)
   expect(data.toasts).toContain('Alpha：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
   const shown = await screen(ui)
-  expect(shown).toContain(flat('處理中  派工排隊中（第 1 位）'))
+  expect(shown).toContain(flat('處理中  派工排隊中（排第 1 位'))
   expect(shown).toContain(flat('… 派工排隊中（第 1 位）'))
   expect(await ui.find({ key: `${A}continue` })).toBeFalsy()
   const unqueue = await ui.find({ key: `${A}unqueue` })
@@ -68,7 +68,7 @@ test('test_dispatch_queues_with_position_when_three_desk_agents_are_busy', async
   // 重新整理、名額還是滿的：照舊排著，不派
   await h.refresh()
   expect(data.launches).toHaveLength(0)
-  expect(await screen(ui)).toContain(flat('派工排隊中（第 1 位）'))
+  expect(await screen(ui)).toContain(flat('派工排隊中（排第 1 位'))
   await ui.unmount()
 })
 
@@ -90,7 +90,7 @@ test('test_manual_and_auto_dispatches_share_one_queue_in_order', async ($, on) =
   await h.step(); await h.step()
   expect(data.launches).toHaveLength(0)
   await ui.press({ key: `row-${CARD_A}` })
-  expect(await screen(ui)).toContain(flat('派工排隊中（第 2 位）'))
+  expect(await screen(ui)).toContain(flat('派工排隊中（排第 2 位'))
   expect(log.has('Alpha 自動派驗收排隊中（第 2 位）')).toBe(true)
   expect(await screen(ui)).not.toContain(flat('Alpha 自動派驗收排隊中（第 2 位）'))
 
@@ -101,7 +101,7 @@ test('test_manual_and_auto_dispatches_share_one_queue_in_order', async ($, on) =
   expect(data.launches[0].init.cwd).toBe(GAMMA)
   expect(String(data.launches[0].argv.at(-1))).toContain('依卡片的下一步繼續：實作匯出')
   expect(runningDesk(data)).toBeLessThanOrEqual(3)
-  expect(await screen(ui)).toContain(flat('派工排隊中（第 1 位）'))
+  expect(await screen(ui)).toContain(flat('派工排隊中（排第 1 位'))
 
   // 再一個結束：派出 Alpha 的審查
   h.finishOne()

@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, REGISTRY, result, text, flat, feedLog } from './fixture'
 import { AGENT_STOPPED } from '../hooks/chain'
+import { TURN_TEXT } from '../hooks/turn'
 import { endedHow } from '../hooks/model'
 
 // 工作桌與主對話撞同一個 worktree：被停掉的 Agent 不算做完；別人留下的未提交改動擋住派工；Agent 知道自己的名字。
@@ -70,7 +71,7 @@ test('an agent stopped outside the desk pauses the chain instead of being treate
 
   const ui = await $.ui.mount(PANE(120))
   const shown = await screen(ui)
-  expect(shown).toContain(flat(`▶ 輪到你  ${AGENT_STOPPED}`))
+  expect(shown).toContain(flat(`▶ 輪到你  ${TURN_TEXT.agentStopped()}`))
   expect(shown).toContain(flat(`Alpha 流程已暫停：${AGENT_STOPPED}`))
   expect((await ui.find({ key: `${PREFIX}continue` }))?.props?.hotkey).toBe('g')
   await ui.unmount()
@@ -105,7 +106,7 @@ test('pressing k and an outside stop leave the same pause', async ($, on) => {
   expect(h.jobs().last.ended).toEqual({ how: 'stopped' })
   ui = await $.ui.mount(PANE(160))
   const shown = await screen(ui)
-  expect(shown).toContain(flat(`▶ 輪到你  ${AGENT_STOPPED}`))
+  expect(shown).toContain(flat(`▶ 輪到你  ${TURN_TEXT.agentStopped()}`))
   // 停止的原因照樣記進動態（警告）；之後 Agent 離開清單記的「Agent 已完成」是一般事件，問題列跟著收掉，原因看「輪到你」那列。
   expect(log.list.some(e => e.tone === 'warning' && e.text.startsWith(`Alpha ${AGENT_STOPPED}`))).toBe(true)
   await ui.unmount()

@@ -41,7 +41,7 @@ test('permission wait: a permission prompt asks you to approve in claude agents,
     // ▶ 輪到你：去 claude agents 批准
     expect(shown).toContain(flat(`▶ 輪到你`))
     expect(shown).toContain(flat(APPROVE))
-    expect(shown).not.toContain(flat('按 y 回覆'))
+    expect(shown).not.toContain(flat('y 回覆 Agent 的提問'))
     // 動作列：沒有 y（回覆），有 k（停止）與 l（輸出）
     expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
     expect((await ui.find({ key: `${PREFIX}stop` }))?.props?.hotkey).toBe('k')
@@ -62,7 +62,7 @@ test('permission wait: a permission prompt asks you to approve in claude agents,
     const band = await $.ui.mount(BAND(200))
     const bar = flat(text(await band.drawn()))
     expect(bar).toContain(flat(`輪到你：${APPROVE}`))
-    expect(bar).not.toContain(flat('按 y 回覆'))
+    expect(bar).not.toContain(flat('y 回覆 Agent 的提問'))
     await band.unmount()
 
     // /desk reply 也不送：說清楚它在等權限批准
@@ -84,7 +84,7 @@ test('permission wait: a blocked agent waiting on anything else still asks you t
   const shown = await screen(ui)
 
   expect(shown).toContain(flat('等回覆'))
-  expect(shown).toContain(flat('按 y 回覆 Agent 的提問'))
+  expect(shown).toContain(flat('y 回覆 Agent 的提問'))
   expect(shown).not.toContain(flat('等權限批准'))
   expect((await ui.find({ key: `${PREFIX}reply` }))?.text).toBe('↩ 回覆')
   await ui.unmount()

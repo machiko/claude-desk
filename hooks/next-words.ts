@@ -29,7 +29,7 @@ const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(]\\s*(?:按\\s*)
 export const REVIEW_WHY = '下一步是驗收，g 派的是繼續、不會驗收'
 /** 下一步只剩等待時，g 不派的原因。 */
 export const IDLE_WHY = '下一步只剩等待，沒有要 Agent 做的事'
-/** 檢查欄空白或範本佔位：不派實作、不跑測試的原因與下一步；「輪到你」那句由兩段組成，三處說法一致。 */
+/** 檢查欄空白或範本佔位：不派實作、不跑測試的原因與下一步（g、v 的拒絕由這兩段組成）；「輪到你」那句用同一個原因接白話範本（turn.ts 的 TURN_TEXT.missingCheck）。 */
 export const MISSING_CHECK_WHY = '卡片還沒有測試指令'
 export const MISSING_CHECK_NEXT = '開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 

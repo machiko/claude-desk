@@ -49,7 +49,8 @@ export const WORD = {
   pickedNote: '之後每則對話都附上它的卡',
   deselect: '✕ 取消選取',
   history: '歷程',
-  empty: '尚無任務。\n第一次用：輸入 /desk tutorial 看教學\n開第一張卡：/desk:card new <分支> <任務名>',
+  /** 沒有任務時的空狀態：每列照說明頁的寫法「做什麼（什麼時候用）」。 */
+  empty: '尚無任務（還沒開過卡）\n輸入 /desk tutorial 看教學（第一次用時）\n輸入 /desk:card new <分支> <任務名> 開第一張卡（要開始做一件事時）',
   loading: '讀取任務中…',
   off: '此對話未開啟工作桌；輸入 /desk 開啟。',
   verify: '測試',

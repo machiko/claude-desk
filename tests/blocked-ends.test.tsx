@@ -37,10 +37,10 @@ test('test_blocked_agent_that_finished_is_not_waiting_for_reply', async ($, on) 
     // 不是「等回覆」：沒有回覆鍵，也不說 Agent 在等你
     expect(await labelShown(ui, '等回覆')).toBe(false)
     expect(await ui.find({ key: `${PREFIX}reply` })).toBeUndefined()
-    expect(shown).not.toContain(flat('按 y 回覆'))
+    expect(shown).not.toContain(flat('y 回覆 Agent 的提問'))
     expect(shown).not.toContain(flat('Agent 等待你回覆'))
     // 「輪到你」照卡片的階段與下一步說
-    expect(shown).toContain(flat('▶ 輪到你 按 g 派 Agent：依審核修正'))
+    expect(shown).toContain(flat('▶ 輪到你 g 派 Agent 做下一步（依審核修正）'))
     await ui.unmount()
 
     // /desk reply 被拒：Agent 沒有在等你
@@ -90,7 +90,7 @@ test('test_agent_waiting_for_input_still_asks_for_reply', async ($, on) => {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   let ui = await $.ui.mount(PANE(120))
   expect(await labelShown(ui, '等回覆')).toBe(true)
-  expect(await screen(ui)).toContain(flat('▶ 輪到你 按 y 回覆 Agent 的提問'))
+  expect(await screen(ui)).toContain(flat('▶ 輪到你 y 回覆 Agent 的提問'))
   expect((await ui.find({ key: `${PREFIX}reply` }))?.text).toBe('↩ 回覆')
   await ui.unmount()
 
@@ -175,7 +175,7 @@ async function waitsForCardQuestion($: any, on: any, viaReply: boolean) {
   expect(sh(data)).toBe(0)
   expect(data.launches).toHaveLength(launched)
   const ui = await $.ui.mount(PANE(120))
-  expect(await screen(ui)).toContain(flat('▶ 輪到你 按選項字母'))
+  expect(await screen(ui)).toContain(flat('▶ 輪到你 f 填入決策（先按選項字母'))
   await ui.unmount()
 
   // 在對話處理完：「等你」清成無。流程不替那次派工接著跑測試或派工，動態說一聲

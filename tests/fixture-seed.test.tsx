@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE } from './fixture'
 
-const HELP_ROW = '停止 Agent（按兩次確認）'
+const HELP_ROW = /^停止 Agent（按兩次確認/
 
 async function mount($: any) {
   await $.command.run({ command: 'desk', args: 'refresh' } as any)

@@ -281,7 +281,7 @@ test('agent push: implementation prompts allow pushing the own branch and openin
     expect(p).toContain('不 force push')
     expect(p).toContain('不 push 到其他分支')
     expect(p).toContain('不合併 PR')
-    expect(p).toContain('PR 網址寫進歷程')
+    expect(p).toContain('在歷程記一筆，例如「Agent：push 並開 PR → 等 CI（PR #12）」')
     expect(p).not.toContain('不 push、不開 PR')
     // 其他環境限制照舊
     expect(p).toContain('不碰正式環境')
@@ -526,11 +526,11 @@ test('publish prompt: push and PR only, keeps the gate, no spec or changelog dut
   const p = buildPrompt(atMerge(), 'publish', openPrRequest('feature/a', 'origin/main'))
   const pushOnly = buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12))
 
-  expect(p.split('\n')[0]).toBe('推送：push feature/a 並對 main 開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR 時，push 完把開 PR 的網址寫進 等你 後結束。只推已 commit 的：不 commit、不改程式、不 rebase。')
+  expect(p.split('\n')[0]).toBe('推送：push feature/a 並對 main 開 PR，歷程記一筆「Agent：push 並開 PR → 等 CI（PR #<編號>）」；沒有 gh 或平台開不了 PR 時，push 完把開 PR 的網址寫進 等你 後結束。只推已 commit 的：不 commit、不改程式、不 rebase。')
   // 只 push：不叫它開 PR，也沒有開不了 PR 時寫等你那句
-  expect(pushOnly.split('\n')[0]).toBe('推送：只 push feature/a（PR #12 已開，不開新 PR），push 後把分支頂端 commit 寫進歷程。只推已 commit 的：不 commit、不改程式、不 rebase。')
+  expect(pushOnly.split('\n')[0]).toBe('推送：只 push feature/a（PR #12 已開，不開新 PR），push 後歷程記一筆「Agent：push 新 commit → 等 CI（commit <頂端 commit 前 7 碼>）」。只推已 commit 的：不 commit、不改程式、不 rebase。')
   expect(pushOnly).not.toContain('開不了 PR')
-  expect(openPrRequest('feature/a', '')).toBe('push feature/a 並開 PR，PR 網址寫進歷程；沒有 gh 或平台開不了 PR 時，push 完把開 PR 的網址寫進 等你 後結束')
+  expect(openPrRequest('feature/a', '')).toBe('push feature/a 並開 PR，歷程記一筆「Agent：push 並開 PR → 等 CI（PR #<編號>）」；沒有 gh 或平台開不了 PR 時，push 完把開 PR 的網址寫進 等你 後結束')
   expect(pushRequest('feature/a', undefined)).toContain('只 push feature/a（PR 已開，不開新 PR）')
   expect(p).toContain('可以 push 這件任務自己的分支')
   expect(p).toContain('不 force push')
@@ -648,7 +648,7 @@ test('test_review_prompt_preflight_on_rereview_and_security', () => {
 
 /** 加這個功能之前的審查提示詞（到「任務：」之前），用來確認沒設前置時逐字不變。 */
 const SNAP_GRADES = (file: string) => `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 授權、個資、測試、命名）。寫進 ${file}（整份覆寫）。`
-const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。都算進關卡的 MEDIUM 數。'
+const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查：MEDIUM n 條記錄不修 → 見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。都算進關卡的 MEDIUM 數。'
 const SNAP_GATE = '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>'
 const SNAP_CONTRACT = '契約：templates/review.md。自己重跑完成檢查 `true`。'
 const SNAPSHOT = {
@@ -745,7 +745,7 @@ test('open PR request follows the origin: gh on GitHub, bb_post on Bitbucket, pu
 
   // 專案 pr.open 覆寫：不看 origin，{branch}／{target} 換成分支與目標（目標去掉 origin/）
   const glab = openPrRequest('feature/a', 'origin/main', prHowOf({ host: 'github', repo: { owner: 'acme', repo: 'shop' } }, 'glab mr create --source-branch {branch} --target-branch {target}'))
-  expect(glab).toBe('push feature/a 並對 main 開 PR 用 `glab mr create --source-branch feature/a --target-branch main`，PR 網址寫進歷程；指令失敗時push 完把開 PR 的網址寫進 等你 後結束')
+  expect(glab).toBe('push feature/a 並對 main 開 PR 用 `glab mr create --source-branch feature/a --target-branch main`，歷程記一筆「Agent：push 並開 PR → 等 CI（PR #<編號>）」；指令失敗時push 完把開 PR 的網址寫進 等你 後結束')
   expect(glab).not.toContain('gh pr create')
   expect(prHowOf({ host: 'bitbucket', repo: { workspace: 'acme', repo: 'shop' } }, '  ')).toEqual({ host: 'bitbucket', repo: 'acme/shop' })
 })
