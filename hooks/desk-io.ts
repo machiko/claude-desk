@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, FeedEvent, PanelAction, Snapshot } from '../types'
-import { hhmm, keepFeed, liveCases, plain, rawAgents } from './model'
+import { hhmm, keepFeed, liveCases, plain, rawAgents, slugOf } from './model'
 import { logTail } from './probes'
 import type { DeskPaths } from './probes'
 import { CONFIRM_MS, confirmStep } from './extras'
@@ -240,11 +240,29 @@ export function cardReminder(c: Case): string {
 }
 
 /** 決策裡審查 MEDIUM 題選了修掉：對話只記決策，修正由工作桌派。 */
-export const MEDIUM_FIX_BY_DESK = '審查 MEDIUM 那題選了 B) 修掉：不要自己修、不要改程式，只在 Decisions 記哪幾條要修、把那題從「等你」拿掉；「等你」清掉後工作桌會自動派 Agent 修正（算一輪修正，不受上限擋），修完自動重新測試與驗收。'
+export const MEDIUM_FIX_BY_DESK = '審查 MEDIUM 那題選了 C) 修掉：不要自己修、不要改程式，只在 Decisions 記哪幾條要修、把那題從「等你」拿掉；「等你」清掉後工作桌會自動派 Agent 修正（算一輪修正，不受上限擋），修完自動重新測試。'
 
-/** 從面板送出的決策：請對話照決策處理後寫回卡片，工作桌看到「等你」改了才解除鎖定。`fixMedium`：審查 MEDIUM 題選了修掉。 */
-export function decisionContext(c: Case, withCard: boolean, fixMedium = false): string {
-  const ask = `這是使用者在工作桌對任務「${c.name}」卡片「等你」的決策。照決策處理後寫回卡片 ${c.statusPath}：「等你」拿掉已決定的題目（都決定了就寫「無」），在 Decisions 記一筆；工作桌看到「等你」改了，才會解除這題的鎖定。${fixMedium ? MEDIUM_FIX_BY_DESK : ''}`
+/** 審查 MEDIUM 後續卡的卡名：原卡名接「：審查 MEDIUM」。 */
+export const mediumFollowUpName = (name: string) => `${name}：審查 MEDIUM`
+
+/**
+ * 決策裡審查 MEDIUM 題選了另開卡修：對話開一張疊在這條分支上的後續卡（MEDIUM 改的是還沒合併的程式），把要修的寫進新卡，
+ * 原卡只記決策、清「等你」，不改程式；工作桌不派修正，原卡照常往開 PR 走。
+ */
+export function mediumFollowUp(c: Case): string {
+  const branch = c.git?.branch
+  const base = branch ? ` ${branch}` : ' <這張卡的分支>'
+  const name = mediumFollowUpName(c.name)
+  return `審查 MEDIUM 那題選了 B) 另開卡修：這張卡不修、不要改程式，照常往開 PR 走。用 \`/desk:card new feature/${slugOf(c)}-medium "${name}"${base}\` 開一張疊在這條分支上的後續卡，把要修的 MEDIUM（${c.root}/.task/REVIEW.md 標「（等你決定）」的那幾條，有 .task/SECURITY.md 也看）寫進新卡的下一步（太長就下一步寫摘要、每條全文寫進新卡 History）；在這張卡 Decisions 記後續卡名「${name}」、把那題從「等你」拿掉。工作桌不會在這張卡派修正。`
+}
+
+/** 從面板送出的決策裡，審查 MEDIUM 題選了哪一種要工作桌另外處理的：修掉（fix，修正由工作桌派）或另開卡修（followUp）。 */
+export type MediumPick = 'fix' | 'followUp'
+
+/** 從面板送出的決策：請對話照決策處理後寫回卡片，工作桌看到「等你」改了才解除鎖定。`medium`：審查 MEDIUM 題選了修掉或另開卡修。 */
+export function decisionContext(c: Case, withCard: boolean, medium?: MediumPick): string {
+  const extra = medium === 'fix' ? MEDIUM_FIX_BY_DESK : medium === 'followUp' ? mediumFollowUp(c) : ''
+  const ask = `這是使用者在工作桌對任務「${c.name}」卡片「等你」的決策。照決策處理後寫回卡片 ${c.statusPath}：「等你」拿掉已決定的題目（都決定了就寫「無」），在 Decisions 記一筆；工作桌看到「等你」改了，才會解除這題的鎖定。${extra}`
   return withCard ? `${ask}\n${cardData(c)}` : ask
 }
 

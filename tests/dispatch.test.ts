@@ -186,7 +186,7 @@ test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
     expect(p).toContain('記錄、不修')
     expect(p).toContain('不寫進卡片 等你')
     expect(p).toContain('歷程')
-    expect(p).toContain('審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格')
+    expect(p).toContain('審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格')
     expect(p).toContain('都算進關卡的 MEDIUM 數')
     expect(p).toContain('review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>')
   }
@@ -628,7 +628,7 @@ test('test_review_prompt_preflight_on_rereview_and_security', () => {
 
 /** 加這個功能之前的審查提示詞（到「任務：」之前），用來確認沒設前置時逐字不變。 */
 const SNAP_GRADES = (file: string) => `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 授權、個資、測試、命名）。寫進 ${file}（整份覆寫）。`
-const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。都算進關卡的 MEDIUM 數。'
+const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查 MEDIUM n 條記錄、不修（摘要），見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。都算進關卡的 MEDIUM 數。'
 const SNAP_GATE = '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>'
 const SNAP_CONTRACT = '契約：templates/review.md。自己重跑完成檢查 `true`。'
 const SNAPSHOT = {

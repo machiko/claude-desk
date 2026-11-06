@@ -207,15 +207,21 @@ export function picksOf(decisions: Decision[], answer: string): Record<string, s
   return Object.fromEntries(tokens.map(t => t.match(/^(\d+)-?([A-Za-z]|\d{1,2})$/)).filter((m): m is RegExpMatchArray => !!m).map(m => [String(Number(m[1]) - 1), m[2]!.toUpperCase()]))
 }
 
-/** 審查寫進「等你」的 MEDIUM 題：「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」。 */
+/** 審查寫進「等你」的 MEDIUM 題：寫法見 prompts/review.ts 的 MEDIUM_ASK_FORM（A 不修／B 另開卡修／C 修掉／D 改規格）。 */
 const REVIEW_MEDIUM_ASK = /^審查 MEDIUM \d+ 條/
 
-/** 這次送出的答案裡，審查 MEDIUM 那題選的是「修掉」：工作桌要在你清掉「等你」後自動派修正。 */
-export function picksMediumFix(ask: string, answer: string): boolean {
+/** 這次送出的答案裡，審查 MEDIUM 那題選的選項文字以 `prefix` 開頭：照文字認，不照字母（舊卡的題目可能還是舊的字母順序）。 */
+function picksMediumOption(ask: string, answer: string, prefix: string): boolean {
   const decisions = parseDecisions(ask)
   const picks = picksOf(decisions, answer)
-  return decisions.some((d, i) => REVIEW_MEDIUM_ASK.test(d.title) && !!d.options.find(o => o.key === picks[String(i)])?.text.startsWith('修掉'))
+  return decisions.some((d, i) => REVIEW_MEDIUM_ASK.test(d.title) && !!d.options.find(o => o.key === picks[String(i)])?.text.startsWith(prefix))
 }
+
+/** 這次送出的答案裡，審查 MEDIUM 那題選的是「修掉」：工作桌要在你清掉「等你」後自動派修正。 */
+export const picksMediumFix = (ask: string, answer: string): boolean => picksMediumOption(ask, answer, '修掉')
+
+/** 這次送出的答案裡，審查 MEDIUM 那題選的是「另開卡修」：對話開一張疊在這條分支上的後續卡，工作桌不派修正、原卡照常往開 PR 走。 */
+export const picksMediumFollowUp = (ask: string, answer: string): boolean => picksMediumOption(ask, answer, '另開卡')
 
 /** 「填入決策」預填進輸入框的那句；送出時工作桌靠開頭認出是哪件任務的決策。 */
 export const decisionPrompt = (name: string, answer: string) => `「${name}」決策：${answer}`

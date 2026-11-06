@@ -20,8 +20,8 @@ function atMerge(): Case {
 
 const PITFALLS_FILE = `${PROJECT_DIR}/review-pitfalls.md`
 const PITFALLS_LINE = (path: string) => `先讀常犯錯誤清單 ${path}，逐條對照這次要寫的改動。`
-const SELF_CHECK = '交出前自我檢查：每條驗收情境的測試，把對應改動拿掉要會紅'
-const ADJACENT = '改到自動流程、狀態判斷或解析的，在暫存複本對照 main 跑相鄰路徑'
+const SELF_CHECK = '交出前自我檢查：每條驗收情境挑一處最關鍵的改動拿掉、只跑對應的測試確認會紅'
+const ADJACENT = '改到自動流程時才在暫存複本對照 main 跑相鄰路徑'
 const WHOLE_CLASS = '先把同一類情況全部列出'
 const writingPrompts = (c: Case, pitfalls = '') => ({
   continue: buildPrompt(c, 'continue', '', undefined, undefined, undefined, '', pitfalls),
@@ -118,11 +118,24 @@ test('test_writing_prompts_require_self_check_before_push', () => {
   for (const pitfalls of ['/h/pitfalls.md', '']) {
     for (const p of Object.values(writingPrompts(c, pitfalls))) {
       expect(p).toContain(SELF_CHECK)
-      expect(p).toContain('把對應改動拿掉要會紅')
+      expect(p).toContain('沒斷言到「則」那欄，要補')
       expect(p).toContain('拿掉改動在暫存複本做，或 commit 後才在 worktree 做、做完用 git diff 確認已還原，不要用 git stash')
       expect(p).toContain(ADJACENT)
       expect(p).toContain('做了什麼寫進歷程')
     }
+  }
+})
+
+/** lean-fix-loop AC-1：自我檢查只做必要的：每條驗收情境拿掉一處最關鍵的改動、只跑對應測試，不每處都拿、拿掉後不跑整套；相鄰路徑只在改到自動流程時對照 main，也只跑那些路徑的測試。 */
+test('test_self_check_rule_limits_mutations_to_one_per_ac', () => {
+  const c = mk('依規格實作')
+  for (const p of Object.values(writingPrompts(c, '/h/pitfalls.md'))) {
+    expect(p).toContain('每條驗收情境挑一處最關鍵的改動拿掉、只跑對應的測試確認會紅')
+    expect(p).toContain('不要每處改動都拿，拿掉後不要跑整套')
+    expect(p).toContain('改到自動流程時才在暫存複本對照 main 跑相鄰路徑（例如暫停後重開、別的對話、重新驗收），也只跑那些路徑的測試')
+    // 舊句：每條驗收情境的測試都把對應改動拿掉、狀態判斷或解析也要對照 main
+    expect(p).not.toContain('每條驗收情境的測試，把對應改動拿掉要會紅')
+    expect(p).not.toContain('改到自動流程、狀態判斷或解析的')
   }
 })
 
