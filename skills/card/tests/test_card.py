@@ -16,6 +16,12 @@ SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 SPEC_CASES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'tests', 'spec-cases.mjs')
 TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'templates', 'DESK-template.md')
 CARD_TS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'hooks', 'card.ts')
+# 歷程一筆的行格式與白話範本：卡片模板「卡片規則」段（開頭接「- History 」）與派工提示（hooks/prompts/rules.ts 的 HISTORY_FORMAT）同一句。
+HISTORY_RULE = ("每筆寫成 `- YYYY-MM-DD HH:MM：<誰>：<做了什麼> → <結果>`，時間跑 `date '+%Y-%m-%d %H:%M'` 取得，不要自己估；"
+                '白話一句 40 字內，例如「Agent：補上匯出測試 → 待測試（commit abc1234）」；'
+                'commit、PR 編號這類代號最多一個、放句尾括號；不寫指令、檔名、Agent 啟動名，技術細節寫 .task/REPORT.md。')
+# done 寫歷程那筆的說法：card.py 的 done 說明、skills/card/SKILL.md、skills/flow/SKILL.md、README 都用這一句。
+DONE_HISTORY_DOC = '「<人>：<狀態> → <結果>（commit <HEAD>）」'
 
 
 def read(path):
@@ -741,17 +747,18 @@ class CardScriptTest(unittest.TestCase):
 
     def test_card_template_tells_history_time_comes_from_date_command(self):
         # history-future-time AC-4：開新卡的「卡片規則」寫明歷程時間用 date 指令取得，跟派工提示（hooks/prompts/rules.ts）同一個指令。
+        # card-rules-guard-legacy AC-5 把時間句併進歷程行格式那一行，這裡比對併進去之後的寫法。
         command = "date '+%Y-%m-%d %H:%M'"
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         text = read(self.card_path())
         rules = text[text.index('## 卡片規則'):text.index('## 規格')]
-        self.assertIn(f'- History 每筆的時間一律跑 `{command}` 取得，不要自己估。', rules)
+        self.assertIn(f'時間跑 `{command}` 取得，不要自己估；', rules)
         self.assertIn(command, read(os.path.join(os.path.dirname(os.path.dirname(TEMPLATE)), 'hooks', 'prompts', 'rules.ts')))
 
     def test_dispatch_prompt_and_card_template_carry_plain_history_format(self):
         # plain-pm-wording AC-1 的模板那半：開新卡的「卡片規則」寫歷程範本那段，跟派工提示（hooks/prompts/rules.ts 的 HISTORY_FORMAT）同一段。
-        rule = ('每筆寫成「<誰>：<做了什麼> → <結果>」，白話一句 40 字內，例如「Agent：補上匯出測試 → 待測試（commit abc1234）」；'
-                'commit、PR 編號這類代號最多一個、放句尾括號；不寫指令、檔名、Agent 啟動名，技術細節寫 .task/REPORT.md。')
+        # card-rules-guard-legacy AC-5 在範本前面接上行格式與 date 取時間，這裡比對接上之後的整句。
+        rule = HISTORY_RULE
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         text = read(self.card_path())
         rules = text[text.index('## 卡片規則'):text.index('## 規格')]
@@ -776,6 +783,55 @@ class CardScriptTest(unittest.TestCase):
             self.assertRegex(line, plain)
             self.assertNotIn('/desk:card', line)
             self.assertNotIn('feature/order-export', line)
+
+    def test_card_template_history_line_format_is_single_consistent_rule(self):
+        # card-rules-guard-legacy AC-5：「卡片規則」段講時間的只剩歷程行格式那一行（不再有「不用手寫時間」），跟派工提示同一句；
+        # card.py 寫的歷程照那個行格式。
+        self.write_settings({'user': 'Alex'})
+        card, _ = self.confirmed_card_with_commit()
+        text = read(card)
+        rules = [l for l in text[text.index('## 卡片規則'):text.index('## 規格')].split('\n') if l.strip()]
+        self.assertEqual([l for l in rules if '時間' in l], [f'- History {HISTORY_RULE}'])
+        self.assertNotIn('不用手寫時間', text)
+        self.assertIn(HISTORY_RULE, read(os.path.join(REPO, 'hooks', 'prompts', 'rules.ts')))
+        line_format = re.search(r'`(- YYYY-MM-DD HH:MM：[^`]+)`', HISTORY_RULE).group(1)
+        pattern = re.escape(line_format).replace('YYYY', r'\d{4}').replace('MM', r'\d{2}').replace('DD', r'\d{2}').replace('HH', r'\d{2}')
+        for slot in ('<誰>', '<做了什麼>', '<結果>'):
+            pattern = pattern.replace(re.escape(slot), '.+')
+
+        self.assertEqual(self.run_card('done', 'order-export', '匯出做完').returncode, 0)
+
+        lines = [l for l in read(card)[read(card).index('## History'):].split('\n') if l.startswith('- ')]
+        self.assertGreaterEqual(len(lines), 2)
+        for line in lines[-2:]:
+            self.assertRegex(line, f'^{pattern}$')
+
+    def test_done_docs_match_card_script_history_format(self):
+        # card-rules-guard-legacy AC-5：card.py 說明、card 與 flow 的 SKILL.md、README 講 done 寫的歷程都是同一句，
+        # 不再說記分支與 HEAD；card.py 實際寫的那筆照這句的格式。
+        docs = {
+            'card.py': SCRIPT,
+            'skills/card/SKILL.md': os.path.join(REPO, 'skills', 'card', 'SKILL.md'),
+            'skills/flow/SKILL.md': os.path.join(REPO, 'skills', 'flow', 'SKILL.md'),
+            'README.md': os.path.join(REPO, 'README.md'),
+        }
+        for name, path in docs.items():
+            body = read(path)
+            self.assertTrue(DONE_HISTORY_DOC in body, f'{name} 沒寫 {DONE_HISTORY_DOC}')
+            for stale in ('記日期、分支、HEAD', 'History（分支、HEAD）'):
+                self.assertFalse(stale in body, f'{name} 還寫 {stale}')
+        self.write_settings({'user': 'Alex'})
+        card, wt = self.confirmed_card_with_commit()
+        sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=wt, capture_output=True, text=True).stdout.strip()
+        slots = {'<人>': 'Alex', '<狀態>': '匯出做完', '<結果>': '待測試', '<HEAD>': sha}
+        expected = DONE_HISTORY_DOC.strip('「」')
+        for slot, value in slots.items():
+            expected = expected.replace(slot, value)
+
+        self.assertEqual(self.run_card('done', 'order-export', '匯出做完').returncode, 0)
+
+        last = [l for l in read(card).split('\n') if l.startswith('- ')][-1]
+        self.assertRegex(last, rf'^- \d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}：{re.escape(expected)}$')
 
     def test_done_notes_uncommitted_files(self):
         card, wt = self.confirmed_card_with_commit()

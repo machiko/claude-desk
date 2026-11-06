@@ -11,7 +11,7 @@ import type { MediumPick } from './desk-io'
 import { normalizeRoot } from './dispatch'
 import type { Timer } from './desk-io'
 import { cardWrites, specOkCards, specOkMarks, specOkMatches, specOkTargets, specOkVerdict, touchesDesk } from './touch'
-import { cardTitle, fillNameSlots, rulesDiff, rulesFeedText, rulesHeadline, rulesNotice } from './card-rules'
+import { cardTitle, fillNameSlots, rulesDiff, rulesFeedText, rulesHeadline, rulesNotice, rulesTouched } from './card-rules'
 import { expandHome } from './card'
 import { home, loadSettings } from './probes'
 import type { SpecOkMarks } from './touch'
@@ -200,12 +200,23 @@ async function cardTemplatePath($: any, deps: PromptSyncDeps): Promise<string> {
   return own ? expandHome(own, await home($)) : `${$.plugin.root}/templates/DESK-template.md`
 }
 
+/** 寫入前的卡片全文（卡片路徑 → 全文；寫入前不存在或讀不到是 null）。 */
+type CardsBefore = ReadonlyMap<string, string | null>
+
+/** 工具呼叫前先讀這次可能寫到的 DESK 卡（跟 cardRulesNotices 同一份路徑）：守門用來判斷這次寫入有沒有改到規則段。 */
+async function cardsBefore($: any, deps: PromptSyncDeps, call: any): Promise<CardsBefore> {
+  const paths = cardWrites(call, deps.knownPaths())
+  const texts = await Promise.all(paths.map(path => $.fs.read(path).then((t: unknown) => (typeof t === 'string' ? t : null), () => null)))
+  return new Map(paths.map((path, i) => [path, texts[i] ?? null]))
+}
+
 /**
- * 工具呼叫寫到 DESK 卡之後：卡片規則段跟模板不一致就回提示（附在工具結果給模型看），同時 toast；Agent（agentId）寫的再記一筆錯誤動態。
+ * 工具呼叫寫到 DESK 卡之後：這次寫入改到卡片規則段（或卡片是這次才有的）而且跟模板不一致，就回提示（附在工具結果給模型看），同時 toast；
+ * Agent（agentId）寫的再記一筆錯誤動態。規則段沒動（例如模板改版前開的舊卡只改狀態、歷程）不拿模板比；
  * 模板或卡片沒有這一段、讀不到檔、卡片沒再改過（同樣內容提示過了）都不提示。不管工作桌開著沒有：派工 Agent 自己的對話也看得到提示。
  */
-async function cardRulesNotices($: any, deps: PromptSyncDeps, call: any): Promise<string[]> {
-  const paths = cardWrites(call, deps.knownPaths())
+async function cardRulesNotices($: any, deps: PromptSyncDeps, call: any, before: CardsBefore): Promise<string[]> {
+  const paths = [...before.keys()]
   if (!paths.length) return []
   const template = await $.fs.read(await cardTemplatePath($, deps)).catch(() => null)
   if (typeof template !== 'string') return []
@@ -214,6 +225,8 @@ async function cardRulesNotices($: any, deps: PromptSyncDeps, call: any): Promis
   for (const path of paths) {
     const text = await $.fs.read(path).catch(() => null)
     if (typeof text !== 'string') continue
+    const was = before.get(path)
+    if (typeof was === 'string' && !rulesTouched(was, text)) continue
     const name = s?.cases.find(c => normPath(c.statusPath) === path)?.name || cardTitle(text) || path.split('/').slice(-3, -2)[0] || path
     // card.py new 把模板的卡名佔位換成標題的任務名：比對也用標題的。
     const diff = rulesDiff(text, fillNameSlots(template, cardTitle(text) || name))
@@ -385,19 +398,21 @@ export function registerPromptSync(on: On, deps: PromptSyncDeps) {
   on('session.end', async ($, e, next) => { lastAttached = ''; return next(e) })
 
   // 對話（或它派的 subagent）改了卡片、登錄表，跑了卡片腳本或會移動分支的 git：馬上重讀，不等回合結束。
-  // 寫到 DESK 卡的，卡片規則段跟模板不一致就在工具結果附提示（cardRulesNotices）。
+  // 寫到 DESK 卡、改到卡片規則段的，跟模板不一致就在工具結果附提示（工具呼叫前先讀卡片 cardsBefore，結束後 cardRulesNotices）。
   // 主對話（沒有 agentId）跑 card.py spec-ok 確認成功的，記下卡片路徑，回合結束再派：先看腳本印的那一行；印出來的比指令裡 spec-ok 的次數少，
   // 才比對跑之前先讀的、指令裡目標對得上的卡。subagent 跑的、腳本失敗（卡片沒變）的、Bash 跑的期間別處確認的其他卡都不記。
   on('tool.call', async ($, e, next) => {
     const targets = deps.isActive() && !e.agentId ? specOkTargets(e as any) : []
     const probes = targets.length ? await specOkProbes($, targets).catch(() => null) : null
+    // 卡片規則段守門要比寫入前後：讀不到就當成都沒有卡，這次不檢查。
+    const before = await cardsBefore($, deps, e).catch(() => new Map() as CardsBefore)
     const result = await next(e)
     try { if (deps.isActive() && touchesDesk(e as any, deps.knownPaths())) touchSoon($, deps) } catch { /* 只是提早重讀，失敗就等定時更新 */ }
     // 判斷本身意外出錯：不知道有沒有確認，回合結束照「可能已確認」提示，不默默略過。
     if (targets.length) await noteSpecOks($, e, result, probes, targets).catch(() => noteUnsure(targetsWho(targets)))
     // 寫壞卡片規則段：提示附在工具結果後面給模型看；檢查本身出錯就不提示，不影響工具結果與重讀。
     if (result.deny !== undefined || result.isError) return result
-    const notices = await cardRulesNotices($, deps, e).catch(() => [] as string[])
+    const notices = await cardRulesNotices($, deps, e, before).catch(() => [] as string[])
     return notices.length ? { ...result, context: [...(result.context ?? []), ...notices] } : result
   })
 

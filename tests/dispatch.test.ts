@@ -551,9 +551,12 @@ test('card rules tell agents the status field says what happened, not what is ne
   expect(buildPrompt(c, 'reply', '用 B')).toContain(rule)
 })
 
-/** history-future-time AC-1：每一種派工（實作、回覆、修正、審查、同步、推送、解衝突）的提示都叫 Agent 用 date 指令取歷程時間。 */
+/**
+ * history-future-time AC-1：每一種派工（實作、回覆、修正、審查、同步、推送、解衝突）的提示都叫 Agent 用 date 指令取歷程時間。
+ * card-rules-guard-legacy AC-5 把時間句併進歷程行格式那句，這裡比對併進去之後的寫法。
+ */
 test('every dispatch prompt tells agent to stamp history with date command', () => {
-  const rule = "歷程時間一律跑 `date '+%Y-%m-%d %H:%M'` 取得，不要自己估"
+  const rule = "時間跑 `date '+%Y-%m-%d %H:%M'` 取得，不要自己估"
   const c = mk('寫測試')
   const prompts: Record<string, string> = {
     continue: buildPrompt(c, 'continue'),
