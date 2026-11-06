@@ -170,8 +170,9 @@ export function seenHeads(run: ChainRun | undefined, branch: string | undefined)
  * `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。
  * `branch`：現在的分支；這條分支審查過（reviewedBranch）又不是高風險時，實作做完、檢查通過就過關、不複審（帶 unreviewed）。
  * `quotaHold`：5 小時額度低於門檻的暫停原因（model.ts 的 quotaHold）；非空時要派 Agent 的那步改成停下，跑檢查與過關照舊。
+ * `combineSecurity`：設了 review.combineSecurity，高風險分支的資安重點已併進程式碼審查：過關後不另派資安審查，照舊停下來給你看。
  */
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; quotaHold?: string; /** 現在的分支：看這條分支審查過了沒（reviewedBranch）。 */ branch?: string }
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; quotaHold?: string; /** 現在的分支：看這條分支審查過了沒（reviewedBranch）。 */ branch?: string; combineSecurity?: boolean }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -207,7 +208,7 @@ function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, c
     if (!verdict) return { kind: 'stop', reason: '驗收結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' }
     // 只有 CRITICAL／HIGH 會自動修；可能影響行為的 MEDIUM 由審查寫進「等你」，流程照樣過關。
     if (blocking(verdict) === 0) {
-      if (high && !ctx.lastWasSecurity) return { kind: 'dispatch', dispatch: 'review', round: run.round, security: true }
+      if (high && !ctx.lastWasSecurity && !ctx.combineSecurity) return { kind: 'dispatch', dispatch: 'review', round: run.round, security: true }
       return high ? { kind: 'pass', needsHuman: high } : { kind: 'pass' }
     }
     return mayFix(run) ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'review' } : { kind: 'stop', reason: `整張卡已自動修 ${MAX_FIX_ROUNDS} 輪仍有 CRITICAL ${verdict.critical}、HIGH ${verdict.high}${AFTER_LIMIT}` }

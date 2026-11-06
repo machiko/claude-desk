@@ -215,21 +215,26 @@ async function githubPr($: any, root: string, repo: GhRepo, branch: string): Pro
   return pickGhPr(JSON.parse(String(r.stdout)), repo.owner)
 }
 
+/** 選基準分支用得到的欄位：任務根目錄、git、PR（目標），與卡片的「基準」欄。 */
+export type BaseInput = Pick<Case, 'root' | 'git' | 'pr' | 'base'>
+
 /**
- * 這個分支要併進去的分支（候選，依序）：PR 目標 → 最新的 origin/release/* → dispatch.json 的 card.base → origin/HEAD。
+ * 這個分支要併進去的分支（候選，依序）：PR 目標 → 卡片「基準」欄 → 最新的 origin/release/* → dispatch.json 的 card.base → origin/HEAD。
+ * 卡片記了基準（開卡時的分支）就不猜最新的 release 線：同時有好幾條 release 線時，最新的那條不一定是這張卡要併的。
  * 不含分支自己（主工作區在 main 上時不拿 origin/main 當基準）。
  */
-export async function baseRefs($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = ''): Promise<string[]> {
-  const release = (await git($, c.root, ['for-each-ref', '--sort=-committerdate', '--count=1', '--format=%(refname:short)', 'refs/remotes/origin/release/'])) ?? ''
+export async function baseRefs($: any, c: BaseInput, cardBase = ''): Promise<string[]> {
+  const own = c.base?.trim() ?? ''
+  const release = own ? '' : (await git($, c.root, ['for-each-ref', '--sort=-committerdate', '--count=1', '--format=%(refname:short)', 'refs/remotes/origin/release/'])) ?? ''
   const originHead = (await git($, c.root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])) ?? ''
-  const own = c.git?.branch ?? ''
-  const list = [c.pr?.dest ? `origin/${c.pr.dest}` : '', release, cardBase.trim(), originHead].map(r => r.trim())
-  // `-` 開頭的會被 git 當成選項（card.base 來自專案設定檔，不一定可信），一律不用。
-  return [...new Set(list.filter(r => r && !r.startsWith('-') && r !== own && r !== `origin/${own}`))]
+  const branch = c.git?.branch ?? ''
+  const list = [c.pr?.dest ? `origin/${c.pr.dest}` : '', own, release, cardBase.trim(), originHead].map(r => r.trim())
+  // `-` 開頭的會被 git 當成選項（card.base 來自專案設定檔、基準欄來自卡片，不一定可信），一律不用。
+  return [...new Set(list.filter(r => r && !r.startsWith('-') && r !== branch && r !== `origin/${branch}`))]
 }
 
 /** 分支相對第一個找得到 merge-base 的候選：基準分支與分叉點。都找不到就 null。 */
-export async function diffBase($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = ''): Promise<{ target: string; base: string } | null> {
+export async function diffBase($: any, c: BaseInput, cardBase = ''): Promise<{ target: string; base: string } | null> {
   for (const target of await baseRefs($, c, cardBase)) {
     const base = await git($, c.root, ['merge-base', 'HEAD', target])
     if (base) return { target, base }
@@ -244,7 +249,7 @@ export async function diffBase($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, car
  * 剛開的分支、停在 main 被 release 包含的主工作區，HEAD 都在主線上，不算；squash、rebase、fast-forward 合併也因此看不出來，
  * 那些靠 PR 狀態。只在合併段才問。找到就一直記住；沒找到兩分鐘內不重問（force 例外）。
  */
-export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase = '', force = false, seen: readonly string[] = []): Promise<string | undefined> {
+export async function mergedProbe($: any, c: BaseInput, cardBase = '', force = false, seen: readonly string[] = []): Promise<string | undefined> {
   const head = c.git?.head
   if (!head) return undefined
   const key = `${c.root}\n${head}`
@@ -274,7 +279,7 @@ export async function mergedProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, 
  * 同名分支從已包含舊合併的基準分支重開並有新 commit 時，新 HEAD 不在基準分支裡、舊 HEAD 也只是某個 merge commit 的第二個父，不算。
  * 有 PR 資訊（例如之後的 commit 開了新 PR）就照 PR 走；切到別的分支也不算。
  */
-async function mergedBefore($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, was?: GitMerged[string]): Promise<string | undefined> {
+async function mergedBefore($: any, c: BaseInput, was?: GitMerged[string]): Promise<string | undefined> {
   if (c.pr || !c.git || !was || was.branch !== c.git.branch || was.head === c.git.head) return undefined
   const landing = await firstParentLanding($, c.root, was.head, 'HEAD')
   if (!landing) return undefined
@@ -303,7 +308,7 @@ async function firstParentLanding($: any, root: string, from: string, to: string
  * 第二段只接受工作桌曾在這條分支看過的 HEAD（`seen`）當分叉點：從別條已合併分支的 commit 開出來、還沒合併的分支（疊分支、
  * 從已併回 main 的 release 分支切出的 fix）分叉點也符合「經由 merge commit 併進」，但那個 commit 從來不是這條分支的 HEAD，不算。
  */
-async function mergedCommit($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: string, ref: string, was: GitMerged[string] | undefined, seen: readonly string[]): Promise<string | null> {
+async function mergedCommit($: any, c: BaseInput, head: string, ref: string, was: GitMerged[string] | undefined, seen: readonly string[]): Promise<string | null> {
   if ((await git($, c.root, ['merge-base', '--is-ancestor', 'HEAD', ref])) !== null) {
     const parent = await landingParent($, c.root, 'HEAD', ref)
     return parent && parent !== head ? head : null
@@ -333,10 +338,10 @@ const recent = new Map<string, { at: number; tried: Tried | null }>()
  * desk 自己只跑 fetch、rev-parse、merge-tree 與讀取，不 merge、commit、push、checkout。依「根目錄＋HEAD＋基準的 commit」快取；
  * 同一個 HEAD 在下一次 fetch 之前沿用上次的結果；有衝突時再數未提交的檔。沒衝突或不知道（git 太舊、失敗）是 undefined。
  */
-export async function conflictProbe($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, cardBase: string, now: number, force = false): Promise<Case['conflict']> {
+export async function conflictProbe($: any, c: BaseInput, cardBase: string, now: number, force = false): Promise<Case['conflict']> {
   const head = c.git?.head
   if (!head) return undefined
-  const key = `${c.root}\n${head}\n${c.pr?.dest ?? ''}`
+  const key = `${c.root}\n${head}\n${c.pr?.dest ?? ''}\n${c.base ?? ''}`
   const last = recent.get(key)
   const again = !last || force || now - last.at >= FETCH_TTL_MS
   const tried = again ? await tryMerge($, c, head, cardBase, now, force) : last.tried
@@ -360,7 +365,7 @@ async function quietFetchEnv($: any, root: string): Promise<Record<string, strin
 const envText = (value: unknown) => String(value ?? '').trim()
 
 /** fetch（需要的話）後試合併；undefined＝找不到基準分支（不記），null＝git 回答不了。 */
-async function tryMerge($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: string, cardBase: string, now: number, force: boolean): Promise<Tried | null | undefined> {
+async function tryMerge($: any, c: BaseInput, head: string, cardBase: string, now: number, force: boolean): Promise<Tried | null | undefined> {
   const found = await diffBase($, c, cardBase)
   if (!found) return undefined
   const ref = found.target
@@ -385,19 +390,26 @@ async function tryMerge($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, head: stri
   return { into: remote ?? ref, ref, files }
 }
 
+/** 分支相對基準分支（見 diffBase）改了哪些檔；找不到基準就 null。 */
+export async function diffFiles($: any, c: BaseInput, cardBase = ''): Promise<{ target: string; files: string[] } | null> {
+  const found = await diffBase($, c, cardBase)
+  if (!found) return null
+  const files = ((await git($, c.root, ['diff', '--name-only', `${found.base}..HEAD`])) ?? '').split(/\r?\n/).filter(Boolean)
+  return { target: found.target, files }
+}
+
 /**
- * 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 與選基準用的輸入（PR 目標、card.base）快取：
+ * 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 與選基準用的輸入（PR 目標、卡片基準欄、card.base）快取：
  * 沒帶 PR 算的不會蓋掉帶 PR 的（重新整理與自動流程要給同一個 c，見 register.tsx）。找不到基準就是空清單（算一般風險，不快取）。
  */
-export async function riskOf($: any, c: Pick<Case, 'root' | 'git' | 'pr'>, extra: readonly [RegExp, string][] = [], cardBase = ''): Promise<Risk> {
+export async function riskOf($: any, c: BaseInput, extra: readonly [RegExp, string][] = [], cardBase = ''): Promise<Risk> {
   const head = c.git?.head
   if (!head) return classify([], extra)
-  const key = [c.root, head, c.pr?.dest ?? '', cardBase.trim()].join('\n')
+  const key = [c.root, head, c.pr?.dest ?? '', c.base ?? '', cardBase.trim()].join('\n')
   const cached = risks.get(key)
   if (cached) return cached
-  const found = await diffBase($, c, cardBase)
-  const files = found ? ((await git($, c.root, ['diff', '--name-only', `${found.base}..HEAD`])) ?? '').split(/\r?\n/) : []
-  const risk = classify(files, extra)
+  const found = await diffFiles($, c, cardBase)
+  const risk = classify(found?.files ?? [], extra)
   // 找不到基準（例如還沒 fetch）不快取，下次找到了再判斷，免得高風險被當成一般記住。
   if (found) risks.set(key, risk)
   return risk

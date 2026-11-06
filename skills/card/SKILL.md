@@ -8,6 +8,7 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
 腳本是 `python3 ${CLAUDE_PLUGIN_ROOT}/skills/card/scripts/card.py`（下面寫成 `card.py`）。收到 `/desk:card <args>` 時：
 
 - `new`、`archive`、`changelog` 與 `overlap`：直接執行 `card.py <args>`，把輸出原樣給使用者。
+  - `new` 不帶 base 時從主 repo 當下的分支切出（origin 有同名分支就用 `origin/<分支>`；主 repo 是 detached HEAD 時用 `card.base`，再沒有用 `origin/main`），用到的基準記在卡片 DESK 區塊的「基準」欄；工作桌的審查範圍、風險與開 PR 目標都先看它（PR 開了以 PR 目標為準）。
   - `overlap <目標>`：唯讀，列出這張卡的實作計畫跟登錄表上其他進行中的卡（已歸檔段、卡片檔不存在、沒填計畫的不算）同檔的檔案，每個同檔一行「同檔預警：<檔> 也在「<卡名>」的實作計畫（<slug>）」，沒有印「同檔預警：無」。有同檔時建議「先合哪張」或「改成疊放（`new` 時 base 指向另一張的分支）」，不要自己改 base 或順序。
   - `new` 帶 `--trivial`（放哪個位置都行，可以同時給 base）開「瑣事卡」：只改註解、CHANGELOG、沒被測試引用的說明文字時用。腳本在「## 規格」第一行寫「類型：瑣事（…）」、關卡直接設 `spec：待確認規格（瑣事）`，驗收情境維持範本（面板跟一般卡一樣提示去寫規格）；規格怎麼寫見下面「產生規格」的瑣事卡段。
   - `new` 之後提醒：接著用 `/desk:card spec <slug>` 產生規格。`new` 不建 `changelog.d/<slug>.md`（空片段會讓發版合併報錯），條目由實作時寫。橫切重構（改名、搬檔、改六段結構）的卡要等其他卡合併、或其他卡等它合併，見 `docs/WORKFLOW.md` 的「開卡順序」。
@@ -36,8 +37,8 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
    - 不改程式、不 commit、不碰其他任務的卡。
 2b. **規格前審（有 `spec preflight:` 時）**：
    - 步驟 1 印出 `spec preflight: <指令>` 時，先決定 `--paths`（步驟 2 讀到的相關程式模組，逗號分隔路徑清單）；將 `{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成模組路徑，其餘佔位原樣保留。
-   - 相關檔只有 1～2 個（小卡）就不跑前審，History 記一行：`- YYYY-MM-DD HH:MM：規格前審：略過（小卡：相關檔 n 個）`。
-   - 相關檔 3 個以上：用 Bash 的 `run_in_background` 在背景執行前審指令，不停下來等；同時繼續讀程式、想釐清題、擬規格草稿。步驟 5 寫進卡片前收結果：讀取輸出檔（預設 `.task/SPEC-gemini.md`），還沒跑完就等它跑完（不另設逾時）。
+   - 相關檔少於步驟 1 印的 `spec preflight min files:`（`card.specPreflightMinFiles`，沒設是 3，也就是相關檔只有 1～2 個）的小卡就不跑前審，History 記一行：`- YYYY-MM-DD HH:MM：規格前審：略過（小卡：相關檔 n 個）`。
+   - 相關檔達到門檻（沒設時是相關檔 3 個以上）：用 Bash 的 `run_in_background` 在背景執行前審指令，不停下來等；同時繼續讀程式、想釐清題、擬規格草稿。步驟 5 寫進卡片前收結果：讀取輸出檔（預設 `.task/SPEC-gemini.md`），還沒跑完就等它跑完（不另設逾時）。
    - 候選清單只當建議：與卡片 Scope、非目標衝突的丟掉；採用的寫進 AC 表，並在「對應測試」欄保留建議的測試名（標（新））。
    - History 加一行：`- YYYY-MM-DD HH:MM：規格前審：候選 m、採用 n、<丟棄原因一句>`（全數採用時寫全數採用）。
    - 指令執行失敗（找不到指令、非 0、超時）就跳過前審照常寫規格，History 記一行：`- YYYY-MM-DD HH:MM：規格前審：略過（<原因>）`。

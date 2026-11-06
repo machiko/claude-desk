@@ -43,6 +43,8 @@ export type Case = {
   ask: string
   next: string
   gate: string
+  /** 卡片 DESK 區塊的「基準」欄（開卡時記下的基準分支，例如 origin/release/v26.2.8）；舊卡沒有。審查範圍、風險與開 PR 目標都先看它。 */
+  base?: string
   /** 卡片檔案最後寫入時間；讀不到為 null。 */
   updatedAt: number | null
   /** 分支最後一次 commit 的時間（毫秒；不算只改卡片的 commit）；讀不到或教學模式就沒有。 */

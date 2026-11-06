@@ -146,7 +146,7 @@ export async function refresh($: any, options: PluginOptions) {
       const autoReview = !!run && run.owner === self && !!last && !last.handled && (last.kind === 'continue' || last.kind === 'reply')
       // 流程接手時檢查通過就過關（輪到你的說法）：跟 nextStep 同一個判斷，含風險；只有流程還會接著走（沒過關或過關後有新 commit）時才算。
       const skip = !!run && !tutorial && !!settings && reviewedOn(run, probe.git?.branch) && (!run.passed || stale)
-        && skipsReview(run, probe.git?.branch, await riskOf($, { root: base.root, git: probe.git, pr }, settings.riskHigh, settings.cardBase))
+        && skipsReview(run, probe.git?.branch, await riskOf($, { root: base.root, git: probe.git, pr, ...(base.base ? { base: base.base } : {}) }, settings.riskHigh, settings.cardBase))
       const chain = run
         ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: shownStopped(run.stopped), ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.fixTotal ? { fixTotal: run.fixTotal } : {}), ...(run.stopped === MEDIUM_FIX_NOT_SENT && run.mediumFixSecurity ? { mediumSecurity: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(run.passed && run.unreviewed ? { unreviewed: true, ...(run.reviewFix ? { reviewFix: true } : {}) } : {}), ...(skip ? { reviewed: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
@@ -382,7 +382,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     // 額度煞車：要派下一個 Agent 前看 5 小時額度。停在提問、題目已在對話處理的那次本來就不派，不看。
     const handed = askClearedOnCard(last, c.ask)
     const hold = settings && !tutorial && !handed ? quotaHold(s.limits, settings.chainQuotaStop, s.at) : ''
-    const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent, ...(hold ? { quotaHold: hold } : {}), ...(c.git?.branch ? { branch: c.git.branch } : {}) })
+    const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent, ...(hold ? { quotaHold: hold } : {}), ...(c.git?.branch ? { branch: c.git.branch } : {}), ...(settings?.review.combineSecurity ? { combineSecurity: true } : {}) })
     if (!planned) continue
     // 寫入放棄（被別的對話蓋掉）不算有動作：不提早重新整理，等下一次重新整理再試，免得每兩秒重套一次。
     const actedBefore = acted

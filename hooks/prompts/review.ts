@@ -6,7 +6,15 @@ export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
 
 /** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單與過去審查紀錄在哪。 */
-export type ReviewOpts = { round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; history: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string; /** 審查前置指令的 `{root}`；沒給用任務根目錄。 */ root?: string }
+export type ReviewOpts = {
+  round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; history: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string; /** 審查前置指令的 `{root}`；沒給用任務根目錄。 */ root?: string
+  /** 工作桌自己跑的完成檢查（指令與卡片相同）已在這個 HEAD 通過、HEAD 沒動：審查不重跑整套。 */
+  verifiedHead?: string
+  /** 分支相對基準分支改了幾個檔（review.preflightMinFiles 的門檻用）；不知道就沒有。 */
+  files?: number
+  /** 高風險分支、設了 review.combineSecurity：資安重點併進這次程式碼審查，過關後不另派資安審查。 */
+  securityFocus?: boolean
+}
 
 /** 下一步以 .task/review-… 開頭時，那個路徑。 */
 export function reviewTask(c: Case): string {
@@ -52,6 +60,27 @@ function preflightRule(cmd: string, vars: { root: string; base: string }, file: 
   return `審查前置：先執行 \`${run}\`，它的輸出是候選清單，每條都要自己逐條驗證過才准列進 ${file}，未驗證的不算；${file} 第一行記「前置：成功，候選 n 條，採用 m 條」。指令失敗（找不到、非 0、超時）就略過、照常審查，第一行記「前置：失敗（原因）」。`
 }
 
+/**
+ * 完成檢查那句：工作桌在派審查時的 HEAD 跑過完成檢查而且通過（verifiedHead），HEAD 沒變就不重跑整套、只跑跟改動有關的測試；
+ * 沒有通過紀錄或 HEAD 已移動，照舊自己重跑。
+ */
+function checkRule(command: string, verifiedHead: string | undefined): string {
+  if (!verifiedHead) return `自己重跑完成檢查 \`${command}\`。`
+  return `完成檢查 \`${command}\` 已在 HEAD ${verifiedHead} 通過（工作桌跑的）：HEAD 沒變就不重跑整套，只跑跟改動有關的測試；HEAD 已移動就自己重跑完成檢查。`
+}
+
+/**
+ * 這次要不要加前置句：沒設指令不加；設了 review.preflightMinFiles 時，複審與重新審查一律不加，第一次審查 diff 檔數低於門檻也不加
+ * （檔數不明照加）。沒設門檻（0）照舊都加。
+ */
+function wantsPreflight(words: ReviewWords, r: ReviewOpts | undefined): boolean {
+  if (!words.preflight) return false
+  const min = words.preflightMinFiles ?? 0
+  if (min <= 0) return true
+  if (r && (r.round > 0 || r.recheck)) return false
+  return r?.files === undefined || r.files >= min
+}
+
 export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
   const scope = r?.base && r.recheck
@@ -61,11 +90,12 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
     : r?.target ? `看這個分支相對 ${r.target} 的 diff（從 git merge-base 起算）。` : '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。'
   return [
     `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續 Agent、不參考 Agent 的結論。`,
-    `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。自己重跑完成檢查 \`${c.verify}\`。`,
-    ...(words.preflight ? [preflightRule(words.preflight, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file)] : []),
+    `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。${checkRule(c.verify, r?.verifiedHead)}`,
+    ...(wantsPreflight(words, r) ? [preflightRule(words.preflight!, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file)] : []),
     scope,
     ...(r?.pitfalls ? [`先讀專案常犯錯誤清單 ${r.pitfalls}，逐條對照這次的改動。`] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
+    ...(r?.securityFocus && !r.security ? [`這是高風險分支，這次審查同時做資安審查（過關後不另派）：另外逐項看 ${words.security}，有問題照下面的分級列進 ${file}。`] : []),
     `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
     MEDIUM_RULE,
     ...(r?.security ? [SECURITY_KEEP_ASK] : []),

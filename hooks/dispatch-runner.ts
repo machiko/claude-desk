@@ -1,12 +1,12 @@
 // 背景 Agent 派工與執行排程。
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
-import type { AgentInfo, Case } from '../types'
+import type { AgentInfo, Case, Verify } from '../types'
 import { DEMO_ONLY } from './card-actions'
 import { KIND_LABEL, LaunchError, REVIEW_FILE, addRunTime, dispatchRunMs, SECURITY_FILE, buildPrompt, fixesByG, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, untrustedSteps, writesCode } from './dispatch'
-import type { DispatchKind, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
+import type { DispatchKind, DispatchSettings, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
-import { loadSettings, deskPaths, diffBase, gitProbe, home, originRemote, worktreeMark } from './probes'
+import { loadSettings, deskPaths, diffBase, diffFiles, gitProbe, home, originRemote, riskOf, worktreeMark } from './probes'
 import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, runGraceMs, JOBS_KEY } from './desk-io'
 import { hasAgentQueue, isAgentQueued, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
 import { startSim } from './tutorial-run'
@@ -16,10 +16,12 @@ import { WORD } from './theme'
 import { lastLaunches } from './stale-agents'
 import { restage, spin, tutorial, lastAgents } from './register'
 import { carriedFix, carriedReview, countedFix } from './chain'
+import { checkStands } from './pipeline'
 import { fixesReview } from './prompts/fix'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
+const verifiesAtom = atom({ plugin: 'desk', key: 'verifies' } as const, {} as Record<string, Verify>)
 /** 派工因為 repo 還沒信任而開不了的那幾件（卡片路徑 → 擋下原因）：面板的「輪到你」改說三步；派工開頭與成功派出時清掉。 */
 const untrustedAtom = atom({ plugin: 'desk', key: 'untrusted' } as const, {} as Record<string, UntrustedHold>)
 
@@ -151,6 +153,25 @@ export function launchFailed(label: string, error: unknown): string {
 export const alreadyQueued = (c: Case) => `${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`
 
 /**
+ * 審查看的範圍與省略：diff 的基準分支；工作桌的完成檢查在派審查時的 HEAD 通過（指令沒變）就帶 verifiedHead，審查不重跑整套；
+ * 設了 review.preflightMinFiles 才數 diff 檔數；設了 review.combineSecurity、分支是高風險、這次是程式碼審查時帶 securityFocus。
+ */
+async function reviewScope($: any, c: Case, probed: Case['git'], settings: DispatchSettings, security: boolean): Promise<Pick<ReviewOpts, 'target' | 'verifiedHead' | 'files' | 'securityFocus'>> {
+  const at = { ...c, ...(probed ? { git: probed } : {}) }
+  const found = (settings.review.preflightMinFiles ?? 0) > 0 ? await diffFiles($, at, settings.cardBase) : await diffBase($, at, settings.cardBase)
+  const verify = ((await read($, verifiesAtom)) as Record<string, Verify>)[c.statusPath]
+  // HEAD 要對得上（不只是沒移動）：讀不到 HEAD、舊紀錄沒記 HEAD 都照舊重跑。
+  const verifiedHead = checkStands(at, verify) === true && verify?.head && verify.head === at.git?.head ? verify.head : undefined
+  const securityFocus = !security && !!settings.review.combineSecurity && (await riskOf($, at, settings.riskHigh, settings.cardBase)).level === 'high'
+  return {
+    ...(found ? { target: found.target } : {}),
+    ...(verifiedHead ? { verifiedHead } : {}),
+    ...(found && 'files' in found ? { files: found.files.length } : {}),
+    ...(securityFocus ? { securityFocus: true } : {}),
+  }
+}
+
+/**
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
  * 從啟動後的 agents 清單用名字對回完整 session id 才算成功；審查與（設了同步模型的）同步開新 session，不改任務的 session。
  * 同時在跑的工作桌 Agent 已達上限（maxAgents）就排進派工隊伍，有空位再依序派出。
@@ -212,8 +233,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
       const base = recorded && recorded !== c.git?.branch ? recorded : undefined
       const template = settings.review.template || `${$.plugin.root}/templates/review.md`
       const recheck = !!opts.auto && !!run?.recheck && !opts.security
-      const target = tutorial ? undefined : (await diffBase($, c, settings.cardBase))?.target
-      review = { round, template, ...(target ? { target } : {}), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls, history: paths.reviews }
+      review = { round, template, ...(tutorial ? {} : await reviewScope($, c, probed, settings, !!opts.security)), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls, history: paths.reviews }
     }
     const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls)
     const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
