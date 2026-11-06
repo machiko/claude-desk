@@ -105,7 +105,7 @@ export async function reply($: any, options: PluginOptions, c: Case, text?: stri
 /** 教學不派真的 Agent：合併照教學說的按 t。 */
 const TUTORIAL_PUBLISH = '教學不會真的 push：照教學的指示按 t 合併'
 
-/** 開 PR 要推送 Agent 做的那句：對基準分支（baseRefs 第一個）開 PR，做法依 origin（或專案 `pr.open`）。 */
+/** 開 PR 要推送 Agent 做的那句：對基準分支（baseRefs 第一個：PR 目標、卡片基準欄、最新 release 線…）開 PR，做法依 origin（或專案 `pr.open`）。 */
 async function openPrText($: any, options: PluginOptions, c: Case): Promise<string> {
   const settings = await loadSettings($, options)
   const [target] = await baseRefs($, c, settings.cardBase ?? '')

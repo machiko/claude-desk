@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { fixture, CARD_A, PROJECT_DIR, result } from './fixture'
 import { carriedFix, carriedReview, fixTotalOf, nextStep, recheckFeed, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED, ASK_HANDED_OVER, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
 
 const run = (round = 0, extra = {}) => ({ owner: 'me', startedAt: 1, round, ...extra })
@@ -149,4 +150,47 @@ test('test_high_risk_fix_is_still_rereviewed', () => {
   expect(nextStep(seen, 'review', null, v(0, 0), true, { risk: high, branch: 'feature/a' })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 1, security: true })
   expect(nextStep(run(), 'continue', true, null, true, { risk: { level: 'low', reasons: ['只動文件'] }, branch: 'feature/a' })).toEqual({ kind: 'pass', skipped: true })
   expect(nextStep(run(), 'continue', true, null, true, { branch: 'feature/a' })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
+})
+
+/** card-base-and-fast-path AC-5：設了 review.combineSecurity，高風險分支的程式碼審查已含資安重點，過關後不再另派資安審查，照舊停下來給你看。 */
+test('combined security review does not dispatch second review', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const ALPHA = '/home/u/wt/alpha'
+  data.files[`${PROJECT_DIR}/dispatch.json`] = JSON.stringify({ review: { combineSecurity: true } })
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1', files: ['src/Auth/Fido.php'] }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.agents = []
+  let n = 0
+  data.launch = async (e: any) => {
+    n++
+    const id = `c000000${n}`
+    data.agents = [{ id, kind: 'background', cwd: ALPHA, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, id)
+  }
+  const step = async () => { await clock.advance(2500); await clock.settle() }
+  const finish = async () => {
+    data.agents = data.agents.map(a => ({ ...a, status: 'idle', state: 'done' }))
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    await clock.settle(); await step(); await step(); await step()
+  }
+  const prompt = (i: number) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  await finish()
+  // 實作 → 檢查通過 → 程式碼審查（含資安重點；檢查剛在 h1 跑過，不重跑整套）
+  expect(data.launches).toHaveLength(2)
+  expect(prompt(1).startsWith('程式碼審查')).toBe(true)
+  expect(prompt(1)).toContain('這是高風險分支，這次審查同時做資安審查（過關後不另派）')
+  expect(prompt(1)).toContain('完成檢查 `node test.mjs` 已在 HEAD h1 通過')
+
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；可')
+  await finish()
+  expect(data.launches).toHaveLength(2)
+  expect(data.toasts.some(t => t.includes('資安驗收已派出'))).toBe(false)
+  const chain = (data.store.chains as any)[ALPHA]
+  expect(chain.passed).toBe(true)
+  expect(chain.needsHuman).toContain('認證／中介層')
 })

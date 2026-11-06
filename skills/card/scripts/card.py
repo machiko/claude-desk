@@ -6,7 +6,10 @@
 - 舊卡 `.console/STATUS.md`：`<!-- CARD -->` 區塊，欄位「驗證」「等使用者」，`- 更新：… · rev N · …` 每次寫入要加 1。
 
 用法：
-  card.py new <分支> <卡名> [base]             從主 repo 建 worktree（資料夾名取分支最後一段）、DESK 卡、登錄表列
+  card.py new <分支> <卡名> [base]             從主 repo 建 worktree（資料夾名取分支最後一段）、DESK 卡、登錄表列；
+                                               沒給 base 時用主 repo 當下的分支（origin 有同名分支就用 origin/<分支>），
+                                               主 repo 是 detached HEAD 時用 card.base；用到的基準寫進 DESK 區塊的「基準」欄。
+                                               base 是登錄表上另一張卡的分支（疊放的後續卡）時，基準欄改記那張卡的基準（它沒有就不記）
                                                --trivial（任何位置）：瑣事卡，規格段標「類型：瑣事」、關卡設 spec：待確認規格（瑣事）；驗收情境維持範本，由 spec 步驟預填
   card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
@@ -45,13 +48,14 @@ CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree �
   user            寫進卡片的人名（預設「使用者」）
   card.main       主 repo（new 從這裡建 worktree；目標寫 main 時指它的卡片）
   card.worktrees  worktree 放哪（預設主 repo 旁邊的 <名稱>-worktrees）
-  card.base       new 沒給 base 時從哪裡切（預設 origin/main）
+  card.base       new 沒給 base、主 repo 又是 detached HEAD 時從哪裡切（預設 origin/main）
   card.check      new 之後建議的完成檢查，{slug} 會換成資料夾名
   card.registry   任務登錄表（預設專案資料夾裡的 projects-scope.md；new 時不存在就建一份）
   card.template   DESK 卡模板（預設 plugin 內附的 templates/DESK-template.md）
   card.archive    歸檔資料夾（預設登錄表旁邊的 archive/）
   card.specRules  寫規格時要額外遵守的專案規則（字串陣列）
   card.specPreflight  規格前審指令，{root}、{card}、{paths} 會換成對應路徑
+  card.specPreflightMinFiles  相關檔少於這個數就不跑規格前審（正整數，預設 3）
   card.retro      歸檔回顧指令，{slug} 會換成卡片名稱
   card.changelog.format  changelog 的格式：不設是「## 未發布」＋扁平條目；"keepachangelog" 依 Keep a Changelog
                   （動詞對照：新增→Added、調整→Changed、移除→Removed、修復→Fixed、修補→Security）
@@ -134,6 +138,8 @@ TPL = expand(os.environ.get('DESK_CARD_TEMPLATE') or cfg('template', os.path.joi
 WT_ROOT = expand(cfg('worktrees', (MAIN.rstrip('/') + '-worktrees') if MAIN else ''))
 BASE = cfg('base', 'origin/main')
 ARCHIVE = expand(os.environ.get('DESK_CARD_ARCHIVE') or cfg('archive', os.path.join(os.path.dirname(REG), 'archive') if REG else ''))
+DEFAULT_SPEC_PREFLIGHT_MIN_FILES = 3
+SPEC_PREFLIGHT_MIN_FILES = CFG.get('specPreflightMinFiles') if isinstance(CFG.get('specPreflightMinFiles'), int) and not isinstance(CFG.get('specPreflightMinFiles'), bool) and CFG.get('specPreflightMinFiles') > 0 else DEFAULT_SPEC_PREFLIGHT_MIN_FILES
 SPEC_RULES = [r.strip() for r in CFG.get('specRules', []) if isinstance(r, str) and r.strip()] if isinstance(CFG.get('specRules'), list) else []
 
 
@@ -387,6 +393,62 @@ NAME_SLOT = '<任務名>'
 LEGACY_NAME_SLOT = '<案名>'  # 0.24.0 以前模板的卡名佔位：自訂模板（card.template）可能還寫著它
 
 
+BASE_FIELD = '基準'
+
+
+def main_repo_base():
+    """new 沒給 base 時的基準：主 repo 當下的分支，origin 有同名分支就用 origin/<分支>；detached HEAD 用 card.base。"""
+    branch = git_branch(MAIN)
+    if not branch:
+        return BASE
+    remote = git('-C', MAIN, 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{branch}').returncode == 0
+    return f'origin/{branch}' if remote else branch
+
+
+def stacked_on(base):
+    """base（可帶 origin/）是登錄表上另一張進行中的卡的 worktree 分支時，回傳那張卡的 (卡名, 卡片路徑)；不是就 None。
+    主 repo 那張卡（根目錄就是主 repo，例如發版線）不算疊放；卡片檔或 worktree 不在的列略過。"""
+    if not base or not os.path.isfile(REG):
+        return None
+    wanted = base[len('origin/'):] if base.startswith('origin/') else base
+    for name, path in active_rows():
+        root = card_root(path)
+        if not os.path.isfile(path) or not os.path.isdir(root) or os.path.abspath(root) == os.path.abspath(MAIN):
+            continue
+        if git_branch(root) == wanted:
+            return name, path
+    return None
+
+
+def recorded_base(base):
+    """卡片「基準」欄要記的分支與說明。疊在別張卡的分支上（審查 MEDIUM 另開卡修的後續卡）時，那條分支合併後就沒了，
+    不能當審查範圍與開 PR 目標：改記那張卡的基準欄；那張卡沒有基準欄就不記（工作桌照舊順序找）。"""
+    parent = stacked_on(base)
+    if not parent:
+        return base, base
+    name, path = parent
+    text = read(path)
+    desk = re.search(r'<!-- (DESK|CARD)\b[^>]*-->\n(.*?)<!-- /\1 -->', text, re.S)
+    inherited = field(desk.group(2), BASE_FIELD) if desk else ''
+    if inherited:
+        return inherited, f'{inherited}（疊在「{name}」的分支上，沿用它的基準）'
+    return '', f'不記（疊在「{name}」的分支上，那張卡沒有基準欄，工作桌照舊順序找）'
+
+
+def insert_base_field(path, base):
+    """DESK 區塊「關卡」行之後插一行「- 基準：<ref>」；沒有關卡行（自訂模板）就接在區塊最後。新行自己帶換行。"""
+    text = read(path)
+    _, start, end = block(text)
+    body = text[start:end]
+    line = f'- {BASE_FIELD}：{base}'
+    gate = re.search(r'^- 關卡：.*$', body, re.M)
+    if gate:
+        body = body[:gate.end()] + '\n' + line + body[gate.end():]
+    else:
+        body = (body if body.endswith('\n') or not body else body + '\n') + line + '\n'
+    write(path, text[:start] + body + text[end:])
+
+
 def cmd_new(branch, name, base=None, trivial=False):
     need_registry()
     if not MAIN:
@@ -405,16 +467,20 @@ def cmd_new(branch, name, base=None, trivial=False):
         fail(f'已存在：{wt}')
     os.makedirs(WT_ROOT, exist_ok=True)
     git('-C', MAIN, 'fetch', '-q', 'origin')
+    base = base or main_repo_base()
     if git('-C', MAIN, 'show-ref', '--verify', '--quiet', f'refs/heads/{branch}').returncode == 0:
         git('-C', MAIN, 'worktree', 'add', wt, branch, check=True)
     else:
-        git('-C', MAIN, 'worktree', 'add', '-b', branch, wt, base or BASE, check=True)
+        git('-C', MAIN, 'worktree', 'add', '-b', branch, wt, base, check=True)
         # 從遠端分支切出來時不要追蹤它，免得 push 到錯的地方。
         git('-C', wt, 'branch', '--unset-upstream')
     os.makedirs(os.path.join(wt, '.desk'), exist_ok=True)
     os.makedirs(os.path.join(wt, '.task'), exist_ok=True)
     card = os.path.join(wt, '.desk', 'CARD.md')
     write(card, content)
+    record, shown_base = recorded_base(base)
+    if record:
+        insert_base_field(card, record)
     if trivial:
         # 開卡就設 spec 關卡：spec 步驟預填驗收情境後，確認前也不會派工。驗收情境不在這裡預填，面板才會像一般卡提示去寫規格。
         set_gate(card, TRIVIAL_GATE)
@@ -428,6 +494,7 @@ def cmd_new(branch, name, base=None, trivial=False):
     insert_registry_row(f'| {name} | `{card}` | | | |')
     print(f'開卡完成：{wt}')
     print(f'  卡片：{card}')
+    print(f'  基準：{shown_base}')
     check = cfg('check').replace('{slug}', slug)
     print(f'  建議完成檢查：{check}' if check else f'  完成檢查：{CMD} spec 會一起補上')
     print(f'  下一步：{CMD} spec {slug} 產生規格，確認後 /desk refresh')
@@ -446,6 +513,8 @@ def cmd_card(arg):
     print(f'root: {root}')
     print(f'format: {fmt}')
     print(f'branch: {git_branch(root)}')
+    if field(body, BASE_FIELD):
+        print(f'base: {field(body, BASE_FIELD)}')
     print(f'gate: {field(body, "關卡")}')
     print(f'check: {check}')
     print(f'spec: {"yes" if has_spec(text) else "no"}; filled AC: {", ".join(filled_ac(text)) or "none"}')
@@ -458,6 +527,7 @@ def cmd_card(arg):
         print(f'suggested check: {cfg("check").replace("{slug}", os.path.basename(root))}')
     if cfg('specPreflight') and not trivial:
         print(f'spec preflight: {cfg("specPreflight")}')
+        print(f'spec preflight min files: {SPEC_PREFLIGHT_MIN_FILES}')
     for rule in SPEC_RULES:
         print(f'rule: {rule}')
 

@@ -475,14 +475,22 @@ export function settleMergedAsk<T extends Case>(c: T, verify: Verify | undefined
   return { ...rest, state: stateOf(rest, verify) } as T
 }
 
+/** 卡片「基準」欄的分支（去掉反引號）；沒有這欄、寫「無」或空白就是空字串。 */
+const cardBaseOf = (card: Record<string, string> | null): string => {
+  const value = plain(card?.['基準'] ?? '').replace(/`/g, '').trim()
+  return saysNone(value) ? '' : value
+}
+
 export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: number | null, agents: Record<string, AgentInfo>, verify: Verify | undefined): Case {
   const row = { ...rawRow, name: plain(rawRow.name) }
   const card = cardText === null ? null : parseCard(cardText)
   const root = projectRoot(row.statusPath)
   const agent = agents[root]
+  const branchBase = cardBaseOf(card)
   const base: Omit<Case, 'state'> = {
     name: row.name, statusPath: row.statusPath, root, hasCard: card !== null, ...(row.manual ? { manual: true } : {}),
     status: plain(card?.['狀態'] ?? ''), verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: plain(card?.['關卡'] ?? ''),
+    ...(branchBase ? { base: branchBase } : {}),
     updatedAt: mtime, ...(agent ? { agent } : {}),
     ...(cardText !== null && hasSpec(cardText) && !filledAc(cardText).length ? { specGap: true as const } : {}),
   }

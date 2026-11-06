@@ -1,5 +1,5 @@
 // 卡片與登錄表的解析：純函式，不碰磁碟。
-// DESK 卡只有五個欄位：狀態、檢查、等你、下一步、關卡；舊版 CARD 的「等使用者」一併接受。
+// DESK 卡的五個欄位：狀態、檢查、等你、下一步、關卡；開卡時另記「基準」（舊卡沒有）。舊版 CARD 的「等使用者」一併接受。
 import type { Case, Decision, Gate } from '../types'
 
 export type RegistryRow = { name: string; statusPath: string; manual?: boolean }

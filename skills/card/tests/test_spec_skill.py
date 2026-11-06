@@ -91,6 +91,15 @@ class SpecSkillTest(unittest.TestCase):
         trivial = step(self.body, '2c.')
         self.assertIn('跳過 2b 規格前審', trivial)
 
+    def test_spec_preflight_threshold_from_config(self):
+        """card-base-and-fast-path AC-4／AC-7：2b 的小卡門檻讀步驟 1 印的 `spec preflight min files:`（card.specPreflightMinFiles，沒設是 3）。
+        card.py 印出門檻的那半由 test_card.py 的 test_card_command_prints_spec_preflight_min_files 驗。"""
+        pre = step(self.body, '2b.')
+        skip = next(l for l in pre.splitlines() if '不跑前審' in l)
+        for part in ('少於步驟 1 印的 `spec preflight min files:`', '`card.specPreflightMinFiles`', '沒設是 3'):
+            self.assertIn(part, skip)
+        self.assertIn('相關檔達到門檻', pre)
+
     def test_spec_skill_requires_unchanged_behavior_rows(self):
         """build-like-review AC-5：改到自動流程、狀態旗標或解析器的卡，寫驗收情境時要列「維持現狀」的相鄰路徑或真實輸出樣本，各一列。"""
         write = step(self.body, '5.')
