@@ -5,12 +5,12 @@
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, SentRecord, Snapshot } from '../types'
-import { parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
+import { parseCard, parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { WORD } from './theme'
-import { errorLine, errorText, quotaHeld, reasonLine, slugOf } from './model'
+import { errorLine, errorText, plain, quotaHeld, reasonLine, slugOf } from './model'
 import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
 import { afterSpecRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, refusalOf, refusalText } from './dispatch'
-import { archivesOnShip, canRelease, isReleaseLine } from './pipeline'
+import { archivesOnShip, canRelease, isReleaseLine, releasingStep } from './pipeline'
 import { AGENT_STOPPED, CHAIN_CHANGED, paused, revOf } from './chain'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
@@ -190,6 +190,9 @@ export async function fillDecision($: any, c: Case) {
  */
 export async function fillRelease($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
+  // 第一次按之後發版才在對話裡開始（面板還沒重新整理）：重讀卡片，發版中就不填，同一版不做兩次。
+  const refused = releaseRefusal(await releasingNow($, c))
+  if (refused) { $.ui.toast(refused, { timeoutMs: 8000 }); return }
   if ((await promptDraft($)).trim()) { $.ui.toast(RELEASE_DRAFT, { timeoutMs: 8000 }); return }
   const cases = ((await read($, snapshotAtom)) as Snapshot | null)?.cases.filter(canRelease) ?? []
   const text = releasePrompt(cases.length ? cases : [c], { confirmed: true })
@@ -199,6 +202,19 @@ export async function fillRelease($: any, c: Case) {
 }
 
 const RELEASE_DRAFT = '輸入框有未送出的字，先送出或清掉再按發版'
+export const RELEASE_RUNNING = '發版中，等它跑完'
+/** 按發版時這件正在發版（releasingNow 讀到的步驟）：回傳要跳的提示，否則 null。 */
+export const releaseRefusal = (step: string | null): string | null => step ? RELEASE_RUNNING : null
+
+/** 按下當下的卡片：狀態寫發版進行中、還沒逾時就回傳步驟；讀不到卡片就照快照（c.releasing）。 */
+async function releasingNow($: any, c: Case): Promise<string | null> {
+  const [text, stat] = await Promise.all([
+    $.fs.read(c.statusPath).catch(() => null) as Promise<string | null>,
+    $.fs.stat(c.statusPath).catch(() => null) as Promise<{ mtimeMs?: number } | null>,
+  ])
+  if (typeof text !== 'string') return c.releasing ?? null
+  return releasingStep(plain(parseCard(text)?.['狀態'] ?? ''), typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, await $.clock.now())
+}
 const RELEASE_FILLED = '發版請求已填入（已確認照慣例版號），按 Esc 回輸入框再按 Enter；要改版號就在送出前改這行'
 
 export async function openCard($: any, c: Case) {

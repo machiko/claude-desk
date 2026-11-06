@@ -4,7 +4,7 @@ import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '..
 import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
-import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, standingVerdict, toFix } from './pipeline'
+import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, releasingStep, standingVerdict, toFix } from './pipeline'
 import { RUN_WARN_MS, isDeskLaunch, spanMs } from './dispatch'
 import { MEDIUM_FIX_NOT_SENT } from './chain'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
@@ -445,6 +445,8 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
   if (!saysNone(c.ask)) return 'ask'
   if (approvalWait(c.agent)) return 'approve'
   if (agentWaits(c.agent)) return 'reply'
+  // 發版在對話裡跑（卡片寫進行中、還沒逾時）：沒有背景 Agent 也算處理中。
+  if (c.releasing) return 'running'
   const running = !!c.agent && !c.agent.asks
   const verdict = parseVerdict(c.gate)
   // 審查結論由自動流程處理：沒擋的就過、有擋的去修；流程停下或沒有流程時才要人。
@@ -481,17 +483,20 @@ const cardBaseOf = (card: Record<string, string> | null): string => {
   return saysNone(value) ? '' : value
 }
 
-export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: number | null, agents: Record<string, AgentInfo>, verify: Verify | undefined): Case {
+/** `now`：判斷發版進行中有沒有逾時用；沒給（示範資料、只看卡片的測試）就不算發版中。 */
+export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: number | null, agents: Record<string, AgentInfo>, verify: Verify | undefined, now?: number): Case {
   const row = { ...rawRow, name: plain(rawRow.name) }
   const card = cardText === null ? null : parseCard(cardText)
   const root = projectRoot(row.statusPath)
   const agent = agents[root]
   const branchBase = cardBaseOf(card)
+  const status = plain(card?.['狀態'] ?? '')
+  const releasing = now === undefined ? null : releasingStep(status, mtime, now)
   const base: Omit<Case, 'state'> = {
     name: row.name, statusPath: row.statusPath, root, hasCard: card !== null, ...(row.manual ? { manual: true } : {}),
-    status: plain(card?.['狀態'] ?? ''), verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: plain(card?.['關卡'] ?? ''),
+    status, verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: plain(card?.['關卡'] ?? ''),
     ...(branchBase ? { base: branchBase } : {}),
-    updatedAt: mtime, ...(agent ? { agent } : {}),
+    updatedAt: mtime, ...(releasing ? { releasing } : {}), ...(agent ? { agent } : {}),
     ...(cardText !== null && hasSpec(cardText) && !filledAc(cardText).length ? { specGap: true as const } : {}),
   }
   return { ...base, state: stateOf(base, verify) }
@@ -569,6 +574,9 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning', 'reply')
     else if (c.state === 'approve' && p.state !== 'approve') push(`${c.name} Agent 等你批准權限`, 'warning', 'approve')
     else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning', 'gate')
+    // 發版在對話裡跑，不是 Agent：說開始發版、發版步驟結束，不說開始執行、Agent 已完成。
+    else if (c.releasing && !p.releasing) push(`${c.name} 開始發版`, 'suggestion')
+    else if (p.releasing && !c.releasing) push(`${c.name} 發版步驟結束`, 'subtle')
     else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
     else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent 已完成`, 'subtle')
     // 流程暫停、檢查沒過、檢查中斷、容器沒起都已寫了原因、跳了 toast；只剩審查結論擋下、流程沒停（手動審查）要在這裡說。
