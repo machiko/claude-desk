@@ -123,7 +123,7 @@ export async function refresh($: any, options: PluginOptions) {
         $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
         $.fs.stat(row.statusPath).catch(() => null) as Promise<{ mtimeMs?: number } | null>,
       ])
-      const base = buildCase(row, card, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, agents, verifies[row.statusPath])
+      const base = buildCase(row, card, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, agents, verifies[row.statusPath], now)
       const last = jobs[normalizeRoot(base.root)]?.last
       // 最後一次派工停在提問、題目寫進卡片「等你」後已在對話處理（清成「無」）：那個 Agent 不再代表任務，同一輪就照卡片算。
       const cleared = askClearedOnCard(last, base.ask)

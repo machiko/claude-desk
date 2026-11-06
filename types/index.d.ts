@@ -47,6 +47,8 @@ export type Case = {
   base?: string
   /** 卡片檔案最後寫入時間；讀不到為 null。 */
   updatedAt: number | null
+  /** 發版正在跑的步驟：狀態寫「發版 v…：進行中（<步驟>）」、卡片 10 分鐘內更新過才有（見 pipeline.ts 的 releasingStep）。 */
+  releasing?: string
   /** 分支最後一次 commit 的時間（毫秒；不算只改卡片的 commit）；讀不到或教學模式就沒有。 */
   commitAt?: number
   /** 那次 commit 改到的檔案最後被修改的時間（不晚於 commit）：先寫卡、測試跑很久才 commit 時，程式其實比卡片早改好。 */

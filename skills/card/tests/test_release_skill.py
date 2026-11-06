@@ -143,6 +143,17 @@ class ReleaseSkillTest(unittest.TestCase):
         self.assertIn('只看跨卡的交互', part)
         self.assertIn('不重審', part)
 
+    def test_release_in_progress_pattern_matches_release_skill(self):
+        """發版進行中狀態卡 K-2：SKILL.md 叫對話寫進「狀態」的那句範本，跟 tests/release-sample.mjs 的 inProgress 是同一串字；
+        照樣本填好的狀態由 tests/release-in-progress.test.tsx 的同名測試交給面板的正規式，認得出步驟。"""
+        body = read(SKILL)
+        sample = json.loads(read(SAMPLE).split('\nexport default ', 1)[1])['inProgress']
+        self.assertIn('「狀態」寫「%s」' % sample['template'], body)
+        status = sample['template']
+        for slot, value in sample['fill'].items():
+            status = status.replace(slot, value)
+        self.assertEqual(status, sample['status'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -3,7 +3,7 @@
 import type { Case, SentRecord } from '../types'
 import { agentWaits, approvalWait, approveText, isQuotaHold, QUOTA_RESTART, quotaHeld, slugOf } from './model'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, runningKind, shipsWith, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, releaseStep, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext, untrustedSteps } from './dispatch'
@@ -66,7 +66,12 @@ const RUNNING_TEXT: Partial<Record<string, string>> = {
   publish: 'Agent 在 push、開 PR（l 看輸出）', catchup: CATCHUP_RUNNING,
 }
 
-const runningText = (c: Case) => RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
+/** 發版在對話裡跑（卡片寫進行中、還沒逾時）時「輪到你」那句。 */
+export const releasingText = (step: string) => `發版中（${step}），等它跑完`
+/** 卡片寫發版進行中、超過 RELEASE_STALE_MS 沒更新（當成停了）時「輪到你」那句。 */
+export const releaseStoppedText = (step: string) => `上次發版停在${step}，按兩次 z 重來`
+
+const runningText = (c: Case) => c.releasing ? releasingText(c.releasing) : RUNNING_TEXT[runningKind(c) ?? c.chain?.lastKind ?? 'continue'] ?? RUNNING_TEXT.continue!
 
 const SELF_REVIEW = '（驗收是自審，可按 w 派獨立驗收）'
 /** 檢查欄空白、範本佔位或說明文字（verifyCommand 回空字串）時，規格段叫你填的那句。 */
@@ -112,12 +117,15 @@ const autoAfterCheck = (c: Case, again = false) => c.chain?.reviewed ? '自動�
 /**
  * 上線段該做的事與做完之後：還沒打 tag 就按兩次 z（「⚑ 發版」）把已確認照慣例版號的發版請求填進輸入框（關卡是 release 的打了 tag 接著部署、按 u，否則歸檔）；
  * tag 打了、關卡是 release 就部署後按 u，不是 release 就歸檔。合併進發版線（release/*）的卡隨那條線發版，等它打 tag；
- * 其他沒有發版按鈕的（教學模式、發版線本身）照舊叫你打 tag。
+ * 其他沒有發版按鈕的（教學模式、發版線本身）照舊叫你打 tag。發版在對話裡跑（releasing）時說發版中、等它跑完；
+ * 卡片還寫著進行中卻逾時（當成停了）就說停在哪步、按兩次 z 重來。
  * 面板合併後的下一步與部署步驟列「全部做完後：」也用這一句。
  */
 export const shipTurn = (c: Case, tutorial = false): Turn => keyed(shipBase(c, tutorial))
 
 function shipBase(c: Case, tutorial: boolean): BaseTurn {
+  // 發版在對話裡跑：打 tag、歸檔都由它做，不叫你動手。
+  if (c.releasing) return { who: 'ai', text: releasingText(c.releasing) }
   const release = parseGate(c.gate)?.kind === 'release'
   if (c.tag && release) return { who: 'you', text: `部署 ${c.tag} 後按 u 確認上線；確認後歸檔`, action: 'ship' }
   if (c.tag) return { who: 'you', ...(!tutorial && canArchive(c) ? archiveTurn(c) : { text: `${c.tag} 已打；輸入 ${CARD_CMD} archive ${slugOf(c)} 歸檔` }) }
@@ -125,6 +133,9 @@ function shipBase(c: Case, tutorial: boolean): BaseTurn {
   const line = tutorial ? null : shipsWith(c)
   if (line) return { who: 'you', text: `隨 ${line} 發版；${release ? '發版線打 tag 後部署並按 u 確認上線' : '發版線打 tag 後歸檔'}` }
   if (tutorial || !canRelease(c)) return { who: 'you', text: release ? '打 tag 發版；打了之後部署並按 u 確認上線' : '打 tag 發版；打了之後歸檔' }
+  // 卡片還寫著進行中、卻超過 10 分鐘沒更新：當成停了，說停在哪步，按兩次 z 重來。
+  const stopped = releaseStep(c.status)
+  if (stopped) return { who: 'you', text: releaseStoppedText(stopped), action: 'release' }
   return { who: 'you', text: `${RELEASE_TURN}；${release ? '打了 tag 之後部署並按 u 確認上線' : '打了 tag 之後歸檔'}`, action: 'release' }
 }
 

@@ -279,7 +279,7 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
   const archive = `${CARD_CMD} archive ${slugOf(c)}`
   const ship = shipTurn(c, view.s.tutorial)
   const toShip = !!c.tag && parseGate(c.gate)?.kind === 'release' && !isDone
-  const waitAgent = isBusy(c) && (isDone || !!c.tag) ? `Agent 處理中，完成後再${toShip ? '確認上線' : '歸檔'}` : ''
+  const waitAgent = isBusy(c) && !c.releasing && (isDone || !!c.tag) ? `Agent 處理中，完成後再${toShip ? '確認上線' : '歸檔'}` : ''
   const afterDeploy = waitAgent || (isDone ? archive : ship.text)
   // 上線段那句是「要做的事；做完之後」兩段：下一步列兩段都列出來，不收成「還有 1 項」。
   if (c.pr?.state === 'MERGED' || gitMerged) rows.push(...(c.deploySteps?.length
@@ -322,7 +322,8 @@ function nowCardBody(ui: any, view: PaneView, c: Case, width: number, act: PaneA
     rows.push(<Box paddingLeft={INDENT}><Text wrap="truncate-end"><Text color={COLOR.attention} bold>{head}</Text><Text color={COLOR.text}>{(first ?? '').slice(head.length)}</Text></Text></Box>)
     rows.push(...rest.map(line => <Box paddingLeft={INDENT}><Text color={COLOR.text} wrap="truncate-end">{line}</Text></Box>))
   }
-  if (c.state === 'running' && !latest) rows.push(...kvRows(ui, 'Agent', c.agent?.last || c.next, width, view.isExpanded, COLOR.running))
+  // 發版在對話裡跑：沒有背景 Agent，「輪到你」已寫發版中與步驟，不列 Agent 列。
+  if (c.state === 'running' && !c.releasing && !latest) rows.push(...kvRows(ui, 'Agent', c.agent?.last || c.next, width, view.isExpanded, COLOR.running))
   if (view.logsOpen === c.statusPath) {
     const lines = view.logView[c.statusPath] ?? []
     if (!lines.length) rows.push(<Box paddingLeft={INDENT + KV_LABEL}><Text color={COLOR.faint}>讀取中…</Text></Box>)
