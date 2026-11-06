@@ -262,14 +262,17 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `rules`、`projects.<根目錄>.rules` | 每次派工都附上的專案規則 |
 | `review.high`／`security`／`categories` | 審查分級說明、資安審查範圍、類別範例 |
 | `review.template` | 審查契約檔（預設內附的 [templates/review.md](templates/review.md)） |
-| `review.preflight` | 審查前置指令：每次審查（程式碼審查、資安審查、複審、重新審查）先執行，輸出當候選清單、逐條驗證過才列進審查檔，審查檔第一行記前置成功與否；指令失敗就略過照常審。任何會輸出候選清單的工具都行（lint、SAST、另一個模型的 CLI…）。`{root}` 換成任務根目錄、`{base}` 換成這次審查看的基準（不明時空字串），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
+| `review.preflight` | 審查前置指令：每次審查（程式碼審查、資安審查、複審、重新審查）先執行（設了 `review.preflightMinFiles` 時，diff 少於門檻的審查不跑），輸出當候選清單、逐條驗證過才列進審查檔，審查檔第一行記前置成功與否；指令失敗就略過照常審。任何會輸出候選清單的工具都行（lint、SAST、另一個模型的 CLI…）。`{root}` 換成任務根目錄、`{base}` 換成這次審查看的基準（不明時空字串），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
+| `review.preflightMinFiles` | 審查前置的檔數門檻：diff 少於這麼多檔的審查與複審（修正後、重新審查）不跑 `review.preflight`；正整數，0 或不設（預設）＝都跑 |
+| `review.combineSecurity` | `true` 時，高風險分支的資安重點併進程式碼審查，過關後不另派資安審查，照樣停下來等你看；只認 JSON 的 `true`，預設關閉 |
 | `review.pitfalls` | 常犯錯誤清單路徑（可用 `~`），讓清單跟著 repo 走；優先於 plugin 選項 `pitfallsPath` 與專案資料夾的 `review-pitfalls.md`，空白照原本順序 |
 | `risk.high` | 額外的高風險路徑（正規式）；碰到就加跑資安審查並停下來等你看 |
 | `checkServices` | 完成檢查裡出現這個指令名時需要哪些容器服務 |
 | `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
 | `updateCheck` | `"off"` 不自動檢查 desk 新版本；沒設＝每 24 小時查一次（`/desk update` 不受影響） |
-| `card.*` | `/desk:card` 用：主 repo、worktree 位置、預設 base（desk 也拿它當 diff 與合併判斷的基準之一）、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
-| `card.specPreflight` | 規格前審指令：`/desk:card spec` 讀現況後提示執行，輸出當候選清單（`.task/SPEC-gemini.md`）供對話篩選併入規格；在背景執行，對話同時繼續讀程式與擬草稿，相關檔 1～2 個的小卡跳過；指令失敗跳過照常寫規格。任何會輸出規格候選的工具都行。`{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成相關模組檔案路徑（逗號分隔），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
+| `card.*` | `/desk:card` 用：主 repo、worktree 位置、`card.base`（`new` 沒帶 base 且主 repo 是 detached HEAD 時才用；平常從主 repo 當下的分支切出、記在卡片「基準」欄，desk 的 diff 與合併判斷先看這欄）、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
+| `card.specPreflight` | 規格前審指令：`/desk:card spec` 讀現況後提示執行，輸出當候選清單（`.task/SPEC-gemini.md`）供對話篩選併入規格；在背景執行，對話同時繼續讀程式與擬草稿，相關檔少於 `card.specPreflightMinFiles` 的小卡跳過；指令失敗跳過照常寫規格。任何會輸出規格候選的工具都行。`{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成相關模組檔案路徑（逗號分隔），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
+| `card.specPreflightMinFiles` | 規格前審的檔數門檻：相關檔少於這個數就不跑 `card.specPreflight`；正整數，預設 3 |
 | `card.retro` | 歸檔回顧指令：`card.py archive` 複製完 `.task` 檔後、清理 worktree 之前執行，`{slug}` 換成任務名稱，stdout 原樣印出；指令失敗印一行警示但不中斷歸檔。任何會做歸檔統計或產出回顧的工具都行。desk 不執行也不檢查這條指令；空白＝不加 |
 
 ## 開發
