@@ -178,3 +178,23 @@ test('an old PR stops showing after an hour of failed reads', { options: { refre
   expect(await ui.find({ type: 'Text', text: /PR #21/ })).toBeUndefined()
   await ui.unmount()
 })
+
+/** 每卡審一次的審查 HIGH：riskOf 的快取照「選基準用的輸入」分開：同一個 HEAD，沒帶 PR 算過（基準是最新的 release）後，帶 PR 的照 PR 目標算，反過來也一樣 */
+test('risk is cached per base input: a run without the PR does not stand in for one with it', async () => {
+  const $ = gitOnly({
+    'for-each-ref --sort=-committerdate --count=1 --format=%(refname:short) refs/remotes/origin/release/': 'origin/release/v1.4\n',
+    'symbolic-ref --short refs/remotes/origin/HEAD': 'origin/main\n',
+    'merge-base HEAD origin/release/v1.4': 'r1\n',
+    'merge-base HEAD origin/main': 'm1\n',
+    'diff --name-only r1..HEAD': 'src/a.ts\ndatabase/migrations/2026_11_06_add.php\n',
+    'diff --name-only m1..HEAD': 'src/a.ts\n',
+  })
+  const noPr = { root: BETA, git: { branch: 'feature/b', head: 'g9' } }
+  const withPr = { ...noPr, pr: { id: 7, state: 'OPEN' as const, ci: 'none' as const, dest: 'main' } }
+  expect(await riskOf($, noPr)).toEqual({ level: 'high', reasons: ['migration'] })
+  expect(await riskOf($, withPr)).toEqual({ level: 'normal', reasons: [] })
+  // 先算帶 PR 的（另一個 HEAD）：沒帶 PR 的照樣算自己的基準
+  const later = { root: BETA, git: { branch: 'feature/b', head: 'g10' } }
+  expect((await riskOf($, { ...later, pr: withPr.pr })).level).toBe('normal')
+  expect((await riskOf($, later)).level).toBe('high')
+})

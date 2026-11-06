@@ -704,3 +704,34 @@ for (const [risk, files] of [['normal', ['src/a.ts']], ['high', ['app/Http/Middl
     expect(screen).toContain(flat(`驗收後有新 commit：按 v 重新執行測試；通過後${risk === 'normal' ? '自動過關、不重新驗收' : '自動重新驗收'}`))
   })
 }
+
+/** 審查 HIGH（本卡）：PR 開著時，重新整理先算的風險（給輪到你）跟自動流程用同一個基準（PR 目標），不會被沒帶 PR 的那次算錯、快取後蓋掉 */
+test('risk after a new commit uses the PR target for the turn hint and the flow alike', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  // PR 目標是 main：相對 main 只改了一般的檔；最新的 release 分叉得早，相對它會多出別張卡合進 main 的 migration
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h2', forkPoints: { 'origin/main': 'm1', 'origin/release/v1.4': 'r1' }, filesFrom: { m1: ['src/a.ts'], r1: ['src/a.ts', 'database/migrations/2026_11_06_add.php'] } }
+  data.prs = [{ id: 7, state: 'OPEN', dest: 'main', url: 'https://bitbucket.org/x/7' }]
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const log = feedLog(on)
+  f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha', reviewedBranch: 'feature/alpha' } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+
+  // 流程接手前的輪到你：一般風險，通過就過關
+  data.run = async () => new Promise(() => {})
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  expect(flat(text(await ui.drawn()))).toContain(flat('通過後自動過關、不重新驗收'))
+  await ui.unmount()
+  // 自動流程：同一個判斷，只重新測試、過了就過關，不派驗收
+  data.run = async () => result(0, 'ok')
+  await f.refresh(); await f.step(); await f.step(); await f.step()
+  expect(log.has('Alpha 驗收通過後有新 commit，自動重新測試，通過就過關、不重新驗收')).toBe(true)
+  expect(data.launches.length).toBe(0)
+  expect(f.chain().passed).toBe(true)
+  expect(f.chain().unreviewed).toBe(true)
+  expect(f.chain().needsHuman).toBeUndefined()
+})
