@@ -311,6 +311,54 @@ class CardScriptTest(unittest.TestCase):
         self.run_card('new', 'feat/y', '名稱二')
         self.assertIn('- 基準：origin/main\n', read(self.card_path('y')))
 
+    def test_new_stacked_card_records_parent_base_not_parent_branch(self):
+        """審查 HIGH：疊在別張卡分支上的後續卡（審查 MEDIUM 另開卡修）從原卡分支切出，但基準欄記原卡的基準：
+        原卡合併、分支刪掉後，後續卡的審查範圍與開 PR 目標仍是原卡要併的分支。本機分支名與 origin/ 寫法都算。"""
+        self.release_line_on_main()
+        self.run_card('new', 'feature/order-export', '訂單匯出')
+        parent = os.path.join(self.main + '-worktrees', 'order-export')
+        write(os.path.join(parent, 'export.txt'), 'x\n')
+        git('add', 'export.txt', cwd=parent)
+        git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'export', cwd=parent)
+        git('push', '-q', 'origin', 'feature/order-export', cwd=parent)
+
+        local = self.run_card('new', 'feature/order-export-medium', '訂單匯出：審查 MEDIUM', 'feature/order-export')
+        remote = self.run_card('new', 'feature/order-export-medium2', '訂單匯出：審查 MEDIUM 2', 'origin/feature/order-export')
+
+        self.assertEqual(local.returncode, 0, local.stderr)
+        for slug, r in (('order-export-medium', local), ('order-export-medium2', remote)):
+            wt = os.path.join(self.main + '-worktrees', slug)
+            # 疊放照舊：從原卡分支切出（帶著原卡的 commit）
+            self.assertEqual(git_out('rev-parse', 'HEAD', cwd=wt), git_out('rev-parse', 'HEAD', cwd=parent))
+            card = read(self.card_path(slug))
+            self.assertIn('- 基準：origin/release/v26.2.8\n', card)
+            self.assertNotIn('- 基準：feature/order-export', card)
+            self.assertNotIn('- 基準：origin/feature/order-export', card)
+            self.assertIn('基準：origin/release/v26.2.8（疊在「訂單匯出」的分支上，沿用它的基準）', r.stdout)
+
+    def test_new_stacked_on_card_without_base_records_no_base(self):
+        """審查 HIGH：原卡是沒有基準欄的舊卡時，後續卡不記基準欄（工作桌照舊順序找），不記原卡分支。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        parent_card = self.card_path('order-export')
+        write(parent_card, read(parent_card).replace('- 基準：origin/main\n', ''))
+
+        r = self.run_card('new', 'feature/order-export-medium', '訂單匯出：審查 MEDIUM', 'feature/order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('- 基準：', read(self.card_path('order-export-medium')))
+        self.assertIn('基準：不記（疊在「訂單匯出」的分支上', r.stdout)
+
+    def test_new_on_main_repo_card_branch_is_not_stacking(self):
+        """主 repo 那張卡（例如發版線卡，根目錄就是主 repo）的分支不算疊放：照 AC-1 記主 repo 當下的分支。"""
+        self.release_line_on_main()
+        write(self.reg, read(self.reg) + f'| 發版線 | `{os.path.join(self.main, ".desk", "CARD.md")}` |\n')
+        os.makedirs(os.path.join(self.main, '.desk'))
+        write(os.path.join(self.main, '.desk', 'CARD.md'), '<!-- DESK -->\n- 狀態：x\n- 關卡：無\n- 基準：origin/main\n<!-- /DESK -->\n')
+
+        self.run_card('new', 'feat/x', '名稱')
+
+        self.assertIn('- 基準：origin/release/v26.2.8\n', read(self.card_path('x')))
+
     def test_new_local_only_branch_on_main_is_used_as_is(self):
         """主 repo 當下的分支 origin 沒有：用本機分支當基準。"""
         git('checkout', '-q', '-b', 'local-only', cwd=self.main)

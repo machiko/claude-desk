@@ -37,11 +37,14 @@ const gitOnly = (answers: Record<string, string>) => {
 }
 const NEWEST_RELEASE = 'for-each-ref --sort=-committerdate --count=1 --format=%(refname:short) refs/remotes/origin/release/'
 const LINES = { [NEWEST_RELEASE]: 'origin/release/v26.3.0\n', 'symbolic-ref --short refs/remotes/origin/HEAD': 'origin/main\n' }
+/** git 找得到這條分支（rev-parse --verify）。 */
+const exists = (ref: string) => ({ [`rev-parse --verify --quiet ${ref}^{commit}`]: 'abc\n' })
 
 /** card-base-and-fast-path AC-2 */
 test('card base field wins over newest release line', async () => {
   const { $, asked } = gitOnly({
     ...LINES,
+    ...exists('origin/release/v26.2.8'),
     'merge-base HEAD origin/release/v26.2.8': 'fork828\n',
     'merge-base HEAD origin/release/v26.3.0': 'fork830\n',
     'diff --name-only fork828..HEAD': 'src/Auth/Fido.php\n',
@@ -63,4 +66,15 @@ test('card without base keeps legacy order', async () => {
   const c = { root: '/w/old', git: { branch: 'feat/old', head: 'h2' } } as any
   expect(await baseRefs($ as any, c, 'origin/develop')).toEqual(['origin/release/v26.3.0', 'origin/develop', 'origin/main'])
   expect(await baseRefs($ as any, { ...c, pr: { id: 1, state: 'OPEN', ci: 'none', dest: 'release/v2' } }, 'origin/develop')).toEqual(['origin/release/v2', 'origin/release/v26.3.0', 'origin/develop', 'origin/main'])
+})
+
+/** card-base-and-fast-path 審查 HIGH：基準欄的分支已經不在（疊放卡的原卡合併後刪掉），當沒有這欄、照舊順序找。 */
+test('card base that no longer exists falls back to legacy order', async () => {
+  const { $ } = gitOnly(LINES)
+  const c = { root: '/w/medium', git: { branch: 'feature/x-medium', head: 'h3' }, base: 'feature/x' } as any
+  expect(await baseRefs($ as any, c, 'origin/develop')).toEqual(['origin/release/v26.3.0', 'origin/develop', 'origin/main'])
+  // `-` 開頭的基準欄不拿去問 git，也不當基準
+  const { $: quiet, asked } = gitOnly(LINES)
+  expect(await baseRefs(quiet as any, { ...c, base: '--output=/tmp/x' })).toEqual(['origin/release/v26.3.0', 'origin/main'])
+  expect(asked.some(a => a.includes('--output'))).toBe(false)
 })

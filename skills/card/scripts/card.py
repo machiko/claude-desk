@@ -8,7 +8,8 @@
 用法：
   card.py new <分支> <卡名> [base]             從主 repo 建 worktree（資料夾名取分支最後一段）、DESK 卡、登錄表列；
                                                沒給 base 時用主 repo 當下的分支（origin 有同名分支就用 origin/<分支>），
-                                               主 repo 是 detached HEAD 時用 card.base；用到的基準寫進 DESK 區塊的「基準」欄
+                                               主 repo 是 detached HEAD 時用 card.base；用到的基準寫進 DESK 區塊的「基準」欄。
+                                               base 是登錄表上另一張卡的分支（疊放的後續卡）時，基準欄改記那張卡的基準（它沒有就不記）
                                                --trivial（任何位置）：瑣事卡，規格段標「類型：瑣事」、關卡設 spec：待確認規格（瑣事）；驗收情境維持範本，由 spec 步驟預填
   card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
@@ -404,6 +405,36 @@ def main_repo_base():
     return f'origin/{branch}' if remote else branch
 
 
+def stacked_on(base):
+    """base（可帶 origin/）是登錄表上另一張進行中的卡的 worktree 分支時，回傳那張卡的 (卡名, 卡片路徑)；不是就 None。
+    主 repo 那張卡（根目錄就是主 repo，例如發版線）不算疊放；卡片檔或 worktree 不在的列略過。"""
+    if not base or not os.path.isfile(REG):
+        return None
+    wanted = base[len('origin/'):] if base.startswith('origin/') else base
+    for name, path in active_rows():
+        root = card_root(path)
+        if not os.path.isfile(path) or not os.path.isdir(root) or os.path.abspath(root) == os.path.abspath(MAIN):
+            continue
+        if git_branch(root) == wanted:
+            return name, path
+    return None
+
+
+def recorded_base(base):
+    """卡片「基準」欄要記的分支與說明。疊在別張卡的分支上（審查 MEDIUM 另開卡修的後續卡）時，那條分支合併後就沒了，
+    不能當審查範圍與開 PR 目標：改記那張卡的基準欄；那張卡沒有基準欄就不記（工作桌照舊順序找）。"""
+    parent = stacked_on(base)
+    if not parent:
+        return base, base
+    name, path = parent
+    text = read(path)
+    desk = re.search(r'<!-- (DESK|CARD)\b[^>]*-->\n(.*?)<!-- /\1 -->', text, re.S)
+    inherited = field(desk.group(2), BASE_FIELD) if desk else ''
+    if inherited:
+        return inherited, f'{inherited}（疊在「{name}」的分支上，沿用它的基準）'
+    return '', f'不記（疊在「{name}」的分支上，那張卡沒有基準欄，工作桌照舊順序找）'
+
+
 def insert_base_field(path, base):
     """DESK 區塊「關卡」行之後插一行「- 基準：<ref>」；沒有關卡行（自訂模板）就接在區塊最後。新行自己帶換行。"""
     text = read(path)
@@ -447,7 +478,9 @@ def cmd_new(branch, name, base=None, trivial=False):
     os.makedirs(os.path.join(wt, '.task'), exist_ok=True)
     card = os.path.join(wt, '.desk', 'CARD.md')
     write(card, content)
-    insert_base_field(card, base)
+    record, shown_base = recorded_base(base)
+    if record:
+        insert_base_field(card, record)
     if trivial:
         # 開卡就設 spec 關卡：spec 步驟預填驗收情境後，確認前也不會派工。驗收情境不在這裡預填，面板才會像一般卡提示去寫規格。
         set_gate(card, TRIVIAL_GATE)
@@ -461,7 +494,7 @@ def cmd_new(branch, name, base=None, trivial=False):
     insert_registry_row(f'| {name} | `{card}` | | | |')
     print(f'開卡完成：{wt}')
     print(f'  卡片：{card}')
-    print(f'  基準：{base}')
+    print(f'  基準：{shown_base}')
     check = cfg('check').replace('{slug}', slug)
     print(f'  建議完成檢查：{check}' if check else f'  完成檢查：{CMD} spec 會一起補上')
     print(f'  下一步：{CMD} spec {slug} 產生規格，確認後 /desk refresh')

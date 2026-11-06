@@ -55,7 +55,7 @@
 | 一般 | 其他 | 檢查 → 程式碼審查 |
 | 高 | Auth／Middleware、migration、CI 設定、Dockerfile／compose、相依套件鎖檔、`.env`，加上設定檔 `risk.high` 的專案路徑 | 檢查 → 程式碼審查 → 資安審查 → 停下來等你看過；開了 PR 就算看過。設了 `autoPr` 也不自動開 PR。設了 `review.combineSecurity` 時資安重點併進程式碼審查，過關後不另派資安審查，照樣停下來等你看 |
 
-改了哪些檔＝分支相對「要併進去的分支」的 diff，基準依序找：PR 目標 → 卡片 DESK 區塊的「基準」欄（`/desk:card new` 開卡時記下的分支；有這欄就不猜最新的 release 線）→ 最新的 `origin/release/*` → 專案 `dispatch.json` 的 `card.base` → `origin/HEAD`。都找不到就算一般風險。審查看的 diff 與「⇡ 開 PR」的目標也照這個順序。
+改了哪些檔＝分支相對「要併進去的分支」的 diff，基準依序找：PR 目標 → 卡片 DESK 區塊的「基準」欄（`/desk:card new` 開卡時記下的分支，疊放的後續卡記原卡的基準；有這欄就不猜最新的 release 線，分支已經不在就當沒有）→ 最新的 `origin/release/*` → 專案 `dispatch.json` 的 `card.base` → `origin/HEAD`。都找不到就算一般風險。審查看的 diff 與「⇡ 開 PR」的目標也照這個順序。
 
 ## 每天怎麼用
 

@@ -221,16 +221,24 @@ export type BaseInput = Pick<Case, 'root' | 'git' | 'pr' | 'base'>
 /**
  * 這個分支要併進去的分支（候選，依序）：PR 目標 → 卡片「基準」欄 → 最新的 origin/release/* → dispatch.json 的 card.base → origin/HEAD。
  * 卡片記了基準（開卡時的分支）就不猜最新的 release 線：同時有好幾條 release 線時，最新的那條不一定是這張卡要併的。
+ * 基準欄的分支已經不在（合併後刪掉、拼錯）就當沒有這欄，照舊順序找，免得開 PR 對到不存在的分支。
  * 不含分支自己（主工作區在 main 上時不拿 origin/main 當基準）。
  */
 export async function baseRefs($: any, c: BaseInput, cardBase = ''): Promise<string[]> {
-  const own = c.base?.trim() ?? ''
-  const release = own ? '' : (await git($, c.root, ['for-each-ref', '--sort=-committerdate', '--count=1', '--format=%(refname:short)', 'refs/remotes/origin/release/'])) ?? ''
+  const recorded = await recordedBase($, c)
+  const release = recorded ? '' : (await git($, c.root, ['for-each-ref', '--sort=-committerdate', '--count=1', '--format=%(refname:short)', 'refs/remotes/origin/release/'])) ?? ''
   const originHead = (await git($, c.root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])) ?? ''
   const branch = c.git?.branch ?? ''
-  const list = [c.pr?.dest ? `origin/${c.pr.dest}` : '', own, release, cardBase.trim(), originHead].map(r => r.trim())
+  const list = [c.pr?.dest ? `origin/${c.pr.dest}` : '', recorded, release, cardBase.trim(), originHead].map(r => r.trim())
   // `-` 開頭的會被 git 當成選項（card.base 來自專案設定檔、基準欄來自卡片，不一定可信），一律不用。
   return [...new Set(list.filter(r => r && !r.startsWith('-') && r !== branch && r !== `origin/${branch}`))]
+}
+
+/** 卡片基準欄的分支，git 找得到才算；沒有這欄、`-` 開頭（會被當成選項）或分支不在都是空字串。 */
+async function recordedBase($: any, c: BaseInput): Promise<string> {
+  const ref = c.base?.trim() ?? ''
+  if (!ref || ref.startsWith('-')) return ''
+  return (await git($, c.root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) ? ref : ''
 }
 
 /** 分支相對第一個找得到 merge-base 的候選：基準分支與分叉點。都找不到就 null。 */
