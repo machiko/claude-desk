@@ -120,6 +120,29 @@ test('dispatch prompt and card template carry plain history format', () => {
   for (const e of examples(HISTORY_FORMAT)) expect([e, HISTORY_LINE.test(e)]).toEqual([e, true])
 })
 
+/**
+ * card-rules-guard-legacy AC-5（派工提示那半；卡片模板那半由 skills/card/tests 的 Python 測試比對同一句）：
+ * 歷程的時間句併進行格式那句，每一種派工的提示只講一次 date 取時間，不再另有一條時間規則。
+ */
+test('card template history line format is single consistent rule', () => {
+  const date = "`date '+%Y-%m-%d %H:%M'`"
+  expect(HISTORY_FORMAT.startsWith(`每筆寫成 \`- YYYY-MM-DD HH:MM：<誰>：<做了什麼> → <結果>\`，時間跑 ${date} 取得`)).toBe(true)
+  const c = mk({ next: '補上匯出測試' })
+  const merge = mk({ gate: 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過' }, {}, passed)
+  const prompts: Record<string, string> = {
+    continue: buildPrompt(c, 'continue'),
+    reply: buildPrompt(c, 'reply', '用 B'),
+    fix: buildPrompt(c, 'continue', '', { from: 'review', round: 1 }),
+    review: buildPrompt(c, 'review'),
+    sync: buildPrompt(c, 'sync'),
+    publish: buildPrompt(merge, 'publish', pushRequest('feature/a', 12)),
+    catchup: buildPrompt(merge, 'catchup', 'origin/main'),
+  }
+  for (const [kind, p] of Object.entries(prompts)) {
+    expect([kind, p.split(date).length - 1, p.includes('不用手寫時間'), p.includes('歷程時間一律')]).toEqual([kind, 1, false, false])
+  }
+})
+
 /** AC-4：審查、修正、推送要求寫歷程的句子，給的是範本格式的範例。 */
 test('review and publish history lines use plain format', () => {
   const c = mk({ next: '補上匯出測試' })

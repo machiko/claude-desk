@@ -1,5 +1,5 @@
-// 卡片規則段守門：對話或 Agent 寫入 DESK 卡後，拿「## 卡片規則」段跟模板比，被誤蓋、少行時說出是哪幾行。
-// 純函式；prompt-sync.ts 在工具呼叫結束後讀卡片與模板、呼叫這裡，再把提示附在工具結果、跳 toast、記動態。
+// 卡片規則段守門：對話或 Agent 寫入 DESK 卡、這次寫入改到「## 卡片規則」段（或卡片是新開的）時，拿那一段跟模板比，被誤蓋、少行時說出是哪幾行。
+// 純函式；prompt-sync.ts 在工具呼叫前讀一次卡片、結束後讀卡片與模板、呼叫這裡，再把提示附在工具結果、跳 toast、記動態。
 
 /** 段落標題：行首錨定，卡片其他段落（例如規則段裡的說明句）出現同字串不算。 */
 const RULES_HEADING = /^## 卡片規則[ \t]*$/m
@@ -46,6 +46,19 @@ export function rulesDiff(card: string, template: string): RulesDiff | null {
   const at = a.findIndex((line, i) => line !== b[i])
   const i = at === -1 ? a.length : at
   return { missing: a.length - common, extra: b.length - common, first: { template: a[i] ?? null, card: b[i] ?? null } }
+}
+
+/**
+ * 這次寫入有沒有改到「## 卡片規則」段：寫入前後兩邊的段落照行比（行首錨定，空白行與行尾空白不算）。
+ * 一邊有這一段、另一邊沒有算改到；兩邊都沒有不算。模板改版前開的舊卡只改其他段時回 false，守門就不拿新模板比它。
+ */
+export function rulesTouched(before: string, after: string): boolean {
+  const was = rulesSection(before)
+  const now = rulesSection(after)
+  if (was === null || now === null) return was !== now
+  const a = meaningful(was)
+  const b = meaningful(now)
+  return a.length !== b.length || a.some((line, i) => line !== b[i])
 }
 
 /** 兩串行的最長共同子序列長度（段落只有十幾行，O(n·m) 夠用）。 */
