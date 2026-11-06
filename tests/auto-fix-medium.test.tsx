@@ -531,3 +531,59 @@ test('test_answer_b_on_code_review_medium_clears_old_security_mark', async ($, o
   expect(data.launches).toHaveLength(1)
   expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/REVIEW.md 修正')).toBe(true)
 })
+
+/** 高風險卡：程式碼審查只剩 MEDIUM、在等你問，流程自動派資安審查；資安審查跑的時候你選 B 送出、對話清掉等你。共用到「資安審查做完」之前。 */
+async function answerBDuringSecurityReview($: any, data: any, clock: any) {
+  const h = helpers($, data, clock)
+  data.agents = []
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1', files: ['app/Http/Middleware/Admin.php'] }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  launchOneAtATime(data, clock)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可', ASK)
+  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理（等你決定）'
+  reviewJustFinished(data, ALPHA, 0)
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0).startsWith('資安審查')).toBe(true)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  await ui.press({ key: `case-${CARD_A}-opt0B` })
+  await ui.press({ key: `case-${CARD_A}-fill` })
+  await $.prompt.submit({ text: data.fills.at(-1).text } as any)
+  await ui.unmount()
+  expect((data.store.chains as any)[ALPHA].mediumFixAt).toBe('h1')
+  return h
+}
+
+/** 資安審查跑時回答 B：資安審查做完先照常處理（有 HIGH 就派依 SECURITY.md 的修正），不先派 MEDIUM 修正把那次結論蓋掉 */
+test('test_answer_b_during_security_review_lets_security_result_be_handled_first', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = await answerBDuringSecurityReview($, data, clock)
+  // 對話清掉等你；資安審查做完寫 HIGH 1
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；越權')
+  data.files[`${ALPHA}/.task/SECURITY.md`] = '- [HIGH][授權] app/Http/Middleware/Admin.php:3 — 沒檢查角色'
+  await h.finish(2)
+
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1).startsWith('修正第 1／2 輪：依 .task/SECURITY.md 修正所有 CRITICAL、HIGH')).toBe(true)
+  expect(h.prompt(1)).not.toContain('選了 B) 修掉')
+  const last = (data.store.jobs as any)[ALPHA].last
+  expect(last.round).toBe(1)
+  expect((data.store.chains as any)[ALPHA].fixTotal).toBe(1)
+})
+
+/** 資安審查跑時回答 B、資安審查做完沒有 CRITICAL／HIGH：先照常處理（過關），接著才派你選的 MEDIUM 修正 */
+test('test_answer_b_during_security_review_dispatches_fix_after_security_passes', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = await answerBDuringSecurityReview($, data, clock)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；無')
+  data.files[`${ALPHA}/.task/SECURITY.md`] = '無發現'
+  await h.finish(2)
+
+  expect(data.launches).toHaveLength(2)
+  expect(h.prompt(1).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 B) 修掉：依 .task/REVIEW.md 與 .task/SECURITY.md 修正')).toBe(true)
+  const run = (data.store.chains as any)[ALPHA]
+  expect(run.mediumFixAt).toBeUndefined()
+  expect(run.fixTotal).toBe(1)
+})
