@@ -27,3 +27,21 @@ test('test_release_confirm_marker_matches_skill_sample', () => {
   expect(releasePrompt([beta], { confirmed: true })).toEndWith(`；${SAMPLE.confirmed}）`)
   expect(releasePrompt([beta])).not.toContain(SAMPLE.confirmed)
 })
+
+/**
+ * AC-5（本卡）：發版的動作順序以整版審查開頭、排在合併 CHANGELOG 片段之前；擋下時「等你」那題面板只看到一題、選項恰好 A、B、C。
+ * SKILL.md 的字句（範圍、重點、輸出檔、不打 tag、題目範本）由 skills/card/tests/test_release_skill.py 的同名測試斷言。
+ */
+test('test_release_skill_runs_integration_review_before_changelog', () => {
+  const actions: string = SAMPLE.fill['<動作，用 → 串>']
+  expect(actions.split(' → ').slice(0, 2)).toEqual(['整版審查', '合併 CHANGELOG 片段'])
+  expect(SAMPLE.question).toContain('照做會依序：整版審查 → 合併 CHANGELOG 片段')
+  const decisions = parseDecisions(SAMPLE.integration.question)
+  expect(decisions).toHaveLength(1)
+  expect(decisions[0]!.title).toBe('整版審查 CRITICAL 0、HIGH 2')
+  expect(decisions[0]!.options).toEqual([
+    { key: 'A', text: '開修正卡再發' },
+    { key: 'B', text: '照發' },
+    { key: 'C', text: '先不發' },
+  ])
+})

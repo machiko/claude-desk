@@ -106,6 +106,8 @@ const checkStageFailed = (c: Case) => !!c.chain?.stopped && c.pipeline?.current 
  * 只有流程紀錄不夠：紀錄按資料夾永久保存，別的對話開的（foreign）或最後一次派的是同步，按 v 之後不會派審查。
  */
 const willAutoReview = (c: Case) => !!c.chain?.autoReview && !c.chain.stopped && !c.chain.passed
+/** 流程接手時檢查通過後做什麼：這條分支審查過（每張卡只審查一次）就直接過關、不複審，否則派審查（`again`：重新驗收）。 */
+const autoAfterCheck = (c: Case, again = false) => c.chain?.reviewed ? '自動過關、不重新驗收' : again ? '自動重新驗收' : '自動驗收'
 
 /**
  * 上線段該做的事與做完之後：還沒打 tag 就按兩次 z（「⚑ 發版」）把已確認照慣例版號的發版請求填進輸入框（關卡是 release 的打了 tag 接著部署、按 u，否則歸檔）；
@@ -136,8 +138,8 @@ const archiveTurn = (c: Case) => ({ text: `按兩次 q 歸檔（或輸入 ${CARD
  * 或流程已經會自己接手（recheck 排好的新一輪、修正輪剛做完：willAutoReview），都是自動重新審查。
  */
 function checkTurnText(c: Case): string {
-  if (c.chain?.stale) return `驗收後有新 commit：按 v 重新執行測試；${(c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? '通過後自動重新驗收' : '通過後按 w 重新驗收'}`
-  return `按 v 執行測試；${willAutoReview(c) ? '通過後自動驗收' : '通過後按 w 派驗收'}`
+  if (c.chain?.stale) return `驗收後有新 commit：按 v 重新執行測試；${(c.chain.passed && !c.chain.foreign) || willAutoReview(c) ? `通過後${autoAfterCheck(c, true)}` : '通過後按 w 重新驗收'}`
+  return `按 v 執行測試；${willAutoReview(c) ? `通過後${autoAfterCheck(c)}` : '通過後按 w 派驗收'}`
 }
 
 /** 審查段：按 w，以及審查之後會怎樣：CRITICAL／HIGH 自動修正、影響行為的 MEDIUM 寫進「等你」，過關後合併開著的 PR，沒有 PR 就開 PR。 */
@@ -257,9 +259,9 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
       if (saysNone(c.next)) return { who: 'none', text: '閒置：卡片沒有下一步' }
       // 流程會自動接審查（autoReview）：檢查通過就派審查。不會（主對話開發、done 寫的下一步、別的對話開的流程）：v 只記結果，審查要再按 w。
       // 下一步是派審查：g 派的是繼續，不會審查；先 v 檢查，通過後 w（或流程自動接）。
-      if (reviewNext(c.next)) return { who: 'you', text: `下一步是驗收：按 v 執行測試，通過後${willAutoReview(c) ? '自動驗收' : '按 w 派驗收'}`, action: 'verify' }
+      if (reviewNext(c.next)) return { who: 'you', text: `下一步是驗收：按 v 執行測試，通過後${willAutoReview(c) ? autoAfterCheck(c) : '按 w 派驗收'}`, action: 'verify' }
       if (idleNext(c.next)) return willAutoReview(c)
-        ? { who: 'you', text: '下一步只剩等測試／驗收：按 v 執行測試，流程接著驗收；要改程式先把下一步寫成要做的事', action: 'verify' }
+        ? { who: 'you', text: `下一步只剩等測試／驗收：按 v 執行測試，流程接著${c.chain?.reviewed ? '過關、不重新驗收' : '驗收'}；要改程式先把下一步寫成要做的事`, action: 'verify' }
         : { who: 'you', text: '下一步只剩等測試：按 v 執行測試，通過後按 w 派驗收；要改程式先把下一步寫成要做的事', action: 'verify' }
       return { who: 'you', text: `按 g 派 Agent：${c.next}`, action: 'continue' }
     case 'check':

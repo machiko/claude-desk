@@ -1,8 +1,12 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, CARD_A, result } from './fixture'
+import { fixture, feedLog, flat, text, PANE, CARD_A, result } from './fixture'
 import { AGENT_STOPPED } from '../hooks/chain'
+import { buildCase, summary } from '../hooks/model'
+import { pipeline, stageLabel } from '../hooks/pipeline'
+import { PUBLISH_PR_TURN, turnOf } from '../hooks/turn'
+import type { Case } from '../types'
 
-test('continue → auto check → auto review → fix round 1 on HIGH → check → review → pass, Bitbucket read only', async ($, on) => {
+test('continue → auto check → auto review → fix round 1 on HIGH → check → pass without re-review, Bitbucket read only', async ($, on) => {
   const { data, clock } = fixture(on)
   data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1' }
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
@@ -45,19 +49,13 @@ test('continue → auto check → auto review → fix round 1 on HIGH → check 
   expect(prompt(2)).toContain('修正第 1／2 輪')
   expect(data.launches[2].argv[data.launches[2].argv.indexOf('--resume') + 1]).toBe('a0000001-0000-4000-8000-000000000000')
 
-  // 修完：關卡改回無、有新 commit → 再檢查一次 → 再審查
-  setGate('無')
+  // 修完：有新 commit → 再檢查一次 → 這條分支審查過，綠了就過關、不再派任何東西（每張卡只審查一次）
+  setGate('review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 0；已依審查修正、未複審（發版時整版審查）')
   data.git['/home/u/wt/alpha']!.head = 'h2'
   await finish()
   expect(data.processCalls.filter(c => c.argv[0] === 'sh').length).toBe(2)
-  expect(data.launches.length).toBe(4)
-  expect(prompt(3)).toContain('程式碼審查')
-
-  // 只剩 MEDIUM：過關，不再派任何東西
-  setGate('review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 1；可合併')
-  await finish()
-  expect(data.launches.length).toBe(4)
-  expect(data.toasts.some(t => t.includes('驗收通過'))).toBe(true)
+  expect(data.launches.length).toBe(3)
+  expect(data.toasts.some(t => t.includes('測試通過，未複審'))).toBe(true)
   expect((data.store.chains as any)['/home/u/wt/alpha'].passed).toBe(true)
 
   expect(data.mcpCalls.length > 0).toBe(true)
@@ -118,6 +116,8 @@ test('high risk: code review passes → security review → pass but waits for y
   await finish()
   expect(prompt(2)).toContain('修正第 1／2 輪')
   expect(data.writes.some(w => /\/handoffs\/shop\/reviews\/alpha-\d{8}-\d{4}-code\.md$/.test(w))).toBe(true)
+  // 高風險：第一次審查不記「這條分支審查過」，修完照舊複審（本卡 AC-4）
+  expect((data.store.chains as any)['/home/u/wt/alpha'].reviewedBranch).toBeUndefined()
   setGate('無')
   data.git['/home/u/wt/alpha']!.head = 'h2'
   await finish()
@@ -162,7 +162,8 @@ test('docs-only change skips review after the check passes', async ($, on) => {
   expect((data.store.chains as any)['/home/u/wt/alpha'].skippedReview).toBe(true)
 })
 
-test('a commit after the review passed reruns the check and a diff-only review, without using fix rounds', async ($, on) => {
+/** 舊紀錄（沒記「這條分支審查過」）：過關後的新 commit 照舊重新檢查並重新審查一次，只看上次審查之後的 diff。新紀錄見 test_new_commit_after_pass_rechecks_without_review。 */
+test('a commit after the review passed in a legacy chain reruns the check and a diff-only review, without using fix rounds', async ($, on) => {
   const { data, clock } = fixture(on)
   const root = '/home/u/wt/alpha'
   data.git[root] = { branch: 'feature/alpha', head: 'h2' }
@@ -291,16 +292,15 @@ test('idle next: the chain never dispatches a waiting-only next step', async ($,
   expect(data.launches.length).toBe(3)
   expect(prompts()[2]).toContain('修正第 1／2 輪')
 
-  // 修完過關：之後手動按 g 被拒絕、沒有新的派工
-  setGate('無')
+  // 修完、測試通過就過關（不複審）：之後手動按 g 被拒絕、沒有新的派工
+  setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；已依審查修正、未複審（發版時整版審查）')
   data.git['/home/u/wt/alpha']!.head = 'h2'
   await finish()
-  setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
-  await finish()
-  expect(data.launches.length).toBe(4)
+  expect((data.store.chains as any)['/home/u/wt/alpha'].passed).toBe(true)
+  expect(data.launches.length).toBe(3)
   await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
   await clock.settle()
-  expect(data.launches.length).toBe(4)
+  expect(data.launches.length).toBe(3)
   expect(data.toasts.some(t => t.includes('無法繼續（') && t.includes('沒有要 Agent 做的事'))).toBe(true)
   expect(prompts().some(p => p.startsWith('依卡片的下一步繼續：等'))).toBe(false)
 })
@@ -438,4 +438,158 @@ test('test_restart_after_stopped_agent_is_not_counted_as_fix', async ($, on) => 
   expect(f.prompt(2).startsWith('修正第 2／2 輪：')).toBe(true)
   expect(f.chain().fixTotal).toBe(2)
   expect(f.chain().stopped).toBeUndefined()
+})
+
+/** 一般風險的卡走到第一次審查有 HIGH 2、自動派出修正第 1 輪；回傳 alphaFlow 的小工具。 */
+async function fixAfterFirstReview($: any, data: any, clock: any) {
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  await f.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  await f.finish()
+  expect(f.prompt(1).startsWith('程式碼審查')).toBe(true)
+  f.setGate('review：CRITICAL 0、HIGH 2、MEDIUM 1、LOW 0；漏稽核')
+  await f.finish()
+  expect(data.launches.length).toBe(3)
+  expect(f.prompt(2).startsWith('修正第 1／2 輪：')).toBe(true)
+  // 第一次審查有結論：記下這條分支審查過
+  expect(f.chain().reviewedBranch).toBe('feature/alpha')
+  return f
+}
+
+/** AC-1（本卡）：一般風險的卡依審查修完、完成檢查通過：不派複審，流程過關可開 PR；修正提示叫 Agent 把關卡寫成未複審，六段寫「已修正・未複審」 */
+test('test_fix_after_review_passes_on_green_check_without_rereview', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const f = await fixAfterFirstReview($, data, clock)
+  expect(f.prompt(2)).toContain('卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM <原數>、LOW <原數>；已依審查修正、未複審（發版時整版審查）」')
+  expect(f.prompt(2)).toContain('History 加一行列出依審查修了哪幾條')
+
+  // 修正 Agent 照提示寫回關卡、commit；完成檢查通過
+  f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；已依審查修正、未複審（發版時整版審查）')
+  data.git[f.root]!.head = 'h2'
+  await f.finish()
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(2)
+  expect(data.launches.length).toBe(3)
+  expect(f.chain().passed).toBe(true)
+  expect(f.chain().unreviewed).toBe(true)
+  // 判定的 HEAD 是檢查時的：過關後不會被當成有新 commit 又重新檢查
+  expect(f.chain().judgedHead).toBe('h2')
+  expect(log.has('Alpha 測試通過，未複審（發版時整版審查），可開 PR')).toBe(true)
+  expect(data.toasts).toContain('Alpha：測試通過，未複審，可以開 PR')
+  await f.step(); await f.step()
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(2)
+  expect(data.launches.length).toBe(3)
+
+  // 六段：驗收過了，合併段寫「已修正・未複審」，摘要同一句；輪到你照常開 PR
+  await f.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  expect(flat(text(await ui.drawn()))).toContain(flat('按兩次 n 開 PR'))
+  await ui.unmount()
+  const base = { ...buildCase({ name: 'Alpha', statusPath: CARD_A }, data.files[CARD_A]!, 1, {}, undefined), git: { branch: 'feature/alpha', head: 'h2' }, chain: { round: 1, passed: true, unreviewed: true } } as Case
+  const c = { ...base, pipeline: pipeline(base, undefined) }
+  expect(c.pipeline.stages.find(st => st.id === 'review')!.status).toBe('done')
+  expect(stageLabel(c.pipeline)).toBe('合併・已修正・未複審，可開 PR')
+  expect(summary({ ...c, state: 'ready' })).toBe('已修正・未複審，可開 PR')
+  expect(turnOf(c).text).toBe(PUBLISH_PR_TURN)
+  // 對照：審查通過過關（沒有 unreviewed）照舊寫「可開 PR」
+  const reviewed = { ...base, chain: { round: 0, passed: true } }
+  expect(stageLabel(pipeline(reviewed, undefined))).toBe('合併・可開 PR')
+})
+
+/** AC-2（本卡）：依審查修完後完成檢查沒過：照舊自動派修正（算進整張卡 2 輪上限），測試過了才過關、一樣不複審；用完就停下 */
+test('test_fix_after_review_still_retries_failing_check', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = await fixAfterFirstReview($, data, clock)
+  data.run = async () => result(1, '', 'FAIL test_audit')
+  data.git[f.root]!.head = 'h2'
+  await f.finish()
+  expect(data.launches.length).toBe(4)
+  expect(f.prompt(3).startsWith('修正第 2／2 輪：完成檢查')).toBe(true)
+  expect(f.chain().fixTotal).toBe(2)
+
+  // 第 2 輪修完測試過了：過關，不複審
+  data.run = async () => result(0, 'ok')
+  data.git[f.root]!.head = 'h3'
+  await f.finish()
+  expect(data.launches.length).toBe(4)
+  expect(data.launches.every((l: any) => !String(l.argv.at(-1)).startsWith('程式碼審查') || l === data.launches[1])).toBe(true)
+  expect(f.chain().passed).toBe(true)
+  expect(f.chain().unreviewed).toBe(true)
+})
+
+/** AC-2（本卡）：修正輪用完、測試還是沒過：停下，不派複審也不再修 */
+test('test_fix_after_review_still_retries_failing_check stops when rounds run out', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = await fixAfterFirstReview($, data, clock)
+  data.run = async () => result(1, '', 'FAIL test_audit')
+  data.git[f.root]!.head = 'h2'
+  await f.finish()
+  expect(data.launches.length).toBe(4)
+  data.git[f.root]!.head = 'h3'
+  await f.finish()
+  expect(data.launches.length).toBe(4)
+  expect(f.chain().stopped).toBe('整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格')
+  expect(f.chain().passed).toBeUndefined()
+})
+
+/** AC-3（本卡）：過關後分支又有新 commit：只重跑完成檢查，過了照舊過關、沒過照舊派修正；不派審查 */
+test('test_new_commit_after_pass_rechecks_without_review', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h2' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const log = feedLog(on)
+  f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；過')
+  // 上一輪：在 h1 審查通過（這條分支審查過）；之後你又改了，分支多了 h2
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, fixTotal: 1, fixBranch: 'feature/alpha', passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha', reviewedBranch: 'feature/alpha' } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+
+  // 過了：只跑檢查就過關，不派審查；判定的 HEAD 換成 h2
+  await f.refresh(); await f.step(); await f.step(); await f.step()
+  expect(log.has('Alpha 驗收通過後有新 commit，自動重新測試，通過就過關、不重新驗收')).toBe(true)
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(1)
+  expect(data.launches.length).toBe(0)
+  expect(f.chain().passed).toBe(true)
+  expect(f.chain().unreviewed).toBe(true)
+  expect(f.chain().judgedHead).toBe('h2')
+  expect(f.chain().reviewedBranch).toBe('feature/alpha')
+  expect(f.chain().fixTotal).toBe(1)
+
+  // 又有新 commit、這次沒過：照舊派修正（不是審查）
+  data.run = async () => result(1, '', 'FAIL')
+  data.git[f.root]!.head = 'h3'
+  await f.refresh(); await f.step(); await f.step(); await f.step()
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(2)
+  expect(data.launches.length).toBe(1)
+  expect(f.prompt(0).startsWith('修正第 2／2 輪：完成檢查')).toBe(true)
+})
+
+/** 本卡：按 g 重開流程也帶著「這條分支審查過」：改完測試綠就過關、不重新驗收（按 w 才會再派審查） */
+test('a manual restart on a reviewed branch keeps the mark and passes on a green check', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const f = alphaFlow($, data, clock)
+  data.git[f.root] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace('- 下一步：push', '- 下一步：補一個邊界情況')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  f.setGate('review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過')
+  data.store.chains = { [f.root]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha', reviewedBranch: 'feature/alpha' } }
+  data.store.jobs = { [f.root]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true } } }
+  await f.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(1)
+  expect(f.chain().passed).toBeUndefined()
+  expect(f.chain().reviewedBranch).toBe('feature/alpha')
+  data.git[f.root]!.head = 'h2'
+  await f.finish()
+  expect(data.processCalls.filter((c: any) => c.argv[0] === 'sh').length).toBe(1)
+  expect(data.launches.length).toBe(1)
+  expect(f.chain().passed).toBe(true)
+  expect(f.chain().unreviewed).toBe(true)
 })

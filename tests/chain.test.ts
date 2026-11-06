@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { carriedFix, fixTotalOf, nextStep, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED, ASK_HANDED_OVER, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
+import { carriedFix, carriedReview, fixTotalOf, nextStep, recheckFeed, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED, ASK_HANDED_OVER, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
 
 const run = (round = 0, extra = {}) => ({ owner: 'me', startedAt: 1, round, ...extra })
 const v = (critical: number, high: number, medium = 0) => ({ critical, high, medium, low: 0 })
@@ -115,4 +115,38 @@ test('test_fix_round_total_is_per_branch', () => {
   expect(carriedFix(used, 'feature/b', true)).toEqual({ fixTotal: 1, fixBranch: 'feature/b' })
   // 舊紀錄沒有累計數：用這一輪的 round
   expect(fixTotalOf(run(1))).toBe(1)
+})
+
+/** 本卡 AC-1～AC-3（單元）：這條分支審查過、不是高風險：修正（審查或測試沒過的）與過關後的重新檢查，測試綠就過關、帶 unreviewed，不派審查；測試沒過照舊派修正 */
+test('nextStep passes a reviewed branch on a green check without another review', () => {
+  const seen = { reviewedBranch: 'feature/a' }
+  const ctx = { branch: 'feature/a' }
+  expect(nextStep(run(1, seen), 'continue', true, null, true, ctx)).toEqual({ kind: 'pass', unreviewed: true })
+  expect(nextStep(run(0, { ...seen, recheck: true }), 'continue', true, null, true, ctx)).toEqual({ kind: 'pass', unreviewed: true })
+  expect(nextStep(run(1, seen), 'reply', true, null, true, ctx)).toEqual({ kind: 'pass', unreviewed: true })
+  expect(nextStep(run(1, seen), 'continue', false, null, true, ctx)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 2, reason: 'check' })
+  expect(nextStep(run(1, seen), 'continue', null, null, true, ctx)).toEqual({ kind: 'verify' })
+  // 只動文件照舊免驗收
+  expect(nextStep(run(1, seen), 'continue', true, null, true, { ...ctx, risk: { level: 'low', reasons: ['只動文件'] } })).toEqual({ kind: 'pass', skipped: true })
+  // 換了分支、沒記、分支不明：照舊派審查
+  for (const [r, c] of [[run(1, seen), { branch: 'feature/b' }], [run(1), ctx], [run(1, seen), {}]] as const) {
+    expect(nextStep(r, 'continue', true, null, true, c)).toEqual({ kind: 'dispatch', dispatch: 'review', round: 1 })
+  }
+  // 開新一輪只帶同一條分支的標記
+  expect(carriedReview(run(0, seen), 'feature/a')).toEqual(seen)
+  expect(carriedReview(run(0, seen), 'feature/b')).toEqual({})
+  expect(carriedReview(undefined, 'feature/a')).toEqual({})
+  expect(recheckFeed('Alpha', true)).toBe('Alpha 驗收通過後有新 commit，自動重新測試，通過就過關、不重新驗收')
+  expect(recheckFeed('Alpha', false)).toBe('Alpha 驗收通過後有新 commit，自動重新測試與驗收')
+})
+
+/** 本卡 AC-4：高風險卡就算這條分支審查過，修正後照舊複審（之後照舊接資安審查）；只動文件照舊免驗收；第一次實作做完照舊派審查 */
+test('test_high_risk_fix_is_still_rereviewed', () => {
+  const high = { level: 'high' as const, reasons: ['認證／中介層'] }
+  const seen = run(1, { reviewedBranch: 'feature/a' })
+  expect(nextStep(seen, 'continue', true, null, true, { risk: high, branch: 'feature/a' })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 1 })
+  expect(nextStep(run(0, { reviewedBranch: 'feature/a', recheck: true }), 'continue', true, null, true, { risk: high, branch: 'feature/a' })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
+  expect(nextStep(seen, 'review', null, v(0, 0), true, { risk: high, branch: 'feature/a' })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 1, security: true })
+  expect(nextStep(run(), 'continue', true, null, true, { risk: { level: 'low', reasons: ['只動文件'] }, branch: 'feature/a' })).toEqual({ kind: 'pass', skipped: true })
+  expect(nextStep(run(), 'continue', true, null, true, { branch: 'feature/a' })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
 })

@@ -16,7 +16,7 @@ const ARMED = '再按 z 確認：照慣例版號直接發版（不再問）'
 const CONFIRMED = '；已在面板確認：版號照慣例直接做'
 const LINE = 'release/v26.2.7'
 /** skills/release/SKILL.md 的照做動作順序（tests/release-skill.test.ts 與 skills/card/tests/test_release_skill.py 驗 SKILL.md 本身）。 */
-const CHAIN = '合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過'
+const CHAIN = '整版審查 → 合併 CHANGELOG 片段 → 改版號 → 跑完整檢查 → commit → 打 tag → push 主分支與 tag → 等 CI 通過'
 /** 搬進 skills/release/SKILL.md 的規則字句：發版請求裡不再出現。 */
 const RULES = ['只問我一次', 'A) 照做', '→', '不 force push', '題目沒列的事']
 const pr = (n: number, dest = 'main') => ({ number: n, state: 'MERGED', baseRefName: dest, headRepositoryOwner: { login: 'acme' }, url: `https://github.com/acme/shop/pull/${n}`, statusCheckRollup: [] })

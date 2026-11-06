@@ -109,6 +109,40 @@ class ReleaseSkillTest(unittest.TestCase):
         # 指定版號的規則在「判斷不了版號」之前：寫了版號就不算判斷不了
         self.assertLess(confirm.find('請求裡另寫了版號'), confirm.find('判斷不了版號'))
 
+    def test_release_skill_runs_integration_review_before_changelog(self):
+        """本卡 AC-5：合併 CHANGELOG 前先對上一個 v* tag..origin/main 整版審查，結果寫 reviews 的 release-v<版號>.md；
+        有 CRITICAL／HIGH 停在這步、不打 tag，每張卡等你寫同一題；只有 MEDIUM／LOW 照常發版並列出。派審查 Agent 做，對話不自己邊看邊修。"""
+        body = read(SKILL)
+        order = body[body.find('3. 照做的動作依序是'):]
+        order = order[:order.find('\n')]
+        self.assertIn('整版審查 → 合併 CHANGELOG 片段', order)
+        front = re.match(r'---\n(.*?)\n---\n', body, re.S).group(1)
+        self.assertLess(front.find('整版審查'), front.find('合併 CHANGELOG 片段'))
+        start = body.find('## 整版審查')
+        self.assertGreater(start, -1)
+        section = body[start:body.find('\n## ', start + 1)]
+        for phrase in ('合併 CHANGELOG 片段之前做', '有確認段也照做', '上一個 `v*` tag', 'origin/main',
+                       '派一個審查 Agent 做', '對話不自己邊看邊修', '同一個檔被多張卡改', '一張卡改了另一張依賴的行為',
+                       'reviews 資料夾', '`release-v<版號>.md`', '不打 tag', '只有 MEDIUM／LOW：照常接著做', '列出'):
+            self.assertIn(phrase, section)
+        blocked = section[section.find('有 CRITICAL 或 HIGH'):]
+        self.assertIn('停在這步', blocked)
+        self.assertIn('不打 tag', blocked)
+        # 擋下時的題目範本：數字填上後跟樣本一字不差（樣本由 TS 那支交給 parseDecisions，只有一題 A／B／C）
+        sample = json.loads(read(SAMPLE).split('\nexport default ', 1)[1])['integration']
+        self.assertIn('每張卡的「等你」寫同一題', blocked)
+        self.assertIn('`%s`' % sample['template'], blocked)
+        question = sample['template']
+        for n in sample['counts']:
+            question = question.replace(' n', ' %d' % n, 1)
+        self.assertEqual(question, sample['question'])
+        # 審查契約有整版審查段：只看跨卡的交互、各卡規格不重審
+        template = read(os.path.join(ROOT, 'templates', 'review.md'))
+        part = template[template.find('整版審查（'):]
+        self.assertGreater(template.find('整版審查（'), -1)
+        self.assertIn('只看跨卡的交互', part)
+        self.assertIn('不重審', part)
+
 
 if __name__ == '__main__':
     unittest.main()

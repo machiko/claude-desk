@@ -155,7 +155,7 @@ test('a blocking review verdict without a chain sends a review fix, not a check 
     expect(c.state).toBe('failed')
     expect(dispatchable(c)).toContain('continue')
     const head = buildPrompt(c, 'continue').split('\n')[0]!
-    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進歷程。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 改回 無，狀態寫一句修了什麼。')
+    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進歷程。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 修掉 C) 改規格」，其他照修。修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM <沒修的條數>、LOW <原數>；已依審查修正、未複審（發版時整版審查）」，History 加一行列出依審查修了哪幾條，狀態寫一句修了什麼。')
     expect(head).not.toContain('未通過')
   }
 })
@@ -237,6 +237,12 @@ test('a stale check the chain will pick up by itself says the re-review is autom
 
   for (const t of auto) expect(t).toEqual({ who: 'you', text: '驗收後有新 commit：按 v 重新執行測試；通過後自動重新驗收', action: 'verify', key: 'v' })
   expect(turnOf(mk({}, { chain: stopped })).text).not.toContain('自動重新驗收')
+  // 這條分支審查過（每張卡只審查一次）：流程接手時通過就過關，不說會重新驗收
+  for (const chain of [rechecked, fixed]) expect(turnOf(mk({}, { chain: { ...chain, reviewed: true } })).text).toBe('驗收後有新 commit：按 v 重新執行測試；通過後自動過關、不重新驗收')
+  expect(turnOf(mk({}, { chain: { ...stopped, reviewed: true } })).text).not.toContain('自動過關')
+  const fixing = { round: 1, lastKind: 'fix' as const, autoReview: true, reviewed: true }
+  expect(turnOf(mk({ next: '等審查' }, { chain: fixing })).text).toBe('下一步只剩等測試／驗收：按 v 執行測試，流程接著過關、不重新驗收；要改程式先把下一步寫成要做的事')
+  expect(turnOf(mk({ next: '派審查' }, { chain: fixing })).text).toBe('下一步是驗收：按 v 執行測試，通過後自動過關、不重新驗收')
 })
 
 /** one-next-step AC-2：合併段與上線段也寫出下一步之後是什麼；部署步驟列「全部做完後：」接同一句。 */

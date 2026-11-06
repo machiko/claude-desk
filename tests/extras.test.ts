@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, paneReminders, reminderWhen, reviewTop, preflightLine, mediumToFix, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
+import { confirmStep, isArmed, logLines, deploySteps, parseReminders, dueReminders, paneReminders, reminderWhen, reviewTop, preflightLine, mediumToFix, mediumToDecide, parseGitStatus, gitLine, mergedAtHead } from '../hooks/extras'
 
 test('confirm fires only on a second press of the same action within 3 seconds', () => {
   const a = confirmStep(null, 'x\ncontinue', 1000)
@@ -147,4 +147,19 @@ test('test_medium_to_fix_skips_lines_marked_not_fix_or_your_decision', () => {
   expect(mediumToFix(null)).toBe(0)
   expect(mediumToFix('')).toBe(0)
   expect(mediumToFix('- [HIGH][x] a — b\n- [LOW][y] c — d')).toBe(0)
+})
+
+/** 每卡審一次：審查檔裡標「（等你決定）」的 MEDIUM（有 CRITICAL／HIGH 時要等修正後的審查才問，這時照舊複審） */
+test('mediumToDecide counts only MEDIUM lines ending with a your-decision note', () => {
+  const text = [
+    '- [MEDIUM][規格] — AC-2 無法驗證（等你決定）',
+    '* [medium][邊界] e.ts:5 — 上限沒擋（上一輪已列，等你決定）。 ',
+    '- [MEDIUM][邊界] a.ts:1 — 空字串沒處理',
+    '- [MEDIUM][命名] c.ts:3 — 變數名不清（記錄、不修）',
+    '- [MEDIUM][提示] a.ts:7 — 少寫要不要等你決定（等你決定前要先確認）',
+    '- [HIGH][稽核] g.ts:7 — 漏寫稽核（等你決定）',
+  ].join('\r\n')
+  expect(mediumToDecide(text)).toBe(2)
+  expect(mediumToDecide(null)).toBe(0)
+  expect(mediumToDecide('- [HIGH][x] a — b')).toBe(0)
 })

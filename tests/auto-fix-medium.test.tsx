@@ -157,6 +157,8 @@ test('test_high_with_medium_fixes_only_critical_and_high', async ($, on) => {
   expect(run.fixTotal).toBe(1)
   expect(run.fixBranch).toBe('feature/alpha')
   expect(run.mediumFix).toBeUndefined()
+  // 有 HIGH 又有等你決定的 MEDIUM：那題要等修正後的審查過關時才問，先不記「這條分支審查過」（每張卡只審查一次的例外）
+  expect(run.reviewedBranch).toBeUndefined()
 
   // 修完：自動檢查 → 複審；複審只剩等你決定的 MEDIUM，審查在等你問 → 過關，只用了 1 輪
   setCard(data, CARD_A, '無')
@@ -171,6 +173,8 @@ test('test_high_with_medium_fixes_only_critical_and_high', async ($, on) => {
   expect(h.fixes()).toHaveLength(1)
   expect((data.store.chains as any)[ALPHA].passed).toBe(true)
   expect(data.files[CARD_A]).toContain(`- 等你：${ASK}`)
+  // 複審有結論、沒有 CRITICAL／HIGH：這次記下，之後的新 commit 只跑測試
+  expect((data.store.chains as any)[ALPHA].reviewedBranch).toBe('feature/alpha')
 })
 
 /** 審查 MEDIUM 第 3 條：自動派的修正提示只寫剛結束那份審查的審查檔（程式碼審查 → REVIEW.md、資安審查 → SECURITY.md），兩份檔都在也不混 */
