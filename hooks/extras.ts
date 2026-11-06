@@ -52,8 +52,9 @@ export function deploySteps(cardText: string | null): string[] {
  * 卡片「## History」段落的每一筆，新的在前：`- ` 開頭的行是一筆，縮排的續行併進前一筆。
  * 開頭的 `YYYY-MM-DD` 是日期、後面可接 `HH:MM` 時間（去掉後面的「：」）；模板佔位（`YYYY-MM-DD`、日期後沒有內容）不算。
  * 日期＋時間由新到舊；時間相同或沒寫時間（舊卡）的照卡片裡由後往前（卡片由舊到新寫），沒有日期的放最後。
+ * cardMtime（卡片最後修改時間，毫秒）有值時，時間晚於它超過 1 分鐘的那筆是 Agent 估錯的未來時間：只回日期，排序仍用原時間。
  */
-export function historyEntries(cardText: string | null): HistoryEntry[] {
+export function historyEntries(cardText: string | null, cardMtime: number | null = null): HistoryEntry[] {
   if (!cardText) return []
   const lines = cardText.replace(/\r\n?/g, '\n').split('\n')
   const start = lines.findIndex(l => /^##\s*History\s*$/i.test(l))
@@ -81,7 +82,18 @@ export function historyEntries(cardText: string | null): HistoryEntry[] {
   })
   return keyed
     .sort((a, b) => b.key.localeCompare(a.key) || b.order - a.order)
-    .map(e => e.entry)
+    .map(e => cardMtime !== null && isFuture(e.entry, cardMtime) ? { date: e.entry.date!, text: e.entry.text } : e.entry)
+}
+
+/** 歷程時間可以比卡片修改時間晚多久（同一分鐘內寫完再存檔、秒數被捨去）。 */
+export const HISTORY_SLACK_MS = 60_000
+/** 這筆的日期＋時間（本地時間）晚於卡片修改時間所在那一分鐘再加 HISTORY_SLACK_MS：寫卡片時還沒到的時間。 */
+function isFuture(e: HistoryEntry, cardMtime: number): boolean {
+  if (!e.date || !e.time) return false
+  const [y, mo, d] = e.date.split('-').map(Number)
+  const [h, mi] = e.time.split(':').map(Number)
+  const at = new Date(y!, mo! - 1, d!, h!, mi!).getTime()
+  return at > Math.floor(cardMtime / 60_000) * 60_000 + HISTORY_SLACK_MS
 }
 
 /**

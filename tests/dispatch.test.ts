@@ -551,6 +551,22 @@ test('card rules tell agents the status field says what happened, not what is ne
   expect(buildPrompt(c, 'reply', '用 B')).toContain(rule)
 })
 
+/** history-future-time AC-1：每一種派工（實作、回覆、修正、審查、同步、推送、解衝突）的提示都叫 Agent 用 date 指令取歷程時間。 */
+test('every dispatch prompt tells agent to stamp history with date command', () => {
+  const rule = "歷程時間一律跑 `date '+%Y-%m-%d %H:%M'` 取得，不要自己估"
+  const c = mk('寫測試')
+  const prompts: Record<string, string> = {
+    continue: buildPrompt(c, 'continue'),
+    reply: buildPrompt(c, 'reply', '用 B'),
+    fix: buildPrompt(c, 'continue', '', { from: 'review', round: 1 }),
+    review: buildPrompt(c, 'review'),
+    sync: buildPrompt(c, 'sync'),
+    publish: buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12)),
+    catchup: buildPrompt(atMerge(), 'catchup', 'origin/main'),
+  }
+  for (const [kind, p] of Object.entries(prompts)) expect([kind, p.includes(rule)]).toEqual([kind, true])
+})
+
 /**
  * card-base-and-fast-path AC-3（取代 agent-limit AC-5 的「收尾跑一次完成檢查」）：會改程式的派工改的過程與收尾都只跑相關測試，
  * 整套的完成檢查交給工作桌做完後的那次；審查沒有通過紀錄時照舊自己重跑，同步與推送不加。
