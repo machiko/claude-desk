@@ -234,7 +234,10 @@ test('test_turn_hints_say_run_test_and_dispatch_acceptance', async ($, on) => {
   for (const shown of [alpha, beta, gamma]) expect(shown).not.toMatch(OLD_HINT)
 
   // 檢查沒核准時按一次 v：不跳對話框，按鈕與檢查列說「測試」
+  // 核准紀錄由重新整理讀進面板：改了 store 要整理一輪才看得到
   data.store.trustedVerify = {}
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
   await pick(ui, CARD_A)
   await ui.press({ key: `case-${CARD_A}-verify` })
   await clock.settle()

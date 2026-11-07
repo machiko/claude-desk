@@ -143,10 +143,11 @@ function githubCase(data: any) {
 test('a failing gh is retried after a minute, not on every refresh', async ($, on) => {
   const { data, clock } = fixture(on)
   githubCase(data)
-  // /desk refresh 與 r 會強制重讀 PR；這裡用每 30 秒的定時更新
+  // /desk refresh 與 r 會強制重讀 PR；這裡用每 30 秒的定時更新（面板開著：閒置時不是每次都跑）
   const tickRefresh = async () => { await clock.advance(30_000); await clock.settle() }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
+  await $.command.run({ command: 'desk', args: '' } as any)
   expect(data.ghCalls.length).toBe(1)
   data.gh = null
   // CI 跑中：下一輪照樣重讀，這次失敗
@@ -166,6 +167,8 @@ test('an old PR stops showing after an hour of failed reads', { options: { refre
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
   data.gh = null
+  // 面板開著：定時更新每個間隔都跑（閒置時才拉長）
+  await $.command.run({ command: 'desk', args: '' } as any)
   const ui = await $.ui.mount(PANE(72))
   await ui.press({ key: `row-${CARD_B}` })
   await clock.advance(600_000)

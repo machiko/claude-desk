@@ -327,6 +327,8 @@ test('a commit within two minutes of the merge is still recognized as merged wit
   const tickRefresh = async () => { await clock.advance(30_000); await clock.settle(); await clock.advance(2500); await clock.settle() }
   await $.command.run({ command: 'desk', args: 'refresh' } as any)
   await clock.settle()
+  // 面板開著：30 秒後的定時更新會跑（閒置時才拉長）
+  await $.command.run({ command: 'desk', args: '' } as any)
 
   // 30 秒後（還在兩分鐘節流內）：g1 已併進 main，分支上又多了 g2（g2 不在 main 裡）
   data.git[root] = { ...data.git[root]!, head: 'g2', merged: [], forkPoint: 'g1', descends: ['g1'], branchLine: 'g2\n', firstParent: 'm2\nm1\n', parents: { m1: 'base0', g2: 'g1' } }

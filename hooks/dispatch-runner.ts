@@ -14,7 +14,7 @@ import { rawAgents, supersede, agentInfo, agentsByRoot } from './model'
 import { isBusy, untrustedKey } from './turn'
 import { WORD } from './theme'
 import { lastLaunches } from './stale-agents'
-import { restage, spin, tutorial, lastAgents } from './register'
+import { restage, spin, tutorial, lastAgents, lastAgentsAt } from './register'
 import { carriedFix, carriedReview, countedFix } from './chain'
 import { checkStands } from './pipeline'
 import { fixesReview } from './prompts/fix'
@@ -72,6 +72,7 @@ export function resetDispatchState() {
   unconfirmed.clear()
   launchKinds = {}
   launchSeq = 0
+  lastLaunchAt = -Infinity
 }
 
 /**
@@ -109,8 +110,28 @@ export async function startedSince($: any, c: Case): Promise<boolean> {
   return !!agent && isBusy({ ...c, agent })
 }
 
-/** 現在在跑的工作桌 Agent（整台機器）：即時問 claude agents，問不到用上一輪的清單，也沒有就當 0（不擋派工）。 */
+/** 重新整理讀到的 agents 清單在這麼久之內，派工直接沿用（算名額、當啟動前的清單），不再跑一次 claude agents。 */
+export const AGENTS_FRESH_MS = 5_000
+
+/** 這個對話最近一次呼叫 claude --bg 的時間：之後讀到的清單才算數（之前讀的看不到剛派出的 Agent，名額會少算）。 */
+let lastLaunchAt = -Infinity
+
+/**
+ * 可以沿用的 agents 清單：重新整理在 AGENTS_FRESH_MS 內讀到、而且讀的時間晚於這個對話最近一次派出 Agent（同一毫秒不算）；
+ * 不符合（太舊、從沒讀到、之後又派過）就回 undefined，照舊即時問。
+ */
+function recentAgents(now: number): readonly RawAgent[] | undefined {
+  if (!lastAgents || lastAgentsAt <= lastLaunchAt) return undefined
+  return now - lastAgentsAt < AGENTS_FRESH_MS ? lastAgents : undefined
+}
+
+/**
+ * 現在在跑的工作桌 Agent（整台機器）：清單剛讀過就沿用（recentAgents），不然即時問 claude agents；
+ * 問不到用上一輪的清單，也沒有就當 0（不擋派工）。
+ */
 async function runningDeskNow($: any): Promise<number> {
+  const recent = recentAgents(await $.clock.now())
+  if (recent) return runningDeskAgents(recent)
   const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: PRESS_AGENTS_MS }).catch(() => null)
   const list = out && out.exitCode === 0 ? rawAgents(out.stdout) : lastAgents
   return list ? runningDeskAgents(list) : 0
@@ -242,7 +263,10 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     await spin($, true)
     // Bitbucket 的推送 Agent 要用 MCP 的 bb_post 開 PR：這一種派工就算沒設 mcp 也載入；專案有 pr.open 覆寫就照全域設定。
     const mcp = settings.mcp || (kind === 'publish' && !settings.prOpen && (await originRemote($, c.root))?.host === 'bitbucket')
-    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp })
+    // 剛讀過的 agents 清單當啟動前的清單（不再跑一次）；先取再記這次啟動的時間，之後的派工才不會沿用看不到這個 Agent 的清單。
+    const recent = tutorial ? undefined : recentAgents(await $.clock.now())
+    if (!tutorial) lastLaunchAt = await $.clock.now()
+    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp }, recent)
     const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。同一條分支累計的修正數照帶（不歸零）；
     // 「這條分支審查過」也照帶：按 g 改完只跑測試、不複審（按 w 照樣派審查）。

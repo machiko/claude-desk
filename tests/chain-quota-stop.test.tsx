@@ -681,6 +681,8 @@ test('test_manual_dispatch_ignores_quota_threshold — g resume that waits in th
   await heldBeforeReview($, data, clock, h)
 
   data.agents = FULL()
+  // 派工沿用 5 秒內讀過的 agents 清單：先整理一輪，名額滿了才看得到
+  await h.refresh()
   const ui = await $.ui.mount(PANE(160))
   await pressG(ui, clock)
   await ui.unmount()
