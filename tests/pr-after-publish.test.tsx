@@ -114,16 +114,47 @@ test('test_pr_cache_resumes_after_publish_end_is_noted', async ($, on) => {
   data.git[BETA] = { ...data.git[BETA]!, upstream: true, ahead: 0 }
   finishAgents(data)
   await tick(clock)
-  const ended = data.ghCalls.length
+  const callsAfterEnd = data.ghCalls.length
   await tick(clock)
   await tick(clock)
   await tick(clock)
   const later = await screen(ui)
   await ui.unmount()
 
-  expect(ended).toBeGreaterThan(0)
-  expect(data.ghCalls.length - ended).toBe(0)
+  expect(callsAfterEnd).toBeGreaterThan(0)
+  expect(data.ghCalls.length - callsAfterEnd).toBe(0)
   expect(later).toContain(flat('PR #12'))
+})
+
+/** AC-1：兩個 desk 對話同時開著，另一個對話先重新整理、記下推送結束並停掉 Agent；這個對話下一輪照樣重查一次，之後回到快取。 */
+test('test_pr_requeried_when_another_session_noted_publish_end', async ($, on) => {
+  const { data, clock } = fixture(on)
+  onlyBeta(data, { upstream: false }, [])
+  startsAgents(data, clock)
+
+  const ui = await mount($, clock)
+  await pressTwice(ui, clock, 'open-pr')
+  data.gh = [OPEN_PR]
+  data.git[BETA] = { ...data.git[BETA]!, upstream: true, ahead: 0 }
+  finishAgents(data)
+  // 另一個對話先記下結束（工作桌的派工紀錄是所有對話共用的），也把做完的 Agent 停掉、清單不再列出它
+  const jobs = data.store.jobs as any
+  data.store.jobs = { ...jobs, [BETA]: { ...jobs[BETA], last: { ...jobs[BETA].last, ended: { how: 'finished' } } } }
+  data.agents = []
+  const mark = data.ghCalls.length
+  await tick(clock)
+  const requeried = data.ghCalls.length - mark
+  const after = await screen(ui)
+  const openPr = await has(ui, 'open-pr')
+  await tick(clock)
+  await tick(clock)
+  await ui.unmount()
+
+  expect(requeried).toBe(1)
+  expect(after).toContain(flat('PR #12'))
+  expect(after).not.toContain(flat('n 開 PR'))
+  expect(openPr).toBe(false)
+  expect(data.ghCalls.length - mark).toBe(1)
 })
 
 /** AC-4 */
