@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, text, flat } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, flat } from './fixture'
+import { screen } from './world'
 import { setFields } from '../hooks/tutorial'
 
 // 檢查欄不是一條可執行指令（範本佔位、說明文字）時，當作缺完成檢查：不派實作、不執行它，輪到你直說缺什麼。
@@ -9,7 +10,6 @@ const PROSE = '`待 spec 定，先不跑`'
 const MISSING_TURN = 'o 開卡片填測試指令（卡片還沒有測試指令，在「檢查」欄填一條修之前會紅、修好會綠的指令）'
 const REFUSED = 'Beta：無法繼續（卡片還沒有測試指令）；開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
 const SPEC = '\n\n## 規格\n\n- 目標：匯出 CSV\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | 有訂單 | 按匯出 | 下載 CSV | `export` |\n\n### 實作計畫\n\n| 檔案 | 改什麼 |\n| --- | --- |\n| `a.ts` | 加匯出 |\n'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh')
 
 /** 只留 Beta 一件：規格已填（有 AC-1 與計畫）、關卡無、下一步有事、沒有 Agent 在跑；檢查欄由各測試決定。 */

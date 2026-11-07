@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, feedLog, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, TRUSTED, result, text, flat } from './fixture'
+import { screen } from './world'
 import { historyEntries } from '../hooks/extras'
 import { issueOf, hhmm } from '../hooks/model'
 import type { Case, FeedEvent } from '../types'
@@ -8,7 +9,6 @@ import type { Case, FeedEvent } from '../types'
 // desk 自己的動態只在最新一筆是錯誤或警告時，在歷程上方多一行說原因。
 const ALPHA = '/home/u/wt/alpha'
 const CARD_OLD = '/home/u/wt/delta/.console/STATUS.md'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 const LONG = '第五筆：PR 已開，這一筆寫得很長，' + '把審查意見、測試數字與檔案清單都塞了進來，'.repeat(6) + '最後一句是結尾'
 
 /** 卡片尾巴的 History：由舊到新寫，最前面還留著模板的佔位；後面還有別的段落，歷程不能讀過頭。 */

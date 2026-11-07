@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, REGISTRY, TRUSTED, result, text, flat, feedLog } from './fixture'
+import { screen } from './world'
 import { setFields, tutorialPaths, TUTORIAL_NAME } from '../hooks/tutorial'
 import { DEMO_ONLY, decisionRefusal } from '../hooks/card-actions'
 
@@ -11,7 +12,6 @@ const GAMMA = '/home/u/wt/gamma'
 const SHAPE = /^[^：]+：無法.+（.+）；.+$/
 const SPEC = '\n\n## 規格\n\n- 目標：匯出 CSV\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | 有訂單 | 按匯出 | 下載 CSV | `export` |\n\n### 實作計畫\n\n| 檔案 | 改什麼 |\n| --- | --- |\n| `a.ts` | 加匯出 |\n'
 const MISSING_NEXT = '開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 const sh = (data: any) => data.processCalls.filter((c: any) => c.argv[0] === 'sh')
 const registry = (rows: [string, string][]) => `## 任務\n| Project | path |\n| --- | --- |\n${rows.map(([n, p]) => `| ${n} | \`${p}\` |`).join('\n')}`
 const run = async ($: any, clock: any, args: string) => { const out: any = await $.command.run({ command: 'desk', args } as any); await clock.settle(); return String(out?.text ?? '') }

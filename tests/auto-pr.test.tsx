@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, PANE, PROJECT_DIR, CARD_A, CARD_B, REGISTRY, result, text, flat } from './fixture'
+import { fixture, feedLog, PANE, PROJECT_DIR, CARD_A, CARD_B, REGISTRY, text, flat } from './fixture'
+import { screen, busyAgent as busy, startsAgents } from './world'
 import { autoPrApplies, autoPrPlan, passWords } from '../hooks/auto-pr'
 import { NO_PUSH_NEEDED, parseSettings, queueRefusal } from '../hooks/dispatch'
 import { pipeline } from '../hooks/pipeline'
@@ -15,7 +16,6 @@ const ME = 'fixture-session'
 const PASSED = 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可合併'
 const ASK = '審查 MEDIUM 1 條怎麼處理：A) 不修，記錄原因 B) 修掉'
 const OPEN_PR = { number: 12, state: 'OPEN', baseRefName: 'release/v1.4', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }
-const busy = (name: string, cwd: string) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 })
 /** 三個在跑的工作桌 Agent，都在別的專案。 */
 const FULL = () => [busy('desk-m0-0', '/home/u/other/one'), busy('desk-m0-1', '/home/u/other/two'), busy('desk-m0-2', '/home/u/other/three')]
 
@@ -40,15 +40,6 @@ function betaReviewed(data: any, settings: unknown = { autoPr: true }) {
   if (settings !== null) data.files[SETTINGS] = typeof settings === 'string' ? settings : JSON.stringify(settings)
 }
 
-/** 派工會在那個根目錄多一個在跑的 Agent（照 `claude --bg` 的回應）。 */
-function startsAgents(data: any, clock: any) {
-  data.launch = async (e: any) => {
-    const id = `e000000${data.launches.length}`
-    data.agents = [...data.agents, { ...busy(e.argv[3], e.init.cwd), id, sessionId: `${id}-0000-4000-8000-000000000000`, startedAt: clock.now() }]
-    return result(0, id)
-  }
-}
-
 /** desk 自己跑的指令裡有沒有寫遠端的（git push、gh pr create／merge）。 */
 function recordExec(data: any) {
   const calls: any[] = []
@@ -71,7 +62,6 @@ function helpers($: any, data: any, clock: any) {
     data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
     await refresh(); await step(); await step(); await step()
   }
-  const screen = async (ui: any) => flat(text(await ui.drawn()))
   const promptOf = (i = 0) => String(data.launches[i].argv.at(-1))
   const checks = () => data.processCalls.filter((c: any) => c.argv[0] === 'sh').length
   return { step, refresh, finish, screen, promptOf, checks }
@@ -86,7 +76,7 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on', async ($, o
   const log = feedLog(on)
   const notified = capture(on)
   betaReviewed(data)
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const calls = recordExec(data)
   const h = helpers($, data, clock)
 
@@ -128,7 +118,7 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on — docs only
   data.git[BETA]!.files = ['README.md', 'docs/guide.md']
   data.store.verifies = {}
   data.store.jobs = { [BETA]: lastJob('continue', { fresh: false }) }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const calls = recordExec(data)
   const h = helpers($, data, clock)
 
@@ -154,7 +144,7 @@ test('test_review_pass_dispatches_open_pr_agent_when_auto_pr_is_on — keeps the
   const { data, clock } = fixture(on)
   betaReviewed(data)
   data.files[CARD_B] = data.files[CARD_B]!.replace('- 等你：無', `- 等你：${ASK}`)
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   await h.refresh()
@@ -185,7 +175,7 @@ async function recheckPasses($: any, on: any, ahead: number) {
   data.git[BETA] = { branch: 'feature/b', head: 'c3', remote: 'git@github.com:acme/shop.git', upstream: true, ahead }
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, passed: true, reviewHead: 'c2', reviewBranch: 'feature/b', judgedHead: 'c2', judgedBranch: 'feature/b' } }
   data.store.jobs = { [BETA]: lastJob('publish', { handled: true }) }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const calls = recordExec(data)
   const h = helpers($, data, clock)
 
@@ -233,7 +223,7 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full', async ($, on) => {
   const log = feedLog(on)
   betaReviewed(data, { autoPr: true, maxAgents: 3 })
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   await h.refresh()
@@ -263,7 +253,7 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full — cancel keeps the pass
   const log = feedLog(on)
   betaReviewed(data, { autoPr: true, maxAgents: 3 })
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   await h.refresh()
@@ -296,7 +286,7 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full — a PR opened while que
   const { data, clock } = fixture(on)
   betaReviewed(data, { autoPr: true, maxAgents: 3 })
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
   await h.refresh()
   data.gh = [OPEN_PR]
@@ -315,7 +305,7 @@ test('test_auto_pr_waits_in_queue_when_agents_are_full — dropped when nothing 
   const { data, clock } = fixture(on)
   betaReviewed(data, { autoPr: true, maxAgents: 3 })
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
   await h.refresh()
   data.gh = [OPEN_PR]
@@ -341,7 +331,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — h
   data.git[BETA]!.files = ['app/Http/Middleware/Admin.php']
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b', securityHead: 'c2', securityBranch: 'feature/b' } }
   data.store.jobs = { [BETA]: lastJob('review', { security: true }) }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   await h.refresh(); await h.step()
@@ -358,7 +348,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — p
   betaReviewed(data)
   setGate(data, CARD_B, 'review：CRITICAL 0、HIGH 2、MEDIUM 0、LOW 0；還有 bug')
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 2, reviewHead: 'c2', reviewBranch: 'feature/b' } }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   await h.refresh(); await h.step()
@@ -375,7 +365,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — f
   const theirs = { owner: 'other-session', startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b' }
   data.store.chains = { [BETA]: theirs }
   data.store.jobs = { [BETA]: lastJob('review', { owner: 'other-session' }) }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   await h.refresh(); await h.step()
@@ -394,7 +384,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — d
   const log = feedLog(on)
   betaReviewed(data)
   data.gh = [{ ...OPEN_PR, number: 9, state: 'CLOSED', statusCheckRollup: [] }]
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   await h.refresh()
@@ -415,7 +405,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — r
   const { data, clock } = fixture(on)
   betaReviewed(data)
   const calls = recordExec(data)
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
 
   for (const branch of ['release/v1.5', 'HEAD']) {
@@ -438,7 +428,7 @@ test('test_behaves_as_before_when_auto_pr_is_off_and_never_merges_when_on', asyn
   const { data, clock } = fixture(on)
   const log = feedLog(on)
   betaReviewed(data, null)
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const h = helpers($, data, clock)
   const ui = await $.ui.mount(PANE(160))
 
@@ -475,7 +465,7 @@ test('test_behaves_as_before_when_auto_pr_is_off_and_never_merges_when_on — on
   data.store.trustedVerify = { ...(data.store.trustedVerify as object), [CARD_A]: 'node test.mjs' }
   data.store.verifies = { ...(data.store.verifies as object), [CARD_A]: { command: 'node test.mjs', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'a2' } }
   data.store.chains = { ...(data.store.chains as object), [ALPHA]: { owner: ME, startedAt: 0, round: 0, passed: true, reviewHead: 'a2', reviewBranch: 'feature/alpha', judgedHead: 'a2', judgedBranch: 'feature/alpha' } }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'all' })
   const calls = recordExec(data)
   const h = helpers($, data, clock)
 
