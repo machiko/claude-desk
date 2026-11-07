@@ -1,7 +1,20 @@
 // 完成檢查的核准：面板按兩次 v 或 g（第一次在檢查列列出全文），或確認規格時直接記下（trustCheck）。核准紀錄在 $.store（TRUST_KEY）。
 // 吃 $ 的函式一律用 function 宣告。
+import { atom, update } from 'claude-code'
 import type { Case } from '../types'
 import { TRUST_KEY } from './desk-io'
+
+/**
+ * 面板重繪用的核准紀錄（同 key 在 register.tsx 也宣告一次，引擎規定 read／update 的 atom 要同檔宣告）：
+ * 每輪重新整理讀一次 store 放進來，這個對話核准時也一起更新；別的對話核准的要等下一輪重新整理才看得到。
+ */
+const trustedAtom = atom({ plugin: 'desk', key: 'trusted' } as const, {} as Record<string, string>)
+
+/**
+ * 這個對話核准過幾次（trustCheck 寫完 atom 才加 1）：重新整理讀核准紀錄前記下它，寫回 atom 前數字變了就不寫，
+ * 免得讀到核准之前的舊紀錄、把剛核准的蓋回去。
+ */
+export let trustWrites = 0
 
 /** 這個對話核准過的完成檢查：卡片路徑 → 指令全文。 */
 export async function trustedChecks($: any): Promise<Record<string, string>> {
@@ -22,6 +35,10 @@ export const unapprovedText = (c: Pick<Case, 'name' | 'verify'>): string =>
 export async function trustCheck($: any, c: Case): Promise<boolean> {
   if (!c.verify) return false
   const trusted = await trustedChecks($)
-  if (trusted[c.statusPath] !== c.verify) await $.store.set(TRUST_KEY, { ...trusted, [c.statusPath]: c.verify })
+  const next = { ...trusted, [c.statusPath]: c.verify }
+  if (trusted[c.statusPath] !== c.verify) await $.store.set(TRUST_KEY, next)
+  // 面板下一次重繪就顯示已核准，不等下一輪重新整理。
+  await update($, trustedAtom, () => next)
+  trustWrites++
   return true
 }

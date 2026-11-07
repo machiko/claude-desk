@@ -188,9 +188,9 @@ test('test_running_now_card_animates_and_shows_elapsed_and_last_line', async ($,
   await clock.advance(SPIN_MS); await clock.settle()
   expect(await busyGlyph()).not.toBe(glyph0)
 
-  // 快轉 4 分 12 秒時先卸下面板（SPIN 每拍都會重畫），再掛回來看。
+  // 快轉到開始後 4 分 12 秒（前面已過兩拍 SPIN）時先卸下面板（SPIN 每拍都會重畫），再掛回來看。
   await ui.unmount()
-  await clock.advance(4 * 60_000 + 12_000); await clock.settle()
+  await clock.advance(4 * 60_000 + 12_000 - 2 * SPIN_MS); await clock.settle()
   const again = await $.ui.mount(PANE(72))
   const rows = await cardRows(again)
   // 標題徽章也寫「處理中」：找輪到誰那一句（圖示＋處理中開頭）。
