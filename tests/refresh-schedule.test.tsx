@@ -341,3 +341,107 @@ test('test_dispatch_during_a_refresh_keeps_the_next_interval_refreshing', async 
   await interval(clock)
   expect(count.lists).toBe(1)
 })
+
+/** 卡住下一次 claude --bg：release 時才呼叫原本的 data.launch（Agent 那時才出現在清單）並回來。 */
+function holdLaunch(data: any) {
+  const gate = { release: () => {}, held: false }
+  const original = data.launch
+  data.launch = (e: any) => {
+    if (gate.held) return original(e)
+    gate.held = true
+    return new Promise(done => { gate.release = () => done(original(e)) })
+  }
+  return gate
+}
+
+test('test_dispatch_after_a_list_read_while_launching_asks_agents_again', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  alphaReady(data)
+  data.files[SETTINGS] = JSON.stringify({ maxAgents: 1 })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // Alpha 的 claude --bg 還沒回來時跑一輪重新整理：那份清單沒有 Alpha
+  const launching = holdLaunch(data)
+  await clock.advance(200)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(launching.held).toBe(true)
+  await clock.advance(300)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  launching.release()
+  await clock.settle()
+  expect(data.toasts).toContain('Alpha：繼續已派出')
+
+  // 5 秒內再派 Gamma：不沿用那份清單，即時問才知道名額滿了，排隊
+  await clock.advance(1000)
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts.some(t => t.startsWith('Gamma：同時執行的 Agent 已達上限 1 個'))).toBe(true)
+})
+
+test('test_dispatch_after_a_launch_that_threw_asks_agents_again', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  alphaReady(data)
+  data.files[SETTINGS] = JSON.stringify({ maxAgents: 1 })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // Alpha 的 claude --bg 還沒回來時跑一輪重新整理；回來後確認用的 claude agents 出錯：派工算失敗，但 Agent 其實已經在跑
+  const launching = holdLaunch(data)
+  await clock.advance(200)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  await clock.advance(300)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const box = { failNext: true }
+  data.exec = (e: any) => {
+    if (box.failNext && e.argv[0] === 'claude' && e.argv[1] === 'agents') { box.failNext = false; throw new Error('agents crashed') }
+    return null
+  }
+  launching.release()
+  await clock.settle()
+  expect(box.failNext).toBe(false)
+  expect(data.toasts.some(t => t.startsWith('Alpha：無法派繼續'))).toBe(true)
+
+  // 5 秒內再派 Gamma：不沿用那份清單，即時問看到 Alpha 在跑，名額滿了排隊
+  await clock.advance(1000)
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts.some(t => t.startsWith('Gamma：同時執行的 Agent 已達上限 1 個'))).toBe(true)
+})
+
+test('test_dispatch_while_launching_keeps_the_next_interval_refreshing', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  const count = { lists: 0 }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // 面板收著；同步 Gamma 的 claude --bg 還沒回來時送出一輪重新整理（清單沒有 Gamma）；派工先結束，清單之後才回來
+  const launching = holdLaunch(data)
+  await clock.advance(200)
+  await $.command.run({ command: 'desk', args: 'sync Gamma' } as any)
+  await clock.settle()
+  const gate = holdNext(data, count, isAgents)
+  await clock.advance(300)
+  const running = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  expect(gate.held).toBe(true)
+  launching.release()
+  await clock.settle()
+  expect(data.toasts).toContain('Gamma：同步已派出')
+  await clock.advance(1000)
+  gate.release()
+  await running
+  await clock.settle()
+
+  // 那份清單看不到 Gamma 在跑：不算閒置，下一個間隔照樣整理；閒置的話要再等 3 個間隔
+  count.lists = 0
+  await interval(clock)
+  expect(count.lists).toBe(1)
+})

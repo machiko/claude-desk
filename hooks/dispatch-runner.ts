@@ -113,17 +113,20 @@ export async function startedSince($: any, c: Case): Promise<boolean> {
 /** 重新整理讀到的 agents 清單在這麼久之內，派工直接沿用（算名額、當啟動前的清單），不再跑一次 claude agents。 */
 export const AGENTS_FRESH_MS = 5_000
 
-/** 這個對話最近一次呼叫 claude --bg 的時間：之後讀到的清單才算數（之前讀的看不到剛派出的 Agent，名額會少算）。 */
+/**
+ * 這個對話最近一次派工啟動的時間：呼叫 claude --bg 之前記一次，launch 回來或丟錯之後再記一次。
+ * 晚於它送出的清單才算數：啟動前、或 claude --bg 還沒回來時送出的清單可能看不到剛派出的 Agent，名額會少算。
+ */
 let lastLaunchAt = -Infinity
 
-/** 這個對話在 `at`（含）之後呼叫過 claude --bg：那之前送出的 agents 清單可能看不到剛派出的 Agent。從沒派過就是 false。 */
+/** `at`（含）之後這個對話有派工啟動或啟動結束（lastLaunchAt）：那時送出的 agents 清單可能看不到剛派出的 Agent。從沒派過就是 false。 */
 export function launchedSince(at: number): boolean {
   return lastLaunchAt !== -Infinity && lastLaunchAt >= at
 }
 
 /**
- * 可以沿用的 agents 清單：重新整理在 AGENTS_FRESH_MS 內送出、而且送出的時間晚於這個對話最近一次派出 Agent（同一毫秒不算）；
- * 不符合（太舊、從沒讀到、送出之後又派過）就回 undefined，照舊即時問。
+ * 可以沿用的 agents 清單：重新整理在 AGENTS_FRESH_MS 內送出、而且送出的時間晚於 lastLaunchAt（同一毫秒不算）；
+ * 不符合（太舊、從沒讀到、在派工啟動前或啟動中送出）就回 undefined，照舊即時問。
  */
 function recentAgents(now: number): readonly RawAgent[] | undefined {
   if (!lastAgents || launchedSince(lastAgentsAt)) return undefined
@@ -140,6 +143,19 @@ async function runningDeskNow($: any): Promise<number> {
   const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: PRESS_AGENTS_MS }).catch(() => null)
   const list = out && out.exitCode === 0 ? rawAgents(out.stdout) : lastAgents
   return list ? runningDeskAgents(list) : 0
+}
+
+/**
+ * 呼叫 launch，前後各記一次 lastLaunchAt：claude --bg 還沒回來時送出的清單也不沿用。
+ * 丟錯也記（確認不到、確認時出錯的 Agent 可能已經在跑）。
+ */
+async function launchMarked($: any, c: Case, prompt: string, o: Parameters<typeof launch>[3], recent: readonly RawAgent[] | undefined) {
+  lastLaunchAt = await $.clock.now()
+  try {
+    return await launch($, c, prompt, o, recent)
+  } finally {
+    lastLaunchAt = await $.clock.now()
+  }
 }
 
 /** 這件有派工還在啟動（已佔名額或已寫「啟動中」佔位）。 */
@@ -270,8 +286,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const mcp = settings.mcp || (kind === 'publish' && !settings.prOpen && (await originRemote($, c.root))?.host === 'bitbucket')
     // 剛讀過的 agents 清單當啟動前的清單（不再跑一次）；先取再記這次啟動的時間，之後的派工才不會沿用看不到這個 Agent 的清單。
     const recent = tutorial ? undefined : recentAgents(await $.clock.now())
-    if (!tutorial) lastLaunchAt = await $.clock.now()
-    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launch($, c, prompt, { model, effort, sessionId, name, mcp }, recent)
+    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launchMarked($, c, prompt, { model, effort, sessionId, name, mcp }, recent)
     const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。同一條分支累計的修正數照帶（不歸零）；
     // 「這條分支審查過」也照帶：按 g 改完只跑測試、不複審（按 w 照樣派審查）。

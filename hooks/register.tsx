@@ -596,7 +596,7 @@ async function scheduledRefresh($: any, options: PluginOptions) {
 /**
  * 沒人在看、也沒東西在跑：面板沒畫出或不在最前面（paneShown），
  * 上一份快照沒有 Agent 在跑或停下來問，也沒有檢查在跑或排隊、派工在啟動或排隊。還沒有快照不算閒置。
- * 快照的 agents 清單送出之後這個對話又派過 Agent 也不算：那一輪可能拿舊清單蓋掉派工時標上的「執行中」，要等下一份清單看到它。
+ * 快照的 agents 清單在這個對話派工啟動前或啟動中（claude --bg 還沒回來）送出的也不算：那一輪可能拿舊清單蓋掉派工時標上的「執行中」，要等下一份清單看到它。
  */
 async function isIdle($: any): Promise<boolean> {
   if (await paneShown($)) return false
