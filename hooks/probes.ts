@@ -453,7 +453,7 @@ export async function diffFiles($: any, c: BaseInput, cardBase = ''): Promise<{ 
 
 /**
  * 這個分支相對要併進去的分支（見 baseRefs）改了哪些檔，依 HEAD 與選基準用的輸入（PR 目標、卡片基準欄、card.base）快取：
- * 沒帶 PR 算的不會蓋掉帶 PR 的（重新整理與自動流程要給同一個 c，見 register.tsx）。找不到基準就是空清單（算一般風險，不快取）。
+ * 沒帶 PR 算的不會蓋掉帶 PR 的（重新整理與自動流程要給同一個 c，見 register.tsx 與 auto-chain.ts）。找不到基準就是空清單（算一般風險，不快取）。
  */
 export async function riskOf($: any, c: BaseInput, extra: readonly [RegExp, string][] = [], cardBase = ''): Promise<Risk> {
   const head = c.git?.head

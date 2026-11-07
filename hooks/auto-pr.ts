@@ -1,5 +1,5 @@
 // 審查過關後自動開 PR（dispatch.json 的 autoPr）：決定開 PR、只 push 還是不派，以及動態與提示的字。
-// 純函式；派推送 Agent 在 card-actions.ts 的 autoPublish，什麼時候問在 register.tsx 自動流程的過關那段。
+// 純函式；派推送 Agent 在 card-actions.ts 的 autoPublish，什麼時候問在 auto-chain.ts 自動流程的過關那段。
 import type { Case } from '../types'
 import { isReleaseLine } from './pipeline'
 
