@@ -43,12 +43,9 @@ async function handledAlready($: any, version: string): Promise<boolean> {
   return !!done && !isNewer(version, done.version)
 }
 
-/** 卡片路徑 → 這一輪已讀到的卡片文字（讀不到是 null）；有列的就不再讀檔。 */
-export type CardTexts = ReadonlyMap<string, string | null>
-
 /** 一張登錄表列的卡：寫了「已發版」而且是 desk 專案，就回傳版號與卡名。讀不到卡片或 plugin.json 就不算。 */
-async function releasedDeskCard($: any, row: RegistryRow, texts?: CardTexts): Promise<Released | null> {
-  const text = texts?.has(row.statusPath) ? texts.get(row.statusPath) : await $.fs.read(row.statusPath).catch(() => null)
+async function releasedDeskCard($: any, row: RegistryRow): Promise<Released | null> {
+  const text = await $.fs.read(row.statusPath).catch(() => null)
   const version = typeof text === 'string' ? releasedVersion(parseCard(text)?.['狀態'] ?? '') : null
   if (!version || !(await isDeskProject($, projectRoot(row.statusPath)))) return null
   return { version, name: row.name }
@@ -57,10 +54,9 @@ async function releasedDeskCard($: any, row: RegistryRow, texts?: CardTexts): Pr
 /**
  * 重新整理一開始（讀完登錄表、還沒跑 claude agents 與各卡探測）就看：同回合的 archive --cleanup 會刪掉 worktree，晚了就讀不到 plugin.json。
  * 寫「已發版」的 desk 專案卡挑版號最大的；比這個對話已記的新、也還沒有對話處理過，才記成待辦，不倒退（登錄表留著上一版的已發版卡也不會蓋掉新版）。
- * texts：重新整理這一輪已讀好的卡片文字（每張卡只讀一次）；沒給或沒列到的卡照舊讀檔。
  */
-export async function noteReleased($: any, rows: readonly RegistryRow[], texts?: CardTexts) {
-  const found = (await Promise.all(rows.map(row => releasedDeskCard($, row, texts)))).filter((x): x is Released => x !== null)
+export async function noteReleased($: any, rows: readonly RegistryRow[]) {
+  const found = (await Promise.all(rows.map(row => releasedDeskCard($, row)))).filter((x): x is Released => x !== null)
   const newest = found.reduce<Released | null>((best, x) => (!best || isNewer(x.version, best.version) ? x : best), null)
   if (!newest || (await handledAlready($, newest.version))) return
   await update($, notedAtom, v => (v && !isNewer(newest.version, v.version) ? v : newest))

@@ -1,10 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, REGISTRY, flat, text } from './fixture'
 import { setFields } from '../hooks/tutorial'
-import { world } from './update-world'
 
 // 減少每次重新整理的子行程（refresh-spawns 卡）：git 的 ref 沒變就不重問 tag 與遠端領先落後、同一個 Agent 的 log 只讀一次、
-// CI 跑中的 PR 每 60 秒查一次、每張卡片檔一輪只讀一次。
+// CI 跑中的 PR 每 60 秒查一次。
 const ALPHA = '/home/u/wt/alpha'
 const BETA = '/home/u/wt/beta'
 const GAMMA = '/home/u/wt/gamma'
@@ -193,26 +192,4 @@ test('test_pending_ci_rechecks_pr_after_sixty_seconds', async ($, on) => {
   expect(within).toBe(1)
   expect(after).toBe(2)
   expect(forced).toBe(3)
-})
-
-/** K-3 */
-test('test_refresh_reads_each_card_once', async ($, on) => {
-  const { data, clock } = fixture(on)
-  on('turn.complete', () => ({ text: '' }))
-  // fixture 的 fs.read 每讀一次檔先問一次 unreadable.includes：借它記下讀了哪些檔（都不拒絕）
-  const reads: string[] = []
-  const record = (path: string) => { reads.push(String(path)); return false }
-  data.unreadable = new Proxy([] as string[], { get: (list, key) => key === 'includes' ? record : Reflect.get(list, key) })
-  const { changes } = world(data, { kind: 'github', installed: '0.43.0', latest: '0.44.0' })
-  data.files[CARD_B] = setFields(data.files[CARD_B]!, { 狀態: '已發版 v0.44.0：tag 與 main 已推送' })
-  data.files[`${BETA}/.claude-plugin/plugin.json`] = JSON.stringify({ name: 'desk', version: '0.44.0' })
-  data.store.updateCheck = { at: NOW, latest: '0.43.0', current: '0.43.0' }
-
-  await refresh($, clock)
-  const cardReads = [CARD_A, CARD_B, CARD_C].map(card => reads.filter(p => p === card).length)
-  await $.turn.complete({ answer: '', durationMs: 4000, isAborted: false, turnId: 't1', reason: 'answer' } as any)
-  await clock.settle()
-
-  expect(cardReads).toEqual([1, 1, 1])
-  expect(changes).toEqual(['marketplace update claude-desk', 'update desk@claude-desk --scope user'])
 })

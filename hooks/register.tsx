@@ -102,10 +102,8 @@ export async function refresh($: any, options: PluginOptions) {
     const error = text !== null ? null : tutorial ? `無法讀取教學的登錄表 ${path}；輸入 /desk tutorial end 回到你的任務` : registryError(paths!, missing)
     const rows = parseRegistry(text ?? '', await home($))
     knownPaths = [...(path ? [path] : []), ...rows.map(r => r.statusPath)]
-    // 每張卡片這一輪只讀一次：發版待辦與組任務都用這份。
-    const cardTexts: ReadonlyMap<string, string | null> = new Map(await Promise.all(rows.map(async row => [row.statusPath, await ($.fs.read(row.statusPath) as Promise<string>).catch(() => null)] as const)))
     // desk 自己發版的待辦要在探測之前記：同回合的 archive --cleanup 會刪掉 worktree。
-    if (!tutorial) await noteReleased($, rows, cardTexts).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
+    if (!tutorial) await noteReleased($, rows).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
     // 教學不看真的背景 agent，只看模擬的那一個。
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
     const jobs = await loadJobs($)
@@ -124,8 +122,10 @@ export async function refresh($: any, options: PluginOptions) {
     /** Agent id → 這一輪讀到的 `claude logs` 整份輸出：最後一句與打開的 log 檢視共用，同一個 Agent 只讀一次。 */
     const logs = new Map<string, string | null>()
     const cases: Case[] = await Promise.all(rows.map(async row => {
-      const card = cardTexts.get(row.statusPath) ?? null
-      const stat = await ($.fs.stat(row.statusPath) as Promise<{ mtimeMs?: number }>).catch(() => null)
+      const [card, stat] = await Promise.all([
+        $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
+        $.fs.stat(row.statusPath).catch(() => null) as Promise<{ mtimeMs?: number } | null>,
+      ])
       const cardMtime = typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null
       const base = buildCase(row, card, cardMtime, agents, verifies[row.statusPath], now)
       const last = jobs[normalizeRoot(base.root)]?.last
