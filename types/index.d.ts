@@ -165,6 +165,8 @@ declare module 'claude-code' {
       launching: Record<string, number>
       /** 派工因為 repo 還沒信任而開不了的任務：卡片路徑 → 擋下原因（派的是哪一種、是不是自動流程派的）；派工開頭、成功派出、之後又有 Agent 開過時清掉。 */
       untrusted: Record<string, { kind: 'untrusted'; root: string; at: number; dispatch: 'continue' | 'sync' | 'review' | 'reply' | 'publish' | 'catchup'; auto: boolean }>
+      /** 核准過的完成檢查（卡片路徑 → 指令全文）：每輪重新整理從 $.store 讀一次，這個對話核准時一起更新；面板重繪讀這裡，不讀 store。 */
+      trusted: Record<string, string>
       /** 排隊等著跑完成檢查的任務（卡片路徑），依序。 */
       checkQueue: string[]
       /** 派工隊伍：同時執行的 Agent 達上限時排的派工（卡片路徑，依序）。 */

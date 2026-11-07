@@ -223,7 +223,7 @@ export async function originRemote($: any, root: string): Promise<Remote> {
 
 /**
  * 這個分支的 PR 與 CI：Bitbucket 用 MCP 的 bb_get、GitHub 用 gh pr list，都是唯讀；發版線不查。
- * 5 分鐘快取，CI 跑中時每 60 秒查一次；讀失敗後一分鐘內不再試，舊結果超過一小時就不顯示。force（按 r）一定重查。
+ * 5 分鐘快取，CI 跑中時每 60 秒查一次；讀失敗後一分鐘內不再試，舊結果超過一小時就不顯示。force（按 r、推送 Agent 剛結束）一定重查。
  */
 export async function prProbe($: any, options: PluginOptions, root: string, branch: string, now: number, force = false): Promise<PrInfo | undefined> {
   if (/^release\//.test(branch) || branch === 'HEAD') return undefined

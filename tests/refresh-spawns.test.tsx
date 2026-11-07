@@ -208,10 +208,11 @@ test('test_pending_ci_rechecks_pr_after_sixty_seconds', async ($, on) => {
   data.agents = []
   data.git[BETA] = { branch: 'feature/b', head: 'b1', remote: 'git@github.com:acme/shop.git' }
   data.gh = [{ number: 21, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, statusCheckRollup: [{ conclusion: '', status: 'IN_PROGRESS' }] }]
-  // 定時更新（不強制重讀 PR）：每 30 秒一輪
+  // 定時更新（不強制重讀 PR）：每 30 秒一輪（面板開著：閒置時才拉長成 4 個間隔一次）
   const tick = async () => { await clock.advance(30_000); await clock.settle() }
 
   await refresh($, clock)
+  await $.command.run({ command: 'desk', args: '' } as any)
   expect(data.ghCalls.length).toBe(1)
   await tick()
   const within = data.ghCalls.length

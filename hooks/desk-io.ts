@@ -12,6 +12,7 @@ import { LaunchError, isUntrustedLaunch, launchArgs, parseLaunchToken } from './
 import { RUN_SEEN_STEP_MS } from './run-time'
 import { confirmLaunch, rawAgents } from './agents'
 import type { RootJobs } from './dispatch'
+import type { RawAgent } from './agents'
 import { stageLabel } from './pipeline'
 import { SUMMARY_SYSTEM, cleanSummary, summaryPrompt, textKey } from './digest-status'
 import { CHAIN_OVERWRITTEN, MAX_SAVE_RETRIES, revOf } from './chain'
@@ -34,7 +35,8 @@ export const JOBS_KEY = 'jobs'
 export const CHAIN_KEY = 'chains'
 export const SUMMARY_KEY = 'summaries'
 export const SUMMARY_KEEP = 60
-export const SPIN_MS = 400
+/** 有東西在跑時轉圈字換格的間隔：每秒一格就夠看出在動，重繪次數少一半以上。 */
+export const SPIN_MS = 1000
 export const LAUNCH_TIMEOUT_MS = 60_000
 export const MIN_REFRESH_S = 10
 export const MAX_REFRESH_S = 600
@@ -269,10 +271,12 @@ export function decisionContext(c: Case, withCard: boolean, medium?: MediumPick)
   return withCard ? `${ask}\n${cardData(c)}` : ask
 }
 
-/** 真的派工：`claude --bg` 啟動，再從 agents 清單用唯一名稱對回完整 session id。 */
-export async function launch($: any, c: Case, prompt: string, o: { model: string; effort: string; sessionId?: string; name: string; mcp?: boolean }) {
-  const beforeOut = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
-  const before = beforeOut && beforeOut.exitCode === 0 ? rawAgents(beforeOut.stdout) : []
+/**
+ * 真的派工：`claude --bg` 啟動，再從 agents 清單用唯一名稱對回完整 session id。
+ * `recent`：派工端剛讀到的 agents 清單（見 dispatch-runner 的 recentAgents）；有給就當啟動前的清單，不再跑一次 claude agents。
+ */
+export async function launch($: any, c: Case, prompt: string, o: { model: string; effort: string; sessionId?: string; name: string; mcp?: boolean }, recent?: readonly RawAgent[]) {
+  const before = recent ? [...recent] : await agentsNow($)
   const r = await $.process.run(launchArgs(prompt, { model: o.model, effort: o.effort, sessionId: o.sessionId, launchName: o.name, mcp: o.mcp }), { cwd: c.root, timeoutMs: LAUNCH_TIMEOUT_MS })
   if (r.exitCode !== 0) throw new LaunchError(String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || `claude --bg 失敗（exit ${r.exitCode}）`, isUntrustedLaunch(`${r.stderr ?? ''}\n${r.stdout ?? ''}`))
   const token = parseLaunchToken(r.stdout)
@@ -282,4 +286,10 @@ export async function launch($: any, c: Case, prompt: string, o: { model: string
   const confirmed = confirmLaunch(before, after, o.name, token)
   if (!confirmed) throw new LaunchError(`已啟動（${token}），但在 agents 清單找不到唯一的 ${o.name}；下次重新整理時會再確認`, false, true)
   return { ...confirmed, id: confirmed.id ?? token }
+}
+
+/** 啟動前即時問一次 agents 清單；問不到當作空的（名字是唯一的，對回時不會認錯）。 */
+async function agentsNow($: any): Promise<RawAgent[]> {
+  const out = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
+  return out && out.exitCode === 0 ? rawAgents(out.stdout) : []
 }

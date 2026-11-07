@@ -23,7 +23,7 @@ import type { RunShown } from './run-time'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
 import { MEDIUM_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, reviewedOn, seenHeads, shownStopped, skipsReview } from './chain'
-import { isApproved, trustCheck, trustedChecks, unapprovedText } from './approve-check'
+import { isApproved, trustCheck, trustedChecks, trustWrites, unapprovedText } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
 import type { ChainRun, ChainStep } from './chain'
@@ -33,7 +33,7 @@ import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, re
 export { tutorial } from './tutorial-run'
 import { checkQueue, checking, isQueued, verifyPending, runVerify, resetCheckingState } from './verify-runner'
 export { checkQueue, verifyPending, runVerify } from './verify-runner'
-import { slots, launchKinds, launchingCount, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState, unconfirmed } from './dispatch-runner'
+import { slots, launchKinds, launchingCount, launchedSince, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState, unconfirmed } from './dispatch-runner'
 export { dispatch, launchingCount, busyRefused, confirmedIdle } from './dispatch-runner'
 import { JOBS_KEY, SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, refreshMs, registryError, runGraceMs, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
 import { isEmpty } from './layout'
@@ -74,6 +74,8 @@ const logViewAtom = atom({ plugin: 'desk', key: 'logView' } as const, {})
 const helpAtom = atom({ plugin: 'desk', key: 'isHelp' } as const, false)
 /** 「更多動作」（m）展開當下現在卡的卡片路徑（沒有現在卡是空字串）；收合是 null。現在卡換人就不算展開。 */
 const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, null)
+/** 核准過的完成檢查（卡片路徑 → 指令全文）：每輪重新整理讀一次 store 放進來，面板重繪讀這裡；這個對話核准時 approve-check 也會更新。 */
+const trustedAtom = atom({ plugin: 'desk', key: 'trusted' } as const, {} as Record<string, string>)
 /** 最近一次畫面 content 最多能捲到第幾列；捲動 hook 用它夾住位置（模組變數，重載後下一次畫就補上）。 */
 let maxOffset = 0
 
@@ -86,10 +88,21 @@ let launchSeq = 0
 /** 這個對話最近一次請求的模型與 effort（turn.step 帶的）；重新載入後要等下一次請求。 */
 let turnModel: { model?: string; effort?: string } = {}
 let forcePr = false
+/**
+ * 根目錄 → 這個對話已經為它強制重查過 PR 的推送派工（啟動名）。PR 快取是每個對話各一份，
+ * 派工紀錄的 ended 卻是所有對話共用的：別的對話先記下結束，這個對話照樣要為那次推送重查一次。
+ */
+const publishRequeried = new Map<string, string>()
 /** 登錄表與每張卡片的路徑（上一輪讀到的）：對話改到它們就馬上重讀。 */
 let knownPaths: string[] = []
-/** 上一輪重新整理讀到的背景 agent 清單；派工時即時問不到 claude agents 就用它算名額。 */
+/** 上一輪重新整理讀到的背景 agent 清單；派工時剛讀過就沿用，即時問不到 claude agents 也用它算名額。 */
 export let lastAgents: readonly RawAgent[] | null = null
+/** lastAgents 是什麼時候送出去問的（不是回來的時間：等回來的期間派出的 Agent 不在清單裡）；從沒讀到是 -Infinity。 */
+export let lastAgentsAt = -Infinity
+/** 閒置時（見 isIdle）計時器每觸發這麼多次才整輪重新整理一次。 */
+export const IDLE_EVERY = 4
+/** 連續閒置、跳過重新整理的觸發次數；不閒置或跑了一輪就歸零。 */
+let idleSkips = 0
 export let optionsRef: PluginOptions | undefined
 /** 卡片解析結果：卡片內容與修改時間都沒變才沿用（歷程的未來時間看修改時間判斷）。 */
 const cardParseCache = new Map<string, { raw: string; mtime: number | null; steps: string[]; history: any[] }>()
@@ -112,19 +125,17 @@ export async function refresh($: any, options: PluginOptions) {
     // desk 自己發版的待辦要在探測之前記：同回合的 archive --cleanup 會刪掉 worktree。
     if (!tutorial) await noteReleased($, rows).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
     // 教學不看真的背景 agent，只看模擬的那一個。
+    const agentsAskedAt = await $.clock.now()
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
     const jobs = await loadJobs($)
     // 被後來派工取代、還停在提問的工作桌 Agent 不代表任務：拿掉它們再挑（狀態照卡片走），之後停掉。
     const { list, superseded } = supersede(agentsOut && agentsOut.exitCode === 0 ? rawAgents(agentsOut.stdout) : [], lastLaunches(jobs))
     const agents: Record<string, AgentInfo> = tutorial ? simAgents() : agentsOut && agentsOut.exitCode === 0 ? agentsByRoot(list) : {}
-    if (!tutorial && agentsOut && agentsOut.exitCode === 0) lastAgents = list
-    const verifies = await read($, verifiesAtom)
-    const chains = await loadChains($)
-    const summaries = await loadSummaries($)
-    const launching = await read($, launchingAtom)
-    const verifying = await read($, verifyingAtom)
-    const settings = tutorial ? null : await loadSettings($, options)
-    const self = await me($)
+    if (!tutorial && agentsOut && agentsOut.exitCode === 0) { lastAgents = list; lastAgentsAt = agentsAskedAt }
+    const [verifies, chains, summaries, launching, verifying, settings, self] = await Promise.all([
+      read($, verifiesAtom), loadChains($), loadSummaries($), read($, launchingAtom), read($, verifyingAtom),
+      tutorial ? null : loadSettings($, options), me($),
+    ])
     const cardBase = settings?.cardBase ?? ''
     /** Agent id → 這一輪讀到的 `claude logs` 整份輸出：最後一句與打開的 log 檢視共用，同一個 Agent 只讀一次。 */
     const logs = new Map<string, string | null>()
@@ -151,7 +162,13 @@ export async function refresh($: any, options: PluginOptions) {
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
       const probe = await gitProbe($, base.root)
-      const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr) : undefined
+      // 推送（開 PR、push）的 Agent 結束了（記下了，或清單看得出來）、這個對話還沒為它重查過：這一輪強制重查 PR，
+      // 不沿用推送前快取的「沒有 PR」或舊的 CI；重查過就記在這個對話，下一輪回到快取。
+      const rootKey = normalizeRoot(base.root)
+      const publishName = !tutorial && last?.kind === 'publish' ? last.launchName : undefined
+      const publishEnded = !!publishName && publishRequeried.get(rootKey) !== publishName && (!!last?.ended || !!endedHow(list, publishName))
+      const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr || publishEnded) : undefined
+      if (publishName && publishEnded && probe.git) publishRequeried.set(rootKey, publishName)
       const run = chains[normalizeRoot(base.root)]
       const stale = movedSince(run?.judgedHead, probe.git)
       // 卡片上有無阻擋的審查結論，但沒有任何 desk 派的審查判過它（沒有流程紀錄，或流程只派過實作）：自審。
@@ -217,16 +234,21 @@ export async function refresh($: any, options: PluginOptions) {
       const settled = settleMergedAsk(piped, verifies[row.statusPath])
       return { ...settled, state: finalState(settled) }
     }))
-    const usage = await $.session.usage().catch(() => null)
-    const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
-    const deskVersions = await versions($, cases)
     // 檢查關閉時當作沒查過：沒有提示，版本格是「檢查並更新」。
-    const check = settings && settings.updateCheck !== 'off' ? await loadUpdateCheck($) : null
+    const [usage, deskVersions, check, model, boxes] = await Promise.all([
+      $.session.usage().catch(() => null), versions($, cases),
+      settings && settings.updateCheck !== 'off' ? loadUpdateCheck($) : null,
+      models($, options, turnModel, cases.map(c => c.root), settings ?? undefined), containers($, options, settings ?? undefined),
+    ])
+    const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
     const notice = noticeOf(check, deskVersions.desk)
     const versionState = isUpdating() ? 'updating' as const : versionStateOf(check, deskVersions.desk)
     // 教學模式：示範任務接在後面當「全部任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
-    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: await models($, options, turnModel, cases.map(c => c.root), settings ?? undefined), containers: await containers($, options, settings ?? undefined), reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
+    const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: model, containers: boxes, reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
+    // 核准紀錄在寫回前才讀（這輪跑了好幾秒，途中可能按兩次 v 核准過）；讀的期間又核准就不寫，atom 已是最新的。
+    const approvals = trustWrites
+    const trusted = await trustedChecks($)
     // 選取的任務已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
     if (!error && rows.length) {
       await update($, selected, v => (v && !cur.cases.some(c => c.statusPath === v) ? null : v))
@@ -235,6 +257,7 @@ export async function refresh($: any, options: PluginOptions) {
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
     await update($, snapshot, () => cur)
+    if (approvals === trustWrites) await update($, trustedAtom, () => trusted)
     // 失敗之後這件又有 Agent 開過：「還沒信任」不再成立，三步不再出現。
     await update($, untrustedAtom, v => liveHolds(v, cases) as Record<string, UntrustedHold>)
     await collapseMoreIfMoved($)
@@ -573,7 +596,8 @@ async function start($: any, options: PluginOptions, remember: boolean) {
     await resumeTutorial($, options)
     if (stored && typeof stored === 'object') await update($, verifiesAtom, () => stored)
     refreshTimer?.cancel()
-    refreshTimer = $.clock.every(refreshMs(options), () => refresh($, options))
+    idleSkips = 0
+    refreshTimer = $.clock.every(refreshMs(options), () => scheduledRefresh($, options))
   }
   if (remember) {
     const id = await $.session.id().catch(() => null)
@@ -582,6 +606,33 @@ async function start($: any, options: PluginOptions, remember: boolean) {
       if (!list.includes(id)) await $.store.set(SESSIONS_KEY, [...list.slice(-19), id])
     }
   }
+}
+
+/**
+ * 計時器觸發：閒置時（isIdle）只在連續第 IDLE_EVERY 次才整輪重新整理，其他時候每次都跑。
+ * 對話改卡、回合結束、按 r、流程動作後的重新整理不走這裡，照舊馬上跑。
+ */
+async function scheduledRefresh($: any, options: PluginOptions) {
+  if (await isIdle($)) {
+    idleSkips++
+    if (idleSkips < IDLE_EVERY) return
+  }
+  idleSkips = 0
+  return refresh($, options)
+}
+
+/**
+ * 沒人在看、也沒東西在跑：面板沒畫出或不在最前面（paneShown），
+ * 上一份快照沒有 Agent 在跑或停下來問，也沒有檢查在跑或排隊、派工在啟動或排隊。還沒有快照不算閒置。
+ * 快照的 agents 清單在這個對話派工啟動前或啟動中（claude --bg 還沒回來）送出的也不算：那一輪可能拿舊清單蓋掉派工時標上的「執行中」，要等下一份清單看到它。
+ */
+async function isIdle($: any): Promise<boolean> {
+  if (await paneShown($)) return false
+  if (launchedSince(lastAgentsAt)) return false
+  const s = await read($, snapshot)
+  if (!s || s.cases.some(c => !c.demo && (c.state === 'running' || !!c.agent?.asks || !!c.agent?.waitsFor))) return false
+  if (Object.keys(await read($, verifyingAtom)).length || Object.keys(await read($, launchingAtom)).length) return false
+  return !checking && !(await read($, queueAtom)).length && !hasAgentQueue() && launchingCount() === 0
 }
 
 async function stop($: any) {
@@ -616,10 +667,15 @@ export async function openPane($: any) {
   if (opened && opened.isPlaced === false) $.ui.toast(`工作桌面板尚未顯示（${plain(String(opened.reason ?? ''))}）；輸入 /desk 開啟`)
 }
 
-/** 摘要列按鈕：開或關看引擎的實際狀態（畫出且在最前面才算看得到），不看 isPaneOpen；引擎卸下面板時 ui.close hook 不會執行，那個值會停在 true。 */
-async function togglePane($: any) {
+/** 面板看得到：看引擎的實際狀態（畫出且在最前面），不看 isPaneOpen；引擎卸下面板時 ui.close hook 不會執行，那個值會停在 true。 */
+async function paneShown($: any): Promise<boolean> {
   const pane = ((await $.ui.panes().catch(() => [])) as { id: string; isPlaced: boolean; isShown: boolean }[]).find(p => p.id === PANE)
-  if (pane?.isPlaced && pane.isShown) { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}) }
+  return !!pane?.isPlaced && pane.isShown
+}
+
+/** 摘要列按鈕：看得到（paneShown）就收起，不然開啟。 */
+async function togglePane($: any) {
+  if (await paneShown($)) { await update($, isPaneOpen, () => false); await $.ui.close({ id: PANE }).catch(() => {}) }
   else await openPane($)
 }
 
@@ -669,6 +725,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     active = false
     clearProbeCaches()
+    publishRequeried.clear()
     cardParseCache.clear()
     reviewTextCache.clear()
     setTutorial(null)
@@ -682,6 +739,7 @@ export const register: Register = (on, options) => {
     resetCheckingState()
     resetDispatchState()
     lastAgents = null
+    lastAgentsAt = -Infinity
     await update($, queueAtom, () => [])
     await clearAgentQueue($)
     // 載入計數：更新後 /reload-plugins 被拒時，看新版是不是其實已經載入了。
@@ -793,7 +851,7 @@ export const register: Register = (on, options) => {
       queue: await read($, queueAtom),
       agentQueue: await readAgentQueue($),
       armed: await read($, armedAtom),
-      trusted: await trustedChecks($),
+      trusted: await read($, trustedAtom),
       logsOpen: await read($, logsOpenAtom),
       logView: await read($, logViewAtom),
       isHelp: await read($, helpAtom),
