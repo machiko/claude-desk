@@ -25,6 +25,8 @@ import type { Project } from './project'
 const PR_TTL_MS = 5 * 60_000
 /** 讀 PR 失敗（gh 沒登入、斷網、MCP 斷線）後多久再試；舊結果最多沿用多久。 */
 const PR_RETRY_MS = 60_000
+/** PR 開著、CI 還在跑時多久再查一次（按 r 重新整理會強制重查）。 */
+const PR_PENDING_MS = 60_000
 const PR_STALE_MS = 60 * 60_000
 /** git 判斷「還沒合併」後多久再問（按 r 重新整理會強制重問）。 */
 const MERGE_MISS_MS = 2 * 60_000
@@ -33,6 +35,12 @@ let deskVersion: string | undefined
 export type Remote = { host: 'bitbucket'; repo: Repo } | { host: 'github'; repo: GhRepo } | null
 const remotes = new Map<string, Remote>()
 const tags = new Map<string, string>()
+/** 根目錄 → git common dir（worktree 共用的那個 .git）；只快取問得到的。 */
+const commonDirs = new Map<string, string>()
+/** common dir＋HEAD → 上次 tag --contains 沒找到時的 tag 簽章；簽章沒變（沒打新 tag）就不重問。 */
+const tagMisses = new Map<string, string>()
+/** 根目錄＋分支 → 上次照 origin 同名分支算領先落後時的 HEAD＋簽章與結果；都沒變就沿用。 */
+const originCounts = new Map<string, { stamp: string; counts: Partial<GitState> }>()
 /** at＝最後一次嘗試、okAt＝最後一次讀成功；failed 時套 PR_RETRY_MS。 */
 const prs = new Map<string, { at: number; okAt: number; branch: string; pr: PrInfo | null; failed?: boolean }>()
 const risks = new Map<string, Risk>()
@@ -66,6 +74,9 @@ let cachedHome: string | undefined
 export function clearProbeCaches() {
   remotes.clear()
   tags.clear()
+  commonDirs.clear()
+  tagMisses.clear()
+  originCounts.clear()
   prs.clear()
   risks.clear()
   merges.clear()
@@ -122,20 +133,48 @@ export async function deskPaths($: any, options: PluginOptions): Promise<DeskPat
   }
 }
 
-/** 分支、HEAD、包含 HEAD 的最舊 v* tag（依 HEAD 快取）。不是 git 資料夾就全空。 */
+/** 這個根目錄的 git common dir（worktree 的 ref 都放在那裡）；問不到是 null，下次再問。 */
+async function commonDir($: any, root: string): Promise<string | null> {
+  const known = commonDirs.get(root)
+  if (known) return known
+  const dir = await git($, root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+  if (dir) commonDirs.set(root, dir)
+  return dir
+}
+
+/**
+ * ref 檔的修改時間串成的簽章：git 打 tag、push、fetch 都會換掉 ref 檔（或在 refs/tags 新增檔、改寫 packed-refs），時間跟著變。
+ * 任何一個讀不到（不是一般的 git 資料夾、reftable、檔案還不存在）就是 null：不快取，照舊問 git。
+ */
+async function refStamp($: any, paths: readonly string[]): Promise<string | null> {
+  const stats = await Promise.all(paths.map(p => ($.fs.stat(p) as Promise<{ mtimeMs?: number }>).catch(() => null)))
+  const times = stats.map(s => s?.mtimeMs)
+  return times.every(t => typeof t === 'number') ? times.join('\n') : null
+}
+
+/**
+ * 分支、HEAD、包含 HEAD 的最舊 v* tag。找到的 tag 依 HEAD 快取（tag 打了不會消失）；
+ * 沒找到時記下當時 refs/tags 與 packed-refs 的修改時間，沒打新 tag（時間沒變）就不重問，讀不到時間就每次重問。不是 git 資料夾就全空。
+ */
 export async function gitProbe($: any, root: string): Promise<{ git?: { branch: string; head: string }; tag?: string }> {
   // --abbrev-ref 會套用到它後面每一個參數，所以 commit 要寫在它前面。
   const out = await git($, root, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD'])
   if (!out) return {}
   const [head, branch] = out.split(/\r?\n/)
   if (!branch || !head) return {}
-  // 只快取「找到 tag」：tag 打了不會消失；「還沒有 tag」每次重查，否則之後才打的 tag 永遠看不到。
-  let tag = tags.get(head) ?? ''
-  if (!tag) {
-    tag = ((await git($, root, ['tag', '--contains', head, '--list', 'v*', '--sort=creatordate'])) ?? '').split(/\r?\n/).filter(Boolean)[0] ?? ''
-    if (tag) tags.set(head, tag)
-  }
+  const tag = tags.get(head) ?? await tagMiss($, root, head)
   return { git: { branch, head }, ...(tag ? { tag } : {}) }
+}
+
+/** 快取沒有這個 HEAD 的 tag：簽章跟上次沒找到時一樣就直接回空；否則問 git（先讀簽章再問，問完才打的 tag 下一輪看得到）。 */
+async function tagMiss($: any, root: string, head: string): Promise<string> {
+  const common = await commonDir($, root)
+  const stamp = common ? await refStamp($, [`${common}/refs/tags`, `${common}/packed-refs`]) : null
+  const key = `${common}\n${head}`
+  if (stamp !== null && tagMisses.get(key) === stamp) return ''
+  const tag = ((await git($, root, ['tag', '--contains', head, '--list', 'v*', '--sort=creatordate'])) ?? '').split(/\r?\n/).filter(Boolean)[0] ?? ''
+  if (tag) { tags.set(head, tag); tagMisses.delete(key) } else if (stamp !== null) tagMisses.set(key, stamp)
+  return tag
 }
 
 /**
@@ -178,7 +217,7 @@ export async function originRemote($: any, root: string): Promise<Remote> {
 
 /**
  * 這個分支的 PR 與 CI：Bitbucket 用 MCP 的 bb_get、GitHub 用 gh pr list，都是唯讀；發版線不查。
- * 5 分鐘快取，CI 跑中時每次更新都查；讀失敗後一分鐘內不再試，舊結果超過一小時就不顯示。
+ * 5 分鐘快取，CI 跑中時每 60 秒查一次；讀失敗後一分鐘內不再試，舊結果超過一小時就不顯示。force（按 r）一定重查。
  */
 export async function prProbe($: any, options: PluginOptions, root: string, branch: string, now: number, force = false): Promise<PrInfo | undefined> {
   if (/^release\//.test(branch) || branch === 'HEAD') return undefined
@@ -188,7 +227,7 @@ export async function prProbe($: any, options: PluginOptions, root: string, bran
   const cached = own?.branch === branch ? own : undefined
   const shown = (c: typeof cached) => c && now - c.okAt < PR_STALE_MS ? c.pr ?? undefined : undefined
   const live = !cached?.failed && cached?.pr?.state === 'OPEN' && cached.pr.ci === 'pending'
-  if (cached && !force && !live && now - cached.at < (cached.failed ? PR_RETRY_MS : PR_TTL_MS)) return shown(cached)
+  if (cached && !force && now - cached.at < (cached.failed ? PR_RETRY_MS : live ? PR_PENDING_MS : PR_TTL_MS)) return shown(cached)
   try {
     const pr = remote.host === 'github' ? await githubPr($, root, remote.repo, branch) : await bitbucketPr($, options, remote.repo, branch)
     prs.set(root, { at: now, okAt: now, branch, pr })
@@ -434,12 +473,22 @@ export async function archiveReview($: any, options: PluginOptions, c: Case, sec
   await $.fs.write(`${dir}/${slug}-${stamp}-${security ? 'security' : 'code'}.md`, text).catch(() => {})
 }
 
+/** Agent 的整份輸出（`claude logs`）；沒有 id 或讀不到是 null。最後一句與最後幾行都從它取，同一輪只讀一次。 */
+export async function agentLog($: any, id: string | undefined): Promise<string | null> {
+  if (!id) return null
+  const r = await $.process.run(['claude', 'logs', id], { timeoutMs: LOGS_TIMEOUT_MS }).catch(() => null)
+  return r && r.exitCode === 0 ? String(r.stdout) : null
+}
+
+/** 整份輸出的最後一句話；讀不到是空字串。 */
+export const lastLineOf = (log: string | null): string => log === null ? '' : lastMeaningful(log)
+
+/** 整份輸出最近幾行有意義的；讀不到是空清單。 */
+export const logTailOf = (log: string | null, n = 10): string[] => log === null ? [] : logLines(log, n)
+
 /** 進行中或停下來問的 agent，最後一句話（`claude logs`）。 */
 export async function lastLine($: any, id: string | undefined): Promise<string> {
-  if (!id) return ''
-  const r = await $.process.run(['claude', 'logs', id], { timeoutMs: LOGS_TIMEOUT_MS }).catch(() => null)
-  if (!r || r.exitCode !== 0) return ''
-  return lastMeaningful(String(r.stdout))
+  return lastLineOf(await agentLog($, id))
 }
 
 /** 全域 dispatch.json 疊上目前專案的 dispatch.json；都讀不到就是預設值。 */
@@ -515,19 +564,31 @@ export async function gitStatus($: any, root: string): Promise<GitState | undefi
   return st.upstream ? st : { ...st, ...(await originBranch($, root, out)) }
 }
 
-/** 沒設追蹤分支（card.py new 會取消追蹤；用 git push origin <分支> 推過也不會設）：照 origin 上的同名分支算領先、落後。 */
+/**
+ * 沒設追蹤分支（card.py new 會取消追蹤；用 git push origin <分支> 推過也不會設）：照 origin 上的同名分支算領先、落後。
+ * 算到的數字依「HEAD＋origin 同名分支 ref 檔與 packed-refs 的修改時間」快取：HEAD 沒動、遠端分支沒被 push／fetch 更新就沿用；
+ * 讀不到時間或沒算到數字就不快取，每次照舊問 git。
+ */
 async function originBranch($: any, root: string, status: string): Promise<Partial<GitState>> {
   const branch = status.match(/^# branch\.head (.+)$/m)?.[1]
   if (!branch || branch === '(detached)') return {}
-  const counts = (await git($, root, ['rev-list', '--left-right', '--count', `refs/remotes/origin/${branch}...HEAD`]))?.trim().match(/^(\d+)\s+(\d+)$/)
-  return counts ? { upstream: true, behind: Number(counts[1]), ahead: Number(counts[2]) } : {}
+  const head = status.match(/^# branch\.oid (\S+)$/m)?.[1]
+  const common = head ? await commonDir($, root) : null
+  const refs = common ? await refStamp($, [`${common}/refs/remotes/origin/${branch}`, `${common}/packed-refs`]) : null
+  const stamp = refs === null ? null : `${head}\n${refs}`
+  const key = `${root}\n${branch}`
+  const known = originCounts.get(key)
+  if (stamp !== null && known?.stamp === stamp) return known.counts
+  const found = (await git($, root, ['rev-list', '--left-right', '--count', `refs/remotes/origin/${branch}...HEAD`]))?.trim().match(/^(\d+)\s+(\d+)$/)
+  if (!found) return {}
+  const counts = { upstream: true, behind: Number(found[1]), ahead: Number(found[2]) }
+  if (stamp !== null) originCounts.set(key, { stamp, counts })
+  return counts
 }
 
 /** Agent 最近幾行有意義的輸出。 */
 export async function logTail($: any, id: string | undefined, n = 10): Promise<string[]> {
-  if (!id) return []
-  const r = await $.process.run(['claude', 'logs', id], { timeoutMs: LOGS_TIMEOUT_MS }).catch(() => null)
-  return r && r.exitCode === 0 ? logLines(String(r.stdout), n) : []
+  return logTailOf(await agentLog($, id), n)
 }
 
 /** 完成檢查最長跑多久。 */
