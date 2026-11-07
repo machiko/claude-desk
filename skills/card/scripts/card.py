@@ -206,18 +206,82 @@ def write(path, text):
         f.write(text)
 
 
+# 卡片區塊與欄位行：規則與 hooks/card.ts 的 parseCard 相同（tests/card-cases.mjs 兩邊共用）。
+# 標記的 `<!--` 與 DESK／CARD 之間、結尾標記裡可以有空白；區塊從開頭標記的 `-->` 之後算起，不必緊接換行。
+CARD_BLOCK = re.compile(r'<!--\s*(DESK|CARD)[^>]*-->(.*?)<!--\s*/\1\s*-->', re.S)
+# 欄位行：行首可有空白，`-` 之後、冒號前後的空白都不算；全形「：」或半形「:」都認。
+FIELD_LINE = re.compile(r'^\s*-\s*([^：:]+?)\s*[：:]\s*(.*)$')
+# 舊欄名對照（與 hooks/card.ts 的 FIELD_ALIAS 同一張表）：讀到左邊的欄名當成右邊那欄。
+FIELD_ALIAS = {'等使用者': '等你', '檢查': '驗證'}
+
+
+def canonical(name):
+    return FIELD_ALIAS.get(name, name)
+
+
+def find_block(text):
+    """(format, start, end)：CARD／DESK 區塊在全文中的範圍（不含標記）；沒有區塊回 None。"""
+    m = CARD_BLOCK.search(text)
+    return (m.group(1), m.start(2), m.end(2)) if m else None
+
+
 def block(text):
     """回傳 (format, start, end)：CARD／DESK 區塊在全文中的範圍（不含結尾標記）。"""
-    for fmt in ('DESK', 'CARD'):
-        m = re.search(rf'<!-- {fmt}\b[^>]*-->\n(.*?)<!-- /{fmt} -->', text, re.S)
+    found = find_block(text)
+    if found is None:
+        fail('卡片裡找不到 <!-- DESK --> 或 <!-- CARD --> 區塊')
+    return found
+
+
+def all_field_lines(body):
+    """區塊內文裡每一行欄位：[(行號, 原本的欄名, 正式欄名, 值)]。讀（field）與寫（rewrite_fields）都從這裡找行。"""
+    out = []
+    for i, line in enumerate(body.split('\n')):
+        m = FIELD_LINE.match(line)
         if m:
-            return fmt, m.start(1), m.end(1)
-    fail('卡片裡找不到 <!-- DESK --> 或 <!-- CARD --> 區塊')
+            out.append((i, m.group(1), canonical(m.group(1)), m.group(2).strip()))
+    return out
 
 
-def field(text, name):
-    m = re.search(rf'^- {name}：(.*)$', text, re.M)
-    return m.group(1).strip() if m else ''
+def field_lines(body, name):
+    """區塊內文裡欄名（換成正式欄名後）是 name 那欄的行：[(行號, 原本的欄名, 值)]。"""
+    want = canonical(name)
+    return [(i, own, value) for i, own, key, value in all_field_lines(body) if key == want]
+
+
+def field(body, name):
+    """區塊內文裡某欄的值；同一欄寫了兩行時跟面板一樣取最後一行，沒有就是空字串。舊欄名照 FIELD_ALIAS 認。"""
+    lines = field_lines(body, name)
+    return lines[-1][2] if lines else ''
+
+
+def card_body(text):
+    """卡片區塊的內文（換行統一成 \\n）；沒有區塊回 None。"""
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    found = find_block(text)
+    return text[found[1]:found[2]] if found else None
+
+
+def parse_card(text):
+    """卡片區塊的所有欄位（欄名換成正式欄名）；沒有區塊回 None。結果與 hooks/card.ts 的 parseCard 相同。
+    每欄的值由指令讀欄位用的 field() 取，共用範例（tests/card-cases.mjs）驗的就是指令實際走的路。"""
+    body = card_body(text)
+    if body is None:
+        return None
+    return {key: field(body, key) for _, _, key, _ in all_field_lines(body)}
+
+
+def rewrite_fields(body, fields):
+    """把區塊內文裡的欄位改成新值，回傳新內文；不存在的欄略過。行的認法與 field() 相同，同一欄有兩行時改面板讀的最後一行。
+    改過的行一律寫成「- <欄>：<值>」：全形冒號、去掉多餘空白，欄名沿用那一行原本的（舊卡的舊欄名不換）。"""
+    for name, new in fields.items():
+        found = field_lines(body, name)
+        if not found:
+            continue
+        at, own, _ = found[-1]
+        lines = body.split('\n')
+        body = '\n'.join(lines[:at] + [f'- {own}：{new}'] + lines[at + 1:])
+    return body
 
 
 def is_placeholder(value):
@@ -330,15 +394,14 @@ def set_gate(path, value, fields=None):
 
 
 def set_fields(path, fields, required=()):
-    """改區塊裡的欄位（每欄一行）；required 的欄不存在就報錯不寫，其他欄不存在就略過。舊卡 rev 只加一次。"""
+    """改區塊裡的欄位（每欄一行，改法見 rewrite_fields）；required 的欄不存在就報錯不寫，其他欄不存在就略過。舊卡 rev 只加一次。"""
     text = read(path)
     fmt, start, end = block(text)
     body = text[start:end]
     for name in required:
-        if not re.search(rf'^- {name}：', body, re.M):
+        if not field_lines(body, name):
             fail(f'卡片區塊沒有「{name}」欄')
-    for name, new in fields.items():
-        body = re.sub(rf'^- {name}：.*$', lambda _, n=name, v=new: f'- {n}：{v}', body, count=1, flags=re.M)
+    body = rewrite_fields(body, fields)
     if fmt == 'CARD':
         # 舊卡：rev + 1，更新時間與來源一起改。
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -428,8 +491,8 @@ def recorded_base(base):
         return base, base
     name, path = parent
     text = read(path)
-    desk = re.search(r'<!-- (DESK|CARD)\b[^>]*-->\n(.*?)<!-- /\1 -->', text, re.S)
-    inherited = field(desk.group(2), BASE_FIELD) if desk else ''
+    desk = find_block(text)
+    inherited = field(text[desk[1]:desk[2]], BASE_FIELD) if desk else ''
     if inherited:
         return inherited, f'{inherited}（疊在「{name}」的分支上，沿用它的基準）'
     return '', f'不記（疊在「{name}」的分支上，那張卡沒有基準欄，工作桌照舊順序找）'
@@ -441,9 +504,11 @@ def insert_base_field(path, base):
     _, start, end = block(text)
     body = text[start:end]
     line = f'- {BASE_FIELD}：{base}'
-    gate = re.search(r'^- 關卡：.*$', body, re.M)
+    gate = field_lines(body, '關卡')
     if gate:
-        body = body[:gate.end()] + '\n' + line + body[gate.end():]
+        lines = body.split('\n')
+        at = gate[-1][0] + 1
+        body = '\n'.join(lines[:at] + [line] + lines[at:])
     else:
         body = (body if body.endswith('\n') or not body else body + '\n') + line + '\n'
     write(path, text[:start] + body + text[end:])
@@ -507,7 +572,7 @@ def cmd_card(arg):
     text = read(path)
     fmt, s, e = block(text)
     body = text[s:e]
-    check = field(body, '檢查') or field(body, '驗證')
+    check = field(body, '驗證')  # 新卡的「檢查」照 FIELD_ALIAS 也讀成「驗證」
     print(f'name: {name}')
     print(f'path: {path}')
     print(f'root: {root}')
@@ -745,9 +810,25 @@ def cmd_done(arg, status):
 
 DEPLOY_STEP = re.compile(r'^\s*(?:\d+[.)、]|[-*])\s+(.*\S)\s*$')
 
+# 終端機控制碼：規則與 hooks/model.ts 的 plain() 逐條相同（tests/card-cases.mjs 兩邊共用）。
+PLAIN_RULES = (
+    re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]'),           # CSI：顏色、游標移動、清除
+    re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'),  # OSC：標題、超連結
+    re.compile(r'\x1b[@-Z\\-_]'),                     # 其他兩字元序列
+    re.compile(r'^[0-9;]*m'),                         # 尾巴被截斷時殘留的半截顏色碼（只看整段開頭）
+    re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]'),
+)
+
+
+def plain(text):
+    """去掉終端機控制碼，面板顯示的字就是這個結果。"""
+    for rule in PLAIN_RULES:
+        text = rule.sub('', text)
+    return text
+
 
 def deploy_steps(text):
-    """卡片「## 部署…」段已填的步驟；略過空白編號與 `<…>` 佔位（與 hooks/extras.ts 的 deploySteps 同規則）。"""
+    """卡片「## 部署…」段已填的步驟，去掉終端機控制碼；略過空白編號與 `<…>` 佔位（與 hooks/extras.ts 的 deploySteps 同規則）。"""
     lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
     start = next((i for i, l in enumerate(lines) if re.match(r'##\s*部署', l)), None)
     if start is None:
@@ -758,7 +839,7 @@ def deploy_steps(text):
             break
         m = DEPLOY_STEP.match(l)
         if m and not re.fullmatch(r'<.*>', m.group(1)):
-            steps.append(m.group(1))
+            steps.append(plain(m.group(1)))
     return steps
 
 
