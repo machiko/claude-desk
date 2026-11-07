@@ -144,7 +144,10 @@ export async function refresh($: any, options: PluginOptions) {
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
       const probe = await gitProbe($, base.root)
-      const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr) : undefined
+      // 推送（開 PR、push）的 Agent 剛結束、還沒記下結束：這一輪強制重查 PR，不沿用推送前快取的「沒有 PR」或舊的 CI；
+      // 同一輪稍後 noteRuns 記下結束，下一輪就回到快取。
+      const publishEnded = !tutorial && last?.kind === 'publish' && !last.ended && !!endedHow(list, last.launchName)
+      const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr || publishEnded) : undefined
       const run = chains[normalizeRoot(base.root)]
       const stale = movedSince(run?.judgedHead, probe.git)
       // 卡片上有無阻擋的審查結論，但沒有任何 desk 派的審查判過它（沒有流程紀錄，或流程只派過實作）：自審。
