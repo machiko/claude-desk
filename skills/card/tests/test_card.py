@@ -14,6 +14,7 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts', 'card.py')
 SPEC_CASES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'tests', 'spec-cases.mjs')
+CARD_CASES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'tests', 'card-cases.mjs')
 TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'templates', 'DESK-template.md')
 CARD_TS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'hooks', 'card.ts')
 # 歷程一筆的行格式與白話範本：卡片模板「卡片規則」段（開頭接「- History 」）與派工提示（hooks/prompts/rules.ts 的 HISTORY_FORMAT）同一句。
@@ -91,6 +92,22 @@ class SpecRulesTest(unittest.TestCase):
         self.assertTrue(cases)
         for c in cases:
             self.assertEqual(card.filled_ac(c['card']), c['ac'], c['name'])
+
+
+
+class CardCasesTest(unittest.TestCase):
+    def test_card_fields_match_shared_cases(self):
+        # card-parity AC-3：與 hooks/card.ts 的 parseCard／isPlaceholder、hooks/extras.ts 的 deploySteps 同一份範例
+        # （tests/card-parity.test.ts 的 card fields match shared cases）
+        card = load_card()
+        cases = json.loads(read(CARD_CASES).split('\nexport default ', 1)[1])
+        self.assertTrue(cases)
+        for c in cases:
+            fields = card.parse_card(c['card'])
+            self.assertEqual(fields, c['fields'], c['name'])
+            placeholder = {k: card.is_placeholder((fields or {}).get(k, '')) for k in c['placeholder']}
+            self.assertEqual(placeholder, c['placeholder'], c['name'])
+            self.assertEqual(card.deploy_steps(c['card']), c['deploySteps'], c['name'])
 
 
 class CardScriptTest(unittest.TestCase):
@@ -855,6 +872,42 @@ class CardScriptTest(unittest.TestCase):
         self.assertIn('- 關卡：spec：待確認規格', text)
         self.assertRegex(text, r'- 更新：.* · rev 4 · desk-card')
 
+    def test_half_width_colon_field_is_read_and_rewritten(self):
+        """card-parity AC-1：關卡寫成半形冒號、冒號前後有空白，card 讀得到、gate 改得動，寫回全形且只留一行。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        write(card, re.sub(r'^- 關卡：.*$', '- 關卡 : spec：待確認規格', read(card), count=1, flags=re.M))
+
+        info = self.run_card('card', 'order-export')
+        r = self.run_card('gate', 'order-export', '無')
+
+        self.assertEqual(info.returncode, 0, info.stderr)
+        self.assertIn('gate: spec：待確認規格\n', info.stdout)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('沒有「關卡」欄', r.stderr)
+        text = read(card)
+        self.assertIn('\n- 關卡：無\n', text)
+        self.assertEqual(re.findall(r'^\s*-\s*關卡\s*[：:].*$', text, re.M), ['- 關卡：無'])
+
+    def test_legacy_field_alias_is_read_as_canonical(self):
+        """card-parity AC-2：舊欄名「等使用者」讀成「等你」（跟面板一樣），done 寫回時不動這一行。"""
+        card, _ = self.confirmed_card_with_commit()
+        write(card, read(card).replace('- 等你：無\n', '- 等使用者：要 push 嗎？\n', 1))
+        module = load_card()
+
+        info = self.run_card('card', 'order-export')
+        r = self.run_card('done', 'order-export', '匯出做完')
+
+        self.assertEqual(info.returncode, 0, info.stderr)
+        self.assertEqual(module.parse_card(read(card))['等你'], '要 push 嗎？')
+        _, s, e = module.find_block(read(card))
+        self.assertEqual(module.field(read(card)[s:e], '等你'), '要 push 嗎？')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(card)
+        self.assertIn('- 狀態：匯出做完\n', text)
+        self.assertIn('\n- 等使用者：要 push 嗎？\n', text)
+        self.assertNotRegex(text, r'(?m)^- 等你：')
+
     def test_archive_copies_card_and_reviews_and_moves_registry_row(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
@@ -971,6 +1024,22 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn('部署步驟', r.stdout)
         self.assertNotIn('發版線卡片', r.stdout)
+
+    def test_archive_prints_deploy_steps_without_control_codes(self):
+        """card-parity AC-4：部署步驟含終端機顏色碼，歸檔印出的步驟去掉控制碼，跟面板顯示的一樣。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        text = read(card)
+        head = text.index('## 部署步驟')
+        rest = text.index('\n## ', head + 1)
+        write(card, text[:head] + '## 部署步驟（合併後）\n\n1. \u001b[31m重啟 queue worker\u001b[0m\n' + text[rest:])
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('部署步驟 1 項', r.stdout)
+        self.assertIn('  1. 重啟 queue worker\n', r.stdout)
+        self.assertNotIn('\u001b', r.stdout)
 
     def open_case(self, branch, name, merged=False):
         """開卡、在 worktree commit 一次；merged=True 時在主 repo 用 --no-ff 併進 main。回傳 worktree 路徑。"""
