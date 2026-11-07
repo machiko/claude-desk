@@ -32,8 +32,8 @@ function featureCards(data: any) {
   data.mtimes[PACKED] = NOW - 86_400_000
 }
 
-/** 從某個位置之後，對這個根目錄跑過的 git 指令（以空白接起來）。 */
-const gitSince = (data: any, from: number, root: string) => data.gitCalls.slice(from).filter((g: any) => g.root === root).map((g: any) => g.args.join(' ')) as string[]
+/** 從某個位置之後（到 to 之前），對這個根目錄跑過的 git 指令（以空白接起來）。 */
+const gitSince = (data: any, from: number, root: string, to?: number) => data.gitCalls.slice(from, to).filter((g: any) => g.root === root).map((g: any) => g.args.join(' ')) as string[]
 const tagQueries = (calls: string[]) => calls.filter(a => a.startsWith('tag --contains'))
 const aheadQueries = (calls: string[]) => calls.filter(a => a.startsWith('rev-list --left-right --count'))
 
@@ -66,6 +66,36 @@ test('test_second_refresh_skips_tag_and_ahead_queries_when_refs_unchanged', asyn
     expect(aheadQueries(gitSince(data, 0, root)).length, root).toBe(1)
     expect(tagQueries(gitSince(data, mark, root)), root).toEqual([])
     expect(aheadQueries(gitSince(data, mark, root)), root).toEqual([])
+  }
+  expect(first[0]).toContain(flat('feature/a · 領先 2'))
+  expect(second).toEqual(first)
+})
+
+/** AC-1：repo 沒有 packed-refs（git init 起家、沒 gc 過）也一樣不重問；之後建立了 packed-refs 才重問。 */
+test('test_second_refresh_skips_queries_when_repo_has_no_packed_refs', async ($, on) => {
+  const { data, clock } = fixture(on)
+  featureCards(data)
+  delete data.mtimes[PACKED]
+  const ui = await $.ui.mount(PANE(100))
+
+  await refresh($, clock)
+  const first = await screens(ui)
+  const mark = data.gitCalls.length
+  await refresh($, clock)
+  const second = await screens(ui)
+  // git gc／pack-refs 建立了 packed-refs：ref 可能搬進去了，重問一次
+  data.mtimes[PACKED] = NOW - 1000
+  const packedAt = data.gitCalls.length
+  await refresh($, clock)
+  await ui.unmount()
+
+  for (const [root] of ROWS) {
+    expect(tagQueries(gitSince(data, 0, root)).length, root).toBeGreaterThan(0)
+    expect(aheadQueries(gitSince(data, 0, root)).length, root).toBeGreaterThan(0)
+    expect(tagQueries(gitSince(data, mark, root, packedAt)), root).toEqual([])
+    expect(aheadQueries(gitSince(data, mark, root, packedAt)), root).toEqual([])
+    expect(tagQueries(gitSince(data, packedAt, root)).length, root).toBe(1)
+    expect(aheadQueries(gitSince(data, packedAt, root)).length, root).toBe(1)
   }
   expect(first[0]).toContain(flat('feature/a · 領先 2'))
   expect(second).toEqual(first)
@@ -124,6 +154,7 @@ test('test_falls_back_to_git_when_ref_times_unreadable', async ($, on) => {
   // Alpha：stat 失敗（讀不到 refs/tags、packed-refs 與遠端分支的時間）；Beta：不是一般的 git 資料夾（問不到 common dir）
   delete data.mtimes[TAGS]
   delete data.mtimes[PACKED]
+  delete data.mtimes[remoteRef('feature/a')]
   delete data.repos[BETA]
   const ui = await $.ui.mount(PANE(100))
 

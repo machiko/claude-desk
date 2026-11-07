@@ -142,19 +142,23 @@ async function commonDir($: any, root: string): Promise<string | null> {
   return dir
 }
 
+/** packed-refs 讀不到時在簽章裡的值：git init 起家、沒 gc／pack-refs 過的 repo 本來就沒有這個檔；之後被建立，時間取代它，簽章就變了。 */
+const NO_PACKED_REFS = '-'
+
 /**
  * ref 檔的修改時間串成的簽章：git 打 tag、push、fetch 都會換掉 ref 檔（或在 refs/tags 新增檔、改寫 packed-refs），時間跟著變。
- * 任何一個讀不到（不是一般的 git 資料夾、reftable、檔案還不存在）就是 null：不快取，照舊問 git。
+ * required（refs/tags、origin 同名分支的 ref 檔）任何一個讀不到（不是一般的 git 資料夾、reftable、只在 packed-refs 裡）就是 null：
+ * 不快取，照舊問 git。packed-refs 讀不到是常態，記成 NO_PACKED_REFS 照樣給簽章。
  */
-async function refStamp($: any, paths: readonly string[]): Promise<string | null> {
-  const stats = await Promise.all(paths.map(p => ($.fs.stat(p) as Promise<{ mtimeMs?: number }>).catch(() => null)))
-  const times = stats.map(s => s?.mtimeMs)
-  return times.every(t => typeof t === 'number') ? times.join('\n') : null
+async function refStamp($: any, common: string, required: readonly string[]): Promise<string | null> {
+  const mtime = async (p: string) => ((await ($.fs.stat(p) as Promise<{ mtimeMs?: number }>).catch(() => null))?.mtimeMs)
+  const [packed, ...times] = await Promise.all([`${common}/packed-refs`, ...required].map(mtime))
+  return times.every(t => typeof t === 'number') ? [...times, typeof packed === 'number' ? packed : NO_PACKED_REFS].join('\n') : null
 }
 
 /**
  * 分支、HEAD、包含 HEAD 的最舊 v* tag。找到的 tag 依 HEAD 快取（tag 打了不會消失）；
- * 沒找到時記下當時 refs/tags 與 packed-refs 的修改時間，沒打新 tag（時間沒變）就不重問，讀不到時間就每次重問。不是 git 資料夾就全空。
+ * 沒找到時記下當時 refs/tags 與 packed-refs 的修改時間（沒有 packed-refs 也算一種），沒打新 tag（時間沒變）就不重問，讀不到 refs/tags 的時間就每次重問。不是 git 資料夾就全空。
  */
 export async function gitProbe($: any, root: string): Promise<{ git?: { branch: string; head: string }; tag?: string }> {
   // --abbrev-ref 會套用到它後面每一個參數，所以 commit 要寫在它前面。
@@ -169,7 +173,7 @@ export async function gitProbe($: any, root: string): Promise<{ git?: { branch: 
 /** 快取沒有這個 HEAD 的 tag：簽章跟上次沒找到時一樣就直接回空；否則問 git（先讀簽章再問，問完才打的 tag 下一輪看得到）。 */
 async function tagMiss($: any, root: string, head: string): Promise<string> {
   const common = await commonDir($, root)
-  const stamp = common ? await refStamp($, [`${common}/refs/tags`, `${common}/packed-refs`]) : null
+  const stamp = common ? await refStamp($, common, [`${common}/refs/tags`]) : null
   const key = `${common}\n${head}`
   if (stamp !== null && tagMisses.get(key) === stamp) return ''
   const tag = ((await git($, root, ['tag', '--contains', head, '--list', 'v*', '--sort=creatordate'])) ?? '').split(/\r?\n/).filter(Boolean)[0] ?? ''
@@ -567,14 +571,14 @@ export async function gitStatus($: any, root: string): Promise<GitState | undefi
 /**
  * 沒設追蹤分支（card.py new 會取消追蹤；用 git push origin <分支> 推過也不會設）：照 origin 上的同名分支算領先、落後。
  * 算到的數字依「HEAD＋origin 同名分支 ref 檔與 packed-refs 的修改時間」快取：HEAD 沒動、遠端分支沒被 push／fetch 更新就沿用；
- * 讀不到時間或沒算到數字就不快取，每次照舊問 git。
+ * 沒有 packed-refs 照樣快取；讀不到遠端分支 ref 檔的時間或沒算到數字就不快取，每次照舊問 git。
  */
 async function originBranch($: any, root: string, status: string): Promise<Partial<GitState>> {
   const branch = status.match(/^# branch\.head (.+)$/m)?.[1]
   if (!branch || branch === '(detached)') return {}
   const head = status.match(/^# branch\.oid (\S+)$/m)?.[1]
   const common = head ? await commonDir($, root) : null
-  const refs = common ? await refStamp($, [`${common}/refs/remotes/origin/${branch}`, `${common}/packed-refs`]) : null
+  const refs = common ? await refStamp($, common, [`${common}/refs/remotes/origin/${branch}`]) : null
   const stamp = refs === null ? null : `${head}\n${refs}`
   const key = `${root}\n${branch}`
   const known = originCounts.get(key)
