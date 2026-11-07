@@ -206,7 +206,7 @@ const archiveCmd = (c: Case) => `${CARD_CMD} archive ${slugOf(c)}`
 const archiveTurn = (c: Case) => ({ text: TURN_TEXT.archive(archiveCmd(c)), action: 'archive' as const })
 
 /**
- * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關（register 會排 recheck），
+ * 檢查段：按 v，以及通過後會怎樣。審查後有新 commit 時，流程是這個對話的且已過關（auto-chain 會排 recheck），
  * 或流程已經會自己接手（recheck 排好的新一輪、修正輪剛做完：willAutoReview），都是自動重新審查。
  */
 function checkTurnText(c: Case): string {
