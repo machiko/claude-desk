@@ -1,6 +1,6 @@
 // 工作桌的設計語彙：語意色（跟著使用者主題）、狀態字形、文案。
 // 色彩只在「需要人」「正在跑」「好」「壞」四處出現；其他都是文字本身的輕重。
-import type { CaseState } from '../types'
+import type { CaseState, StageStatus } from '../types'
 
 export const COLOR = {
   text: 'text',
@@ -71,3 +71,9 @@ export const WORD = {
   /** 處理端擋下時的 toast：「<任務名>：Agent 處理中，完成後再<動作>」。 */
   busyRefused: 'Agent 處理中，完成後再',
 } as const
+
+/** 六段各狀態的顏色：摘要列、面板與現在卡的六段都用它。 */
+export const STAGE_COLOR: Record<StageStatus, string> = { done: COLOR.dim, active: COLOR.running, wait: COLOR.attention, fail: COLOR.bad, todo: COLOR.faint, na: COLOR.faint }
+
+/** 示範任務被按了會改東西的鍵：派工、檢查與卡片動作都跳這句。 */
+export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'

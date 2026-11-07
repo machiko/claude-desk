@@ -2,13 +2,13 @@
 // 只有 content（現在卡、全部任務進度表、歷程、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord, HistoryEntry } from '../types'
-import { LIMIT_NAME, displayWidth, elapsedText, fit, focusCase, hhmm, isRunLong, issueOf, modelLabel, pad, resetText, runMinutesText, sorted, stateCounts, summary, totalRunMs, waitingBesides, ago } from './model'
-export { resetText } from './model'
-import { COLOR, SPINNER, STATE, WORD } from './theme'
+import { LIMIT_NAME, focusCase, isRunLong, issueOf, modelLabel, sorted, stateCounts, summary, totalRunMs, waitingBesides } from './model'
+import { displayWidth, elapsedText, fit, hhmm, pad, resetText, runMinutesText, ago } from './text'
+export { resetText } from './text'
+import { COLOR, SPINNER, STATE, WORD, STAGE_COLOR } from './theme'
 import { STAGES, STAGE_GLYPH } from './pipeline'
 import { paneReminders, reminderWhen } from './extras'
 import type { Reminder } from './extras'
-import { STAGE_COLOR } from './band'
 import { contentWindow, flowRows, scrollHint, wrapText } from './layout'
 import type { ContentWindow } from './layout'
 import { button, caseActions, nowCardRows, picksKey, shortCommand } from './pane-card'

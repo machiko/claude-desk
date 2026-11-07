@@ -5,136 +5,17 @@ import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
 import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, releasingStep, standingVerdict, toFix } from './pipeline'
-import { RUN_WARN_MS, isDeskLaunch, spanMs } from './dispatch'
+import { RUN_WARN_MS, spanMs } from './run-time'
 import { MEDIUM_FIX_NOT_SENT } from './chain'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
 import type { Limit } from './quota-words'
-import type { JobRecord } from './dispatch'
+import { fit, plain, resetText, runMinutesText } from './text'
+import { agentWaits, approvalWait, approveText } from './agents'
 
-/** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
-export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
-
-/**
- * card.py 失敗時的原因：它把原因印在第一行，後面才接細節（例如整份登錄表）。
- * 未預期的 Python 例外則是 Traceback 開頭、例外印在最後一行，這時取最後一行。
- */
-export function reasonLine(r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') {
-  const lines = String(r?.stderr || r?.stdout || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
-  const traceback = lines.some(l => l.startsWith('Traceback (most recent call last)'))
-  return (traceback ? lines.at(-1) : lines[0]) || fallback
-}
-
-/** 指令失敗時給人看的那一行：stderr（沒有就 stdout）的最後一行。 */
-export const errorLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') =>
-  String(r?.stderr || r?.stdout || '').trim().split(/\r?\n/).pop() || fallback
-
-export const STALE_MS = 3 * 24 * 60 * 60_000
-
-/** 例外的訊息，去掉控制字元。 */
-export const errorText = (error: unknown) => plain(error instanceof Error ? error.message : String(error))
-
-/**
- * 外部來的文字（Agent 記錄、檢查輸出、卡片）進畫面前清乾淨：拿掉所有終端機控制序列與控制字元。
- * 引擎會整個拒畫含控制字元的文字，面板就會變成一片空白。
- */
-export function plain(text: string): string {
-  return String(text ?? '')
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')          // CSI：顏色、游標移動、清除
-    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '') // OSC：標題、超連結
-    .replace(/\u001b[@-Z\\-_]/g, '')                    // 其他兩字元序列
-    .replace(/^[\d;]*m/, '')                             // 尾巴被截斷時殘留的半截顏色碼
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
-}
-
-/**
- * 不算「有意義的一行」：太短、轉圈圈的狀態字（含被截斷的半個字）、秒數與 token 計數、按鍵提示、純框線、
- * 沒有空白也沒有中文的單一英文片段、畫面最底的 UI 列（輸入框上框線夾名字、模式列、努力度）。
- */
-export function isNoise(line: string): boolean {
-  const l = line.trim()
-  if (displayWidth(l) < 4) return true
-  // 輸入框上框線「──…── <名字> ─」、模式列「⏸ manual mode on · ← for agents」「⏵⏵ accept edits on」（只認 ⏸／⏵⏵ 開頭的，提問裡的「mode on」不算）、努力度「● high · /effort」。
-  if (/^─{10,} .* ─$/.test(l) || /^(?:⏸|⏵⏵)\s*(?:[a-z]+ mode|accept edits|bypass permissions) on\b|← (?:for|\d+) agents|· \/effort$/.test(l)) return true
-  if (/…/.test(l) && displayWidth(l) < 40) return true
-  if (/\d+(?:\.\d+)?k? tokens|\d+s ·|· ↓|esc to interrupt|\? for shortcuts|shift\+tab|^running |^[A-Z][a-z]+ for \d+\s*s/.test(l)) return true
-  if (/^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║>·\-=*`()]+$/.test(l)) return true
-  if (!/[\u3400-\u9fff]/.test(l) && !/\s/.test(l) && l.length < 16) return true
-  // 重繪剩下的數字碎片（倒數、欄位號）：沒有中文、也沒有連續三個英文字母。
-  if (!/[\u3400-\u9fff]/.test(l) && !/[A-Za-z]{3}/.test(l)) return true
-  // 額度列（5h:40% 7d:43%）。
-  if (/\d+[hd]:\d+%/.test(l)) return true
-  return isStatusLine(l)
-}
-
-/**
- * 畫面最底的狀態列「<分支> │ +n/-m │ <worktree>」（沒有改動時沒有中段）：用 │ 分欄、每欄是一個詞（或它的重繪碎片，例如「r leas v14.2.6」）。
- * 兩端都是 │ 的是框線裡的句子（權限提示框、表格），不算。
- */
-export function isStatusLine(line: string): boolean {
-  const l = line.trim()
-  if (!/│/.test(l)) return false
-  if (/\+\d+\/-\d+/.test(l)) return true
-  if (/[\u3400-\u9fff]/.test(l) || (l.startsWith('│') && l.endsWith('│'))) return false
-  return l.split('│').every(seg => seg.trim().split(/\s+/).length <= 3)
-}
-
-/** 東亞寬字（CJK、全形、韓文）在終端機佔兩格。 */
-const isWide = (code: number) => code >= 0x1100 && (code <= 0x115f || (code >= 0x2e80 && code <= 0xa4cf) || (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff00 && code <= 0xff60) || (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x20000 && code <= 0x3fffd))
-
-/**
- * `claude logs` 是整個畫面的重繪紀錄（每次只畫有變的格子），把它重播成最後的畫面，一列一個字串，由上到下。
- * 只追游標與格子：游標移動（上下左右、跳欄、定位）、清行、清畫面照做；顏色、模式切換與其他序列略過。
- * 真實紀錄列與列之間是 \r（回到行首），列由緊接的 \e[nB、\e[n;mH 決定；\n 當一般換行。
- * 同一列多次重繪會疊在同一列上，所以不會把「c mmand.run」這種只畫了變動格子的碎片當成一句話；
- * 紀錄開始前就畫好的格子還是看不到（狀態列常只剩碎片），那些由 isNoise 擋。
- * 短 session 的紀錄從整頁畫起，畫面最底的輸入框（只剩提示符 ❯ 的那列）與它以下的框線、模型列、分支列、模式列都是 UI 元件，整段丟掉。
- */
-export function screenLines(raw: string): string[] {
-  const text = String(raw ?? '')
-  const rows = new Map<number, string[]>()
-  let r = 0
-  let c = 0
-  const row = () => { const got = rows.get(r); if (got) return got; const made: string[] = []; rows.set(r, made); return made }
-  const re = /\u001b\[([0-?]*)[ -/]*([@-~])|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]|\r|\n|[^\u001b\r\n]+/g
-  for (const m of text.matchAll(re)) {
-    const s = m[0]
-    if (s === '\r') { c = 0; continue }
-    if (s === '\n') { r++; c = 0; continue }
-    if (s[0] !== '\u001b') {
-      for (const ch of s) {
-        const code = ch.codePointAt(0) ?? 0
-        if (code < 32 || (code >= 0x7f && code <= 0x9f)) continue
-        const cells = row()
-        cells[c++] = ch
-        if (isWide(code)) cells[c++] = ''
-      }
-      continue
-    }
-    if (m[2] === undefined) continue
-    const args = (m[1] ?? '').split(';').map(x => parseInt(x, 10))
-    const arg = (i: number, fallback: number) => { const v = args[i]; return v === undefined || Number.isNaN(v) ? fallback : v }
-    switch (m[2]) {
-      case 'A': r = Math.max(0, r - arg(0, 1)); break
-      case 'B': r += arg(0, 1); break
-      case 'C': c += arg(0, 1); break
-      case 'D': c = Math.max(0, c - arg(0, 1)); break
-      case 'G': c = Math.max(0, arg(0, 1) - 1); break
-      case 'H': case 'f': r = Math.max(0, arg(0, 1) - 1); c = Math.max(0, arg(1, 1) - 1); break
-      case 'K': { const cells = row(); const k = arg(0, 0); if (k === 0) cells.length = Math.min(cells.length, c); else if (k === 1) cells.fill(' ', 0, c + 1); else cells.length = 0; break }
-      case 'J': { const k = arg(0, 0); for (const key of [...rows.keys()]) if (k === 2 || (k === 0 && key > r) || (k === 1 && key < r)) rows.delete(key); if (k === 0) row().length = Math.min(row().length, c); break }
-      default: break
-    }
-  }
-  const lines = [...rows.keys()].sort((a, b) => a - b)
-    .map(k => plain(Array.from(rows.get(k)!, x => x ?? ' ').join('')).replace(/\s+/g, ' ').trim())
-  const prompt = lines.lastIndexOf('❯')
-  return (prompt < 0 ? lines : lines.slice(0, prompt)).filter(l => l && !isNoise(l))
-}
-
-/** Agent 最後畫面上最下面一句有意義的話（見 screenLines），略過雜訊；行首的轉圈圈、項目符號與 [標籤] 拿掉。 */
-export function lastMeaningful(raw: string, max = 120): string {
-  return (screenLines(raw).pop() ?? '').replace(/^[⏺●✻✽✢✳✶·❯]\s*/, '').replace(/^\[[^\]]*\]\s*/, '').slice(0, max)
-}
+// 文字工具搬到 text.ts、Agent 清單解析搬到 agents.ts；呼叫端與測試照舊從這裡匯入也行。
+export { STALE_MS, ago, displayWidth, elapsedText, errorLine, errorText, fit, hhmm, isNoise, isStatusLine, lastMeaningful, pad, plain, reasonLine, resetText, runMinutesText, screenLines, slugOf } from './text'
+export { agentInfo, agentWaits, agentsByRoot, approvalWait, approveText, askClearedOnCard, askedOnCardAtEnd, asksFor, asksQuestion, codeJobEnded, endedAlive, endedHow, parseAgents, rawAgents, runSeen, supersede } from './agents'
+export type { EndedAlive, LastLaunch, Superseded } from './agents'
 
 /** 模型名稱給人看：claude-opus-5-5 → Opus 5.5；別名（opus、haiku）與其他寫法原樣。 */
 export function modelLabel(id: string | undefined): string {
@@ -144,67 +25,9 @@ export function modelLabel(id: string | undefined): string {
   return `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1)} ${m[2]}.${m[3]}${m[4] ?? ''}`
 }
 
-/** 字串在終端機佔的格數：CJK 與常見全形兩格，其餘一格。 */
-export function displayWidth(text: string): number {
-  let w = 0
-  for (const ch of text) {
-    const code = ch.codePointAt(0) ?? 0
-    if (code < 32) continue
-    w += isWide(code) ? 2 : 1
-  }
-  return w
-}
-
-/** 裁到 `columns` 格，尾端加 …；放得下就原樣。 */
-export function fit(text: string, columns: number): string {
-  if (columns <= 0) return ''
-  if (displayWidth(text) <= columns) return text
-  let out = ''
-  let w = 0
-  for (const ch of text) {
-    const cw = displayWidth(ch)
-    if (w + cw > columns - 1) break
-    out += ch
-    w += cw
-  }
-  return out + '…'
-}
-
-/** 補空白到 `columns` 格。 */
-export const pad = (text: string, columns: number) => text + ' '.repeat(Math.max(0, columns - displayWidth(text)))
-
-/** 多久以前：剛剛、5 分鐘前、3 小時前、2 天前（帶「前」，看得出是過去的時間）。 */
-export function ago(t: number | null, now: number): string {
-  if (t === null) return ''
-  const s = Math.max(0, Math.round((now - t) / 1000))
-  if (s < 60) return '剛剛'
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m} 分鐘前`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小時前`
-  return `${Math.floor(h / 24)} 天前`
-}
-
-/** 跑了多久：12 秒、4 分 12 秒、1 小時 3 分（一小時以上不寫秒）。 */
-export function elapsedText(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  if (s < 60) return `${s} 秒`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m} 分 ${s % 60} 秒`
-  return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
-}
-
-/** 總執行時間只到分：不到 1 分、13 分、1 小時 3 分。 */
-export function runMinutesText(ms: number): string {
-  const m = Math.floor(Math.max(0, ms) / 60_000)
-  if (m < 1) return '不到 1 分'
-  if (m < 60) return `${m} 分`
-  return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
-}
-
 /**
  * 這件的總執行時間：已結束的派工與自動檢查、還沒結束那次派工收起來的幾段（c.runMs），加上它現在這段在跑的時間
- * （min(now, c.runUntil) - c.runFrom）。跟存進去的累計同一套紀錄、同樣的封頂算（見 dispatch.ts 的 runOf）。
+ * （min(now, c.runUntil) - c.runFrom）。跟存進去的累計同一套紀錄、同樣的封頂算（見 run-time.ts 的 runOf）。
  */
 export function totalRunMs(c: Case, now: number): number {
   const running = c.runFrom !== undefined ? spanMs({ from: c.runFrom, until: c.runUntil ?? Infinity }, now) : 0
@@ -219,27 +42,6 @@ export function runTimeText(c: Case, now: number, hasNote = true): string {
   const ms = totalRunMs(c, now)
   if (ms <= 0) return ''
   return `總執行 ${runMinutesText(ms)}${hasNote && isRunLong(c, now) ? `（超過 ${RUN_WARN_MS / 60_000} 分）` : ''}`
-}
-
-export const hhmm = (t: number) => {
-  const d = new Date(t)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
-/** 重置時間：今天只寫時分，明天寫「明天」，7 天內寫星期，更遠寫日期；short 只留哪一天（今天、明天、週三、1/12）。 */
-const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
-const DAY_MS = 86_400_000
-const WEEK_DAYS = 7
-export function resetText(iso: string | undefined, now: number, short = false): string {
-  const t = iso ? Date.parse(iso) : NaN
-  if (!Number.isFinite(t)) return ''
-  const d = new Date(t)
-  const n = new Date(now)
-  // 比日曆日：兩邊都取當地午夜再相減（四捨五入吸收日光節約的一小時）。
-  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()) / DAY_MS)
-  const day = days <= 0 ? '' : days === 1 ? '明天' : days < WEEK_DAYS ? `週${WEEKDAY[d.getDay()]}` : `${d.getMonth() + 1}/${d.getDate()}`
-  if (short) return day || '今天'
-  return `${day ? `${day} ` : ''}${hhmm(t)} 重置`
 }
 
 export { LIMIT_NAME, QUOTA_RESTART, QUOTA_RESTART_CATCHUP, isQuotaHold, quotaHeld, quotaLowOf } from './quota-words'
@@ -269,176 +71,6 @@ export function quotaHold(limits: readonly Limit[] | undefined, threshold: numbe
   const five = limits!.find(l => l.kind === 'five_hour')!
   return `${low}，${resetText(five.resetsAt, now) || '重置'}${restart}`
 }
-
-export function rawAgents(json: string): any[] {
-  try { const v = JSON.parse(json.replace(/^\uFEFF/, '')); return Array.isArray(v) ? v : Array.isArray(v?.agents) ? v.agents : [] } catch { return [] }
-}
-
-/**
- * `claude agents --json --all`：每個根目錄留一個「真的在動」的背景 agent（status busy，或 waiting 停在權限提示）。
- * 一個轉完回合的 agent 會 status idle 而 state 還是 working／blocked，那不算在跑，也不算停下來等你：
- * blocked 是做完一輪的正常結束狀態，Agent 要問人寫進卡片「等你」；只有 status waiting 才是停下來等。
- */
-export const parseAgents = (json: string): Record<string, AgentInfo> => agentsByRoot(rawAgents(json))
-
-const cwdOf = (a: any): string => typeof a?.cwd === 'string' ? a.cwd.replace(/\\/g, '/').replace(/\/+$/, '') : ''
-
-/** 同 parseAgents，從已經解析好的清單（例如拿掉被取代的之後）挑。 */
-export function agentsByRoot(list: readonly any[]): Record<string, AgentInfo> {
-  const out: Record<string, AgentInfo> = {}
-  for (const a of list) {
-    const cwd = cwdOf(a)
-    if (!cwd || a.kind !== 'background') continue
-    const status = String(a.status ?? '').toLowerCase()
-    if (status !== 'busy' && status !== 'waiting') continue
-    const info = agentInfo(a)
-    const prev = out[cwd]
-    if (!prev || (info.startedAt ?? 0) > (prev.startedAt ?? 0)) out[cwd] = info
-  }
-  return out
-}
-
-/** 一個根目錄最後一次派工的名字與派出時間（$.store 的 jobs）。 */
-export type LastLaunch = { launchName: string; startedAt: number }
-/** 被後來的派工取代、還停在提問的工作桌 Agent。 */
-export type Superseded = { root: string; id: string; name: string; startedAt: number }
-
-const isSuperseded = (a: any, last: Readonly<Record<string, LastLaunch>>): boolean => {
-  const l = last[cwdOf(a)]
-  const name = String(a?.name ?? '')
-  return !!l && a.kind === 'background' && String(a.status ?? '').toLowerCase() === 'waiting'
-    && isDeskLaunch(name) && name !== l.launchName && typeof a.startedAt === 'number' && a.startedAt < l.startedAt
-}
-
-/**
- * 挑出被取代的 Agent：工作桌派的（desk- 開頭）、停在提問（status waiting）、比這個根目錄最後一次派工早啟動、不是最後那一次。
- * 它們不再代表任務（狀態照卡片走）；回傳拿掉它們之後的清單，與被取代的那幾個（給工作桌停掉）。
- */
-export function supersede(list: readonly any[], last: Readonly<Record<string, LastLaunch>>): { list: any[]; superseded: Superseded[] } {
-  // 一次分流，每個 Agent 只判斷一次。
-  return list.reduce<{ list: any[]; superseded: Superseded[] }>((acc, a) => isSuperseded(a, last)
-    ? { list: acc.list, superseded: [...acc.superseded, { root: cwdOf(a), id: typeof a.id === 'string' ? a.id : '', name: plain(String(a.name)), startedAt: a.startedAt as number }] }
-    : { list: [...acc.list, a], superseded: acc.superseded }, { list: [], superseded: [] })
-}
-
-/** 做完（done／failed，或做完一輪的 blocked）但程序還活著的工作桌 Agent。 */
-export type EndedAlive = { root: string; id: string; name: string; startedAt: number | null }
-
-/**
- * 挑出做完、程序還活著的 Agent：工作桌派的（desk- 開頭）、state done／failed／blocked、不在跑（status 不是 busy／waiting）、
- * JSON 有數字的 pid（程序早已退出的沒有 pid）、有 id。不看根目錄在不在工作桌上（歸檔後留下的也算）。
- * blocked 是做完一輪的正常結束狀態（要問人寫進卡片「等你」）；真的停下來等的（status waiting、或還停在權限提示）不會被挑到。
- */
-export function endedAlive(list: readonly any[]): EndedAlive[] {
-  return list.flatMap(a => {
-    const status = String(a?.status ?? '').toLowerCase()
-    const state = String(a?.state ?? '').toLowerCase()
-    const alive = a?.kind === 'background' && isDeskLaunch(String(a?.name ?? '')) && (state === 'done' || state === 'failed' || blockedDone(a))
-      && status !== 'busy' && status !== 'waiting' && typeof a.pid === 'number' && typeof a.id === 'string' && !!a.id
-    return alive ? [{ root: cwdOf(a), id: a.id as string, name: plain(String(a.name)), startedAt: typeof a.startedAt === 'number' ? a.startedAt : null }] : []
-  })
-}
-
-export function agentInfo(a: any): AgentInfo {
-  const waitsFor = waitsOf(a)
-  return { ...(typeof a.id === 'string' ? { id: a.id } : {}), name: plain(String(a.name ?? a.id ?? '')), ...(typeof a.sessionId === 'string' ? { sessionId: a.sessionId } : {}), state: String(a.state ?? ''), status: String(a.status ?? ''), ...(a.waitingFor ? { waitingFor: plain(String(a.waitingFor)) } : {}), ...(waitsFor ? { waitsFor } : {}), ...(typeof a.startedAt === 'number' ? { startedAt: a.startedAt } : {}) }
-}
-
-/**
- * 停下來的 Agent 在等什麼：waitingFor 提到 permission 是權限提示；其他 status waiting 的當成提問。
- * state blocked 本身不算：那是做完一輪的正常結束狀態，Agent 要問人寫進卡片「等你」。
- */
-function waitsOf(a: any): AgentInfo['waitsFor'] {
-  if (/permission/i.test(String(a?.waitingFor ?? ''))) return 'permission'
-  return String(a?.status ?? '').toLowerCase() === 'waiting' ? 'question' : undefined
-}
-
-/** Agent 停在權限提示：要到終端機的 claude agents 批准，面板代替不了。 */
-export const approvalWait = (a: AgentInfo | undefined) => a?.waitsFor === 'permission'
-
-/** 等權限批准時給人看的那句：現在卡最上方、摘要列與列表都用它。 */
-export const approveText = (c: Pick<Case, 'agent'>) => `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准；批准後面板會自動更新`
-
-const isBlocked = (a: any): boolean => String(a?.state ?? '').toLowerCase() === 'blocked'
-
-/** 做完一輪的 blocked：不在跑（status 不是 busy／waiting），也不是停在權限提示（那個還在等批准，見 asksFor）。 */
-const blockedDone = (a: any): boolean => {
-  const status = String(a?.status ?? '').toLowerCase()
-  return isBlocked(a) && status !== 'busy' && status !== 'waiting' && waitsOf(a) !== 'permission'
-}
-
-const launchOf = (list: readonly any[], launchName: string | undefined): any =>
-  launchName ? list.find(x => x?.name === launchName && x?.kind === 'background') : undefined
-
-/**
- * 工作桌派出去的那一次（按啟動名）不在跑（不是 busy／waiting）、卻還停在權限提示（state blocked、waitingFor 提到 permission）：
- * 補成停下來的 Agent，面板才說等權限批准。其他 blocked 是做完一輪的正常結束狀態（要問人寫進卡片「等你」），回 null、不補 Agent；
- * status waiting 的已經在 agentsByRoot 挑到，也回 null。
- */
-export function asksFor(list: readonly any[], launchName: string | undefined): AgentInfo | null {
-  const a = launchOf(list, launchName)
-  if (!a) return null
-  const status = String(a.status ?? '').toLowerCase()
-  if (status === 'busy' || status === 'waiting') return null
-  return isBlocked(a) && waitsOf(a) === 'permission' ? { ...agentInfo(a), asks: true } : null
-}
-
-/**
- * 工作桌派出去的那一次（按啟動名）停在提問：status waiting 但不是等權限批准。
- * state blocked 本身不算：那是做完一輪的正常結束狀態，Agent 要問人寫進卡片「等你」。
- */
-export function asksQuestion(list: readonly any[], launchName: string | undefined): boolean {
-  const a = launchOf(list, launchName)
-  return !!a && String(a.status ?? '').toLowerCase() === 'waiting' && waitsOf(a) === 'question'
-}
-
-/**
- * 最後一次派工停在提問時題目寫進了卡片「等你」，之後在對話處理掉：「等你」清成「無」，或已記成處理過（answered）。
- * 面板、自動流程與「最近」那筆都用這一條判斷：不再等那個 Agent，也不替那次派工接著做。
- */
-export const askClearedOnCard = (last: Pick<JobRecord, 'cardAsked' | 'answered'> | undefined, ask: string): boolean =>
-  !!last?.cardAsked && (!!last.answered || saysNone(ask))
-
-/**
- * 會改程式的派工（繼續、修正、回覆）做完一輪：Agent 要問人只能寫進卡片「等你」，所以它結束時「等你」有內容就是在等你決定。
- * 驗收通過後有新 commit、流程自己排的重新測試與驗收（recheck）是合成紀錄、不是 Agent 做完：「等你」裡留著的是審查寫的題目，流程照舊。
- */
-export const codeJobEnded = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck'> | undefined): boolean =>
-  !!last && !last.recheck && (last.kind === 'continue' || last.kind === 'reply') && last.ended?.how === 'finished'
-
-/**
- * 做完一輪時把要你決定的事寫進了「等你」、還沒處理：自動流程停著等，不替它跑測試、派驗收或修正。
- * 流程已接手的（chained：開跑自動檢查、停在檢查段後你重開）不算，那之後「等你」的題目不是它寫的。
- */
-export const askedOnCardAtEnd = (last: Pick<JobRecord, 'kind' | 'ended' | 'recheck' | 'chained'> | undefined, ask: string): boolean =>
-  codeJobEnded(last) && !last?.chained && !saysNone(ask)
-
-/**
- * 工作桌派出去的那一次（按啟動名）結束了沒、怎麼結束的：還在跑或停下來等（busy／waiting）、清單裡找不到都是 null；
- * `claude stop` 停掉的是 stopped（清單裡 state 是 stopped、沒有 status），其他算 finished。找不到不算結束：剛派出去的那次可能還沒出現在這份清單。
- * blocked（status 不是 busy／waiting）算 finished：那是做完一輪的正常結束狀態，要問人寫進卡片「等你」；還停在權限提示的不算（null）。
- */
-export function endedHow(list: readonly any[], launchName: string | undefined): 'finished' | 'stopped' | null {
-  const a = launchOf(list, launchName)
-  if (!a) return null
-  const status = String(a.status ?? '').toLowerCase()
-  if (status === 'busy' || status === 'waiting') return null
-  if (isBlocked(a) && !blockedDone(a)) return null
-  return String(a.state ?? '').toLowerCase() === 'stopped' ? 'stopped' : 'finished'
-}
-
-/**
- * 工作桌派出去的那一次（按啟動名）還沒結束時的樣子：busy 在跑；停在提問、權限提示或還沒做完的 blocked 是 waiting（等人，不算時間）；
- * 不在清單裡（還在啟動）是 null。已經結束的由 endedHow 判斷，這裡不管。
- */
-export function runSeen(list: readonly any[], launchName: string | undefined): 'busy' | 'waiting' | null {
-  const a = launchOf(list, launchName)
-  if (!a) return null
-  return String(a.status ?? '').toLowerCase() === 'busy' && !a.waitingFor ? 'busy' : 'waiting'
-}
-
-/** 停下來等人的 agent：權限提示，或工作桌派出去的那次停在提問。 */
-export const agentWaits = (a: AgentInfo | undefined) => !!a && (!!a.waitingFor || a.status === 'waiting' || !!a.asks)
 
 export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): CaseState {
   if (!c.hasCard) return 'nocard'

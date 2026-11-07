@@ -6,10 +6,12 @@ import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, SentRecord, Snapshot } from '../types'
 import { parseCard, parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
-import { WORD } from './theme'
-import { errorLine, errorText, plain, quotaHeld, reasonLine, slugOf } from './model'
+import { DEMO_ONLY, WORD } from './theme'
+import { quotaHeld } from './model'
+import { errorLine, errorText, plain, reasonLine, slugOf } from './text'
 import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
-import { afterSpecRefusal, normalizeRoot, openPrRequest, prHowOf, pushRequest, refusalOf, refusalText } from './dispatch'
+import { afterSpecRefusal, openPrRequest, prHowOf, pushRequest, refusalOf, refusalText } from './dispatch'
+import { normalizeRoot } from './settings'
 import { archivesOnShip, canRelease, isReleaseLine, releasingStep } from './pipeline'
 import { AGENT_STOPPED, CHAIN_CHANGED, paused, revOf } from './chain'
 import { picksKey } from './pane'
@@ -24,7 +26,8 @@ import { readSent } from './prompt-sync'
 import { trustCheck } from './approve-check'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 
-export const DEMO_ONLY = '示範任務只能看；請照教學那件的指示操作'
+// 示範任務那句搬到 theme.ts；呼叫端與測試照舊從這裡匯入也行。
+export { DEMO_ONLY } from './theme'
 
 const picksAtom = atom({ plugin: 'desk', key: 'picks' } as const, {})
 const snapshotAtom = atom({ plugin: 'desk', key: 'snapshot' } as const, null)

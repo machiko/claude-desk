@@ -1,7 +1,9 @@
 // 輪到誰、該做什麼：依六段與任務狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case, SentRecord } from '../types'
-import { agentWaits, approvalWait, approveText, isQuotaHold, QUOTA_RESTART, quotaHeld, slugOf } from './model'
+import { isQuotaHold, QUOTA_RESTART, quotaHeld } from './model'
+import { agentWaits, approvalWait, approveText } from './agents'
+import { slugOf } from './text'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
 import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, releaseStep, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'

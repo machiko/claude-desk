@@ -1,7 +1,7 @@
 // 每次派工都附的卡片規則，與會改程式的派工多附的幾條（規格、CHANGELOG、測試、push）。
 import type { Case } from '../../types'
 import { named } from '../card'
-import { slugOf } from '../model'
+import { slugOf } from '../text'
 
 /**
  * 每次派工都附的規則；canPush（會改程式的派工與推送）可以 push 自己的分支、開 PR，其他的不寫遠端。

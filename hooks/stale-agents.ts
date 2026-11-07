@@ -1,12 +1,13 @@
 // 被後來派工取代、還停在提問的工作桌 Agent：重新整理時停掉，每個只試一次，結果寫進「最近」。
 // 做完、程序還活著的工作桌 Agent：重新整理時停掉（stopEnded），每個只試一次，停不掉才寫進「最近」。
 // 最後一次派工停在提問（status waiting、不是權限；做完一輪的 blocked 不算）、題目寫進卡片又在對話處理掉的：記下來，不再等它（noteCardAsks）。
-// 挑哪些算被取代是 model.ts 的 supersede（純函式）；這裡只做 I/O。跨檔傳 $ 的函式一律用 function 宣告。
+// 挑哪些算被取代是 agents.ts 的 supersede（純函式）；這裡只做 I/O。跨檔傳 $ 的函式一律用 function 宣告。
 import type { Case } from '../types'
-import type { EndedAlive, LastLaunch, Superseded } from './model'
-import { askClearedOnCard, asksQuestion, codeJobEnded, errorLine, hhmm, plain } from './model'
+import type { EndedAlive, LastLaunch, Superseded } from './agents'
+import { askClearedOnCard, asksQuestion, codeJobEnded } from './agents'
+import { errorLine, hhmm, plain } from './text'
 import type { RootJobs } from './dispatch'
-import { normalizeRoot } from './dispatch'
+import { normalizeRoot } from './settings'
 import { saysNone } from './card'
 import { JOBS_KEY, feedPush, loadJobs } from './desk-io'
 

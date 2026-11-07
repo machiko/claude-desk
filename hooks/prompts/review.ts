@@ -1,6 +1,6 @@
 // 審查（review）派工的提示詞：程式碼審查、資安審查、修正後的複審與重新審查。
 import type { Case } from '../../types'
-import type { ReviewWords } from '../dispatch'
+import type { ReviewWords } from '../settings'
 
 export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
