@@ -1,10 +1,13 @@
 // 派工：組 `claude --bg` 的參數與提示詞、解析啟動輸出、對回新 agent。純函式；I/O 在 register.tsx。
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
-import { CARD_CMD, PLAN_STEP, expandHome, isPlaceholder, named, parseGate, saysNone } from './card'
+import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
 import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, shownStopped } from './chain'
 import type { ChainRun } from './chain'
-import { agentWaits, approvalWait, slugOf } from './model'
+import { UUID, agentWaits, approvalWait } from './agents'
+import { slugOf } from './text'
+import { normalizeRoot, parseSettings } from './settings'
+import type { DispatchSettings } from './settings'
 import { DONE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
 import { CATCHUP_CARD_RULE, catchupHead } from './prompts/catchup'
 import { PUBLISH_CARD_RULE, publishHead } from './prompts/publish'
@@ -24,8 +27,14 @@ export type { ReviewOpts } from './prompts/review'
 export { IDLE_WHY, MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext, reviewNext } from './next-words'
 export { markOf, markRefusal } from './worktree-mark'
 export type { WorktreeMark } from './worktree-mark'
+// 設定解析搬到 settings.ts、執行時間計算搬到 run-time.ts、啟動名與 Agent 清單比對搬到 agents.ts；呼叫端與測試照舊從這裡匯入也行。
+export { DEFAULT_CHAIN_QUOTA_STOP, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, DEFAULT_USER, MODEL_KINDS, modelFor, normalizeRoot, parseSettings, pitfallsFor } from './settings'
+export type { DispatchSettings, ModelKind, ReviewWords } from './settings'
+export { RUN_SEEN_STEP_MS, RUN_WARN_MS, addRunTime, dispatchRunMs, observeRun, runMsOn, runOf, spanMs } from './run-time'
+export type { RunShown } from './run-time'
+export { UUID, confirmLaunch, isDeskLaunch, launchName, runningDeskAgents } from './agents'
+export type { RawAgent } from './agents'
 
-export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHORT_ID = /^[0-9a-f]{8}$/i
 
 /**
@@ -33,249 +42,11 @@ const SHORT_ID = /^[0-9a-f]{8}$/i
  * catchup：合併段跟基準分支有衝突時自動派 Agent 把基準分支合併進來、解衝突；不 push、沒有按鍵。
  */
 export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish' | 'catchup'
-/** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
-export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
-export type ModelKind = typeof MODEL_KINDS[number]
-/**
- * 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。
- * preflight 是審查前置指令（`{root}`、`{base}` 佔位），審查先跑、輸出當候選逐條驗證；空白不加前置句。
- * pitfalls 是專案自己的常犯錯誤清單路徑（可用 `~`），優先於 plugin 選項與專案資料夾預設。
- * preflightMinFiles：diff 少於這麼多檔的審查與複審（修正後、重新審查）不加前置句；0（預設）＝都加。
- * combineSecurity：高風險分支的資安重點併進程式碼審查，過關後不另派資安審查；只認 JSON 的 true。
- */
-export type ReviewWords = { high: string; security: string; categories: string; template: string; preflight?: string; pitfalls?: string; preflightMinFiles?: number; combineSecurity?: boolean }
-export type DispatchSettings = {
-  model: string; effort: string; sync: { model: string; effort: string; fresh: boolean }
-  projects: Record<string, { model?: string; effort?: string; rules?: string[] }>
-  /** 依派工種類的模型與 effort，優先於任務覆寫與全域。 */
-  kinds: Partial<Record<ModelKind, { model?: string; effort?: string }>>
-  /** 寫進提示詞與卡片的人名（「要 <user> 決定的事」「<user> 在工作桌確認」）。 */
-  user: string
-  /** 每次派工都附上的專案規則（例如測試只能怎麼跑）；任務的 rules 接在後面。 */
-  rules: string[]
-  review: ReviewWords
-  /** 額外的高風險路徑（正規式, 理由），排在內建的前面。 */
-  riskHigh: [RegExp, string][]
-  /** 完成檢查裡出現這個指令名就需要哪些容器服務（例如包好的測試腳本 → mysql）。 */
-  checkServices: Record<string, string[]>
-  /** docker-compose.yml 所在資料夾（寫在專案的 dispatch.json，容器列就跟著專案）；空白用 plugin 選項。 */
-  composeDir: string
-  /** card.base：分支預設要併進去的分支（例如 origin/main）；沒有 PR 與 release 線時當 diff 與合併判斷的基準。 */
-  cardBase: string
-  /** card.template：DESK 卡模板（可用 `~`）；空白用 plugin 內附的 templates/DESK-template.md。寫入卡片後的卡片規則段守門跟 card.py 用同一份。 */
-  cardTemplate: string
-  /** updateCheck："off" 不自動檢查 desk 新版本；沒設＝每 24 小時查一次。 */
-  updateCheck: '' | 'off'
-  /** 同時在跑的工作桌背景 Agent 上限（整台機器一起算）；超過的派工排隊。0＝不限。 */
-  maxAgents: number
-  /** 審查過關（含免審查過關）後自動派推送 Agent push 並開 PR（PR 已開只 push）；只認 JSON 的 true，建議寫在專案的 dispatch.json。 */
-  autoPr: boolean
-  /** 專案 `pr.open`：推送 Agent 開 PR 的覆寫指令（`{branch}`、`{target}` 會換掉），給 GitLab、自架等 desk 認不出的平台；空白＝依 origin（GitHub 用 gh、Bitbucket 用 MCP、其他只 push）。 */
-  prOpen: string
-  /** 背景 Agent 要不要載入 MCP server。預設不載（`--strict-mcp-config`）：每個 MCP 都是一支常駐程序，派工一多就吃掉記憶體；要用再在 dispatch.json 設 `mcp: true`。 */
-  mcp: boolean
-  /** 做完的背景 Agent 由工作桌在下一次重新整理時 `claude stop` 收掉：不停的話每支各佔幾百 MB，閒置到 daemon 回收。預設開，只有 JSON 的 false 關掉。 */
-  stopDone: boolean
-  /** 自動流程的額度煞車：5 小時額度剩餘百分比低於這個值時，自動流程不派下一個 Agent、暫停寫原因。0＝關（`"off"`／`false`）；不合法用預設。 */
-  chainQuotaStop: number
-}
-
-export const DEFAULT_MAX_AGENTS = 3
-export const DEFAULT_CHAIN_QUOTA_STOP = 30
-
-export const DEFAULT_USER = '使用者'
-export const DEFAULT_REVIEW: ReviewWords = {
-  high: '實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求',
-  security: '授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩（log、匯出、版控）、機密與金鑰、檔案路徑、外部呼叫',
-  categories: '授權、個資、測試、命名',
-  template: '',
-  preflight: '',
-  pitfalls: '',
-  preflightMinFiles: 0,
-  combineSecurity: false,
-}
-
-const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
-const strList = (v: unknown) => Array.isArray(v) ? v.map(str).filter(Boolean) : []
 /** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
 export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 自動流程已接手這次（開跑自動檢查，或停在檢查段後你重開）：之後「等你」出現的題目不是它做完時寫的。 */ chained?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' }; /** 之前幾段在跑的時間加起來（停下來等人時收進來）。 */ busyMs?: number; /** 現在這段開始在跑的時間；沒有就是派出的時間。 */ runAt?: number; /** 這段最後一次看到它在跑（最多每 RUN_SEEN_STEP_MS 記一次）。 */ seenAt?: number; /** 停下來等人（提問、權限提示）：現在這段不算，再看到它在跑才重新起算。 */ paused?: true }
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string; /** 這條分支已結束的派工與自動檢查總共跑了幾毫秒（不含正在跑的）。 */ runMs?: number; /** runMs 算的是哪條分支；同一個資料夾換了分支就從 0 起算。 */ runBranch?: string }
 
-/** 總執行時間超過這麼久（15 分鐘）就用警示色標出來。 */
-export const RUN_WARN_MS = 15 * 60_000
-
-/**
- * 把一次派工或自動檢查花的時間加進總執行時間（回傳新的一份，不改原本的）。
- * branch 跟記著的分支不同：換了分支，從這次重新算。沒有 branch（讀不到）就照原本的分支加。
- */
-export function addRunTime(jobs: RootJobs | undefined, ms: number, branch?: string): RootJobs {
-  const own = jobs ?? {}
-  const spent = Math.max(0, ms)
-  const isNewBranch = !!branch && !!own.runBranch && branch !== own.runBranch
-  const runBranch = branch ?? own.runBranch
-  return { ...own, runMs: (isNewBranch ? 0 : own.runMs ?? 0) + spent, ...(runBranch ? { runBranch } : {}) }
-}
-
-/** 看到派工在跑時，離上次記下「最後看到在跑」超過這麼久才再記一次，免得每次重新整理都寫。 */
-export const RUN_SEEN_STEP_MS = 60_000
-
-/**
- * 這次派工現在這段在跑的時段：從 from 起，最多算到 until（最後看到它在跑＋grace）：
- * 工作桌關著時結束的、或 Agent 已經不在清單裡的，不會把之後的時間算進去。停下來等人時沒有這段。
- * 存進去的累計（stretchMs）與畫面上的數字（runOf → totalRunMs）都用它，兩邊封頂一樣。
- */
-function stretchSpan(r: JobRecord, grace: number): { from: number; until: number } | null {
-  if (r.paused) return null
-  const from = r.runAt ?? r.startedAt
-  return { from, until: Math.max(r.seenAt ?? from, from) + grace }
-}
-
-/** 這段時段算到 now 是幾毫秒（不超過 until）。 */
-export const spanMs = (span: { from: number; until: number }, now: number): number => Math.max(0, Math.min(now, span.until) - span.from)
-
-/** 這次派工現在這段在跑的時間，算到 now（見 stretchSpan）；停下來等人時是 0。 */
-function stretchMs(r: JobRecord, now: number, grace: number): number {
-  const span = stretchSpan(r, grace)
-  return span ? spanMs(span, now) : 0
-}
-
-/** 這次派工總共在跑多久：之前收起來的幾段，加上現在這段。 */
-export const dispatchRunMs = (r: JobRecord, now: number, grace: number): number => (r.busyMs ?? 0) + stretchMs(r, now, grace)
-
-/**
- * 重新整理看到這次派工的樣子：在跑（busy）或停下來等人（waiting）。回傳新的一份；沒變就回原本那份（呼叫端用 === 判斷要不要寫）。
- * 在跑：剛從等人回來就從現在重新起算，否則離上次記下超過 RUN_SEEN_STEP_MS 才更新「最後看到在跑」。
- * 等人：把現在這段收進 busyMs 並暫停，等的時間不算。
- */
-export function observeRun(r: JobRecord, seen: 'busy' | 'waiting', now: number, grace: number): JobRecord {
-  if (seen === 'busy') {
-    if (r.paused) {
-      const { paused: _, ...rest } = r
-      return { ...rest, runAt: now, seenAt: now }
-    }
-    return now - (r.seenAt ?? r.runAt ?? r.startedAt) >= RUN_SEEN_STEP_MS ? { ...r, seenAt: now } : r
-  }
-  return r.paused ? r : { ...r, busyMs: dispatchRunMs(r, now, grace), paused: true }
-}
-
-/** 畫面用的總執行（見 runOf）。 */
-export type RunShown = { runMs: number; runFrom?: number; runUntil?: number }
-
-/**
- * 畫面用的總執行：runMs 是這條分支已結束的，加上還沒結束那次派工收起來的幾段；runFrom～runUntil 是它現在這段在跑的時段
- * （停下等人、已結束就沒有），畫面上再加 min(now, runUntil) - runFrom，跟著每秒的重畫動，封頂跟存進去的一樣（見 stretchSpan）。
- */
-export function runOf(jobs: RootJobs | undefined, branch: string | undefined, grace: number): RunShown {
-  const done = runMsOn(jobs, branch)
-  const last = jobs?.last
-  if (!last || last.ended) return { runMs: done }
-  const span = stretchSpan(last, grace)
-  return { runMs: done + (last.busyMs ?? 0), ...(span ? { runFrom: span.from, runUntil: span.until } : {}) }
-}
-
-/** 這條分支已結束的總執行毫秒：記的是別條分支（同一個資料夾換了分支）就是 0。 */
-export function runMsOn(jobs: RootJobs | undefined, branch: string | undefined): number {
-  if (!jobs?.runMs) return 0
-  return jobs.runBranch && branch && jobs.runBranch !== branch ? 0 : jobs.runMs
-}
-export type RawAgent = { id?: string; name?: string; sessionId?: string; cwd?: string; kind?: string; state?: string; status?: string; waitingFor?: string; startedAt?: number; pid?: number | null }
-
 export { KIND_LABEL }
-
-/** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
-export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', cardTemplate: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true, chainQuotaStop: DEFAULT_CHAIN_QUOTA_STOP }
-  if (!text) return out
-  try {
-    const d = JSON.parse(text.replace(/^﻿/, ''))
-    out.model = typeof d?.model === 'string' ? d.model.trim() : ''
-    out.effort = typeof d?.effort === 'string' ? d.effort.trim() : ''
-    const sync = d?.sync?.claude
-    out.sync = { model: typeof sync?.model === 'string' ? sync.model.trim() : '', effort: typeof sync?.effort === 'string' ? sync.effort.trim() : '', fresh: d?.sync?.session === 'fresh' || (d?.sync?.session === undefined && !!(typeof sync?.model === 'string' && sync.model.trim())) }
-    if (d?.projects && typeof d.projects === 'object') for (const [root, v] of Object.entries<any>(d.projects)) {
-      out.projects[normalizeRoot(root)] = { ...(typeof v?.model === 'string' ? { model: v.model.trim() } : {}), ...(typeof v?.effort === 'string' ? { effort: v.effort.trim() } : {}), ...(strList(v?.rules).length ? { rules: strList(v.rules) } : {}) }
-    }
-    out.kinds = parseKinds(d?.kinds)
-    out.user = str(d?.user) || DEFAULT_USER
-    out.rules = strList(d?.rules)
-    out.review = { high: str(d?.review?.high) || DEFAULT_REVIEW.high, security: str(d?.review?.security) || DEFAULT_REVIEW.security, categories: str(d?.review?.categories) || DEFAULT_REVIEW.categories, template: str(d?.review?.template), preflight: str(d?.review?.preflight), pitfalls: str(d?.review?.pitfalls), preflightMinFiles: Number.isInteger(d?.review?.preflightMinFiles) && d.review.preflightMinFiles > 0 ? d.review.preflightMinFiles : 0, combineSecurity: d?.review?.combineSecurity === true }
-    if (Array.isArray(d?.risk?.high)) for (const r of d.risk.high) {
-      // 寫錯的正規式略過，不讓整份設定失效。
-      try { if (str(r?.pattern) && str(r?.label)) out.riskHigh.push([new RegExp(str(r.pattern)), str(r.label)]) } catch { /* 略過 */ }
-    }
-    if (d?.checkServices && typeof d.checkServices === 'object') for (const [cmd, v] of Object.entries<unknown>(d.checkServices)) {
-      if (str(cmd) && strList(v).length) out.checkServices[str(cmd)] = strList(v)
-    }
-    out.composeDir = str(d?.composeDir)
-    out.cardBase = str(d?.card?.base)
-    out.cardTemplate = str(d?.card?.template)
-    out.prOpen = str(d?.pr?.open)
-    out.updateCheck = d?.updateCheck === false || str(d?.updateCheck).toLowerCase() === 'off' ? 'off' : ''
-    // 非負整數照用（0＝不限）；負數、小數、字串都當沒寫。
-    out.maxAgents = Number.isInteger(d?.maxAgents) && d.maxAgents >= 0 ? d.maxAgents : DEFAULT_MAX_AGENTS
-    // 字串 "true"、數字 1 都算沒開：自動推送會寫遠端，只認明確的 true。
-    out.autoPr = d?.autoPr === true
-    // 同 autoPr：只認明確的 true。
-    out.mcp = d?.mcp === true
-    // 反過來：預設開，只認明確的 false 關掉。
-    out.stopDone = d?.stopDone !== false
-    out.chainQuotaStop = parseQuotaStop(d?.chainQuotaStop)
-  } catch { /* 壞掉的設定檔當作沒有。 */ }
-  return out
-}
-
-/** chainQuotaStop：整數 1–100 照用；`"off"`（不分大小寫）或 false 關掉（0）；其他（沒寫、非數字、小數、超出範圍）用預設。 */
-function parseQuotaStop(v: unknown): number {
-  if (v === false || (typeof v === 'string' && v.trim().toLowerCase() === 'off')) return 0
-  return Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100 ? v as number : DEFAULT_CHAIN_QUOTA_STOP
-}
-
-/** kinds 只收 MODEL_KINDS 的鍵、值是物件的；欄位不是字串或是空白就當沒寫。其他的（sync、不認得的鍵、型別錯的值）略過。 */
-function parseKinds(v: unknown): DispatchSettings['kinds'] {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
-  const out: DispatchSettings['kinds'] = {}
-  for (const k of MODEL_KINDS) {
-    const e = (v as Record<string, unknown>)[k]
-    if (!e || typeof e !== 'object' || Array.isArray(e)) continue
-    const { model, effort } = e as Record<string, unknown>
-    const pick = { ...(str(model) ? { model: str(model) } : {}), ...(str(effort) ? { effort: str(effort) } : {}) }
-    if (pick.model || pick.effort) out[k] = pick
-  }
-  return out
-}
-
-export const normalizeRoot = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '')
-
-/** 審查與會改程式的派工要讀的常犯錯誤清單：專案 dispatch.json 的 review.pitfalls（展開 ~）優先；空白用 fallback（plugin 選項 → 專案資料夾 review-pitfalls.md）。 */
-export function pitfallsFor(settings: DispatchSettings, fallback: string, home: string): string {
-  const own = settings.review.pitfalls ?? ''
-  return own ? expandHome(own, home) : fallback
-}
-
-/** 這件任務這種派工用的 model／effort：種類（kinds）> 任務覆寫 > 全域；同步另有自己的模型，解衝突照 continue（接任務的 session）。 */
-export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind): { model: string; effort: string; fresh: boolean } {
-  const own = settings.projects[normalizeRoot(root)] ?? {}
-  const base = { model: own.model ?? settings.model, effort: own.effort ?? settings.effort }
-  if (kind === 'sync') return { model: settings.sync.model || base.model, effort: settings.sync.effort || base.effort, fresh: settings.sync.fresh }
-  const byKind = settings.kinds[kind === 'catchup' ? 'continue' : kind] ?? {}
-  // 推送只要分支與卡片，開新對話就夠了，不接任務那個越來越長的 session。
-  return { model: byKind.model ?? base.model, effort: byKind.effort ?? base.effort, fresh: kind === 'review' || kind === 'publish' }
-}
-
-export function launchName(now: number, seq: number): string {
-  return `desk-${now.toString(36)}-${seq.toString(36)}`
-}
-
-/** 名字是不是 launchName() 取的（desk-<時間>-<序號>）：工作桌派出去的背景 agent。 */
-export const isDeskLaunch = (name: string): boolean => /^desk-[0-9a-z]+-[0-9a-z]+$/.test(name)
-
-/**
- * 在跑的工作桌 Agent 有幾個：背景、名字是 launchName() 取的、status busy；不看根目錄（別的專案、別的對話派的也算）。
- * 停在提問或等權限批准（waiting）、idle、blocked、stopped 都不算。
- */
-export function runningDeskAgents(list: readonly RawAgent[]): number {
-  return list.filter(a => a.kind === 'background' && isDeskLaunch(String(a.name ?? '')) && String(a.status ?? '').toLowerCase() === 'busy').length
-}
 
 /** 組 `claude --bg` 的參數；提示詞一定是最後一個。沒開 `mcp` 就加 `--strict-mcp-config`，背景 Agent 不拉任何 MCP 程序。 */
 export function launchArgs(prompt: string, opts: { model?: string; effort?: string; sessionId?: string; launchName: string; mcp?: boolean }): string[] {
@@ -348,13 +119,6 @@ export function liveHolds(holds: Readonly<Record<string, UntrustedHold>>, cases:
   const startedAfter = (path: string, at: number) => cases.some(c => c.statusPath === path && (c.agent?.startedAt ?? 0) > at)
   const kept = Object.entries(holds).filter(([path, h]) => !startedAfter(path, h.at))
   return kept.length === Object.keys(holds).length ? holds : Object.fromEntries(kept)
-}
-
-/** 啟動後清單裡唯一一個叫這個名字、對得上 token、且啟動前不存在的背景 agent。 */
-export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: string, token: string): RawAgent | null {
-  const seen = new Set(before.map(a => `${a.id ?? ''}|${a.sessionId ?? ''}`))
-  const hits = after.filter(a => a.kind === 'background' && a.name === name && (a.id === token || a.sessionId === token) && !seen.has(`${a.id ?? ''}|${a.sessionId ?? ''}`) && typeof a.sessionId === 'string' && UUID.test(a.sessionId))
-  return hits.length === 1 ? hits[0]! : null
 }
 
 export type FixReason = { /** medium：你在「等你」對審查 MEDIUM 題選了修掉。 */ from: 'check' | 'review' | 'medium'; round: number; tail?: string[]; /** 審查修正接在資安審查之後：依 SECURITY.md 修，不是 REVIEW.md。你選修掉 MEDIUM（from medium）時是這次流程跑過資安審查：兩份都看。 */ security?: boolean }

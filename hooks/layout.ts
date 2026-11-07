@@ -1,6 +1,6 @@
 // 面板版面的純計算：自己換行（中文兩格寬）、按鈕排成幾列、捲動視窗落在哪幾列。
 // 面板分 header／content／footer：header 與 footer 常駐，只有 content 捲動，所以 content 必須是一列一個元素、列數算得出來。
-import { displayWidth } from './model'
+import { displayWidth } from './text'
 
 /** 依顯示寬度換行：英數在空白處斷，中文逐字斷；保證每列不超過 width。 */
 export function wrapText(text: string, width: number): string[] {

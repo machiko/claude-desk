@@ -1,6 +1,6 @@
 // 狀態摘要：面板只放一句短話。先用規則（第一句、去括號、去 hash 與時間）立刻給一句，
 // 再請 haiku 濃縮成 20 字內的一句，依原文快取。純函式在這裡，呼叫在 register.tsx。
-import { displayWidth, fit, plain } from './model'
+import { displayWidth, fit, plain } from './text'
 import { splitClauses } from './card'
 
 export const SUMMARY_MAX = 40

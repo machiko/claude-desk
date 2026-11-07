@@ -1,15 +1,17 @@
 // 摘要列：輸入框上方一行。左邊是面板上選的那件（沒選就是進行中的那件，再沒有就是現在該看的那件）與它的六段，右邊是在等你的那件。
 // 版面先算好（純函式，可測），再畫；放不下時依序：截短那句話 → 段名縮成字形 → 拿掉備註 → 任務名截斷 → 拿掉右邊。
-import type { Case, Snapshot, StageStatus } from '../types'
-import { displayWidth, fit, focusCase, liveCases, NEEDS_YOU, summary } from './model'
+import type { Case, Snapshot } from '../types'
+import { focusCase, liveCases, NEEDS_YOU, summary } from './model'
+import { displayWidth, fit } from './text'
 import { stageParts } from './pipeline'
-import { COLOR, STATE, WORD } from './theme'
+import { COLOR, STAGE_COLOR, STATE, WORD } from './theme'
 import { dueReminders, reminderWhen } from './extras'
 import { turnOf } from './turn'
 import type { TurnCtx } from './turn'
 import { noticeText } from './update'
 
-export const STAGE_COLOR: Record<StageStatus, string> = { done: COLOR.dim, active: COLOR.running, wait: COLOR.attention, fail: COLOR.bad, todo: COLOR.faint, na: COLOR.faint }
+// 六段的顏色搬到 theme.ts；呼叫端與測試照舊從這裡匯入也行。
+export { STAGE_COLOR } from './theme'
 
 export type BandPart = { text: string; color: string; bold?: boolean }
 /** notice：desk 有新版本（自動檢查查到的），放在面板按鈕左邊；太窄才拿掉。 */

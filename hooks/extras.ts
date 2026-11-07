@@ -1,6 +1,6 @@
 // 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態。不碰磁碟。
 import type { Case, HistoryEntry } from '../types'
-import { plain, screenLines } from './model'
+import { plain, screenLines } from './text'
 
 /** 二次確認：同一個動作 3 秒內按第二次才執行。 */
 export const CONFIRM_MS = 3000
