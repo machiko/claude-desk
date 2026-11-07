@@ -79,6 +79,11 @@ let launchSeq = 0
 /** 這個對話最近一次請求的模型與 effort（turn.step 帶的）；重新載入後要等下一次請求。 */
 let turnModel: { model?: string; effort?: string } = {}
 let forcePr = false
+/**
+ * 根目錄 → 這個對話已經為它強制重查過 PR 的推送派工（啟動名）。PR 快取是每個對話各一份，
+ * 派工紀錄的 ended 卻是所有對話共用的：別的對話先記下結束，這個對話照樣要為那次推送重查一次。
+ */
+const publishRequeried = new Map<string, string>()
 /** 登錄表與每張卡片的路徑（上一輪讀到的）：對話改到它們就馬上重讀。 */
 let knownPaths: string[] = []
 /** 上一輪重新整理讀到的背景 agent 清單；派工時即時問不到 claude agents 就用它算名額。 */
@@ -144,7 +149,13 @@ export async function refresh($: any, options: PluginOptions) {
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
       const probe = await gitProbe($, base.root)
-      const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr) : undefined
+      // 推送（開 PR、push）的 Agent 結束了（記下了，或清單看得出來）、這個對話還沒為它重查過：這一輪強制重查 PR，
+      // 不沿用推送前快取的「沒有 PR」或舊的 CI；重查過就記在這個對話，下一輪回到快取。
+      const rootKey = normalizeRoot(base.root)
+      const publishName = !tutorial && last?.kind === 'publish' ? last.launchName : undefined
+      const publishEnded = !!publishName && publishRequeried.get(rootKey) !== publishName && (!!last?.ended || !!endedHow(list, publishName))
+      const pr = tutorial ? (tutorial.merged ? { id: 1, state: 'MERGED' as const, ci: 'none' as const, dest: TUTORIAL_RELEASE } : undefined) : probe.git ? await prProbe($, options, base.root, probe.git.branch, now, forcePr || publishEnded) : undefined
+      if (publishName && publishEnded && probe.git) publishRequeried.set(rootKey, publishName)
       const run = chains[normalizeRoot(base.root)]
       const stale = movedSince(run?.judgedHead, probe.git)
       // 卡片上有無阻擋的審查結論，但沒有任何 desk 派的審查判過它（沒有流程紀錄，或流程只派過實作）：自審。
@@ -662,6 +673,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     active = false
     clearProbeCaches()
+    publishRequeried.clear()
     cardParseCache.clear()
     reviewTextCache.clear()
     setTutorial(null)
