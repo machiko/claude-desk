@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_B, REGISTRY, result, text, flat, feedLog, pressHotkey } from './fixture'
+import { screen, startsAgents } from './world'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { needsPr, needsPush, stageActions } from '../hooks/turn'
@@ -33,14 +34,6 @@ function recordExec(data: any) {
 }
 const wroteRemote = (calls: any[]) => calls.some(e => (e.argv[0] === 'git' && e.argv.includes('push')) || (e.argv[0] === 'gh' && e.argv.includes('create')))
 
-/** 派工會啟動一個背景 Agent：清單裡多一個同名、在跑的 Agent（照 `claude --bg` 的回應）。 */
-function startsAgents(data: any, clock: any) {
-  data.launch = async (e: any) => {
-    const id = `e000000${data.launches.length}`
-    data.agents = [{ id, kind: 'background', cwd: BETA, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
-    return result(0, id)
-  }
-}
 const promptOf = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
 
 async function mount($: any) {
@@ -71,8 +64,6 @@ test('push buttons: an untracked branch already pushed to origin offers no push'
   expect(push).toBe(false)
   await ui.unmount()
 })
-
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 沒設追蹤分支、origin 上有同名分支：git 列照它算（與遠端一致、領先 n），不再說「未 push（沒有遠端分支）」；origin 沒有才說。 */
 test('push buttons: the git line of an untracked branch that origin has does not say unpushed', async ($, on) => {
@@ -224,7 +215,7 @@ test('push buttons: open-PR dispatches a publish agent', async ($, on) => {
   const log = feedLog(on)
   onlyBeta(data, { upstream: false }, [])
   judgedAt(data, 'c2')
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
   const calls = recordExec(data)
 
   const ui = await mount($)
@@ -264,7 +255,7 @@ test('push buttons: push dispatches a publish agent that only pushes', async ($,
   const { data, clock } = fixture(on)
   onlyBeta(data, { ahead: 2, changed: 3 })
   judgedAt(data, 'c2')
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
   const calls = recordExec(data)
 
   const ui = await mount($)
@@ -301,7 +292,7 @@ test('push buttons: after publish the stage is merge', async ($, on) => {
   // 這個對話自己的流程（會自動往下走的那種），而且還沒標過關：推送結束後流程也不能接著跑
   data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b', judgedHead: 'c2', judgedBranch: 'feature/b' } }
   data.store.trustedVerify = { [CARD_B]: 'npm test' }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
   const step = async () => { await clock.advance(2500); await clock.settle() }
 
   const ui = await mount($)
@@ -361,7 +352,7 @@ test('push buttons: open-PR on a Bitbucket origin uses bb_post and loads MCP for
   const { data, clock } = fixture(on)
   onlyBeta(data, { upstream: false, remote: 'git@bitbucket.org:acme/shop.git' }, [])
   judgedAt(data, 'c2')
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
 
   const ui = await mount($)
   await ui.press({ key: `${PREFIX}open-pr` })
@@ -386,7 +377,7 @@ test('按 n 兩次才派 Agent 開 PR，輪到你與按鈕看得到 n', async ($
   const { data, clock } = fixture(on)
   onlyBeta(data, { upstream: false }, [])
   judgedAt(data, 'c2')
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
   const calls = recordExec(data)
   const ui = await mount($)
   expect(await screen(ui)).toContain(flat('▶ 輪到你  n 開 PR（按兩次'))
@@ -409,7 +400,7 @@ test('按 n 兩次才派 Agent push，超過三秒只重新待確認', async ($,
   const { data, clock } = fixture(on)
   onlyBeta(data, { ahead: 1 })
   judgedAt(data, 'c2')
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
   const ui = await mount($)
   expect(await screen(ui)).toContain(flat('n 派 Agent push'))
   await pressHotkey(ui, 'n')

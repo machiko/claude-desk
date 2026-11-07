@@ -1,11 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, REGISTRY, flat, text } from './fixture'
+import { screen } from './world'
 import { PREFIX, ROOT, alphaOnly, helpers, sh } from './alpha-chain'
 
 // 完成檢查的核准改成面板按兩次 v／g：第一次在檢查列列出指令全文，第二次核准並執行（或派工）；全程不跳對話框。
 const VERIFY = `${PREFIX}verify`
 const GO = `${PREFIX}continue`
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 按鈕這一段沒列（平常只列現在這一段能做的）就先展開全部動作再按。 */
 async function press(ui: any, clock: any, key: string) {
   if (!(await ui.find({ key }))) await ui.press({ key: 'more' })

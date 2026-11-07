@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
+import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGISTRY, text, flat } from './fixture'
+import { screen, busyAgent as busy, startsAgents } from './world'
 import { DEFAULT_CHAIN_QUOTA_STOP, parseSettings } from '../hooks/dispatch'
 import { nextStep } from '../hooks/chain'
 import { quotaHold, resetText } from '../hooks/model'
@@ -18,7 +19,6 @@ const REASON = `5 小時額度剩 25%，低於門檻 30%，${resetText(RESETS_AT
 /** 解衝突被擋下：合併段沒有 g 可按，結尾改成叫你在對話處理。 */
 const CATCHUP_REASON = `5 小時額度剩 25%，低於門檻 30%，${resetText(RESETS_AT, NOW)}後在對話合併基準分支、解衝突`
 
-const busy = (name: string, cwd: string) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 })
 const FULL = () => [busy('desk-m0-0', '/home/u/other/one'), busy('desk-m0-1', '/home/u/other/two'), busy('desk-m0-2', '/home/u/other/three')]
 const setGate = (data: any, card: string, gate: string) => { data.files[card] = data.files[card]!.replace(/- 關卡：.*$/m, `- 關卡：${gate}`) }
 const registry = (rows: [string, string][]) => `## 任務\n| Project | path |\n| --- | --- |\n${rows.map(([n, p]) => `| ${n} | \`${p}\` |`).join('\n')}`
@@ -30,15 +30,6 @@ function quota(data: any, used: number) {
   data.usage = { ...data.usage, rateLimits: [{ kind: 'five_hour', percentUsed: used, resetsAt: RESETS_AT }, { kind: 'seven_day', percentUsed: 95, resetsAt: new Date(NOW + 3 * 86_400_000).toISOString() }] }
 }
 
-function startsAgents(data: any, clock: any) {
-  data.launch = async (e: any) => {
-    const id = `e000000${data.launches.length}`
-    const cwd = String(e.init?.cwd ?? '')
-    data.agents = [...data.agents.filter((a: any) => a.cwd !== cwd), { ...busy(e.argv[3], cwd), id, sessionId: `${id}-0000-4000-8000-000000000000`, startedAt: clock.now() }]
-    return result(0, id)
-  }
-}
-
 function capture(on: any) {
   const notified: string[] = []
   on('ui.notify', (_: any, e: any) => { notified.push(e.text); return { value: { isSent: true as const, channel: 'terminal_bell' as const } } })
@@ -48,7 +39,6 @@ function capture(on: any) {
 function helpers($: any, data: any, clock: any) {
   const step = async () => { await clock.advance(2500); await clock.settle() }
   const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
-  const screen = async (ui: any) => flat(text(await ui.drawn()))
   const checks = () => data.processCalls.filter((c: any) => c.argv[0] === 'sh').length
   return { step, refresh, screen, checks }
 }
@@ -63,7 +53,7 @@ function betaImplemented(data: any, clock: any) {
   data.store.verifies = { [CARD_B]: ok('c2') }
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0 } }
   data.store.jobs = { [BETA]: lastJob('continue', { fresh: false }) }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
 }
 
 /** AC-1：要派審查、5 小時剩 25%：不派，流程暫停；動態、toast、系統通知各一次；面板「輪到你」寫同一句。 */
@@ -152,7 +142,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b' } }
   data.store.jobs = { [BETA]: lastJob('review') }
   data.files[PROJECT_SETTINGS] = JSON.stringify({ autoPr: true })
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   quota(data, 75)
   const h = helpers($, data, clock)
 
@@ -179,7 +169,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   data.store.verifies = { [CARD_B]: ok('h1') }
   data.store.jobs = { [BETA]: lastJob('review', { handled: true }) }
   data.store.trustedVerify = { [CARD_B]: 'npm test' }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   quota(data, 75)
   const h = helpers($, data, clock)
 
@@ -207,7 +197,7 @@ test('test_quota_stop_after_review_still_archives_and_records_verdict', async ($
   data.store.verifies = { [CARD_B]: ok('c2') }
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b' } }
   data.store.jobs = { [BETA]: lastJob('review') }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   quota(data, 75)
   const h = helpers($, data, clock)
 
@@ -239,7 +229,7 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold', async
   data.store.chains = { [ALPHA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
   data.store.jobs = { [ALPHA]: lastJob('review') }
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   const h = helpers($, data, clock)
 
   // 名額滿：流程要派的修正排第 1 位；你手動按兩次 g 派 Gamma 排第 2 位
@@ -278,7 +268,7 @@ test('test_dropped_queued_fix_then_g_counts_one_round', async ($, on) => {
   data.store.chains = { [ALPHA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
   data.store.jobs = { [ALPHA]: lastJob('review') }
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   const h = helpers($, data, clock)
 
   // 名額滿：修正排進隊伍，還沒派出，不算
@@ -314,7 +304,7 @@ test('test_manual_dispatch_ignores_quota_threshold', async ($, on) => {
   data.git[GAMMA] = { branch: 'feature/gamma', head: 'g1' }
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
   data.store.verifies = { [CARD_B]: ok('b1') }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   quota(data, 75)
   const h = helpers($, data, clock)
 
@@ -413,7 +403,7 @@ function betaSecurityPending(data: any, clock: any) {
   data.store.verifies = { [CARD_B]: ok('c2') }
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, reviewHead: 'c2', reviewBranch: 'feature/b' } }
   data.store.jobs = { [BETA]: lastJob('review') }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
 }
 
 /** AC-1（審查 HIGH）：要派資安審查時被擋下：不派、不算過關（沒有高風險確認可略過），六段停在審查段寫原因，「輪到你」寫同一句、可按 g，沒有開 PR。 */
@@ -453,7 +443,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
   data.store.chains = { [ALPHA]: { owner: ME, startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/alpha', judgedHead: 'h1', judgedBranch: 'feature/alpha' } }
   data.store.jobs = { [ALPHA]: { sessionId: 'a0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: ME, handled: true } } }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   quota(data, 75)
   const h = helpers($, data, clock)
 
@@ -487,7 +477,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   data.store.chains = { [ALPHA]: { owner: 'other-session', startedAt: 0, round: 1, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
   data.store.jobs = { [ALPHA]: { ...lastJob('review'), last: { ...lastJob('review').last, owner: 'other-session' } } }
   const before = JSON.parse(JSON.stringify((data.store.chains as any)[ALPHA]))
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   quota(data, 75)
   const h = helpers($, data, clock)
 
@@ -583,7 +573,7 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — que
   data.store.jobs = { [BETA]: lastJob('review') }
   data.files[PROJECT_SETTINGS] = JSON.stringify({ autoPr: true })
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   const h = helpers($, data, clock)
 
   await h.refresh()
@@ -619,7 +609,7 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — que
   data.store.jobs = { [BETA]: lastJob('review', { handled: true }) }
   data.store.trustedVerify = { [CARD_B]: 'npm test' }
   data.agents = FULL()
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
   const h = helpers($, data, clock)
 
   for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }

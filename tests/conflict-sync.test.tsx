@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, feedLog, PANE, BAND, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
+import { screen, startsAgents } from './world'
 import { buildPrompt, NO_PUSH_RULE, PUSH_RULE } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { catchupHold, parseMergeTree } from '../hooks/catchup'
@@ -37,18 +38,9 @@ function conflictingBeta(data: any, clock: any) {
   data.files[CARD_B] = card('Beta')
   data.git[BETA] = { branch: 'feature/b', head: 'h1', remote: 'git@github.com:acme/shop.git', releases: '', conflicts: ['src/a.ts', 'src/b.ts'] }
   passedAt(data, BETA, CARD_B, 'h1')
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
 }
 
-/** 派工會啟動一個背景 Agent：清單裡多一個同名、在跑的 Agent（照 `claude --bg` 的回應）。 */
-function startsAgents(data: any, clock: any) {
-  data.launch = async (e: any) => {
-    const id = `e000000${data.launches.length}`
-    const cwd = String(e.init?.cwd ?? '')
-    data.agents = [...data.agents.filter((a: any) => a.cwd !== cwd), { id, kind: 'background', cwd, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
-    return result(0, id)
-  }
-}
 const finish = (data: any, root: string) => { data.agents = data.agents.map((a: any) => a.cwd === root ? { ...a, status: 'idle', state: 'done' } : a) }
 const promptOf = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
 
@@ -73,7 +65,6 @@ async function bandText($: any): Promise<string> {
   await band.unmount()
   return drawn
 }
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 async function cardStages(ui: any): Promise<string> {
   const t = await ui.find({ type: 'Text', text: /^[●◉◎◆✕○·] 規格/ })
   return String(t?.text ?? '')
@@ -208,7 +199,7 @@ test('test_conflict_dispatch_is_held_or_queued_when_chain_off_risky_dirty_or_ful
   // 別處已有 3 個工作桌 Agent 在跑（上限 3）
   const others = [1, 2, 3].map(i => ({ id: `f000000${i}`, kind: 'background', cwd: `/home/u/wt/other${i}`, name: `desk-zz-${i}`, sessionId: `f000000${i}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 }))
   data.agents = others
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
 
   await refresh($, clock, 2)
   const ui = await $.ui.mount(PANE(100))

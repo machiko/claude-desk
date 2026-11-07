@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, feedLog, BAND, PANE, CARD_A, CARD_C, REGISTRY, result, text, flat, pressHotkey } from './fixture'
+import { screen } from './world'
 import { ROOT, alphaOnly, helpers } from './alpha-chain'
 import { isUntrustedLaunch, untrustedSteps } from '../hooks/dispatch'
 import { approveText, buildCase } from '../hooks/model'
@@ -13,7 +14,6 @@ const STEPS = untrustedSteps(ROOT, 'g')
 const STEPS_WITH_NAME = `Alpha：${STEPS}`
 /** 多行輸出，信任那行不是最後一行。 */
 const UNTRUSTED_OUTPUT = 'Starting background agent…\nError: workspace not trusted\nRun claude in this folder first.'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 只看 Alpha 與 Gamma（閒置、沒有檢查指令）：另一件從頭到尾不受 Alpha 的信任問題影響。 */
 function alphaAndGamma(data: any, clock: any) {

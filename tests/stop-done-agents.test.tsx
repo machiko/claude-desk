@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, REGISTRY, NOW, result, text, flat, feedLog } from './fixture'
+import { screen } from './world'
 import { setFields } from '../hooks/tutorial'
 import { launchName } from '../hooks/dispatch'
 import { AGENT_STOPPED } from '../hooks/chain'
@@ -15,7 +16,6 @@ const OLD_AT = NOW - 300 * 60_000
 const LATEST = launchName(LAST_AT, 1)
 const LEFTOVER = launchName(OLD_AT, 2)
 const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 const job = (name: string, at: number, extra: Record<string, unknown> = {}) => ({ sessionId: SID, last: { launchName: name, nativeId: 'x', sessionId: SID, kind: 'sync', startedAt: at, fresh: false, ...extra } })
 

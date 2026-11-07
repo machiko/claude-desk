@@ -1,12 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, text, PANE, CARD_B, REGISTRY, flat } from './fixture'
+import { screen } from './world'
 import { COLOR } from '../hooks/theme'
 
 const BETA = '/home/u/wt/beta'
 const REVIEW = `${BETA}/.task/REVIEW.md`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
 
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 內容是這段字的 Text（「前置」列的內容那一格）。 */
 const cell = async (ui: any, s: string) => (await ui.findAll({ type: 'Text' })).find((n: any) => String(n.text ?? '') === s)
 

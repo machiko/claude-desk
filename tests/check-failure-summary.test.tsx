@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, REGISTRY, result, text, flat } from './fixture'
+import { screen } from './world'
 import { hhmm } from '../hooks/model'
 import type { Verify } from '../types'
 
@@ -41,7 +42,6 @@ async function mount($: any, clock: any) {
 }
 
 /** 去掉空白與現在卡的邊條，前後列接在一起看。 */
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** AC-1 */
 test('now card shows failure summary instead of raw tail', async ($, on) => {

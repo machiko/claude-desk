@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
+import { screen, busyAgent as busy } from './world'
 import { appendTo, setFields, tutorialPaths, TUTORIAL_INTRO } from '../hooks/tutorial'
 import { afterSpecRefusal } from '../hooks/dispatch'
 import { specOkCards, specOkMarks, specOkMatches, specOkTarget, specOkTargets, specOkVerdict } from '../hooks/touch'
@@ -12,8 +13,6 @@ const SPEC_GATE = '- 關卡：spec：待確認規格（AC-1～AC-2）'
 const CONFIRMED = '規格已確認（AC-1～AC-2），可派實作'
 const SPEC_OK = (card: string) => `case-${card}-spec-ok`
 const SLUG: Record<string, string> = { alpha: CARD_A, beta: CARD_B, gamma: CARD_C }
-const screen = async (ui: any) => flat(text(await ui.drawn()))
-const busy = (name: string, cwd: string) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 })
 const turnDone = (turnId = 't1') => ({ answer: '', durationMs: 4000, isAborted: false, turnId, reason: 'answer' }) as any
 
 /** 這幾張停在 spec 關卡（有完成檢查、「等你」無、下一步是實作），沒有 Agent 在跑；完成檢查預設都核准過。 */

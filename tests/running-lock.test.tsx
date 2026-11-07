@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, BAND, PANE, CARD_A, CARD_B, NOW, REGISTRY, TRUSTED, result, text, flat } from './fixture'
+import { screen } from './world'
 
 const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
@@ -23,7 +24,6 @@ const LOCKABLE = {
 } as const
 type Lockable = keyof typeof LOCKABLE
 
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 鎖住的動作：不是按鈕，是一段「<原標籤>（執行中，完成後可用）」的文字。 */
 const lockedText = (ui: any, id: Lockable) => ui.find({ type: 'Text', text: `${LOCKABLE[id].label}${LOCKED}` })
 /** 按下去引擎找不到可按的按鈕（只是文字）就丟錯：回 true 代表按不了。 */

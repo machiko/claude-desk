@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat } from './fixture'
+import { screen, busyAgent as busy } from './world'
 import { buildPrompt } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { decisionAnswerOf, picksMediumFix, picksMediumFollowUp } from '../hooks/card'
@@ -14,8 +15,6 @@ const IMPL = 'a0000001-0000-4000-8000-000000000000'
 const ASK = '審查 MEDIUM 1 條（空字串沒處理）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格'
 const AUTO = '工作桌會跟 CRITICAL／HIGH 一起自動派修正'
 const ASK_RULE = '工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
-const busy = (name: string, cwd: string, at = 0) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: at })
 
 /** 卡片：等你清空（或換成指定的題目）、關卡寫成指定的審查結論。 */
 function setCard(data: any, card: string, gate: string, ask = '無') {
