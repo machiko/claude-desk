@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat, feedLog } from './fixture'
+import { screen, busyAgent as busy } from './world'
 import { isDeskLaunch } from '../hooks/dispatch'
 
 // 派工負載：同時在跑的工作桌 Agent 有上限（預設 3），再派的排隊、有空位依序派出；手動與自動流程共用一條隊伍。
@@ -8,8 +9,6 @@ const ALPHA = '/home/u/wt/alpha'
 const GAMMA = '/home/u/wt/gamma'
 const A = `case-${CARD_A}-`
 const C = `case-${CARD_C}-`
-const screen = async (ui: any) => flat(text(await ui.drawn()))
-const busy = (name: string, cwd: string) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 })
 /** 三個在跑的工作桌 Agent，都在不在登錄表的根目錄（別的專案）。 */
 const FULL = () => [busy('desk-m0-0', '/home/u/other/one'), busy('desk-m0-1', '/home/u/other/two'), busy('desk-m0-2', '/home/u/other/three')]
 const runningDesk = (data: any) => data.agents.filter((a: any) => a.kind === 'background' && isDeskLaunch(a.name) && a.status === 'busy').length

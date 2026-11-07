@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_B, REGISTRY, result } from './fixture'
+import { busyAgent as busy, startsAgents } from './world'
 import { resetText } from '../hooks/model'
 import { AGENT_STOPPED, CHAIN_CHANGED, CHAIN_OVERWRITTEN, CHECK_UNAPPROVED } from '../hooks/chain'
 
@@ -10,7 +11,6 @@ const ME = 'fixture-session'
 const RESETS_AT = new Date(NOW + 2.5 * 3_600_000).toISOString()
 const REASON = `5 小時額度剩 25%，低於門檻 30%，${resetText(RESETS_AT, NOW)}後按 g 重開`
 
-const busy = (name: string, cwd: string) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 })
 const registry = (rows: [string, string][]) => `## 任務\n| Project | path |\n| --- | --- |\n${rows.map(([n, p]) => `| ${n} | \`${p}\` |`).join('\n')}`
 const lastJob = (kind: string, extra: object = {}) => ({ sessionId: 'r0000001-0000-4000-8000-000000000000', mark: '', last: { launchName: 'desk-old-0', nativeId: 'r0000001', sessionId: 'r0000001-0000-4000-8000-000000000000', kind, startedAt: 0, fresh: kind === 'review', owner: ME, ended: { how: 'finished' }, ...extra } })
 const ok = (head: string) => ({ command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head })
@@ -19,15 +19,6 @@ const chains = (data: any) => data.store.chains as Record<string, any>
 /** 5 小時額度已用 used%（剩 100 - used）。 */
 function quota(data: any, used: number) {
   data.usage = { ...data.usage, rateLimits: [{ kind: 'five_hour', percentUsed: used, resetsAt: RESETS_AT }] }
-}
-
-function startsAgents(data: any, clock: any) {
-  data.launch = async (e: any) => {
-    const id = `e000000${data.launches.length}`
-    const cwd = String(e.init?.cwd ?? '')
-    data.agents = [...data.agents.filter((a: any) => a.cwd !== cwd), { ...busy(e.argv[3], cwd), id, sessionId: `${id}-0000-4000-8000-000000000000`, startedAt: clock.now() }]
-    return result(0, id)
-  }
 }
 
 function helpers($: any, clock: any) {
@@ -55,7 +46,7 @@ function betaImplemented(data: any, clock: any, chain: object = {}) {
   data.store.verifies = { [CARD_B]: ok('c2') }
   data.store.chains = { [BETA]: { owner: ME, startedAt: 0, round: 0, ...chain } }
   data.store.jobs = { [BETA]: lastJob('continue', { fresh: false }) }
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'others' })
 }
 
 /** 擋在派驗收前、面板已重新整理（看到的是額度暫停與它當時的版本）。 */

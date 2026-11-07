@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, result, text, flat, feedLog } from './fixture'
+import { screen } from './world'
 import { setFields } from '../hooks/tutorial'
 import { hhmm } from '../hooks/model'
 import { launchName } from '../hooks/dispatch'
@@ -9,7 +10,6 @@ const BETA = '/home/u/wt/beta'
 const GAMMA = '/home/u/wt/gamma'
 const PREFIX = `case-${CARD_B}-`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 11:38 派出、停在提問的那個；13:58 又派了一次，已做完。 */
 const STALE_AT = NOW - 140 * 60_000

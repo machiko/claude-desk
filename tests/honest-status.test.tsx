@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_B, REGISTRY, leaves, text, flat } from './fixture'
+import { screen } from './world'
 import { gitLine, parseGitStatus } from '../hooks/extras'
 import { checkStands, pipeline, stageLabel } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
@@ -9,7 +10,6 @@ const BETA = '/home/u/wt/beta'
 const PREFIX = `case-${CARD_B}-`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 2；可合併'
 const UNAPPROVED = '測試指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 只留 Beta 一件：審查過關、沒有 PR、沒有 Agent 在跑；流程是別的對話開的，不會自動派工。 */
 function onlyBeta(data: any, git: Record<string, unknown> = {}) {

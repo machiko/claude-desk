@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_B, REGISTRY, leaves, result, text, flat } from './fixture'
+import { fixture, PANE, CARD_B, REGISTRY, leaves, text, flat } from './fixture'
+import { screen, startsAgents } from './world'
 import { pipeline } from '../hooks/pipeline'
 import { buildCase } from '../hooks/model'
 import { stageActions } from '../hooks/turn'
@@ -36,14 +37,6 @@ function recordExec(data: any) {
 }
 const wroteRemote = (calls: any[]) => calls.some(e => (e.argv[0] === 'git' && e.argv.includes('push')) || (e.argv[0] === 'gh' && e.argv.includes('create')))
 
-/** 派工會啟動一個背景 Agent：清單裡多一個同名、在跑的 Agent（照 `claude --bg` 的回應）。 */
-function startsAgents(data: any, clock: any) {
-  data.launch = async (e: any) => {
-    const id = `e000000${data.launches.length}`
-    data.agents = [{ id, kind: 'background', cwd: BETA, name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
-    return result(0, id)
-  }
-}
 const promptOf = (data: any, i = 0) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
 
 async function mount($: any) {
@@ -55,7 +48,6 @@ const find = (ui: any, id: string) => ui.find({ key: `${PREFIX}${id}` })
 const labelOf = (b: any) => b?.text || b?.props?.label
 /** 帶頭的按鈕：粗體（或已待確認的加框）。 */
 const isLead = (b: any) => b?.props?.variant === 'primary' || leaves(b, 'Text').some((t: any) => t.props?.bold)
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 
 /** 畫面上這件任務的按鈕。 */
 const buttonKeys = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => String(b.key ?? '')).filter((k: string) => k.startsWith(PREFIX)).map((k: string) => k.slice(PREFIX.length))
@@ -82,7 +74,7 @@ test('merge actions: a high-risk case offers open-PR as the lead and dispatches 
   const { data, clock } = fixture(on)
   onlyBeta(data)
   judged(data, RISK)
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
   const calls = recordExec(data)
 
   const ui = await mount($)
@@ -269,7 +261,7 @@ test('merge actions: a normal case confirms without the review-file reminder and
   const { data, clock } = fixture(on)
   onlyBeta(data)
   judged(data)
-  startsAgents(data, clock)
+  startsAgents(data, clock, { keep: 'none', cwd: BETA })
 
   const ui = await mount($)
   const shown = await screen(ui)

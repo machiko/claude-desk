@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, REGISTRY, NOW, result, text, flat, feedLog } from './fixture'
+import { screen } from './world'
 import { alphaOnly, helpers, sh } from './alpha-chain'
 import { launchName } from '../hooks/dispatch'
 
@@ -10,7 +11,6 @@ const BETA = '/home/u/wt/beta'
 const SID = 'bbbbbbbb-0000-4000-8000-000000000000'
 const LAUNCH = launchName(NOW - 60_000, 1)
 const PREFIX = `case-${CARD_B}-`
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 卡片標題列右邊的狀態字（「等回覆」「等批准」…）。 */
 const labelShown = async (ui: any, word: string) => (await ui.findAll({ type: 'Text' })).some((n: any) => String(n.text ?? '').trim() === word)
 
