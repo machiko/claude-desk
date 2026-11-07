@@ -150,7 +150,9 @@ test('a failing gh is retried after a minute, not on every refresh', async ($, o
   await $.command.run({ command: 'desk', args: '' } as any)
   expect(data.ghCalls.length).toBe(1)
   data.gh = null
-  // CI 跑中：下一輪照樣重讀，這次失敗
+  // CI 跑中：60 秒後重讀（refresh-spawns 卡改成每 60 秒查一次，不再每輪都查），這次失敗
+  await tickRefresh()
+  expect(data.ghCalls.length).toBe(1)
   await tickRefresh()
   expect(data.ghCalls.length).toBe(2)
   // 失敗後一分鐘內不再打 gh（CI 跑中也一樣）

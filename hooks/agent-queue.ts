@@ -5,7 +5,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
 import { KIND_LABEL, markRefusal, normalizeRoot, pushRequest, queueRefusal, runningDeskAgents } from './dispatch'
-import type { DispatchKind, QueueEntry, QueueOpts, RawAgent } from './dispatch'
+import type { DispatchKind, DispatchSettings, QueueEntry, QueueOpts, RawAgent } from './dispatch'
 import { paused } from './chain'
 import type { ChainRun, QuotaResume } from './chain'
 import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
@@ -131,10 +131,11 @@ function queuedHold(entry: QueueEntry, c: Case | undefined, s: Snapshot, thresho
 /**
  * 有空位就照順序派出排隊的：用這一輪重新整理的清單與快照算名額，每派出一件就重算，直到滿或隊伍空。
  * 輪到的那件現在不能派就移出並說原因；完成檢查正在跑或在檢查隊伍裡就先跳過、留在原位。回傳有沒有派出任何一件。
+ * preloaded：重新整理這一輪已讀好的設定，有就不再讀 dispatch.json。
  */
-export async function drainAgentQueue($: any, options: PluginOptions, s: Snapshot, list: readonly RawAgent[] | null): Promise<boolean> {
+export async function drainAgentQueue($: any, options: PluginOptions, s: Snapshot, list: readonly RawAgent[] | null, preloaded?: DispatchSettings): Promise<boolean> {
   if (!agentQueue.length) return false
-  const settings = await loadSettings($, options)
+  const settings = await loadSettings($, options, preloaded)
   const max = settings.maxAgents
   // 額度煞車：自動流程排的（含自動推送）輪到時額度低於門檻就不派；你手動排的不看額度。
   const low = quotaLow(s.limits, settings.chainQuotaStop, s.at)

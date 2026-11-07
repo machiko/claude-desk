@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_B, CARD_C, PROJECT_DIR, REGISTRY, result, text, flat, feedLog, pressHotkey } from './fixture'
+import { screen } from './world'
 import { setFields, tutorialPaths, TUTORIAL_TAG } from '../hooks/tutorial'
 import { canArchive } from '../hooks/pipeline'
 import { stageActions } from '../hooks/turn'
@@ -9,7 +10,6 @@ const KEY = `case-${CARD_B}-archive`
 const PASSED = '- 關卡：review：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0；過'
 const PR_MERGED = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [] }]
 const ARCHIVED = `${PROJECT_DIR}/archive/beta-CARD.md`
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 const archiveRuns = (data: any) => data.processCalls.filter((c: any) => c.argv.includes('archive'))
 
 /** 只留 Beta 一件；預設六段全過：已合併、v0.19.0 已打、關卡不是 release。 */

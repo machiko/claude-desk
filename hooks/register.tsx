@@ -6,13 +6,13 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { CARD_CMD, parseRegistry, saysNone } from './card'
 import { agentsByRoot, buildCase, caseNamed, demoCases, endedAlive, endedHow, runSeen, events, feedOnDesk, rawAgents, supersede, asksFor, agentInfo, stateOf, settleMergedAsk, askClearedOnCard, askedOnCardAtEnd, plain, errorText, quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
-import { archiveReview, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLine, loadSettings, logTail, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
+import { agentLog, archiveReview, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLineOf, loadSettings, logTail, logTailOf, mergedProbe, models, prProbe, riskOf, versions, verifyResult, worktreeMark } from './probes'
 import { deploySteps, historyEntries, mediumToDecide, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, addRunTime, buildPrompt, dispatchRunMs, observeRun, runOf, liveHolds, dispatchRefusal, launchName, markRefusal, modelFor, normalizeRoot, pitfallsFor, refusalOf, refusalText, runningDeskAgents, specBlocks, specGapReason } from './dispatch'
-import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, RunShown, UntrustedHold } from './dispatch'
+import type { DispatchKind, DispatchSettings, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs, ReviewOpts, RunShown, UntrustedHold } from './dispatch'
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
 import { MEDIUM_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, reviewedOn, seenHeads, shownStopped, skipsReview } from './chain'
@@ -125,6 +125,8 @@ export async function refresh($: any, options: PluginOptions) {
       tutorial ? null : loadSettings($, options), me($),
     ])
     const cardBase = settings?.cardBase ?? ''
+    /** Agent id → 這一輪讀到的 `claude logs` 整份輸出：最後一句與打開的 log 檢視共用，同一個 Agent 只讀一次。 */
+    const logs = new Map<string, string | null>()
     const cases: Case[] = await Promise.all(rows.map(async row => {
       const [card, stat] = await Promise.all([
         $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
@@ -140,7 +142,11 @@ export async function refresh($: any, options: PluginOptions) {
       // 清單沒挑到時補上最後一次派工還停在權限提示的那個；提問只剩 status waiting（清單已挑到），做完一輪的 blocked 回 null、不補。
       if (!agent && last && !last.answered && !cleared) agent = asksFor(list, last.launchName) ?? undefined
       if (!agent && row.statusPath in launching) agent = { name: '啟動中', state: 'starting', status: 'busy', ...(launchKinds[row.statusPath] ? { kind: launchKinds[row.statusPath] } : {}) }
-      if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) agent = { ...agent, last: await lastLine($, agent.id) }
+      if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) {
+        const log = await agentLog($, agent.id)
+        logs.set(agent.id, log)
+        agent = { ...agent, last: lastLineOf(log) }
+      }
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
       const probe = await gitProbe($, base.root)
@@ -241,7 +247,11 @@ export async function refresh($: any, options: PluginOptions) {
     for (const e of fresh) if (e.tone === 'warning' || e.tone === 'error') { $.ui.toast(e.text, { timeoutMs: 8000 }); notify($, e.text) }
     const openLogs = await read($, logsOpenAtom)
     const logCase = openLogs ? cases.find(c => c.statusPath === openLogs) : undefined
-    if (logCase?.agent?.id) { const lines = await logTail($, logCase.agent.id); await update($, logViewAtom, v => ({ ...v, [logCase.statusPath]: lines })) }
+    if (logCase?.agent?.id) {
+      const id = logCase.agent.id
+      const lines = logs.has(id) ? logTailOf(logs.get(id) ?? null) : await logTail($, id)
+      await update($, logViewAtom, v => ({ ...v, [logCase.statusPath]: lines }))
+    }
     forcePr = false
     statusLine($, cur)
     await spin($, cases.some(c => c.state === 'running'))
@@ -256,8 +266,8 @@ export async function refresh($: any, options: PluginOptions) {
       await noteCardAsks($, list, cases, now)
     }
     // 先補派排隊的（同一輪的清單），流程這一輪新派的排在它們後面：先來先派。派出了就用重算過的快照，流程才看得到它在跑。
-    const drained = !tutorial && await drainAgentQueue($, options, cur, agentsOut && agentsOut.exitCode === 0 ? list : null)
-    await autoChain($, options, drained ? (await read($, snapshot)) ?? cur : cur)
+    const drained = !tutorial && await drainAgentQueue($, options, cur, agentsOut && agentsOut.exitCode === 0 ? list : null, settings ?? undefined)
+    await autoChain($, options, drained ? (await read($, snapshot)) ?? cur : cur, settings ?? undefined)
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
   })().catch(async (error: unknown) => {
@@ -326,9 +336,9 @@ function branchesOf(cases: readonly Case[]): Record<string, string> {
 /**
  * 自動流程（第二到第四段）：只處理這個對話自己派出去、剛結束、還沒處理過的那一次（別的對話開的流程不碰）。
  * 做完實作 → 跑完成檢查 → 綠了派審查 → 有 CRITICAL／HIGH 派修正（MEDIUM 由審查寫進「等你」），
- * 整條分支最多自動修兩輪；停下來就寫進動態並提醒。
+ * 整條分支最多自動修兩輪；停下來就寫進動態並提醒。preloaded：重新整理這一輪已讀好的設定，有就不再讀 dispatch.json。
  */
-async function autoChain($: any, options: PluginOptions, s: Snapshot) {
+async function autoChain($: any, options: PluginOptions, s: Snapshot, preloaded?: DispatchSettings) {
   const mine = await me($)
   const jobs = await loadJobs($)
   const chains = await loadChains($)
@@ -357,9 +367,9 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     }
     // 已經合併：不再自動檢查、審查或修正（之後的 commit 進不了這次合併）。
     const merged = isMerged(c)
-    if (!merged && run && await autoCatchup($, options, c, run, mine, s.at, agentBusy, s.limits)) { acted = true; continue }
+    if (!merged && run && await autoCatchup($, options, c, run, mine, s.at, agentBusy, s.limits, preloaded)) { acted = true; continue }
     if (!merged && run?.passed && c.chain?.stale && run.owner === mine && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !isAgentQueued(c.statusPath) && !(c.statusPath in (await read($, launchingAtom)))) {
-      const rs = await loadSettings($, options)
+      const rs = await loadSettings($, options, preloaded)
       const skip = skipsReview(run, c.git?.branch, await riskOf($, c, rs.riskHigh, rs.cardBase))
       await recheck($, key, run, last, mine, s.at, c.git?.branch)
       await feedPush($, [{ at: s.at, text: recheckFeed(c.name, skip), tone: 'suggestion', card: c.statusPath }])
@@ -390,7 +400,7 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
     const verify = (await read($, verifiesAtom))[c.statusPath]
     const fresh = verify && verify.at >= last.startedAt ? verify : undefined
     const finished: DispatchKind | null = last.kind === 'sync' ? null : last.kind
-    const settings = finished ? await loadSettings($, options) : undefined
+    const settings = finished ? await loadSettings($, options, preloaded) : undefined
     const risk = settings ? await riskOf($, c, settings.riskHigh, settings.cardBase) : undefined
     const stoppedAgent = last.ended?.how === 'stopped'
     // 額度煞車：要派下一個 Agent 前看 5 小時額度。停在提問、題目已在對話處理的那次本來就不派，不看。
@@ -429,11 +439,11 @@ async function autoChain($: any, options: PluginOptions, s: Snapshot) {
       // 免審查、未複審過關：判定的 HEAD 是檢查時的（不記的話過關後馬上算成有新 commit、又重新檢查）；跟現在的 HEAD 一樣才記得住它的分支。
       if (!(await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(step.unreviewed ? { unreviewed: true } : {}), ...(judged ? { judgedHead: judged, judgedBranch: judged === c.git?.head ? c.git?.branch : undefined } : {}) } : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
       // 專案設了 autoPr（高風險照舊停下等你看；發版線、detached HEAD 跟沒開一樣）：重讀一次 PR（不用快取，免得剛開的 PR 沒看到又開一個），決定開 PR、只 push 或不派。
-      const auto = !step.needsHuman && !tutorial && autoPrApplies(c) && (settings ?? await loadSettings($, options)).autoPr
+      const auto = !step.needsHuman && !tutorial && autoPrApplies(c) && (settings ?? await loadSettings($, options, preloaded)).autoPr
       const pr = auto ? await prProbe($, options, c.root, c.git!.branch, s.at, true) : undefined
       const prPlan: AutoPrPlan | undefined = auto ? autoPrPlan({ ...c, pr }) : undefined
       // 額度煞車：要派推送前額度低於門檻就不派（流程照樣是過關），動態與提示寫原因。
-      const low = prPlan && prPlan.kind !== 'skip' ? quotaLow(s.limits, (settings ?? await loadSettings($, options)).chainQuotaStop, s.at) : ''
+      const low = prPlan && prPlan.kind !== 'skip' ? quotaLow(s.limits, (settings ?? await loadSettings($, options, preloaded)).chainQuotaStop, s.at) : ''
       const plan: AutoPrPlan | undefined = low && prPlan ? { kind: 'skip', why: `${low}，沒有自動派推送；要推請按 ${prPlan.kind === 'open' ? '⇡ 開 PR' : '⇡ push'}` } : prPlan
       const words = passWords(c.name, plan, step.skipped ? 'skipped' : step.unreviewed ? 'unreviewed' : 'reviewed')
       const text = step.needsHuman ? `${c.name} ${step.needsHuman}` : words.feed
@@ -502,14 +512,14 @@ async function fixPickedMedium($: any, options: PluginOptions, c: Case, run: Cha
  * 派不出去（不在隊伍裡）就把流程停下寫原因，不然每次重新整理都會再派一次。
  * 回傳有沒有動作（派出、排進隊伍或停下流程）。合併 commit 之後由「審查通過後有新 commit」的重新檢查與審查接手。
  */
-async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRun, mine: string, at: number, agentBusy: boolean, limits: Snapshot['limits']): Promise<boolean> {
+async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRun, mine: string, at: number, agentBusy: boolean, limits: Snapshot['limits'], preloaded?: DispatchSettings): Promise<boolean> {
   const conflict = c.conflict
   if (!conflict || run.owner !== mine || !run.passed || c.chain?.stale || catchupHold(c) || !saysNone(c.ask) || !c.git) return false
   if (agentBusy || c.agent?.asks || c.statusPath in (await read($, verifyingAtom)) || verifyPending(c.statusPath) || isAgentQueued(c.statusPath) || await starting($, c.statusPath)) return false
   if (tutorial || (await worktreeMark($, c.root)).files) return false
   // 額度煞車：額度低於門檻不派解衝突，流程停下寫原因（停過之後 catchupHold 回額度原因，不會再來）。合併段沒有 g 可按，
   // 原因句的結尾改成叫你在對話合併基準分支、解衝突，「輪到你」也照這句。
-  const hold = quotaHold(limits, (await loadSettings($, options)).chainQuotaStop, at, QUOTA_RESTART_CATCHUP)
+  const hold = quotaHold(limits, (await loadSettings($, options, preloaded)).chainQuotaStop, at, QUOTA_RESTART_CATCHUP)
   if (hold) {
     // 快照是這輪重新整理開始時的：同一輪隊伍可能已經把這件停下了（排隊的解衝突被擋），那邊已經通知過，這裡只在真的停下時才說。
     // 看 saveChain 的回傳值：閉包在重套時會再跑，放棄寫入時也不算停下。

@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, NOW, REGISTRY, result, text, flat } from './fixture'
+import { screen } from './world'
 import { alphaOnly, helpers, ROOT } from './alpha-chain'
 
 // 任務總執行時間：每張卡累加 Agent 每次派工與自動檢查跑了多久，卡片頭一列一律寫、超過 15 分在清單也標警示。
@@ -9,7 +10,6 @@ const MIN = 60_000
 const SLOW_MS = 15_000
 const BETA = '/home/u/wt/beta'
 const BETA_SID = 'bbbbbbbb-0000-4000-8000-000000000000'
-const screen = async (ui: any) => flat(text(await ui.drawn()))
 /** 這件記著的總執行毫秒（store 的 jobs）。 */
 const runMsOf = (data: any, root: string): number => Number((data.store.jobs as any)?.[root]?.runMs ?? 0)
 /** 畫面上第一個整段等於 `pattern` 的 Text。 */
