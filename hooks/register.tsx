@@ -16,7 +16,7 @@ import type { DispatchKind, FixReason, JobRecord, QueueOpts, RawAgent, RootJobs,
 import { awaitsSpecOk, blocking, canArchive, checkStands, finalState, isMerged, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
 import { MEDIUM_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, reviewedOn, seenHeads, shownStopped, skipsReview } from './chain'
-import { isApproved, trustCheck, trustedChecks, unapprovedText } from './approve-check'
+import { isApproved, trustCheck, trustedChecks, trustWrites, unapprovedText } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
 import type { ChainRun, ChainStep } from './chain'
@@ -26,7 +26,7 @@ import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, re
 export { tutorial } from './tutorial-run'
 import { checkQueue, checking, isQueued, verifyPending, runVerify, resetCheckingState } from './verify-runner'
 export { checkQueue, verifyPending, runVerify } from './verify-runner'
-import { slots, launchKinds, launchingCount, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState, unconfirmed } from './dispatch-runner'
+import { slots, launchKinds, launchingCount, launchedSince, starting, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState, unconfirmed } from './dispatch-runner'
 export { dispatch, launchingCount, busyRefused, confirmedIdle } from './dispatch-runner'
 import { JOBS_KEY, SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, refreshMs, registryError, runGraceMs, saveChain, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
 import { isEmpty } from './layout'
@@ -85,7 +85,7 @@ let forcePr = false
 let knownPaths: string[] = []
 /** 上一輪重新整理讀到的背景 agent 清單；派工時剛讀過就沿用，即時問不到 claude agents 也用它算名額。 */
 export let lastAgents: readonly RawAgent[] | null = null
-/** lastAgents 是什麼時候讀到的（claude agents 回來的時間）；從沒讀到是 -Infinity。 */
+/** lastAgents 是什麼時候送出去問的（不是回來的時間：等回來的期間派出的 Agent 不在清單裡）；從沒讀到是 -Infinity。 */
 export let lastAgentsAt = -Infinity
 /** 閒置時（見 isIdle）計時器每觸發這麼多次才整輪重新整理一次。 */
 export const IDLE_EVERY = 4
@@ -113,15 +113,16 @@ export async function refresh($: any, options: PluginOptions) {
     // desk 自己發版的待辦要在探測之前記：同回合的 archive --cleanup 會刪掉 worktree。
     if (!tutorial) await noteReleased($, rows).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
     // 教學不看真的背景 agent，只看模擬的那一個。
+    const agentsAskedAt = await $.clock.now()
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
     const jobs = await loadJobs($)
     // 被後來派工取代、還停在提問的工作桌 Agent 不代表任務：拿掉它們再挑（狀態照卡片走），之後停掉。
     const { list, superseded } = supersede(agentsOut && agentsOut.exitCode === 0 ? rawAgents(agentsOut.stdout) : [], lastLaunches(jobs))
     const agents: Record<string, AgentInfo> = tutorial ? simAgents() : agentsOut && agentsOut.exitCode === 0 ? agentsByRoot(list) : {}
-    if (!tutorial && agentsOut && agentsOut.exitCode === 0) { lastAgents = list; lastAgentsAt = await $.clock.now() }
-    const [verifies, chains, summaries, launching, verifying, settings, self, trusted] = await Promise.all([
+    if (!tutorial && agentsOut && agentsOut.exitCode === 0) { lastAgents = list; lastAgentsAt = agentsAskedAt }
+    const [verifies, chains, summaries, launching, verifying, settings, self] = await Promise.all([
       read($, verifiesAtom), loadChains($), loadSummaries($), read($, launchingAtom), read($, verifyingAtom),
-      tutorial ? null : loadSettings($, options), me($), trustedChecks($),
+      tutorial ? null : loadSettings($, options), me($),
     ])
     const cardBase = settings?.cardBase ?? ''
     const cases: Case[] = await Promise.all(rows.map(async row => {
@@ -221,6 +222,9 @@ export async function refresh($: any, options: PluginOptions) {
     // 教學模式：示範任務接在後面當「全部任務」的背景（只能看）；版本、轉圈等仍只看真的任務。
     const cur: Snapshot = { at: now, cases: tutorial ? [...cases, ...demoCases(now)] : cases, error, ...(paths?.project ? { project: paths.project.key } : {}), ...(missing ? { missingRegistry: missing } : {}), contextPercent: typeof usage?.context?.percent === 'number' ? Math.round(usage.context.percent) : null, limits, versions: deskVersions, models: model, containers: boxes, reminders: parseReminders(text ?? '', now), ...(notice ? { update: notice } : {}), versionState, ...(tutorial ? { tutorial: true } : {}) }
     if (mine !== generation) return
+    // 核准紀錄在寫回前才讀（這輪跑了好幾秒，途中可能按兩次 v 核准過）；讀的期間又核准就不寫，atom 已是最新的。
+    const approvals = trustWrites
+    const trusted = await trustedChecks($)
     // 選取的任務已不在登錄表（歸檔、換專案）：取消選取，提示不再附它的卡。讀到空的登錄表（正在被改寫）不算。
     if (!error && rows.length) {
       await update($, selected, v => (v && !cur.cases.some(c => c.statusPath === v) ? null : v))
@@ -229,7 +233,7 @@ export async function refresh($: any, options: PluginOptions) {
     const prev = await read($, snapshot)
     const fresh = events(prev, cur)
     await update($, snapshot, () => cur)
-    await update($, trustedAtom, () => trusted)
+    if (approvals === trustWrites) await update($, trustedAtom, () => trusted)
     // 失敗之後這件又有 Agent 開過：「還沒信任」不再成立，三步不再出現。
     await update($, untrustedAtom, v => liveHolds(v, cases) as Record<string, UntrustedHold>)
     await collapseMoreIfMoved($)
@@ -592,9 +596,11 @@ async function scheduledRefresh($: any, options: PluginOptions) {
 /**
  * 沒人在看、也沒東西在跑：面板沒畫出或不在最前面（paneShown），
  * 上一份快照沒有 Agent 在跑或停下來問，也沒有檢查在跑或排隊、派工在啟動或排隊。還沒有快照不算閒置。
+ * 快照的 agents 清單送出之後這個對話又派過 Agent 也不算：那一輪可能拿舊清單蓋掉派工時標上的「執行中」，要等下一份清單看到它。
  */
 async function isIdle($: any): Promise<boolean> {
   if (await paneShown($)) return false
+  if (launchedSince(lastAgentsAt)) return false
   const s = await read($, snapshot)
   if (!s || s.cases.some(c => !c.demo && (c.state === 'running' || !!c.agent?.asks || !!c.agent?.waitsFor))) return false
   if (Object.keys(await read($, verifyingAtom)).length || Object.keys(await read($, launchingAtom)).length) return false

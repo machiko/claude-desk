@@ -10,6 +10,12 @@ import { TRUST_KEY } from './desk-io'
  */
 const trustedAtom = atom({ plugin: 'desk', key: 'trusted' } as const, {} as Record<string, string>)
 
+/**
+ * 這個對話核准過幾次（trustCheck 寫完 atom 才加 1）：重新整理讀核准紀錄前記下它，寫回 atom 前數字變了就不寫，
+ * 免得讀到核准之前的舊紀錄、把剛核准的蓋回去。
+ */
+export let trustWrites = 0
+
 /** 這個對話核准過的完成檢查：卡片路徑 → 指令全文。 */
 export async function trustedChecks($: any): Promise<Record<string, string>> {
   return ((await $.store.get(TRUST_KEY).catch(() => null)) as Record<string, string> | null) ?? {}
@@ -33,5 +39,6 @@ export async function trustCheck($: any, c: Case): Promise<boolean> {
   if (trusted[c.statusPath] !== c.verify) await $.store.set(TRUST_KEY, next)
   // 面板下一次重繪就顯示已核准，不等下一輪重新整理。
   await update($, trustedAtom, () => next)
+  trustWrites++
   return true
 }

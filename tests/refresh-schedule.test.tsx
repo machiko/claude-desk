@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_C, result } from './fixture'
+import { fixture, PANE, CARD_A, CARD_C, result } from './fixture'
 import { refreshMs } from '../hooks/desk-io'
+import { AGENTS_FRESH_MS } from '../hooks/dispatch-runner'
 
 // 刷新排程與重繪：沒人看又沒東西在跑時拉長重新整理、轉圈每秒一格且重繪不讀 store、核准馬上看得到、派工沿用剛讀過的 agents 清單。
 const INTERVAL = refreshMs({} as any)
@@ -163,4 +164,180 @@ test('test_dispatch_reuses_recent_agents_list_before_launch', async ($, on) => {
   expect(jobs['/home/u/wt/gamma']?.last?.launchName).toBe(data.launches[0].argv[3])
   expect(jobs['/home/u/wt/gamma']?.sessionId).toBe(data.agents.find((a: any) => a.cwd === '/home/u/wt/gamma')?.sessionId)
   await ui.unmount()
+})
+
+// ---- 重新整理途中的變化：一輪要跑好幾秒，途中核准或派工都不能被那一輪的舊資料蓋掉；沿用清單的期限與守門 ----
+
+const SETTINGS = '/home/u/.claude/handoffs/dispatch.json'
+const busyDesk = (name: string, cwd: string) => ({ id: name.slice(-8), kind: 'background', cwd, name, sessionId: `${name.slice(-8)}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: 0 })
+/** 三個在跑的工作桌 Agent，都在別的專案。 */
+const FULL = () => [busyDesk('desk-m0-0', '/home/u/other/one'), busyDesk('desk-m0-1', '/home/u/other/two'), busyDesk('desk-m0-2', '/home/u/other/three')]
+
+/** Alpha 也可以派實作（檢查已核准）。 */
+function alphaReady(data: any) {
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace('- 下一步：push', '- 下一步：實作匯入')
+  data.store.trustedVerify = { ...(data.store.trustedVerify as object), [CARD_A]: 'node test.mjs' }
+}
+
+/**
+ * 攔下下一次符合 `match` 的程序呼叫（`after` 有給就要先看到一次符合 after 的呼叫才開始等）：
+ * claude agents 回答送出當下的清單，其他回答空的成功；呼叫 release 才回來。沒攔到的照 fixture 回答，claude agents 照樣計數。
+ */
+function holdNext(data: any, count: { lists: number }, match: (argv: string[]) => boolean, after?: (argv: string[]) => boolean) {
+  const gate = { armed: !after, release: () => {}, held: false }
+  data.exec = (e: any) => {
+    const argv = e.argv.map(String)
+    if (argv[0] === 'claude' && argv[1] === 'agents') count.lists++
+    if (!gate.armed && after?.(argv)) { gate.armed = true; return null }
+    if (!gate.armed || gate.held || !match(argv)) return null
+    gate.held = true
+    const answer = argv[0] === 'claude' ? result(0, JSON.stringify(data.agents)) : result(0, '')
+    return new Promise(done => { gate.release = () => done(answer) })
+  }
+  return gate
+}
+const isAgents = (argv: string[]) => argv[0] === 'claude' && argv[1] === 'agents'
+const isGit = (argv: string[]) => argv[0] === 'git'
+
+test('test_approval_during_a_refresh_is_not_overwritten', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, false)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_C}` })
+  const press = async (key: string) => { if (!(await ui.find({ key }))) await ui.press({ key: 'more' }); await ui.press({ key }); await clock.settle() }
+
+  // 一輪重新整理讀完 agents 清單、卡在 git 探測時，按兩次 v 核准
+  const gate = holdNext(data, { lists: 0 }, isGit, isAgents)
+  const running = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.advance(100); await clock.settle()
+  expect(gate.held).toBe(true)
+  await press(`${C}verify`)
+  await press(`${C}verify`)
+  expect(data.store.trustedVerify).toEqual({ [CARD_C]: 'node test.mjs' })
+
+  // 那一輪跑完：面板照樣是核准過的樣子，g 的確認句不再說要核准
+  gate.release()
+  await running
+  await clock.settle()
+  await press(`${C}continue`)
+  const label = (await ui.find({ key: `${C}continue` }))?.text
+  expect(label).toContain('確認繼續')
+  expect(label).not.toContain('核准測試')
+  await ui.unmount()
+})
+
+test('test_dispatch_counts_an_agent_launched_while_the_agents_list_was_in_flight', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  alphaReady(data)
+  data.files[SETTINGS] = JSON.stringify({ maxAgents: 1 })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // 一輪重新整理送出 claude agents（還沒有 Alpha）後才派出 Alpha，清單之後才回來
+  const gate = holdNext(data, { lists: 0 }, isAgents)
+  await clock.advance(200)
+  const running = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  expect(gate.held).toBe(true)
+  await clock.advance(300)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  await clock.advance(1000)
+  gate.release()
+  await running
+  await clock.settle()
+
+  // 5 秒內再派 Gamma：那份清單看不到 Alpha，不能沿用；即時問才知道名額滿了，排隊
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts.some(t => t.startsWith('Gamma：同時執行的 Agent 已達上限 1 個'))).toBe(true)
+})
+
+test('test_second_dispatch_within_five_seconds_asks_agents_again', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  alphaReady(data)
+  data.files[SETTINGS] = JSON.stringify({ maxAgents: 1 })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // 剛整理過就連派兩件：第一件沿用清單派出，第二件的清單看不到第一件，要即時問，名額滿了排隊
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts.some(t => t.startsWith('Gamma：同時執行的 Agent 已達上限 1 個'))).toBe(true)
+})
+
+test('test_dispatch_asks_agents_again_when_list_is_older_than_five_seconds', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  const count = countAgents(data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // 整理之後別的專案開了三個工作桌 Agent；清單已經 5 秒前讀的，派工照舊即時問
+  data.agents = FULL()
+  await clock.advance(AGENTS_FRESH_MS); await clock.settle()
+  count.lists = 0
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(count.lists).toBe(1)
+  expect(data.launches).toHaveLength(0)
+  expect(data.toasts).toContain('Gamma：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
+})
+
+test('test_dispatch_asks_agents_live_when_no_list_was_ever_read', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  const box = { lists: 0, failing: true }
+  data.exec = (e: any) => {
+    if (e.argv[0] !== 'claude' || e.argv[1] !== 'agents') return null
+    box.lists++
+    return box.failing ? result(1, '', 'agents unavailable') : null
+  }
+  // 重新整理的 claude agents 失敗：從沒讀到清單
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  box.failing = false
+  box.lists = 0
+
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  // 算名額、啟動前、啟動後各問一次
+  expect(box.lists).toBe(3)
+  expect(data.launches).toHaveLength(1)
+})
+
+test('test_dispatch_during_a_refresh_keeps_the_next_interval_refreshing', async ($, on) => {
+  const { data, clock } = fixture(on)
+  gammaReady(data, clock, true)
+  const count = { lists: 0 }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  // 面板收著；一輪重新整理送出 claude agents 後才派出 Gamma（同步：不開自動流程，那一輪結束不會另外排重新整理），清單（沒有 Gamma）之後才回來
+  const gate = holdNext(data, count, isAgents)
+  await clock.advance(200)
+  const running = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  await clock.advance(300)
+  await $.command.run({ command: 'desk', args: 'sync Gamma' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  await clock.advance(1000)
+  gate.release()
+  await running
+  await clock.settle()
+
+  // 那份清單看不到 Gamma 在跑：不算閒置，下一個間隔照樣整理（看到 Gamma 在跑）；閒置的話要再等 3 個間隔
+  count.lists = 0
+  await interval(clock)
+  expect(count.lists).toBe(1)
 })

@@ -116,12 +116,17 @@ export const AGENTS_FRESH_MS = 5_000
 /** 這個對話最近一次呼叫 claude --bg 的時間：之後讀到的清單才算數（之前讀的看不到剛派出的 Agent，名額會少算）。 */
 let lastLaunchAt = -Infinity
 
+/** 這個對話在 `at`（含）之後呼叫過 claude --bg：那之前送出的 agents 清單可能看不到剛派出的 Agent。從沒派過就是 false。 */
+export function launchedSince(at: number): boolean {
+  return lastLaunchAt !== -Infinity && lastLaunchAt >= at
+}
+
 /**
- * 可以沿用的 agents 清單：重新整理在 AGENTS_FRESH_MS 內讀到、而且讀的時間晚於這個對話最近一次派出 Agent（同一毫秒不算）；
- * 不符合（太舊、從沒讀到、之後又派過）就回 undefined，照舊即時問。
+ * 可以沿用的 agents 清單：重新整理在 AGENTS_FRESH_MS 內送出、而且送出的時間晚於這個對話最近一次派出 Agent（同一毫秒不算）；
+ * 不符合（太舊、從沒讀到、送出之後又派過）就回 undefined，照舊即時問。
  */
 function recentAgents(now: number): readonly RawAgent[] | undefined {
-  if (!lastAgents || lastAgentsAt <= lastLaunchAt) return undefined
+  if (!lastAgents || launchedSince(lastAgentsAt)) return undefined
   return now - lastAgentsAt < AGENTS_FRESH_MS ? lastAgents : undefined
 }
 
