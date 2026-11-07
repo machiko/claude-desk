@@ -94,7 +94,6 @@ class SpecRulesTest(unittest.TestCase):
             self.assertEqual(card.filled_ac(c['card']), c['ac'], c['name'])
 
 
-
 class CardCasesTest(unittest.TestCase):
     def test_card_fields_match_shared_cases(self):
         # card-parity AC-3：與 hooks/card.ts 的 parseCard／isPlaceholder、hooks/extras.ts 的 deploySteps 同一份範例
@@ -108,6 +107,14 @@ class CardCasesTest(unittest.TestCase):
             placeholder = {k: card.is_placeholder((fields or {}).get(k, '')) for k in c['placeholder']}
             self.assertEqual(placeholder, c['placeholder'], c['name'])
             self.assertEqual(card.deploy_steps(c['card']), c['deploySteps'], c['name'])
+            # 指令讀寫欄位走的路（block 內文 → field／rewrite_fields）：每一欄都讀得到面板讀的值，改寫後讀回新值、其他欄不變。
+            body = card.card_body(c['card'])
+            for key, value in (c['fields'] or {}).items():
+                self.assertEqual(card.field(body, key), value, f"{c['name']}：讀 {key}")
+                after = card.rewrite_fields(body, {key: '新值'})
+                self.assertEqual(card.field(after, key), '新值', f"{c['name']}：改 {key}")
+                self.assertEqual({k: card.field(after, k) for k in c['fields'] if k != key},
+                                 {k: v for k, v in c['fields'].items() if k != key}, f"{c['name']}：改 {key} 不動其他欄")
 
 
 class CardScriptTest(unittest.TestCase):
@@ -888,6 +895,21 @@ class CardScriptTest(unittest.TestCase):
         text = read(card)
         self.assertIn('\n- 關卡：無\n', text)
         self.assertEqual(re.findall(r'^\s*-\s*關卡\s*[：:].*$', text, re.M), ['- 關卡：無'])
+
+    def test_duplicate_gate_lines_read_and_rewrite_the_last(self):
+        """card-parity 審查 HIGH：關卡寫了兩行時，面板讀最後一行；card 印最後一行、gate 改最後一行，第一行不動。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        card = self.card_path()
+        write(card, re.sub(r'^- 關卡：.*$', '- 關卡：review：CRITICAL 1\n- 關卡: spec：待確認規格', read(card), count=1, flags=re.M))
+
+        info = self.run_card('card', 'order-export')
+        r = self.run_card('gate', 'order-export', '無')
+
+        self.assertEqual(info.returncode, 0, info.stderr)
+        self.assertIn('gate: spec：待確認規格\n', info.stdout)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(re.findall(r'^\s*-\s*關卡\s*[：:].*$', read(card), re.M), ['- 關卡：review：CRITICAL 1', '- 關卡：無'])
+        self.assertEqual(load_card().parse_card(read(card))['關卡'], '無')
 
     def test_legacy_field_alias_is_read_as_canonical(self):
         """card-parity AC-2：舊欄名「等使用者」讀成「等你」（跟面板一樣），done 寫回時不動這一行。"""

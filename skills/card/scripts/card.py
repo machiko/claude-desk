@@ -233,15 +233,20 @@ def block(text):
     return found
 
 
-def field_lines(body, name):
-    """區塊內文裡欄名（換成正式欄名後）是 name 那欄的行：[(行號, 原本的欄名, 值)]。"""
-    want = canonical(name)
+def all_field_lines(body):
+    """區塊內文裡每一行欄位：[(行號, 原本的欄名, 正式欄名, 值)]。讀（field）與寫（rewrite_fields）都從這裡找行。"""
     out = []
     for i, line in enumerate(body.split('\n')):
         m = FIELD_LINE.match(line)
-        if m and canonical(m.group(1)) == want:
-            out.append((i, m.group(1), m.group(2).strip()))
+        if m:
+            out.append((i, m.group(1), canonical(m.group(1)), m.group(2).strip()))
     return out
+
+
+def field_lines(body, name):
+    """區塊內文裡欄名（換成正式欄名後）是 name 那欄的行：[(行號, 原本的欄名, 值)]。"""
+    want = canonical(name)
+    return [(i, own, value) for i, own, key, value in all_field_lines(body) if key == want]
 
 
 def field(body, name):
@@ -250,19 +255,33 @@ def field(body, name):
     return lines[-1][2] if lines else ''
 
 
-def parse_card(text):
-    """卡片區塊的所有欄位（欄名換成正式欄名）；沒有區塊回 None。結果與 hooks/card.ts 的 parseCard 相同。"""
+def card_body(text):
+    """卡片區塊的內文（換行統一成 \\n）；沒有區塊回 None。"""
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     found = find_block(text)
-    if found is None:
+    return text[found[1]:found[2]] if found else None
+
+
+def parse_card(text):
+    """卡片區塊的所有欄位（欄名換成正式欄名）；沒有區塊回 None。結果與 hooks/card.ts 的 parseCard 相同。
+    每欄的值由指令讀欄位用的 field() 取，共用範例（tests/card-cases.mjs）驗的就是指令實際走的路。"""
+    body = card_body(text)
+    if body is None:
         return None
-    _, start, end = found
-    card = {}
-    for line in text[start:end].split('\n'):
-        m = FIELD_LINE.match(line)
-        if m:
-            card[canonical(m.group(1))] = m.group(2).strip()
-    return card
+    return {key: field(body, key) for _, _, key, _ in all_field_lines(body)}
+
+
+def rewrite_fields(body, fields):
+    """把區塊內文裡的欄位改成新值，回傳新內文；不存在的欄略過。行的認法與 field() 相同，同一欄有兩行時改面板讀的最後一行。
+    改過的行一律寫成「- <欄>：<值>」：全形冒號、去掉多餘空白，欄名沿用那一行原本的（舊卡的舊欄名不換）。"""
+    for name, new in fields.items():
+        found = field_lines(body, name)
+        if not found:
+            continue
+        at, own, _ = found[-1]
+        lines = body.split('\n')
+        body = '\n'.join(lines[:at] + [f'- {own}：{new}'] + lines[at + 1:])
+    return body
 
 
 def is_placeholder(value):
@@ -375,22 +394,14 @@ def set_gate(path, value, fields=None):
 
 
 def set_fields(path, fields, required=()):
-    """改區塊裡的欄位（每欄一行）；required 的欄不存在就報錯不寫，其他欄不存在就略過。舊卡 rev 只加一次。
-    欄位行的認法與 field() 相同（半形冒號、行首空白、舊欄名都認）；同一欄有兩行時改面板讀的最後一行。
-    改過的行一律寫成「- <欄>：<值>」：全形冒號、去掉多餘空白，欄名沿用那一行原本的（舊卡的舊欄名不換）。"""
+    """改區塊裡的欄位（每欄一行，改法見 rewrite_fields）；required 的欄不存在就報錯不寫，其他欄不存在就略過。舊卡 rev 只加一次。"""
     text = read(path)
     fmt, start, end = block(text)
     body = text[start:end]
     for name in required:
         if not field_lines(body, name):
             fail(f'卡片區塊沒有「{name}」欄')
-    for name, new in fields.items():
-        found = field_lines(body, name)
-        if not found:
-            continue
-        at, own, _ = found[-1]
-        lines = body.split('\n')
-        body = '\n'.join(lines[:at] + [f'- {own}：{new}'] + lines[at + 1:])
+    body = rewrite_fields(body, fields)
     if fmt == 'CARD':
         # 舊卡：rev + 1，更新時間與來源一起改。
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
