@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Verify } from '../types'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, fixesByG, markRefusal, refusalOf, refusalText, untrustedSteps, writesCode } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, fixesByG, markRefusal, refusalOf, refusalText, untrustedSteps, readsPitfalls } from './dispatch'
 import { addRunTime, dispatchRunMs } from './run-time'
 import { modelFor, normalizeRoot, pitfallsFor } from './settings'
 import type { DispatchKind, JobRecord, QueueOpts, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
@@ -265,9 +265,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const name = launchName(now, launchSeq++)
     let review: ReviewOpts | undefined
     const probed = kind === 'review' ? (await gitProbe($, c.root)).git : undefined
-    // 常犯錯誤清單：審查與會改程式的派工（繼續、回覆、修正）都讀；檔案不在就不給。
-    const writes = writesCode(kind, opts.fix)
-    const paths = kind === 'review' || writes ? await deskPaths($, options) : undefined
+    // 常犯錯誤清單：審查、實作與回覆讀，修正（自動修正輪與按 g 的修正）不讀、不查檔；檔案不在就不給。
+    const paths = kind === 'review' || readsPitfalls(c, kind, opts.fix) ? await deskPaths($, options) : undefined
     const pitfallsPath = paths ? pitfallsFor(settings, paths.pitfalls, await home($)) : ''
     const pitfalls = pitfallsPath && (await $.fs.exists(pitfallsPath).catch(() => false)) ? pitfallsPath : ''
     if (kind === 'review' && paths) {

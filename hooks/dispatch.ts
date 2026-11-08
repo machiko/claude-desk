@@ -8,12 +8,13 @@ import { UUID, agentWaits, approvalWait } from './agents'
 import { slugOf } from './text'
 import { normalizeRoot, parseSettings } from './settings'
 import type { DispatchSettings } from './settings'
-import { DONE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
+import { DONE_RULE, NO_PUSH_RULE, PUSH_RULE, PUSH_SCOPE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
 import { CATCHUP_CARD_RULE, catchupHead } from './prompts/catchup'
 import { PUBLISH_CARD_RULE, publishHead } from './prompts/publish'
 import { reviewPrompt, reviewTask } from './prompts/review'
 import type { ReviewOpts } from './prompts/review'
-import { fixHead, manualFixHead } from './prompts/fix'
+import { fixHead, manualFix } from './prompts/fix'
+import type { ManualFix } from './prompts/fix'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext } from './next-words'
 import { shipTurn, stageActions } from './turn'
 import { KIND_LABEL } from './kind-label'
@@ -123,30 +124,50 @@ export function liveHolds(holds: Readonly<Record<string, UntrustedHold>>, cases:
 
 export type FixReason = { /** medium：你在「等你」對審查 MEDIUM 題選了修掉。 */ from: 'check' | 'review' | 'medium'; round: number; tail?: string[]; /** 審查修正接在資安審查之後：依 SECURITY.md 修，不是 REVIEW.md。你選修掉 MEDIUM（from medium）時是這次流程跑過資安審查：兩份都看。 */ security?: boolean }
 
-/** 會改程式的派工（繼續、回覆、修正）：多帶規格、CHANGELOG、測試、常犯錯誤清單與自我檢查的規則。派工端算清單路徑也用這一份。 */
+/** 會改程式的派工（繼續、回覆、修正）：多帶規格、CHANGELOG、測試與自我檢查的規則。 */
 export const writesCode = (kind: DispatchKind, fix?: FixReason): boolean => !!fix || kind === 'continue' || kind === 'reply'
+
+/** 按 g 派、開頭走 manualFix 的那份（fixByG 且下一步只剩等待或派審查，或選了修掉 MEDIUM 沒派出）；其他派工是 undefined。 */
+function manualFixOf(c: Case, kind: DispatchKind, fix?: FixReason): ManualFix | undefined {
+  if (fix || kind !== 'continue' || isPlaceholder(c.next) || !fixByG(c)) return undefined
+  return idleNext(c.next) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT ? manualFix(c, ciFailed(c)) : undefined
+}
+
+/**
+ * 會改程式的派工裡要讀常犯錯誤清單的：實作與回覆。修正不讀（修審查檔或檢查指出的具體問題，另有「同一類全部列出」）：
+ * 自動流程的修正輪（帶 fix），與按 g 派的修正——跟 fixesByG 算修正輪數用同一組條件（Agent 被停止後重開、停在檢查段不算修正），
+ * 開頭走 manualFix 時再扣掉沒東西要修的（額度煞車擋在派驗收前）。派工端決定要不要查清單檔也用這一份。
+ */
+export function readsPitfalls(c: Case, kind: DispatchKind, fix?: FixReason): boolean {
+  if (fix || !writesCode(kind)) return false
+  if (kind !== 'continue' || !fixesByG(c)) return true
+  return manualFixOf(c, kind)?.repairs === false
+}
 
 /**
  * `self`：這次派出去的啟動名；Agent 查同一個 worktree 有沒有別的 Agent 時，才不會把自己當成別人。
- * `pitfalls`：常犯錯誤清單路徑（呼叫端確認檔案存在才給）；只有會改程式的派工用得到，審查的清單照舊放在 `review`。
+ * `pitfalls`：常犯錯誤清單路徑（呼叫端確認檔案存在才給）；只有實作與回覆用得到（修正給了也不帶，見 readsPitfalls），審查的清單照舊放在 `review`。
  */
 export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = '', pitfalls = ''): string {
   const head = fix ? fixHead(c, fix)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
-    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : (fixByG(c) && (idleNext(c.next) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT) ? manualFixHead(c, ciFailed(c)) : '') || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
+    : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : manualFixOf(c, kind)?.head || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
     : kind === 'review' ? reviewPrompt(c, settings.review, review)
     : kind === 'publish' ? publishHead(text)
-    : kind === 'catchup' ? catchupHead(text)
+    : kind === 'catchup' ? catchupHead(text, c.verify)
     : `${named(settings.user).trimStart()}的回覆：${text}`
   const writes = writesCode(kind, fix)
   const publishing = !fix && kind === 'publish'
   const catchup = !fix && kind === 'catchup'
   // 解衝突改程式但不 push：合併 commit 由流程重新檢查、審查後，照合併段的 ⇡ push 推上去。
-  const base = cardRules(settings.user, [...settings.rules, ...(settings.projects[normalizeRoot(c.root)]?.rules ?? [])], writes || publishing, publishing ? PUBLISH_CARD_RULE : catchup ? CATCHUP_CARD_RULE : DONE_RULE)
-  // 交出前先做審查會做的檢查：清單（有設、檔案在才有）與自我檢查只給會改程式的派工；解衝突、同步、審查、推送不帶。
-  const selfCheck = [...(pitfalls ? [pitfallsRule(pitfalls)] : []), SELF_CHECK_RULE]
-  const rules = writes ? [SPEC_RULE, ...selfCheck, changelogRule(c), testRule(c), ...base] : catchup ? [testRule(c), ...base] : base
+  // 推送的歷程範例已寫在推送步驟（openPrRequest／pushRequest），範圍規則不再附一次。
+  const pushRule = writes ? PUSH_RULE : publishing ? PUSH_SCOPE_RULE : NO_PUSH_RULE
+  const base = cardRules(settings.user, [...settings.rules, ...(settings.projects[normalizeRoot(c.root)]?.rules ?? [])], pushRule, publishing ? PUBLISH_CARD_RULE : catchup ? CATCHUP_CARD_RULE : DONE_RULE)
+  // 交出前先做審查會做的檢查：自我檢查給會改程式的派工，清單（有設、檔案在才有）只給實作與回覆、修正不帶（readsPitfalls）；解衝突、同步、審查、推送不帶。
+  // 解衝突不附 testRule：catchupHead 第 3 步已寫「解完跑一次完成檢查」，testRule 叫它不跑，兩句相反。
+  const selfCheck = [...(pitfalls && readsPitfalls(c, kind, fix) ? [pitfallsRule(pitfalls)] : []), SELF_CHECK_RULE]
+  const rules = writes ? [SPEC_RULE, ...selfCheck, changelogRule(c), testRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
   return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
 }

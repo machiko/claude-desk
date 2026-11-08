@@ -1,6 +1,7 @@
 // 審查（review）派工的提示詞：程式碼審查、資安審查、修正後的複審與重新審查。
 import type { Case } from '../../types'
 import type { ReviewWords } from '../settings'
+import { pitfallsRule } from './rules'
 
 export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
@@ -93,7 +94,7 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
     `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。${checkRule(c.verify, r?.verifiedHead)}`,
     ...(wantsPreflight(words, r) ? [preflightRule(words.preflight!, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file)] : []),
     scope,
-    ...(r?.pitfalls ? [`先讀專案常犯錯誤清單 ${r.pitfalls}，逐條對照這次的改動。`] : []),
+    ...(r?.pitfalls ? [pitfallsRule(r.pitfalls)] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
     ...(r?.securityFocus && !r.security ? [`這是高風險分支，這次審查同時做資安審查（過關後不另派）：另外逐項看 ${words.security}，有問題照下面的分級列進 ${file}。`] : []),
     `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
