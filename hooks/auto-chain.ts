@@ -7,7 +7,7 @@ import { historyStamp, saysNone } from './card'
 import { errorText } from './text'
 import { quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
 import { BEACON_FILE, archiveReview, loadSettings, prProbe, riskOf, worktreeMark } from './probes'
-import { askWithMedium, externalFallbackText, externalGate, externalOutcome, idleBeacon, mediumAskOf, withExternalResult } from './external-review'
+import { askWithMedium, externalEndOf, externalFallbackText, externalGate, externalOutcome, idleBeacon, mediumAskOf, withExternalResult } from './external-review'
 import { mediumToDecide } from './extras'
 import { REVIEW_FILE, markRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs } from './dispatch'
@@ -101,7 +101,7 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     }
     // 外部驗收結束：先把審查檔第一行的結論寫回卡片關卡（下一輪重新整理照 Claude 驗收的結論往下走），沒有結果就改派 Claude 驗收。
     if (last.external && !last.external.settled) {
-      if (last.ended && await settleExternal($, options, c, run, s.at)) acted = true
+      if (last.ended && await settleExternal($, options, c, run, s, preloaded)) acted = true
       continue
     }
     const verify = (await read($, verifiesAtom))[c.statusPath]
@@ -178,16 +178,19 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
  * 外部驗收結束後的那一步（只有流程是這個對話的才會走到）：讀審查檔與它的修改時間算結論（externalOutcome）。
  * - 有結論：關卡寫成跟 Claude 驗收同一個格式、沒有 CRITICAL／HIGH 時把標「（等你決定）」的 MEDIUM 寫成同一種題目進「等你」，
  *   History 記一筆，派工紀錄標成已寫回；流程暫停中也照寫（跟 Claude 驗收自己寫卡片一樣），往下派由一般的路徑看暫停。
- * - 沒有結論：流程暫停中先不動（重開後再改派）；否則標成已處理、動態寫原因，同一輪改派一次 Claude 驗收（fallback，不會再改回外部）。
+ * - 沒有結論：流程暫停中先不動（重開後再改派）；額度低於門檻就停下流程、記下改派那步（按 g 接續照樣派 Claude）；
+ *   否則標成已處理、動態寫原因，同一輪改派一次 Claude 驗收（fallback，不會再改回外部）。
  * 回報失敗的信標改寫成 idle，面板不再當成外部 Agent 在等你。回傳有沒有動作。
  */
-async function settleExternal($: any, options: PluginOptions, c: Case, run: ChainRun, at: number): Promise<boolean> {
+async function settleExternal($: any, options: PluginOptions, c: Case, run: ChainRun, s: Snapshot, preloaded?: DispatchSettings): Promise<boolean> {
+  const at = s.at
   const key = normalizeRoot(c.root)
   const last = (await loadJobs($))[key]?.last
   const ext = last?.external
   if (!last || !ext || ext.settled || last.handled) return false
   const beacon = parseBeaconJson(await $.fs.read(`${c.root}/${BEACON_FILE}`).catch(() => null))
-  if (beacon?.state === 'blocked') await $.fs.write(`${c.root}/${BEACON_FILE}`, idleBeacon(ext.agent, at)).catch(() => {})
+  // 只收這次外部驗收自己寫的 blocked 信標：之後另外派給外部 Agent 的工作寫的信標不動。
+  if (beacon && externalEndOf(beacon, last.startedAt) === 'blocked') await $.fs.write(`${c.root}/${BEACON_FILE}`, idleBeacon(ext.agent, at)).catch(() => {})
   const [text, stat] = await Promise.all([
     $.fs.read(`${c.root}/${REVIEW_FILE}`).catch(() => null) as Promise<string | null>,
     $.fs.stat(`${c.root}/${REVIEW_FILE}`).catch(() => null) as Promise<{ mtimeMs?: number } | null>,
@@ -195,8 +198,18 @@ async function settleExternal($: any, options: PluginOptions, c: Case, run: Chai
   const outcome = externalOutcome(ext.end ?? 'done', text, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : undefined, last.startedAt)
   if ('why' in outcome) {
     if (run.stopped) return false
-    await markJob($, key, last.launchName, { handled: true })
     const say = externalFallbackText(outcome.why)
+    // 額度煞車：改派 Claude 驗收也是派下一個 Agent，額度低於門檻就跟主判斷一樣停下，記下這步（按 g 接續照樣派 Claude、不回外部）。
+    const hold = tutorial ? '' : quotaHold(s.limits, (await loadSettings($, options, preloaded)).chainQuotaStop, at)
+    if (hold) {
+      if (!(await saveChain($, key, r => r ? paused(r, hold, false, { dispatch: 'review', round: r.round, fallback: true }) : r))) return false
+      await markJob($, key, last.launchName, { handled: true })
+      await feedPush($, [{ at, text: `${c.name} ${say}；流程已暫停：${hold}`, tone: 'error', card: c.statusPath }])
+      $.ui.toast(`${c.name}：流程已暫停，${hold}`, { timeoutMs: 10_000 })
+      notify($, `${c.name}：流程已暫停，${hold}`)
+      return true
+    }
+    await markJob($, key, last.launchName, { handled: true })
     await feedPush($, [{ at, text: `${c.name} ${say}`, tone: 'warning', card: c.statusPath }])
     $.ui.toast(`${c.name}：${say}`, { timeoutMs: 10_000 })
     await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, fallback: true })

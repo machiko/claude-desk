@@ -77,7 +77,7 @@ async function pauseOwnChain($: any, c: Case, mine: string, why: string, resume?
 function queuedResume(entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined): QuotaResume | undefined {
   if (entry.kind !== 'continue' && entry.kind !== 'review') return undefined
   const fix = entry.opts.fix
-  return { dispatch: entry.kind, round: fix?.round ?? run?.round ?? 0, ...(entry.opts.security ? { security: true } : {}), ...(fix?.from ? { reason: fix.from } : {}) }
+  return { dispatch: entry.kind, round: fix?.round ?? run?.round ?? 0, ...(entry.opts.security ? { security: true } : {}), ...(entry.opts.fallback ? { fallback: true } : {}), ...(fix?.from ? { reason: fix.from } : {}) }
 }
 
 /** 自動排的這筆沒派出時要不要停下流程：推送是審查過關後才排的，沒派出流程仍是過關，合併段照舊可以按「⇡ 開 PR」。 */

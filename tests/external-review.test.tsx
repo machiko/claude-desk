@@ -295,3 +295,132 @@ test('test_external_review_respects_paused_chain：沒有結果時暫停中不�
   expect(h.prompt(0).startsWith('程式碼審查')).toBe(true)
   expect(sends(data).length).toBe(0)
 })
+
+// ── 審查第 1 輪 HIGH：改派 Claude 也看額度煞車（直接改派、排隊後改派兩條路徑；按 g 接續照樣派 Claude） ──
+
+/** 5 小時額度已用 used%（門檻預設剩 30%）。 */
+const quotaUsed = (data: any, used: number) => {
+  data.usage = { ...data.usage, rateLimits: [{ kind: 'five_hour', percentUsed: used, resetsAt: new Date(NOW + 3_600_000).toISOString() }] }
+}
+
+test('test_external_review_falls_back_to_claude_once_on_failure：額度低於門檻時停下，按 g 接續照樣派 Claude', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const feed = feedLog(on)
+  const world = externalWorld(data, clock)
+  const h = await toReview($, data, clock)
+  expect(sends(data).length).toBe(1)
+
+  quotaUsed(data, 75)
+  agentEnds(data, clock, world, '審查：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0\n', 'blocked')
+  await h.refresh(); await h.step(); await h.step()
+
+  // 不派 Claude 驗收，流程停下寫額度原因，記下改派那步
+  expect(data.launches.length).toBe(1)
+  expect(feed.has('Alpha 外部驗收沒有結果（外部 Agent 回報失敗），改派 Claude 驗收；流程已暫停：5 小時額度剩 25%')).toBe(true)
+  expect(chainOf(data).stopped).toContain('5 小時額度剩 25%')
+  expect(chainOf(data).resume).toEqual({ dispatch: 'review', round: 0, fallback: true })
+  await h.refresh(); await h.step()
+  expect(data.launches.length).toBe(1)
+
+  // 按 g（/desk go）接續：派的是 Claude 驗收，不是再派一次外部
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(2)
+  expect(h.prompt(1).startsWith('程式碼審查')).toBe(true)
+  expect(h.prompt(1)).toContain('最後把卡片 關卡 寫成')
+  expect(sends(data).length).toBe(1)
+})
+
+test('test_external_review_falls_back_to_claude_once_on_failure：排隊中的改派被額度擋下，按 g 照樣派 Claude', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const world = externalWorld(data, clock, { agent: 'agy' })
+  data.files[SETTINGS] = JSON.stringify({ review: { agent: 'agy' }, maxAgents: 1 })
+  const h = await toReview($, data, clock)
+  expect(sends(data).length).toBe(1)
+
+  // 名額被別的工作桌 Agent 佔著：改派的 Claude 驗收排進隊伍
+  const other = { id: 'f0000001', kind: 'background', cwd: '/home/u/wt/other', name: 'desk-other-0001', sessionId: 'f0000001-0000-4000-8000-000000000000', state: 'working', status: 'busy', startedAt: clock.now() }
+  data.agents = [...data.agents, other]
+  agentEnds(data, clock, world, null, 'blocked')
+  await h.refresh(); await h.step()
+  expect(data.launches.length).toBe(1)
+
+  // 輪到它時額度已低於門檻：丟出隊伍、流程停下，記下的那步帶著改派
+  data.agents = data.agents.filter((a: any) => a.id !== other.id)
+  quotaUsed(data, 75)
+  await h.refresh(); await h.step()
+  expect(data.launches.length).toBe(1)
+  expect(chainOf(data).stopped).toContain('5 小時額度剩 25%')
+  expect(chainOf(data).resume).toEqual({ dispatch: 'review', round: 0, fallback: true })
+  await h.refresh()
+
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches.length).toBe(2)
+  expect(h.prompt(1).startsWith('程式碼審查')).toBe(true)
+  expect(sends(data).length).toBe(1)
+})
+
+// ── 審查第 1 輪 HIGH：只藏「這次外部驗收回報失敗」的信標；其他停下等人、之後另外派的照原樣顯示 ──
+
+const OUT = `${ROOT}/.task/AGENT-OUT.md`
+const paneText = async ($: any) => {
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_A}` })
+  const shown = flat(text(await ui.drawn()))
+  await ui.unmount()
+  return shown
+}
+
+test('test_review_dispatches_external_agent_when_review_agent_set：跑到一半停在權限提示照樣顯示等批准', async ($, on) => {
+  const { data, clock } = fixture(on)
+  externalWorld(data, clock)
+  const h = await toReview($, data, clock)
+  data.files[OUT] = '\u001b]7501;state=blocked;agent=agy;wait=permission;msg=要寫入 .env\u001b\\\n'
+  await h.refresh(); await h.step(); await h.step()
+
+  const shown = await paneText($)
+  expect(shown).toContain(flat('到 agy 終端機視窗確認'))
+  expect(shown).not.toContain(flat('g 派 Agent 做下一步'))
+  // 還沒結束：不改派、不寫關卡
+  expect(data.launches.length).toBe(1)
+  expect(gateOf(data)).toBe('無')
+  expect(lastJob(data).ended).toBeUndefined()
+})
+
+test('test_review_dispatches_external_agent_when_review_agent_set：跑到一半停在提問照樣顯示等回覆', async ($, on) => {
+  const { data, clock } = fixture(on)
+  externalWorld(data, clock)
+  const h = await toReview($, data, clock)
+  data.files[OUT] = '\u001b]7501;state=blocked;agent=agy;wait=question;msg=要審哪個分支？\u001b\\\n'
+  await h.refresh(); await h.step(); await h.step()
+
+  const shown = await paneText($)
+  expect(shown).toContain(flat('y 回覆'))
+  expect(shown).not.toContain(flat('g 派 Agent 做下一步'))
+  expect(data.launches.length).toBe(1)
+  expect(lastJob(data).ended).toBeUndefined()
+})
+
+test('test_external_review_result_writes_gate_and_continues_chain：處理完之後另外派給外部 Agent 的工作照原樣顯示', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const world = externalWorld(data, clock)
+  const h = await toReview($, data, clock)
+  agentEnds(data, clock, world, '審查：CRITICAL 0、HIGH 0、MEDIUM 0、LOW 0\n')
+  await h.refresh(); await h.step(); await h.step(); await h.step()
+  expect(chainOf(data).passed).toBe(true)
+
+  // 之後你用 card.py send 另外派 agy：在跑時不標成驗收
+  await clock.advance(60_000)
+  const later = clock.now()
+  data.files[BEACON] = JSON.stringify({ state: 'working', agent: 'agy', pid: 5151, startedAt: later, updatedAt: later })
+  await h.refresh()
+  expect(await paneText($)).not.toContain(flat('Agent 在驗收'))
+
+  // 停在提問（blocked、question）：照樣顯示等回覆，不藏起來
+  data.files[BEACON] = JSON.stringify({ state: 'blocked', agent: 'agy', startedAt: later, updatedAt: clock.now(), waitsFor: 'question', message: '要改哪個檔？' })
+  await h.refresh()
+  const shown = await paneText($)
+  expect(shown).toContain(flat('y 回覆'))
+  expect(JSON.parse(data.files[BEACON]!).state).toBe('blocked')
+})

@@ -4,6 +4,7 @@ import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
 import { beaconAgentInfo, beaconRootOf, isBeaconId, parseBeaconJson } from './agents'
+import type { AgentBeacon } from './agents'
 import { lastMeaningful, parseOsc7501, plain } from './text'
 import { summarizeCheck } from './verify-summary'
 import { MODEL_KINDS, modelFor, normalizeRoot, parseSettings } from './settings'
@@ -516,7 +517,7 @@ export async function externalEnd($: any, root: string, record: Pick<JobRecord, 
 }
 
 /** 探測 worktree 裡的外部 Agent 信標（`.task/agent-state.json`）與即時輸出（`.task/AGENT-OUT.md`）。 */
-export async function beaconProbe($: any, root: string): Promise<{ agent?: AgentInfo; log: string | null }> {
+export async function beaconProbe($: any, root: string): Promise<{ agent?: AgentInfo; log: string | null; beacon?: AgentBeacon }> {
   const [rawBeacon, rawOut] = await Promise.all([
     $.fs.read(`${root}/${BEACON_FILE}`).catch(() => null) as Promise<string | null>,
     $.fs.read(`${root}/${AGENT_OUT_FILE}`).catch(() => null) as Promise<string | null>,
@@ -526,7 +527,7 @@ export async function beaconProbe($: any, root: string): Promise<{ agent?: Agent
   if (!beacon && !osc) return { log: rawOut }
   const alive = beacon?.pid !== undefined ? await pidAlive($, beacon.pid) : true
   const agent = beaconAgentInfo(root, beacon, osc, lastLineOf(rawOut), alive)
-  return { ...(agent ? { agent } : {}), log: rawOut }
+  return { ...(agent ? { agent } : {}), log: rawOut, ...(beacon ? { beacon } : {}) }
 }
 
 /** 整份輸出的最後一句話；讀不到是空字串。 */

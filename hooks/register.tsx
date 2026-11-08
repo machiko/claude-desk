@@ -46,6 +46,7 @@ import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAge
 import { archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, resumeQuotaHeld, stopAgent } from './card-actions'
 import { autoChain } from './auto-chain'
 import { branchesOf, noteRuns } from './run-notes'
+import { externalBeaconView } from './external-review'
 
 const PANE = 'desk'
 /** 自動派解衝突卻沒派出（不是排進隊伍）時流程停下的原因；失敗原因在動態「無法派解衝突（…）」那筆。 */
@@ -159,10 +160,12 @@ export async function refresh($: any, options: PluginOptions) {
         if (beacon.agent) {
           agent = beacon.agent
           if (agent.id) logs.set(agent.id, beacon.log)
+          // 最後一次派工是外部驗收：這次的信標在跑就是它在驗收；這次回報失敗（blocked）不是在等你，由自動流程改派 Claude 驗收。
+          const view = externalBeaconView(agent, beacon.beacon, last)
+          if (view === 'hide') agent = undefined
+          else if (view === 'review') agent = { ...agent, kind: 'review' }
         }
       }
-      // 最後一次派工是外部驗收：信標在跑就是它在驗收；回報失敗（blocked）不是在等你，由自動流程改派 Claude 驗收。
-      if (agent?.source === 'beacon' && last?.external) agent = agent.status === 'busy' ? { ...agent, kind: 'review' } : undefined
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
       const probe = await gitProbe($, base.root)

@@ -93,7 +93,7 @@ export type ChainRun = {
   resume?: QuotaResume
 }
 /** 額度煞車擋下時本來要派的那步：流程裡的派工只有實作（修正）與審查兩種。 */
-export type QuotaResume = { dispatch: 'continue' | 'review'; round: number; security?: boolean; reason?: string }
+export type QuotaResume = { dispatch: 'continue' | 'review'; round: number; security?: boolean; reason?: string; /** 外部驗收沒有結果、改派 Claude 驗收時被擋下：按 g 接續照樣派 Claude，不再派外部。 */ fallback?: boolean }
 export type ChainStep =
   | { kind: 'verify' }
   | { kind: 'dispatch'; dispatch: DispatchKind; round: number; reason?: string; security?: boolean }

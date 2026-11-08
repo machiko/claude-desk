@@ -1,1 +1,1 @@
-- 新增 `review.agent` 設定：一般驗收改派外部 Agent（如 agy），結果讀回關卡照常往下走，失敗自動改派 Claude；資安審查仍用 Claude
+- 新增 `review.agent` 設定：一般驗收改派外部 Agent（如 agy），結果讀回關卡照常往下走，失敗自動改派 Claude（額度低於煞車門檻時先停下）；資安審查仍用 Claude

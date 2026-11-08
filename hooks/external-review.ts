@@ -1,7 +1,7 @@
 // 外部驗收（dispatch.json 的 review.agent）：派給外部 Agent 的一般驗收怎麼算結束、結論怎麼讀回卡片。純函式；I/O 在 dispatch-runner、run-notes 與 auto-chain。
-import type { ReviewVerdict } from '../types'
+import type { AgentInfo, ReviewVerdict } from '../types'
 import type { AgentBeacon } from './agents'
-import type { ExternalEnd } from './dispatch'
+import type { ExternalEnd, JobRecord } from './dispatch'
 import { MEDIUM_ASK_FORM, parseExternalVerdict } from './prompts/review'
 import { mediumDecideLines } from './extras'
 import { saysNone, withHistory } from './card'
@@ -90,6 +90,19 @@ export function withExternalResult(text: string, gate: string, ask: string | nul
   if (ask !== null) body = body.replace(/^- (等你|等使用者)：.*$/m, (_l, label: string) => `- ${label}：${ask}`)
   const start = m.index + m[0].indexOf(m[2]!)
   return withHistory(text.slice(0, start) + body + text.slice(start + m[2]!.length), entry)
+}
+
+/**
+ * 面板上這個信標 Agent 要怎麼對到最後一次派工（外部驗收）：
+ * - hide：這次外部驗收自己寫的 blocked 信標（回報失敗）、結論還沒處理——不是在等你，由自動流程改派 Claude 驗收；
+ * - review：這次外部驗收還沒結束、信標是這次寫的、Agent 在跑——標成在驗收；
+ * - keep：其他照原樣顯示（跑到一半停在權限或提問、處理完之後你另外派給外部 Agent 的工作、別的信標）。
+ */
+export function externalBeaconView(agent: Pick<AgentInfo, 'status'>, beacon: AgentBeacon | undefined, last: Pick<JobRecord, 'startedAt' | 'external' | 'ended' | 'handled'> | undefined): 'hide' | 'review' | 'keep' {
+  const ext = last?.external
+  if (!ext || !beacon || (beacon.startedAt ?? 0) < last!.startedAt) return 'keep'
+  if (externalEndOf(beacon, last!.startedAt) === 'blocked') return !ext.settled && !last!.handled ? 'hide' : 'keep'
+  return !last!.ended && agent.status === 'busy' ? 'review' : 'keep'
 }
 
 /** 處理過的外部信標改寫成 idle：回報失敗（blocked）的信標留著，面板會一直當成外部 Agent 在等你。 */

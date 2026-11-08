@@ -67,7 +67,7 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   // 帶著面板上次重新整理看到的版本寫：之後別的對話改過這件的流程紀錄（例如接手開了新一輪），就不派、照它寫的留著。
   const taken = await saveChain($, key, r => { if (!r) return r; const { stopped: _s, resume: _r, ...rest } = r; return { ...rest, owner: mine, round: resume.round } }, { basedOn: c.chain?.rev ?? 0 })
   if (!taken) return chainChanged($, c)
-  const sent = await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, resumed: true, ...(resume.security ? { security: true } : {}) })
+  const sent = await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, resumed: true, ...(resume.security ? { security: true } : {}), ...(resume.fallback ? { fallback: true } : {}) })
   // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗；排進隊伍 dispatch 回 true）：流程照原本的原因停著，下次 g 再來。
   if (!sent) {
     await saveChain($, key, r => r ? paused(r, reason, false, resume) : r)
