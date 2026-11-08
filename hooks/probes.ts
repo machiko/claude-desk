@@ -8,6 +8,8 @@ import { lastMeaningful, parseOsc7501, plain } from './text'
 import { summarizeCheck } from './verify-summary'
 import { MODEL_KINDS, modelFor, normalizeRoot, parseSettings } from './settings'
 import { REVIEW_FILE, SECURITY_FILE } from './prompts/review'
+import { externalEndOf } from './external-review'
+import type { ExternalEnd, JobRecord } from './dispatch'
 import { markOf } from './worktree-mark'
 import type { DispatchSettings, ModelKind } from './settings'
 import type { WorktreeMark } from './worktree-mark'
@@ -501,6 +503,16 @@ export async function pidAlive($: any, pid: number | undefined): Promise<boolean
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return true
   const r = await $.process.run(['kill', '-0', String(pid)], { timeoutMs: 2_000 }).catch(() => null)
   return !!r && r.exitCode === 0
+}
+
+/**
+ * 外部驗收（派工紀錄標了 external）結束了沒：先看這個根目錄的信標（externalEndOf）；信標還沒說結束時，
+ * card.py 的背景行程已經不在就算 gone（沒回報完成就結束）。還在跑回 null。
+ */
+export async function externalEnd($: any, root: string, record: Pick<JobRecord, 'startedAt' | 'external'>): Promise<ExternalEnd | null> {
+  const said = externalEndOf(parseBeaconJson(await $.fs.read(`${root}/${BEACON_FILE}`).catch(() => null)), record.startedAt)
+  if (said) return said
+  return await pidAlive($, record.external?.pid) ? null : 'gone'
 }
 
 /** 探測 worktree 裡的外部 Agent 信標（`.task/agent-state.json`）與即時輸出（`.task/AGENT-OUT.md`）。 */

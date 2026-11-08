@@ -318,8 +318,19 @@ export function confirmShip(text: string, date: string, time: string, tag: strin
   if (m[1] === 'CARD') body = body.replace(/^- 更新：.*?rev (\d+).*$/m, (_l, rev) => `- 更新：${date} ${time} · rev ${Number(rev) + 1} · desk 上線確認`)
   const start = m.index + m[0].indexOf(m[2]!)
   const next = text.slice(0, start) + body + text.slice(start + m[2]!.length)
-  const entry = `- ${date} ${time}：${named(user).trimStart()}在工作桌確認 ${tag || '這一版'} 已上線，release 關卡清為無`
-  const lines = next.replace(/\s+$/, '').split('\n')
+  return withHistory(next, `- ${date} ${time}：${named(user).trimStart()}在工作桌確認 ${tag || '這一版'} 已上線，release 關卡清為無`)
+}
+
+/** History 行開頭的本機時間「YYYY-MM-DD HH:MM」（跟 card.py 的 stamp 同一種寫法）。 */
+export function historyStamp(at: number): string {
+  const d = new Date(at)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`
+}
+
+/** 在卡片「## History」段尾（段內最後一筆之後）加一行；沒有那段就在檔尾新開。 */
+export function withHistory(text: string, entry: string): string {
+  const lines = text.replace(/\s+$/, '').split('\n')
   const at = lines.findIndex(l => /^## History\b/.test(l))
   if (at < 0) return `${lines.join('\n')}\n\n## History\n\n${entry}\n`
   let end = at + 1

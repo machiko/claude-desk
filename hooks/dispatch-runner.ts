@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Verify } from '../types'
-import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, fixesByG, markRefusal, refusalOf, refusalText, untrustedSteps, readsPitfalls } from './dispatch'
+import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildExternalPrompt, buildPrompt, fixesByG, markRefusal, refusalOf, refusalText, untrustedSteps, readsPitfalls, usesExternalReview } from './dispatch'
 import { addRunTime, dispatchRunMs } from './run-time'
 import { modelFor, normalizeRoot, pitfallsFor } from './settings'
 import type { DispatchKind, JobRecord, QueueOpts, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
@@ -13,7 +13,9 @@ import { loadSettings, deskPaths, diffBase, diffFiles, gitProbe, home, originRem
 import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, runGraceMs, JOBS_KEY } from './desk-io'
 import { hasAgentQueue, isAgentQueued, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
 import { startSim } from './tutorial-run'
-import { rawAgents, supersede, agentInfo, agentsByRoot, launchName, runningDeskAgents } from './agents'
+import { BEACON_ID_PREFIX, rawAgents, supersede, agentInfo, agentsByRoot, launchName, runningDeskAgents } from './agents'
+import { runnerOf } from './external-review'
+import { slugOf } from './text'
 import { isBusy, untrustedKey } from './turn'
 import { WORD, DEMO_ONLY } from './theme'
 import { lastLaunches } from './stale-agents'
@@ -216,6 +218,30 @@ async function reviewScope($: any, c: Case, probed: Case['git'], settings: Dispa
   }
 }
 
+/** card.py send 背景啟動外部 Agent 的等待上限：它只開子行程、寫信標就回來。 */
+const EXTERNAL_LAUNCH_MS = 30_000
+
+/**
+ * 外部驗收的啟動：在任務的 worktree 跑 `card.py send <slug> --to <執行器> [--agent-cmd <review.agent>] --bg --json <提示>`，
+ * card.py 在背景開外部 Agent、寫 `.task/agent-state.json`。review.agent 帶參數或路徑時整串交給 --agent-cmd，--to 只當執行器名稱。
+ * 回傳背景行程的 pid（讀不到是 undefined）；card.py 失敗丟 LaunchError（訊息是輸出最後一行）。
+ */
+async function launchExternal($: any, options: PluginOptions, c: Case, prompt: string, agent: string): Promise<number | undefined> {
+  const runner = runnerOf(agent)
+  const cmd = agent.trim()
+  const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
+  const argv = ['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'send', slugOf(c), '--to', runner, ...(cmd !== runner ? ['--agent-cmd', cmd] : []), '--bg', '--json', prompt]
+  const r = await $.process.run(argv, { cwd: c.root, timeoutMs: EXTERNAL_LAUNCH_MS, env })
+  const lines = `${r.stdout ?? ''}`.trim().split(/\r?\n/).filter(Boolean)
+  if (r.exitCode !== 0) throw new LaunchError(`${r.stderr || r.stdout || ''}`.trim().split(/\r?\n/).pop() || `card.py send 失敗（exit ${r.exitCode}）`, false)
+  try {
+    const pid = JSON.parse(lines.pop() ?? '')?.pid
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
  * 從啟動後的 agents 清單用名字對回完整 session id 才算成功；審查與（設了同步模型的）同步開新 session，不改任務的 session。
@@ -279,7 +305,9 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
       const recheck = !!opts.auto && !!run?.recheck && !opts.security
       review = { round, template, ...(tutorial ? {} : await reviewScope($, c, probed, settings, !!opts.security)), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls, history: paths.reviews }
     }
-    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls)
+    // 設了 review.agent 的一般驗收改派外部 Agent（資安、併做資安、外部失敗後改派的不算）；教學照舊模擬 Claude。
+    const external = review && !tutorial && usesExternalReview(settings, review, !!opts.fallback) ? settings.review.agent! : ''
+    const prompt = external ? buildExternalPrompt(c, review!, settings) : buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls)
     const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
     launchKinds = { ...launchKinds, [c.statusPath]: doing }
     await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
@@ -288,13 +316,25 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     const mcp = settings.mcp || (kind === 'publish' && !settings.prOpen && (await originRemote($, c.root))?.host === 'bitbucket')
     // 剛讀過的 agents 清單當啟動前的清單（不再跑一次）；先取再記這次啟動的時間，之後的派工才不會沿用看不到這個 Agent 的清單。
     const recent = tutorial ? undefined : recentAgents(await $.clock.now())
-    const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launchMarked($, c, prompt, { model, effort, sessionId, name, mcp }, recent)
-    const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
+    const runner = external ? runnerOf(external) : ''
+    const owner = await me($)
+    let record: JobRecord
+    let agent: AgentInfo
+    if (external) {
+      // 外部 Agent 不在 claude agents 清單：派工紀錄標成外部，在跑與結束看它的信標（.task/agent-state.json）。
+      const pid = await launchExternal($, options, c, prompt, external)
+      record = { launchName: name, nativeId: pid ? String(pid) : name, sessionId: '', kind, startedAt: now, fresh, owner, external: { agent: runner, ...(pid ? { pid } : {}) } }
+      agent = { id: `${BEACON_ID_PREFIX}${c.root}`, name: runner, runner, source: 'beacon', state: 'working', status: 'busy', kind: doing, startedAt: now, ...(pid ? { pid } : {}) }
+    } else {
+      const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launchMarked($, c, prompt, { model, effort, sessionId, name, mcp }, recent)
+      record = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner, ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
+      agent = { ...agentInfo(confirmed), status: 'busy', kind: doing }
+    }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。同一條分支累計的修正數照帶（不歸零）；
     // 「這條分支審查過」也照帶：按 g 改完只跑測試、不複審（按 w 照樣派審查）。
     // 你按 g 派的修正不受上限擋，但照樣算一輪；Agent 被停掉後重開、停在檢查段時按 g 不是修正，不算（fixesByG）。
     const fixed = kind === 'continue' && fixesByG(c)
-    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner: record.owner!, startedAt: now, round: 0, ...carriedFix(r, c.git?.branch, fixed), ...carriedReview(r, c.git?.branch), ...((fixed && fixesReview(c)) || (r?.reviewFix && !r.passed) ? { reviewFix: true } : {}), ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
+    if (!opts.auto && (kind === 'continue' || kind === 'review')) await saveChain($, rootKey, r => ({ owner, startedAt: now, round: 0, ...carriedFix(r, c.git?.branch, fixed), ...carriedReview(r, c.git?.branch), ...((fixed && fixesReview(c)) || (r?.reviewFix && !r.passed) ? { reviewFix: true } : {}), ...(r?.judgedHead ? { judgedHead: r.judgedHead, ...(r.judgedBranch ? { judgedBranch: r.judgedBranch } : {}) } : {}) }))
     // 自動流程的修正（含從隊伍派出的）真的派出去了才算一輪：排隊後被額度煞車或別的原因丟掉的不算。
     if (opts.auto && opts.fix) await saveChain($, rootKey, r => r ? { ...r, ...countedFix(r, c.git?.branch) } : r)
     // 派審查時的 HEAD 連同它所在的分支一起記：合併辨識只認「這條分支」看過的 HEAD。
@@ -305,12 +345,11 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     unconfirmed.delete(c.statusPath)
     // 派工一開始讀的紀錄已經過了好幾秒（算指紋、派出）：重讀一次，這段時間別處記下的結束、檢查時間、指紋才不會被蓋掉。
     const latest = await loadJobs($)
-    const next: RootJobs = { ...carriedJobs(latest[rootKey], now, runGraceMs(options), c.git?.branch), sessionId: fresh ? latest[rootKey]?.sessionId : confirmed.sessionId!, last: record }
+    const next: RootJobs = { ...carriedJobs(latest[rootKey], now, runGraceMs(options), c.git?.branch), sessionId: fresh ? latest[rootKey]?.sessionId : record.sessionId, last: record }
     await $.store.set(JOBS_KEY, { ...latest, [rootKey]: next })
-    const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
     const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安驗收' : KIND_LABEL[kind]
-    const sent = `派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`
+    const sent = `派${label}（${external ? `外部 Agent ${runner}` : `${model || '預設模型'}${fresh ? '・新對話' : ''}`}）`
     await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}${sent}`, tone: 'suggestion', card: c.statusPath }])
     await tellPanel($, now, sent, { name: c.name, skip: opts.auto || tutorial })
     await clearUntrusted($, c.statusPath)

@@ -161,6 +161,8 @@ export async function refresh($: any, options: PluginOptions) {
           if (agent.id) logs.set(agent.id, beacon.log)
         }
       }
+      // 最後一次派工是外部驗收：信標在跑就是它在驗收；回報失敗（blocked）不是在等你，由自動流程改派 Claude 驗收。
+      if (agent?.source === 'beacon' && last?.external) agent = agent.status === 'busy' ? { ...agent, kind: 'review' } : undefined
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }
       const probe = await gitProbe($, base.root)

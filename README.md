@@ -265,6 +265,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `review.preflight` | 審查前置指令：每次審查（程式碼審查、資安審查、複審、重新審查）先執行（設了 `review.preflightMinFiles` 時，diff 少於門檻的審查不跑），輸出當候選清單、逐條驗證過才列進審查檔，審查檔第一行記前置成功與否；指令失敗就略過照常審。任何會輸出候選清單的工具都行（lint、SAST、另一個模型的 CLI…）。`{root}` 換成任務根目錄、`{base}` 換成這次審查看的基準（不明時空字串），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
 | `review.preflightMinFiles` | 審查前置的檔數門檻：diff 少於這麼多檔的審查與複審（修正後、重新審查）不跑 `review.preflight`；正整數，0 或不設（預設）＝都跑 |
 | `review.combineSecurity` | `true` 時，高風險分支的資安重點併進程式碼審查，過關後不另派資安審查，照樣停下來等你看；只認 JSON 的 `true`，預設關閉 |
+| `review.agent` | 一般驗收改派的外部 Agent（例如 `"agy"`，可帶參數）：用 `card.py send` 在 worktree 背景啟動，結論寫在審查檔第一行，desk 讀回卡片關卡後照常往下走（過關、自動修正、MEDIUM 等你決定）；沒有結果（回報失敗、行程不見、審查檔沒更新或第一行讀不到）就改派 Claude 驗收一次。資安審查與 `review.combineSecurity` 的驗收照舊用 Claude；空白＝不改派 |
 | `review.pitfalls` | 常犯錯誤清單路徑（可用 `~`），讓清單跟著 repo 走；優先於 plugin 選項 `pitfallsPath` 與專案資料夾的 `review-pitfalls.md`，空白照原本順序 |
 | `risk.high` | 額外的高風險路徑（正規式）；碰到就加跑資安審查並停下來等你看 |
 | `checkServices` | 完成檢查裡出現這個指令名時需要哪些容器服務 |

@@ -11,8 +11,9 @@ export type ModelKind = typeof MODEL_KINDS[number]
  * pitfalls 是專案自己的常犯錯誤清單路徑（可用 `~`），優先於 plugin 選項與專案資料夾預設。
  * preflightMinFiles：diff 少於這麼多檔的審查與複審（修正後、重新審查）不加前置句；0（預設）＝都加。
  * combineSecurity：高風險分支的資安重點併進程式碼審查，過關後不另派資安審查；只認 JSON 的 true。
+ * agent：一般驗收改派的外部 Agent（例如 `agy`，可帶參數）；空白＝照舊用 Claude。資安審查與併做資安的驗收不改派。
  */
-export type ReviewWords = { high: string; security: string; categories: string; template: string; preflight?: string; pitfalls?: string; preflightMinFiles?: number; combineSecurity?: boolean }
+export type ReviewWords = { high: string; security: string; categories: string; template: string; preflight?: string; pitfalls?: string; preflightMinFiles?: number; combineSecurity?: boolean; agent?: string }
 export type DispatchSettings = {
   model: string; effort: string; sync: { model: string; effort: string; fresh: boolean }
   projects: Record<string, { model?: string; effort?: string; rules?: string[] }>
@@ -62,6 +63,7 @@ export const DEFAULT_REVIEW: ReviewWords = {
   pitfalls: '',
   preflightMinFiles: 0,
   combineSecurity: false,
+  agent: '',
 }
 
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
@@ -83,7 +85,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     out.kinds = parseKinds(d?.kinds)
     out.user = str(d?.user) || DEFAULT_USER
     out.rules = strList(d?.rules)
-    out.review = { high: str(d?.review?.high) || DEFAULT_REVIEW.high, security: str(d?.review?.security) || DEFAULT_REVIEW.security, categories: str(d?.review?.categories) || DEFAULT_REVIEW.categories, template: str(d?.review?.template), preflight: str(d?.review?.preflight), pitfalls: str(d?.review?.pitfalls), preflightMinFiles: Number.isInteger(d?.review?.preflightMinFiles) && d.review.preflightMinFiles > 0 ? d.review.preflightMinFiles : 0, combineSecurity: d?.review?.combineSecurity === true }
+    out.review = { high: str(d?.review?.high) || DEFAULT_REVIEW.high, security: str(d?.review?.security) || DEFAULT_REVIEW.security, categories: str(d?.review?.categories) || DEFAULT_REVIEW.categories, template: str(d?.review?.template), preflight: str(d?.review?.preflight), pitfalls: str(d?.review?.pitfalls), preflightMinFiles: Number.isInteger(d?.review?.preflightMinFiles) && d.review.preflightMinFiles > 0 ? d.review.preflightMinFiles : 0, combineSecurity: d?.review?.combineSecurity === true, agent: str(d?.review?.agent) }
     if (Array.isArray(d?.risk?.high)) for (const r of d.risk.high) {
       // 寫錯的正規式略過，不讓整份設定失效。
       try { if (str(r?.pattern) && str(r?.label)) out.riskHigh.push([new RegExp(str(r.pattern)), str(r.label)]) } catch { /* 略過 */ }

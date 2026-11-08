@@ -1,5 +1,5 @@
 // 審查（review）派工的提示詞：程式碼審查、資安審查、修正後的複審與重新審查。
-import type { Case } from '../../types'
+import type { Case, ReviewVerdict } from '../../types'
 import type { ReviewWords } from '../settings'
 import { pitfallsRule } from './rules'
 
@@ -56,9 +56,9 @@ function mergedBase(base: string, target?: string): string {
  * `{root}` 換成任務根目錄、`{base}` 換成這次看的基準（複審與重新審查是上次審查的 HEAD，第一次是基準分支，不明就空字串）；其他佔位原樣保留。
  * desk 不執行也不檢查這條指令，失敗由審查自己略過。
  */
-function preflightRule(cmd: string, vars: { root: string; base: string }, file: string): string {
+function preflightRule(cmd: string, vars: { root: string; base: string }, file: string, line = '第一行'): string {
   const run = cmd.replace(/\{(root|base)\}/g, (_, k: 'root' | 'base') => vars[k]).trim()
-  return `審查前置：先執行 \`${run}\`，它的輸出是候選清單，每條都要自己逐條驗證過才准列進 ${file}，未驗證的不算；${file} 第一行記「前置：成功，候選 n 條，採用 m 條」。指令失敗（找不到、非 0、超時）就略過、照常審查，第一行記「前置：失敗（原因）」。`
+  return `審查前置：先執行 \`${run}\`，它的輸出是候選清單，每條都要自己逐條驗證過才准列進 ${file}，未驗證的不算；${file} ${line}記「前置：成功，候選 n 條，採用 m 條」。指令失敗（找不到、非 0、超時）就略過、照常審查，${line}記「前置：失敗（原因）」。`
 }
 
 /**
@@ -83,6 +83,34 @@ function wantsPreflight(words: ReviewWords, r: ReviewOpts | undefined): boolean 
 }
 
 export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
+  return reviewLines(c, words, r, false).join('\n')
+}
+
+/**
+ * 外部 Agent（review.agent）跑的一般驗收：範圍、分級與 MEDIUM 標記照 reviewPrompt，但不碰卡片——
+ * 結論寫在審查檔第一行（EXTERNAL_VERDICT_LINE 的格式），由工作桌讀回關卡、MEDIUM 題也由工作桌寫進「等你」。
+ * 前置結果改記在第二行。只給程式碼審查用（資安審查與併做資安的驗收照舊派 Claude）。
+ */
+export function externalReviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
+  return reviewLines(c, words, r, true).join('\n')
+}
+
+/** 外部驗收的審查檔第一行：「審查：CRITICAL n、HIGH n、MEDIUM n、LOW n」。 */
+export const EXTERNAL_VERDICT_LINE = '審查：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>'
+const EXTERNAL_VERDICT_RE = /^審查\s*[:：]\s*CRITICAL\s*(\d+)\s*[、,，]\s*HIGH\s*(\d+)\s*[、,，]\s*MEDIUM\s*(\d+)\s*[、,，]\s*LOW\s*(\d+)\s*$/i
+
+/** 外部 Agent 的 MEDIUM：不寫卡片，只在審查檔標記，工作桌照標記在「等你」出題。 */
+const EXTERNAL_MEDIUM_RULE = '只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的 MEDIUM，在審查檔那條結尾標「（記錄、不修）」；其他 MEDIUM（拿不準的也算可能影響行為）結尾標「（等你決定）」，工作桌會照這個標記在卡片問。兩種都算進第一行的 MEDIUM 數。'
+
+/** 審查檔第一行（外部驗收的結論）讀出的四個數字；第一行不是那個格式、少了任何一個數字就是 null。 */
+export function parseExternalVerdict(text: string | null): ReviewVerdict | null {
+  if (!text) return null
+  const first = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n')[0]!.trim()
+  const m = first.match(EXTERNAL_VERDICT_RE)
+  return m ? { critical: Number(m[1]), high: Number(m[2]), medium: Number(m[3]), low: Number(m[4]) } : null
+}
+
+function reviewLines(c: Case, words: ReviewWords, r: ReviewOpts | undefined, external: boolean): string[] {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
   const scope = r?.base && r.recheck
     ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。${mergedBase(r.base, r.target)}先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 LOW 與標「不修」的項目不要再提；${RECHECK_ASKED}`
@@ -92,16 +120,18 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
   return [
     `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續 Agent、不參考 Agent 的結論。`,
     `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。${checkRule(c.verify, r?.verifiedHead)}`,
-    ...(wantsPreflight(words, r) ? [preflightRule(words.preflight!, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file)] : []),
+    ...(wantsPreflight(words, r) ? [preflightRule(words.preflight!, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file, external ? '第二行' : '第一行')] : []),
     scope,
     ...(r?.pitfalls ? [pitfallsRule(r.pitfalls)] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
     ...(r?.securityFocus && !r.security ? [`這是高風險分支，這次審查同時做資安審查（過關後不另派）：另外逐項看 ${words.security}，有問題照下面的分級列進 ${file}。`] : []),
     `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
-    MEDIUM_RULE,
+    external ? EXTERNAL_MEDIUM_RULE : MEDIUM_RULE,
     ...(r?.security ? [SECURITY_KEEP_ASK] : []),
-    '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>',
+    external
+      ? `${file} 第一行固定寫「${EXTERNAL_VERDICT_LINE}」（四個數字都要有，沒有就寫 0），第二行起才列問題；工作桌讀第一行寫回卡片關卡。`
+      : '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>',
     ...(r?.pitfalls && r.history ? [`審完後看 ${r.history} 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 ${r.pitfalls} 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。`] : []),
-    '不改程式、不 commit。',
-  ].join('\n')
+    external ? '不改程式、不改卡片、不 commit。' : '不改程式、不 commit。',
+  ]
 }

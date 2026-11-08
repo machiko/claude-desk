@@ -184,10 +184,14 @@ export function mediumToFix(text: string | null): number {
  * 有 CRITICAL／HIGH 時這幾題留在審查檔、等你留無，靠修正後的審查過關時問；沒有檔案回 0。
  */
 export function mediumToDecide(text: string | null): number {
-  if (!text) return 0
+  return mediumDecideLines(text).length
+}
+
+/** 審查檔裡標「（等你決定）」的 MEDIUM 那幾行（原樣，算法同 mediumToDecide）；沒有檔案回空清單。 */
+export function mediumDecideLines(text: string | null): string[] {
+  if (!text) return []
   return text.replace(/\r\n?/g, '\n').split('\n')
     .filter(l => /^\s*[-*]\s*\[MEDIUM\]/i.test(l) && /[（(][^（）()]*等你決定[）)][。.]?\s*$/.test(l))
-    .length
 }
 
 /** `git status --porcelain=v2 --branch`：領先、落後、未提交、未追蹤，以及有沒有遠端分支（upstream）。 */

@@ -11,7 +11,7 @@ import type { DispatchSettings } from './settings'
 import { DONE_RULE, NO_PUSH_RULE, PUSH_RULE, PUSH_SCOPE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
 import { CATCHUP_CARD_RULE, catchupHead } from './prompts/catchup'
 import { PUBLISH_CARD_RULE, publishHead } from './prompts/publish'
-import { reviewPrompt, reviewTask } from './prompts/review'
+import { externalReviewPrompt, reviewPrompt, reviewTask } from './prompts/review'
 import type { ReviewOpts } from './prompts/review'
 import { fixHead, manualFix } from './prompts/fix'
 import type { ManualFix } from './prompts/fix'
@@ -23,7 +23,7 @@ import { KIND_LABEL } from './kind-label'
 export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
 export { openPrRequest, openPrSteps, prHowOf, pushRequest } from './prompts/publish'
 export type { PrHow } from './prompts/publish'
-export { REVIEW_FILE, SECURITY_FILE, reviewTask } from './prompts/review'
+export { EXTERNAL_VERDICT_LINE, REVIEW_FILE, SECURITY_FILE, parseExternalVerdict, reviewTask } from './prompts/review'
 export type { ReviewOpts } from './prompts/review'
 export { IDLE_WHY, MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext, reviewNext } from './next-words'
 export { markOf, markRefusal } from './worktree-mark'
@@ -43,8 +43,18 @@ const SHORT_ID = /^[0-9a-f]{8}$/i
  * catchup：合併段跟基準分支有衝突時自動派 Agent 把基準分支合併進來、解衝突；不 push、沒有按鍵。
  */
 export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish' | 'catchup'
+/**
+ * 外部 Agent 跑的驗收怎麼結束（工作桌從 `.task/agent-state.json` 看到的）：done 回報完成、blocked 回報失敗、
+ * gone 行程已不在卻沒回報完成（或派工後信標一直沒更新）。
+ */
+export type ExternalEnd = 'done' | 'blocked' | 'gone'
+/**
+ * 外部 Agent（review.agent）跑的這次驗收：agent 是執行器名稱（信標與動態用），pid 是 card.py send 的背景行程；
+ * end 是看到它結束時記下的；settled 是結論已寫回卡片關卡（之後照 Claude 驗收的結論往下走）。
+ */
+export type ExternalRun = { agent: string; pid?: number; end?: ExternalEnd; settled?: true }
 /** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
-export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 自動流程已接手這次（開跑自動檢查，或停在檢查段後你重開）：之後「等你」出現的題目不是它做完時寫的。 */ chained?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' }; /** 之前幾段在跑的時間加起來（停下來等人時收進來）。 */ busyMs?: number; /** 現在這段開始在跑的時間；沒有就是派出的時間。 */ runAt?: number; /** 這段最後一次看到它在跑（最多每 RUN_SEEN_STEP_MS 記一次）。 */ seenAt?: number; /** 停下來等人（提問、權限提示）：現在這段不算，再看到它在跑才重新起算。 */ paused?: true }
+export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 自動流程已接手這次（開跑自動檢查，或停在檢查段後你重開）：之後「等你」出現的題目不是它做完時寫的。 */ chained?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 這次驗收派給外部 Agent（不是 claude --bg）。 */ external?: ExternalRun; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' }; /** 之前幾段在跑的時間加起來（停下來等人時收進來）。 */ busyMs?: number; /** 現在這段開始在跑的時間；沒有就是派出的時間。 */ runAt?: number; /** 這段最後一次看到它在跑（最多每 RUN_SEEN_STEP_MS 記一次）。 */ seenAt?: number; /** 停下來等人（提問、權限提示）：現在這段不算，再看到它在跑才重新起算。 */ paused?: true }
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string; /** 這條分支已結束的派工與自動檢查總共跑了幾毫秒（不含正在跑的）。 */ runMs?: number; /** runMs 算的是哪條分支；同一個資料夾換了分支就從 0 起算。 */ runBranch?: string }
 
 export { KIND_LABEL }
@@ -170,6 +180,19 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
   const rules = writes ? [SPEC_RULE, ...selfCheck, changelogRule(c), testRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
   return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
+}
+
+/**
+ * 這次驗收改派外部 Agent：專案設了 review.agent，而且不是資安審查、也不是高風險分支併做資安的驗收（那兩種照舊用 Claude）。
+ * 外部驗收沒有結果、改派的 Claude 驗收（fallback）也不改派。
+ */
+export function usesExternalReview(settings: DispatchSettings, review: Pick<ReviewOpts, 'security' | 'securityFocus'>, fallback = false): boolean {
+  return !!settings.review.agent && !review.security && !review.securityFocus && !fallback
+}
+
+/** 外部驗收的整份提示：審查本身（不碰卡片）加上任務、根目錄；不附卡片規則，外部 Agent 不改卡片。 */
+export function buildExternalPrompt(c: Case, review: ReviewOpts, settings: DispatchSettings): string {
+  return [externalReviewPrompt(c, settings.review, review), `任務：${c.name}`, `根目錄：${c.root}`].join('\n')
 }
 
 /** PR 開著、CI 失敗、本機沒有待 push 的 commit：「輪到你」叫你按 g 修正。 */
@@ -311,7 +334,7 @@ export function afterSpecRefusal(c: Case): Refusal | null {
 }
 
 /** 排隊等派的一筆：手動（g、w、s、y、⇡）或自動流程排的；opts 照原本派工的參數。 */
-export type QueueOpts = { text?: string; fix?: FixReason; auto?: boolean; security?: boolean; /** 你按 g（或 /desk go）接續被額度煞車擋下的那步：照自動流程接續原本那輪，但算你手動派的，排隊時不看額度。 */ resumed?: boolean }
+export type QueueOpts = { text?: string; fix?: FixReason; auto?: boolean; security?: boolean; /** 外部驗收沒有結果、改派的 Claude 驗收：設了 review.agent 也不再派給外部 Agent。 */ fallback?: boolean; /** 你按 g（或 /desk go）接續被額度煞車擋下的那步：照自動流程接續原本那輪，但算你手動派的，排隊時不看額度。 */ resumed?: boolean }
 export type QueueEntry = { statusPath: string; kind: DispatchKind; opts: QueueOpts; at: number }
 
 export const NO_PUSH_NEEDED = '已不需要推送（PR 已開且分支已是最新，或不在合併段）'

@@ -5,7 +5,7 @@ import type { Case } from '../types'
 import { endedHow, runSeen } from './agents'
 import { JOBS_KEY, loadJobs } from './desk-io'
 import type { JobRecord, RootJobs } from './dispatch'
-import { worktreeMark } from './probes'
+import { externalEnd, worktreeMark } from './probes'
 import { writeStats } from './run-stats'
 import { addRunTime, dispatchRunMs, observeRun, runOf } from './run-time'
 import type { RunShown } from './run-time'
@@ -15,7 +15,7 @@ const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 
 /**
  * 這幾個根目錄（登錄表上的卡，加上要停掉的做完 Agent 所在的，可能是別的專案）最後一次派工的 Agent：
- * - 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
+ * - 剛結束（做完或被停掉；外部驗收看信標與行程，另記 external.end）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
  *   之後派工用它分辨「現在的改動是上一個 Agent 留下的」還是別的對話在改。每一次派工只記一次，審查與同步不動指紋。
  *   同時把這次派工在跑的時間加進總執行時間：只在第一次記下 ended 時加，同一次派工不會重複算；
  *   最多算到最後看到它在跑之後 grace（工作桌關著時結束的，不把關著的時間算進去）。
@@ -26,7 +26,9 @@ export async function noteRuns($: any, list: readonly any[], roots: readonly str
   for (const key of new Set(roots.map(normalizeRoot))) {
     const last = (await loadJobs($))[key]?.last
     if (!last || last.ended) continue
-    const how = endedHow(list, last.launchName)
+    // 外部驗收不在 claude agents 清單：看它的信標與行程，結束時連怎麼結束的一起記下。
+    const external = last.external ? await externalEnd($, key, last) : null
+    const how = last.external ? (external ? 'finished' : null) : endedHow(list, last.launchName)
     if (!how) { await noteSeen($, key, last, runSeen(list, last.launchName), now, grace); continue }
     const codeAgent = last.kind === 'continue' || last.kind === 'reply' || last.kind === 'catchup'
     const mark = codeAgent ? await worktreeMark($, key) : undefined
@@ -35,7 +37,7 @@ export async function noteRuns($: any, list: readonly any[], roots: readonly str
     const cur = all[key]?.last
     if (!cur || cur.launchName !== last.launchName || cur.ended) continue
     const timed = addRunTime(all[key], dispatchRunMs(cur, now, grace), branches[key])
-    const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } }
+    const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how }, ...(cur.external && external ? { external: { ...cur.external, end: external } } : {}) } }
     await $.store.set(JOBS_KEY, { ...all, [key]: next })
     await writeStats($, key)
     await restageRun($, key, next, grace)
