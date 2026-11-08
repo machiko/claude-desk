@@ -289,6 +289,40 @@ test('agent push: implementation prompts allow pushing the own branch and openin
   }
 })
 
+/** dispatch-slim AC-3：解衝突的提示只說一次「不 push、不開 PR」，也沒有跟「解完跑一次完成檢查」相反的「不用自己跑完成檢查」。 */
+test('test_catchup_prompt_has_no_duplicate_or_conflicting_rules', () => {
+  const c = { ...atMerge(), verify: 'node test.mjs' }
+  for (const target of ['origin/main', '']) {
+    const p = buildPrompt(c, 'catchup', target)
+    expect(p.split('不 push、不開 PR').length - 1).toBe(1)
+    expect(p).toContain('解完跑一次完成檢查')
+    expect(p).not.toContain('不用自己跑')
+    expect(p).not.toContain('收尾 commit 前')
+    expect(p).not.toContain('可以 push')
+  }
+})
+
+/** dispatch-slim AC-4：推送的提示裡 push 後的歷程範例只出現一次（推送步驟那句），寫遠端的範圍照舊。 */
+test('test_publish_prompt_states_history_example_once', () => {
+  const c = atMerge()
+  const requests = [
+    openPrRequest('feature/a', 'origin/main', { host: 'github', repo: 'acme/shop' }),
+    openPrRequest('feature/a', 'origin/main', { host: 'bitbucket', repo: 'acme/shop' }),
+    openPrRequest('feature/a', 'origin/main', { host: 'other', open: 'make pr {branch}' }),
+    openPrRequest('feature/a', 'origin/main'),
+    pushRequest('feature/a', 12),
+  ]
+  for (const r of requests) {
+    const p = buildPrompt(c, 'publish', r)
+    expect(p.split('Agent：push').length - 1).toBe(1)
+    expect(p.split('歷程記一筆').length - 1).toBe(1)
+    expect(p).toContain('可以 push 這件任務自己的分支')
+    expect(p).toContain('不 force push')
+    expect(p).toContain('不合併 PR')
+    expect(p).not.toContain('不 push、不開 PR')
+  }
+})
+
 /** AC-2：範圍外：同步與審查（含資安審查）仍不 push、不開 PR。 */
 test('agent push: sync and review prompts still forbid push and PR', () => {
   const c = mk('push 後開 PR')
