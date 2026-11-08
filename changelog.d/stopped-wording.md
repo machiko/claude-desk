@@ -1,1 +1,0 @@
-- 修復 按 k 或 claude stop 停掉的 Agent，動態寫成「Agent 已完成」：改寫「Agent 已停止」
