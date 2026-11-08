@@ -1,9 +1,10 @@
 // 探測：git、tag、PR（Bitbucket／GitHub）、合併、風險、Agent 記錄、容器、版本、模型。都是讀，不寫卡片；
 // 唯一的寫入是審查存底（archiveReview）。快取放在這個模組裡，重新載入就清空。
 import type { PluginOptions } from 'claude-code'
-import type { Case, PrInfo, Snapshot, Verify } from '../types'
+import type { AgentInfo, Case, PrInfo, Snapshot, Verify } from '../types'
 import { expandHome } from './card'
-import { lastMeaningful, plain } from './text'
+import { beaconAgentInfo, beaconRootOf, isBeaconId, parseBeaconJson } from './agents'
+import { lastMeaningful, parseOsc7501, plain } from './text'
 import { summarizeCheck } from './verify-summary'
 import { MODEL_KINDS, modelFor, normalizeRoot, parseSettings } from './settings'
 import { REVIEW_FILE, SECURITY_FILE } from './prompts/review'
@@ -479,11 +480,41 @@ export async function archiveReview($: any, options: PluginOptions, c: Case, sec
   await $.fs.write(`${dir}/${slug}-${stamp}-${security ? 'security' : 'code'}.md`, text).catch(() => {})
 }
 
-/** Agent 的整份輸出（`claude logs`）；沒有 id 或讀不到是 null。最後一句與最後幾行都從它取，同一輪只讀一次。 */
+export const BEACON_FILE = '.task/agent-state.json'
+export const AGENT_OUT_FILE = '.task/AGENT-OUT.md'
+
+/** Agent 的整份輸出（`claude logs` 或外部 Agent 的 `.task/AGENT-OUT.md`）；沒有 id 或讀不到是 null。最後一句與最後幾行都從它取，同一輪只讀一次。 */
 export async function agentLog($: any, id: string | undefined): Promise<string | null> {
   if (!id) return null
+  if (isBeaconId(id)) {
+    const root = beaconRootOf(id)
+    if (!root) return null
+    const text = await $.fs.read(`${root}/${AGENT_OUT_FILE}`).catch(() => null)
+    return typeof text === 'string' ? text : null
+  }
   const r = await $.process.run(['claude', 'logs', id], { timeoutMs: LOGS_TIMEOUT_MS }).catch(() => null)
   return r && r.exitCode === 0 ? String(r.stdout) : null
+}
+
+/** 檢查外部 Agent 信標記錄的 PID 是否還活著（`kill -0 <pid>`）。 */
+export async function pidAlive($: any, pid: number | undefined): Promise<boolean> {
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return true
+  const r = await $.process.run(['kill', '-0', String(pid)], { timeoutMs: 2_000 }).catch(() => null)
+  return !!r && r.exitCode === 0
+}
+
+/** 探測 worktree 裡的外部 Agent 信標（`.task/agent-state.json`）與即時輸出（`.task/AGENT-OUT.md`）。 */
+export async function beaconProbe($: any, root: string): Promise<{ agent?: AgentInfo; log: string | null }> {
+  const [rawBeacon, rawOut] = await Promise.all([
+    $.fs.read(`${root}/${BEACON_FILE}`).catch(() => null) as Promise<string | null>,
+    $.fs.read(`${root}/${AGENT_OUT_FILE}`).catch(() => null) as Promise<string | null>,
+  ])
+  const beacon = parseBeaconJson(rawBeacon)
+  const osc = rawOut ? parseOsc7501(rawOut) : null
+  if (!beacon && !osc) return { log: rawOut }
+  const alive = beacon?.pid !== undefined ? await pidAlive($, beacon.pid) : true
+  const agent = beaconAgentInfo(root, beacon, osc, lastLineOf(rawOut), alive)
+  return { ...(agent ? { agent } : {}), log: rawOut }
 }
 
 /** 整份輸出的最後一句話；讀不到是空字串。 */

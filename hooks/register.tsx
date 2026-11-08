@@ -6,15 +6,15 @@ import type { Register, PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Snapshot, Verify } from '../types'
 import { CARD_CMD, parseRegistry } from './card'
 import { buildCase, caseNamed, demoCases, events, feedOnDesk, stateOf, settleMergedAsk } from './model'
-import { plain, errorText } from './text'
-import { agentLog, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLineOf, loadSettings, logTail, logTailOf, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
+import { plain, errorText, parseOsc7501 } from './text'
+import { agentLog, beaconProbe, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLineOf, loadSettings, logTail, logTailOf, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
 import { deploySteps, historyEntries, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
 import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, refusalOf, refusalText } from './dispatch'
 import { runOf } from './run-time'
-import { launchName, runningDeskAgents, agentsByRoot, endedAlive, endedHow, rawAgents, supersede, asksFor, agentInfo, askClearedOnCard } from './agents'
+import { launchName, runningDeskAgents, agentsByRoot, applyOscToAgent, endedAlive, endedHow, rawAgents, supersede, asksFor, agentInfo, askClearedOnCard } from './agents'
 import { modelFor, normalizeRoot, pitfallsFor } from './settings'
 import type { DispatchKind, QueueOpts, ReviewOpts, UntrustedHold } from './dispatch'
 import type { RawAgent } from './agents'
@@ -153,7 +153,13 @@ export async function refresh($: any, options: PluginOptions) {
       if (agent && agent.id && !tutorial && (agent.status === 'busy' || agent.asks)) {
         const log = await agentLog($, agent.id)
         logs.set(agent.id, log)
-        agent = { ...agent, last: lastLineOf(log) }
+        agent = applyOscToAgent(agent, log ? parseOsc7501(log) : null, lastLineOf(log))
+      } else if (!agent && !tutorial) {
+        const beacon = await beaconProbe($, base.root)
+        if (beacon.agent) {
+          agent = beacon.agent
+          if (agent.id) logs.set(agent.id, beacon.log)
+        }
       }
       // 對得上最後一次派工：帶著它在做什麼（審查、同步在跑時六段不退回實作）。
       if (agent && last && agent.name === last.launchName) agent = { ...agent, kind: last.round ? 'fix' : last.kind }

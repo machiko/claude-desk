@@ -13,9 +13,10 @@ import { fit, plain, resetText, runMinutesText } from './text'
 import { agentWaits, approvalWait, approveText } from './agents'
 
 // 文字工具搬到 text.ts、Agent 清單解析搬到 agents.ts；呼叫端與測試照舊從這裡匯入也行。
-export { STALE_MS, ago, displayWidth, elapsedText, errorLine, errorText, fit, hhmm, isNoise, isStatusLine, lastMeaningful, pad, plain, reasonLine, resetText, runMinutesText, screenLines, slugOf } from './text'
-export { agentInfo, agentWaits, agentsByRoot, approvalWait, approveText, askClearedOnCard, askedOnCardAtEnd, asksFor, asksQuestion, codeJobEnded, endedAlive, endedHow, parseAgents, rawAgents, runSeen, supersede } from './agents'
-export type { EndedAlive, LastLaunch, Superseded } from './agents'
+export { STALE_MS, ago, displayWidth, elapsedText, errorLine, errorText, fit, hhmm, isNoise, isStatusLine, lastMeaningful, pad, parseOsc7501, plain, reasonLine, resetText, runMinutesText, screenLines, slugOf } from './text'
+export type { Osc7501Signal, Osc7501State } from './text'
+export { BEACON_ID_PREFIX, agentInfo, agentWaits, agentsByRoot, applyOscToAgent, approvalWait, approveText, askClearedOnCard, askedOnCardAtEnd, asksFor, asksQuestion, beaconAgentInfo, beaconRootOf, codeJobEnded, endedAlive, endedHow, isBeaconId, parseAgents, parseBeaconJson, rawAgents, runSeen, supersede } from './agents'
+export type { AgentBeacon, EndedAlive, LastLaunch, Superseded } from './agents'
 
 /** 模型名稱給人看：claude-opus-5-5 → Opus 5.5；別名（opus、haiku）與其他寫法原樣。 */
 export function modelLabel(id: string | undefined): string {

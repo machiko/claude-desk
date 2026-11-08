@@ -38,6 +38,15 @@
                                                「## [Unreleased]」的手寫內容與片段一起移進「## [<版本>] - <今天>」段，
                                                條目依動詞分進 ### Added／Changed／Removed／Fixed／Security，其他手寫小節原樣排最後；
                                                片段動詞不在對照表、版本段已存在、沒有片段且 [Unreleased] 是空的都報錯、不改檔。
+  card.py emit <slug|任務名|main> <working|blocked|done|idle> [訊息] [--agent <名>] [--wait <permission|question>] [--pid <PID>]
+                                               推播 Agent 狀態：向 stdout 印出 Herdr 相容的 OSC 7501 轉義序列，同時原子寫入
+                                               .task/agent-state.json（面板即時感知外部 Agent 狀態），有訊息時一併寫入 .task/AGENT-OUT.md
+  card.py read <slug|任務名|main> [--source <out|review|security|report|spec|card|state>] [--lines <N>] [--json]
+                                               讀取目標任務的 Agent 輸出（.task/AGENT-OUT.md）或產物（REVIEW.md 等），自動剝除控制字元並解析 OSC 7501
+  card.py wait <slug|任務名|main> --until <done|blocked|gate|ready|idle> [--timeout <秒>] [--interval <秒>] [--json]
+                                               阻塞等待目標任務達到指定狀態；等待 done 時若目標進入 blocked 或等你決策會提前返回（exit 2）
+  card.py send <slug|任務名|main> --to <claude|agy|cmd> <提示詞或指令> [--bg] [--agent-cmd <執行檔>] [--json]
+                                               跨 Agent 派工：在目標 worktree 啟動指定 Agent，自動維護 .task/agent-state.json 與 .task/AGENT-OUT.md
 
 CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree 資料夾名），內容是一行或多行「- 」開頭、
 動詞開頭的條目，沒有標題；不改 CHANGELOG.md，發版時才用 changelog 合併，各分支就不會再搶「## 未發布」。
@@ -68,6 +77,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 HOME = os.path.expanduser('~')
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1371,6 +1381,510 @@ def cmd_changelog(version):
     print(f'接著：改版號 → git add {CHANGELOG} {FRAGMENT_DIR} → commit → tag v{version}')
 
 
+BEACON_REL = os.path.join('.task', 'agent-state.json')
+AGENT_OUT_REL = os.path.join('.task', 'AGENT-OUT.md')
+VALID_AGENT_STATES = ('working', 'blocked', 'done', 'idle')
+VALID_WAITS = ('permission', 'question')
+OSC_7501_RE = re.compile(r'\x1b\]7501;([^\x07\x1b]*)(?:\x07|\x1b\\)')
+ANSI_STRIP_RE = re.compile(
+    r'\x1b\[[0-?]*[ -/]*[@-~]'
+    r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'
+    r'|\x1b[@-Z\\-_]'
+    r'|[\x00-\x08\x0b-\x1f\x7f-\x9f]'
+)
+
+
+def strip_ansi(text):
+    """剝除終端機 CSI／OSC 控制序列與控制字元。"""
+    return ANSI_STRIP_RE.sub('', text or '')
+
+
+def parse_osc7501_py(text):
+    """從原始文字掃描最後一筆合法的 OSC 7501 狀態訊號。"""
+    if not text or '\x1b]7501;' not in text:
+        return None
+    found = None
+    for m in OSC_7501_RE.finditer(text):
+        kv = {}
+        for part in m.group(1).split(';'):
+            if '=' not in part:
+                continue
+            k, v = part.split('=', 1)
+            k, v = k.strip().lower(), v.strip()
+            if k and v:
+                kv[k] = v
+        state = kv.get('state', '').lower()
+        if state not in VALID_AGENT_STATES:
+            continue
+        wait = kv.get('wait') or kv.get('reason') or kv.get('waitingfor') or ''
+        wait = wait.lower() if wait.lower() in VALID_WAITS else ('permission' if state == 'blocked' else '')
+        sig = {'state': state}
+        if wait:
+            sig['waitsFor'] = wait
+        if kv.get('agent') or kv.get('runner'):
+            sig['agent'] = strip_ansi(kv.get('agent') or kv.get('runner')).strip()
+        if kv.get('msg') or kv.get('message'):
+            sig['message'] = strip_ansi(kv.get('msg') or kv.get('message')).strip()
+        found = sig
+    return found
+
+
+def format_osc7501(state, agent=None, waits_for=None, message=None):
+    """組出 Herdr 相容的 OSC 7501 轉義序列字串。"""
+    parts = [f'state={state}']
+    if agent:
+        parts.append(f'agent={agent.replace(";", ",")}')
+    if waits_for:
+        parts.append(f'wait={waits_for}')
+    if message:
+        clean_msg = strip_ansi(message).replace('\n', ' ').replace(';', ',').strip()
+        if clean_msg:
+            parts.append(f'msg={clean_msg}')
+    return f'\x1b]7501;{";".join(parts)}\x1b\\'
+
+
+def pid_alive_py(pid):
+    """檢查整數 PID 是否還活著。"""
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def write_beacon(root, state, agent='agy', pid=None, waits_for=None, message=None, started_at=None):
+    """原子寫入 .task/agent-state.json。"""
+    task_dir = os.path.join(root, '.task')
+    os.makedirs(task_dir, exist_ok=True)
+    beacon_path = os.path.join(root, BEACON_REL)
+    now_ms = int(time.time() * 1000)
+    prev = load_json(beacon_path) if os.path.isfile(beacon_path) else {}
+    if started_at is None:
+        started_at = prev.get('startedAt') if prev.get('state') in ('working', 'blocked') and isinstance(prev.get('startedAt'), int) else now_ms
+    payload = {
+        'state': state,
+        'agent': agent or prev.get('agent') or 'agy',
+        'startedAt': started_at,
+        'updatedAt': now_ms,
+    }
+    if isinstance(pid, int) and pid > 0:
+        payload['pid'] = pid
+    if state == 'blocked':
+        payload['waitsFor'] = waits_for if waits_for in VALID_WAITS else 'permission'
+    elif waits_for in VALID_WAITS:
+        payload['waitsFor'] = waits_for
+    if message:
+        payload['message'] = strip_ansi(message).strip()
+    tmp_path = f'{beacon_path}.tmp.{os.getpid()}'
+    write(tmp_path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+    os.replace(tmp_path, beacon_path)
+    return beacon_path, payload
+
+
+def append_agent_out(root, text):
+    """追加文字到 .task/AGENT-OUT.md。"""
+    out_path = os.path.join(root, AGENT_OUT_REL)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, 'a', encoding='utf-8') as f:
+        f.write(text if text.endswith('\n') else text + '\n')
+    return out_path
+
+
+def cmd_emit(args):
+    """card.py emit <target> <working|blocked|done|idle> [message...] [--agent <name>] [--wait <permission|question>] [--pid <pid>]"""
+    agent = os.environ.get('DESK_AGENT') or 'agy'
+    waits_for = None
+    pid = None
+    pos = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--agent' and i + 1 < len(args):
+            agent = args[i + 1].strip() or agent
+            i += 2
+        elif a == '--wait' and i + 1 < len(args):
+            waits_for = args[i + 1].strip().lower()
+            if waits_for not in VALID_WAITS:
+                fail(f'--wait 只能是 permission 或 question：{waits_for}')
+            i += 2
+        elif a == '--pid' and i + 1 < len(args):
+            try:
+                pid = int(args[i + 1])
+            except ValueError:
+                fail(f'--pid 要是整數：{args[i + 1]}')
+            i += 2
+        else:
+            pos.append(a)
+            i += 1
+    if len(pos) < 2:
+        fail('用法：card.py emit <slug|任務名|main> <working|blocked|done|idle> [訊息] [--agent <名>] [--wait <permission|question>] [--pid <PID>]', 2)
+    target, state = pos[0], pos[1].strip().lower()
+    if state not in VALID_AGENT_STATES:
+        fail(f'狀態只能是 working、blocked、done 或 idle：{state}')
+    message = ' '.join(pos[2:]).strip()
+    if pid is None and state in ('working', 'blocked'):
+        pid = os.getppid()
+    name, _, root = resolve(target)
+    osc = format_osc7501(state, agent=agent, waits_for=waits_for or ('permission' if state == 'blocked' else None), message=message)
+    beacon_path, payload = write_beacon(root, state, agent=agent, pid=pid, waits_for=waits_for, message=message)
+    if message:
+        stamp = datetime.datetime.now().strftime('%H:%M:%S')
+        append_agent_out(root, f'{osc}[{stamp}] ({agent}:{state}) {message}')
+    sys.stdout.write(f'{osc}狀態已推播：{name} → {state}（{beacon_path}）\n')
+    sys.stdout.flush()
+    return payload
+
+
+READ_SOURCES = {
+    'out': AGENT_OUT_REL,
+    'agent-out': AGENT_OUT_REL,
+    'logs': AGENT_OUT_REL,
+    'review': os.path.join('.task', 'REVIEW.md'),
+    'security': os.path.join('.task', 'SECURITY-REVIEW.md'),
+    'report': os.path.join('.task', 'REPORT.md'),
+    'spec': os.path.join('.task', 'SPEC-PREFLIGHT.md'),
+    'state': BEACON_REL,
+}
+
+
+def inspect_task_state(path, root):
+    """讀取目標任務目前的卡片關卡、等你、外部信標與輸出狀態。"""
+    text = read(path) if os.path.isfile(path) else ''
+    found = find_block(text) if text else None
+    body = text[found[1]:found[2]] if found else ''
+    gate = field(body, '關卡') if body else ''
+    ask = field(body, '等你') if body else ''
+    status_text = field(body, '狀態') if body else ''
+    beacon_path = os.path.join(root, BEACON_REL)
+    beacon = load_json(beacon_path) if os.path.isfile(beacon_path) else {}
+    out_path = os.path.join(root, AGENT_OUT_REL)
+    raw_out = read(out_path) if os.path.isfile(out_path) else ''
+    osc = parse_osc7501_py(raw_out)
+    b_state = str(beacon.get('state') or '').lower()
+    b_pid = beacon.get('pid')
+    alive = pid_alive_py(b_pid) if isinstance(b_pid, int) else True
+    if b_state in ('working', 'blocked') and not alive:
+        b_state = 'idle'
+    if b_state in ('done', 'idle'):
+        eff_state = b_state
+    elif osc and osc.get('state') in VALID_AGENT_STATES and alive:
+        eff_state = osc['state']
+    elif b_state in VALID_AGENT_STATES:
+        eff_state = b_state
+    else:
+        eff_state = 'idle'
+    clean_lines = [l.strip() for l in strip_ansi(raw_out).splitlines() if l.strip()]
+    last_line = clean_lines[-1] if clean_lines else (beacon.get('message') or '')
+    return {
+        'gate': gate,
+        'ask': ask,
+        'cardStatus': status_text,
+        'state': eff_state,
+        'agent': (osc or {}).get('agent') or beacon.get('agent') or '',
+        'waitsFor': (osc or {}).get('waitsFor') or beacon.get('waitsFor') or ('permission' if eff_state == 'blocked' else ''),
+        'pid': b_pid if isinstance(b_pid, int) else None,
+        'pidAlive': alive,
+        'lastLine': last_line,
+        'hasReview': os.path.isfile(os.path.join(root, '.task', 'REVIEW.md')),
+        'hasReport': os.path.isfile(os.path.join(root, '.task', 'REPORT.md')),
+        'beacon': beacon or None,
+        'osc7501': osc,
+    }
+
+
+def cmd_read(args):
+    """card.py read <target> [--source <out|review|security|report|spec|card|state>] [--lines <N>] [--json]"""
+    source = 'out'
+    max_lines = 50
+    as_json = False
+    pos = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--source' and i + 1 < len(args):
+            source = args[i + 1].strip().lower()
+            i += 2
+        elif a == '--lines' and i + 1 < len(args):
+            try:
+                max_lines = int(args[i + 1])
+            except ValueError:
+                fail(f'--lines 要是整數：{args[i + 1]}')
+            i += 2
+        elif a == '--json':
+            as_json = True
+            i += 1
+        else:
+            pos.append(a)
+            i += 1
+    if not pos:
+        fail('用法：card.py read <slug|任務名|main> [--source <out|review|security|report|spec|card|state>] [--lines <N>] [--json]', 2)
+    name, card_path, root = resolve(pos[0])
+    if source == 'card':
+        target_file = card_path
+    elif source in READ_SOURCES:
+        target_file = os.path.join(root, READ_SOURCES[source])
+    else:
+        fail(f'不支援的 --source：{source}（可用：out、review、security、report、spec、card、state）')
+    raw = read(target_file) if os.path.isfile(target_file) else ''
+    osc = parse_osc7501_py(raw)
+    cleaned = strip_ansi(raw)
+    all_lines = [l.rstrip() for l in cleaned.splitlines() if l.strip()]
+    lines = all_lines[-max_lines:] if max_lines > 0 else all_lines
+    if as_json:
+        info = inspect_task_state(card_path, root)
+        print(json.dumps({
+            'name': name,
+            'root': root,
+            'source': source,
+            'file': target_file,
+            'exists': os.path.isfile(target_file),
+            'state': info['state'],
+            'osc7501': osc or info['osc7501'],
+            'lines': lines,
+            'text': '\n'.join(lines),
+        }, ensure_ascii=False))
+        return
+    if lines:
+        print('\n'.join(lines))
+
+
+VALID_UNTIL = ('done', 'blocked', 'gate', 'ready', 'idle')
+
+
+def check_wait_condition(until, info):
+    """判斷是否達到 wait 條件；回傳 (matched: bool, status_label: str, exit_code: int)。"""
+    state = info['state']
+    has_gate = bool(info['gate'] and info['gate'] != '無')
+    has_ask = bool(info['ask'] and info['ask'] != '無')
+    if until == 'blocked':
+        if state == 'blocked' or has_ask:
+            return True, 'blocked', 0
+        return False, state, 0
+    if until == 'gate':
+        if has_gate:
+            return True, 'gate', 0
+        return False, state, 0
+    if until in ('ready', 'idle'):
+        if state in ('done', 'idle', '') and not has_ask:
+            return True, state or 'idle', 0
+        return False, state, 0
+    if until == 'done':
+        # 等待 done 時若目標卡在權限或等你決策，提前返回 exit 2 避免主控 Agent 盲等逾時
+        if state == 'blocked' or has_ask:
+            return True, 'blocked', 2
+        if state == 'done' or (state != 'working' and (has_gate or info['hasReport'] or info['hasReview'])):
+            return True, 'done', 0
+    return False, state, 0
+
+
+def cmd_wait(args):
+    """card.py wait <target> --until <done|blocked|gate|ready|idle> [--timeout <秒>] [--interval <秒>] [--json]"""
+    until = 'done'
+    timeout_sec = 600.0
+    interval_sec = 1.0
+    as_json = False
+    pos = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--until' and i + 1 < len(args):
+            until = args[i + 1].strip().lower()
+            if until not in VALID_UNTIL:
+                fail(f'--until 只能是 {", ".join(VALID_UNTIL)}：{until}')
+            i += 2
+        elif a == '--timeout' and i + 1 < len(args):
+            try:
+                timeout_sec = float(args[i + 1])
+            except ValueError:
+                fail(f'--timeout 要是數字：{args[i + 1]}')
+            i += 2
+        elif a == '--interval' and i + 1 < len(args):
+            try:
+                interval_sec = max(0.05, float(args[i + 1]))
+            except ValueError:
+                fail(f'--interval 要是數字：{args[i + 1]}')
+            i += 2
+        elif a == '--json':
+            as_json = True
+            i += 1
+        else:
+            pos.append(a)
+            i += 1
+    if not pos:
+        fail('用法：card.py wait <slug|任務名|main> --until <done|blocked|gate|ready|idle> [--timeout <秒>] [--interval <秒>] [--json]', 2)
+    name, card_path, root = resolve(pos[0])
+    started = time.monotonic()
+    while True:
+        info = inspect_task_state(card_path, root)
+        matched, status_label, code = check_wait_condition(until, info)
+        elapsed = round(time.monotonic() - started, 2)
+        if matched:
+            if as_json:
+                print(json.dumps({
+                    'name': name,
+                    'root': root,
+                    'status': status_label,
+                    'until': until,
+                    'agent': info['agent'],
+                    'waitsFor': info['waitsFor'],
+                    'gate': info['gate'],
+                    'ask': info['ask'],
+                    'lastLine': info['lastLine'],
+                    'elapsedSec': elapsed,
+                }, ensure_ascii=False))
+            else:
+                detail = info['lastLine'] or info['gate'] or info['ask'] or info['cardStatus']
+                print(f'{name}：{status_label}{f"（{detail}）" if detail else ""} [{elapsed}s]')
+            if code != 0:
+                sys.exit(code)
+            return
+        if time.monotonic() - started >= timeout_sec:
+            if as_json:
+                print(json.dumps({
+                    'name': name,
+                    'root': root,
+                    'status': 'timeout',
+                    'until': until,
+                    'state': info['state'],
+                    'lastLine': info['lastLine'],
+                    'elapsedSec': elapsed,
+                }, ensure_ascii=False))
+            else:
+                print(f'等待逾時（{timeout_sec}s）：{name} 目前為 {info["state"]}', file=sys.stderr)
+            sys.exit(124)
+        time.sleep(interval_sec)
+
+
+def build_send_argv(to_agent, prompt, agent_cmd=None):
+    """依目標執行器組出子行程 argv。"""
+    if agent_cmd:
+        return [*shlex.split(agent_cmd), prompt]
+    if to_agent == 'cmd':
+        return ['sh', '-c', prompt]
+    if to_agent == 'agy':
+        base = os.environ.get('DESK_AGY_CMD') or 'agy'
+        return [*shlex.split(base), prompt]
+    if to_agent == 'claude':
+        base = os.environ.get('DESK_CLAUDE_CMD') or 'claude'
+        return [*shlex.split(base), '-p', prompt]
+    return [*shlex.split(to_agent), prompt]
+
+
+def run_agent_wrapped(root, to_agent, argv, prompt, started_at=None):
+    """在目標 worktree 執行子行程、即時把輸出寫進 .task/AGENT-OUT.md，並在啟動與結束時更新 .task/agent-state.json。"""
+    out_path = os.path.join(root, AGENT_OUT_REL)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    header = f'\x1b]7501;state=working;agent={to_agent}\x1b\\[{stamp}] ▶ {to_agent}: {prompt}\n'
+    with open(out_path, 'a', encoding='utf-8') as out_f:
+        out_f.write(header)
+        out_f.flush()
+        try:
+            proc = subprocess.Popen(argv, cwd=root, stdout=out_f, stderr=subprocess.STDOUT, text=True)
+        except OSError as e:
+            err_line = f'\x1b]7501;state=blocked;agent={to_agent};wait=permission;msg={e}\x1b\\啟動失敗：{e}\n'
+            out_f.write(err_line)
+            out_f.flush()
+            write_beacon(root, 'blocked', agent=to_agent, waits_for='permission', message=f'啟動失敗：{e}', started_at=started_at)
+            return 127
+        write_beacon(root, 'working', agent=to_agent, pid=proc.pid, message=prompt[:120], started_at=started_at)
+        rc = proc.wait()
+    raw_out = read(out_path) if os.path.isfile(out_path) else ''
+    osc = parse_osc7501_py(raw_out)
+    clean_lines = [l.strip() for l in strip_ansi(raw_out).splitlines() if l.strip()]
+    last_line = clean_lines[-1] if clean_lines else ''
+    if osc and osc.get('state') == 'blocked':
+        write_beacon(root, 'blocked', agent=to_agent, waits_for=osc.get('waitsFor', 'permission'), message=osc.get('message') or last_line, started_at=started_at)
+    elif rc == 0:
+        append_agent_out(root, f'\x1b]7501;state=done;agent={to_agent}\x1b\\')
+        write_beacon(root, 'done', agent=to_agent, message=last_line or '已完成', started_at=started_at)
+    else:
+        msg = last_line or f'執行失敗（exit {rc}）'
+        append_agent_out(root, f'\x1b]7501;state=blocked;agent={to_agent};wait=question;msg={msg}\x1b\\')
+        write_beacon(root, 'blocked', agent=to_agent, waits_for='question', message=msg, started_at=started_at)
+    return rc
+
+
+def cmd_send(args):
+    """card.py send <target> --to <claude|agy|cmd> <prompt...> [--bg] [--agent-cmd <cmd>] [--json]"""
+    to_agent = 'agy'
+    agent_cmd = None
+    bg = False
+    as_json = False
+    pos = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--to' and i + 1 < len(args):
+            to_agent = args[i + 1].strip()
+            i += 2
+        elif a == '--agent-cmd' and i + 1 < len(args):
+            agent_cmd = args[i + 1].strip()
+            i += 2
+        elif a == '--bg':
+            bg = True
+            i += 1
+        elif a == '--json':
+            as_json = True
+            i += 1
+        else:
+            pos.append(a)
+            i += 1
+    if len(pos) < 2:
+        fail('用法：card.py send <slug|任務名|main> --to <claude|agy|cmd> <提示詞或指令> [--bg] [--agent-cmd <執行檔>] [--json]', 2)
+    target = pos[0]
+    prompt = ' '.join(pos[1:]).strip()
+    name, _, root = resolve(target)
+    argv = build_send_argv(to_agent, prompt, agent_cmd)
+    started_at = int(time.time() * 1000)
+    if bg:
+        runner_args = [
+            sys.executable, os.path.abspath(__file__), '_run-wrapped',
+            root, to_agent, prompt, str(started_at), *argv,
+        ]
+        proc = subprocess.Popen(runner_args, cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        beacon_path, _ = write_beacon(root, 'working', agent=to_agent, pid=proc.pid, message=prompt[:120], started_at=started_at)
+        out_path = os.path.join(root, AGENT_OUT_REL)
+        if as_json:
+            print(json.dumps({
+                'name': name,
+                'root': root,
+                'agent': to_agent,
+                'pid': proc.pid,
+                'beacon': beacon_path,
+                'out': out_path,
+                'background': True,
+            }, ensure_ascii=False))
+        else:
+            print(f'已派工給 {to_agent}（PID {proc.pid}）：{name}')
+            print(f'  狀態信標：{beacon_path}')
+            print(f'  輸出紀錄：{out_path}')
+        return
+    rc = run_agent_wrapped(root, to_agent, argv, prompt, started_at=started_at)
+    info = inspect_task_state(os.path.join(root, CARD_FILES[0]), root)
+    if as_json:
+        print(json.dumps({
+            'name': name,
+            'root': root,
+            'agent': to_agent,
+            'exitCode': rc,
+            'state': info['state'],
+            'lastLine': info['lastLine'],
+            'background': False,
+        }, ensure_ascii=False))
+    else:
+        tail = f' — {info["lastLine"]}' if info['lastLine'] else ''
+        print(f'{name}（{to_agent}）執行結束：{info["state"]}{tail}')
+    if rc != 0:
+        sys.exit(rc)
+
+
 def main(argv):
     if not argv:
         fail(__doc__, 2)
@@ -1394,6 +1908,16 @@ def main(argv):
         cmd_archive([a for a in args if a != '--cleanup'], '--cleanup' in args)
     elif cmd == 'changelog' and args:
         cmd_changelog(args[0])
+    elif cmd == 'emit' and args:
+        cmd_emit(args)
+    elif cmd == 'read' and args:
+        cmd_read(args)
+    elif cmd == 'wait' and args:
+        cmd_wait(args)
+    elif cmd == 'send' and args:
+        cmd_send(args)
+    elif cmd == '_run-wrapped' and len(args) >= 5:
+        sys.exit(run_agent_wrapped(args[0], args[1], args[4:], args[2], started_at=int(args[3])))
     else:
         fail(__doc__, 2)
 

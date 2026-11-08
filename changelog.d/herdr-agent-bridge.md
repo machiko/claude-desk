@@ -1,0 +1,2 @@
+- 新增 支援 Herdr 相容的 OSC 7501 終端機狀態序列（`working`、`blocked`、`done`、`idle`）與 `.task/agent-state.json` 外部 Agent 狀態信標（含 PID 存活檢查），面板即時顯示外部 CLI（如 `agy`）的執行與等批准／等回覆狀態，按 `l` 可直接檢視 `.task/AGENT-OUT.md` 輸出
+- 新增 `/desk:card` 跨 Agent 雙向編排子指令：`emit`（推播 OSC 7501 與狀態信標）、`read`（讀取並剝除控制碼的 Agent 輸出或審查／報告檔）、`wait`（阻塞等待目標達成 `done`／`blocked`／`gate`／`ready`，遇阻塞提前返回）與 `send`（跨 Agent 背景或同步派工並自動維護信標與輸出）

@@ -4,6 +4,7 @@ import type { AgentInfo, Case } from '../types'
 import type { JobRecord } from './dispatch'
 import { saysNone } from './card'
 import { plain } from './text'
+import type { Osc7501Signal, Osc7501State } from './text'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -94,7 +95,10 @@ function waitsOf(a: any): AgentInfo['waitsFor'] {
 export const approvalWait = (a: AgentInfo | undefined) => a?.waitsFor === 'permission'
 
 /** 等權限批准時給人看的那句：現在卡最上方、摘要列與列表都用它。 */
-export const approveText = (c: Pick<Case, 'agent'>) => `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准；批准後面板會自動更新`
+export const approveText = (c: Pick<Case, 'agent'>) =>
+  c.agent?.source === 'beacon'
+    ? `Agent 在等權限批准：到 ${c.agent.name || 'Agent'} 終端機視窗確認${c.agent.waitingFor ? `（${c.agent.waitingFor}）` : ''}；確認後面板會自動更新`
+    : `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准；批准後面板會自動更新`
 
 const isBlocked = (a: any): boolean => String(a?.state ?? '').toLowerCase() === 'blocked'
 
@@ -199,4 +203,116 @@ export function confirmLaunch(before: RawAgent[], after: RawAgent[], name: strin
   const seen = new Set(before.map(a => `${a.id ?? ''}|${a.sessionId ?? ''}`))
   const hits = after.filter(a => a.kind === 'background' && a.name === name && (a.id === token || a.sessionId === token) && !seen.has(`${a.id ?? ''}|${a.sessionId ?? ''}`) && typeof a.sessionId === 'string' && UUID.test(a.sessionId))
   return hits.length === 1 ? hits[0]! : null
+}
+
+/** 外部 Agent 信標（`.task/agent-state.json`）在面板上的虛擬 id 前綴：讓按 l 看輸出能讀 `.task/AGENT-OUT.md`。 */
+export const BEACON_ID_PREFIX = 'beacon:'
+
+export const isBeaconId = (id: string | undefined): boolean => typeof id === 'string' && id.startsWith(BEACON_ID_PREFIX)
+
+export const beaconRootOf = (id: string | undefined): string => isBeaconId(id) ? id!.slice(BEACON_ID_PREFIX.length) : ''
+
+/** `.task/agent-state.json` 的結構。 */
+export type AgentBeacon = {
+  state: Osc7501State
+  agent?: string
+  pid?: number
+  updatedAt?: number
+  startedAt?: number
+  message?: string
+  waitsFor?: 'permission' | 'question'
+}
+
+const VALID_BEACON_STATES = new Set<Osc7501State>(['working', 'blocked', 'done', 'idle'])
+
+export function parseBeaconJson(raw: string | null | undefined): AgentBeacon | null {
+  if (!raw) return null
+  try {
+    const obj = JSON.parse(raw.replace(/^\uFEFF/, ''))
+    if (!obj || typeof obj !== 'object') return null
+    const state = String(obj.state ?? '').toLowerCase() as Osc7501State
+    if (!VALID_BEACON_STATES.has(state)) return null
+    const waitRaw = String(obj.waitsFor ?? obj.wait ?? obj.reason ?? '').toLowerCase()
+    const waitsFor: 'permission' | 'question' | undefined = waitRaw === 'permission' ? 'permission' : waitRaw === 'question' ? 'question' : state === 'blocked' ? 'permission' : undefined
+    const agent = typeof obj.agent === 'string' && obj.agent.trim() ? plain(obj.agent.trim()) : undefined
+    const pid = typeof obj.pid === 'number' && Number.isInteger(obj.pid) && obj.pid > 0 ? obj.pid : undefined
+    const updatedAt = typeof obj.updatedAt === 'number' && Number.isFinite(obj.updatedAt) ? obj.updatedAt : undefined
+    const startedAt = typeof obj.startedAt === 'number' && Number.isFinite(obj.startedAt) ? obj.startedAt : updatedAt
+    const message = typeof obj.message === 'string' && obj.message.trim() ? plain(obj.message.trim()) : undefined
+    return {
+      state,
+      ...(agent ? { agent } : {}),
+      ...(pid !== undefined ? { pid } : {}),
+      ...(updatedAt !== undefined ? { updatedAt } : {}),
+      ...(startedAt !== undefined ? { startedAt } : {}),
+      ...(message ? { message } : {}),
+      ...(waitsFor ? { waitsFor } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 將外部信標（`.task/agent-state.json`）與 `.task/AGENT-OUT.md` 裡的 OSC 7501 訊號合成为面板認識的 `AgentInfo`。
+ * - 若信標或 OSC 處於 `working` 或 `blocked`，但附帶的 `pid` 已經不在（`!pidAlive`），視為過期信標回傳 undefined，避免殭屍狀態卡死面板。
+ * - `done`／`idle` 代表外部 Agent 已經收工，不再佔用面板的處理中／等待狀態。
+ */
+export function beaconAgentInfo(
+  root: string,
+  beacon: AgentBeacon | null,
+  osc: Osc7501Signal | null,
+  lastLine = '',
+  pidAlive = true,
+): AgentInfo | undefined {
+  if (!beacon && !osc) return undefined
+  if (beacon?.pid !== undefined && !pidAlive) return undefined
+  // 若 beacon 已經明確標記為 done 或 idle，代表收工，不讓舊的輸出檔殘留 OSC 覆蓋。
+  const effectiveState: Osc7501State = beacon && (beacon.state === 'done' || beacon.state === 'idle')
+    ? beacon.state
+    : osc?.state ?? beacon!.state
+  if (effectiveState === 'done' || effectiveState === 'idle') return undefined
+  const runner = osc?.agent ?? beacon?.agent ?? 'agy'
+  const waitsFor = effectiveState === 'blocked'
+    ? (osc?.waitsFor ?? beacon?.waitsFor ?? 'permission')
+    : undefined
+  const msg = osc?.message ?? beacon?.message ?? ''
+  const last = lastLine || msg
+  const status = effectiveState === 'blocked' ? 'waiting' : 'busy'
+  return {
+    id: `${BEACON_ID_PREFIX}${root}`,
+    name: runner,
+    runner,
+    source: beacon ? 'beacon' : 'osc7501',
+    state: effectiveState,
+    status,
+    ...(waitsFor ? { waitsFor } : {}),
+    ...(effectiveState === 'blocked' && msg ? { waitingFor: msg } : {}),
+    ...(beacon?.startedAt !== undefined ? { startedAt: beacon.startedAt } : {}),
+    ...(beacon?.pid !== undefined ? { pid: beacon.pid } : {}),
+    ...(last ? { last } : {}),
+  }
+}
+
+/**
+ * 用 `claude logs` 裡捕捉到的最新 OSC 7501 轉義序列強化 `claude --bg` Agent 的狀態：
+ * 當 Agent 主動印出 `\e]7501;state=blocked;wait=permission\e\\` 時，即使 `claude agents --json` 還沒標 waitingFor，也能即時呈現等待狀態。
+ */
+export function applyOscToAgent(agent: AgentInfo | undefined, osc: Osc7501Signal | null, lastLine: string): AgentInfo | undefined {
+  if (!agent) return undefined
+  const withLast = lastLine ? { ...agent, last: lastLine } : agent
+  if (!osc) return withLast
+  if (osc.state === 'blocked') {
+    const waitsFor = osc.waitsFor ?? withLast.waitsFor ?? 'permission'
+    return {
+      ...withLast,
+      state: 'blocked',
+      status: 'waiting',
+      waitsFor,
+      ...(osc.message && !withLast.waitingFor ? { waitingFor: osc.message } : {}),
+      ...(osc.message && !withLast.last ? { last: osc.message } : {}),
+      source: 'osc7501',
+    }
+  }
+  return withLast
 }

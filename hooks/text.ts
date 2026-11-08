@@ -24,6 +24,54 @@ export const STALE_MS = 3 * 24 * 60 * 60_000
 /** 例外的訊息，去掉控制字元。 */
 export const errorText = (error: unknown) => plain(error instanceof Error ? error.message : String(error))
 
+/** Herdr 相容的 OSC 7501 四種語意化狀態。 */
+export type Osc7501State = 'working' | 'blocked' | 'done' | 'idle'
+
+/** 從原始終端機輸出解析出的最後一筆 OSC 7501 狀態訊號。 */
+export type Osc7501Signal = {
+  state: Osc7501State
+  waitsFor?: 'permission' | 'question'
+  agent?: string
+  message?: string
+}
+
+const OSC_7501_RE = /\u001b\]7501;([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g
+const OSC_7501_STATES = new Set<Osc7501State>(['working', 'blocked', 'done', 'idle'])
+
+/**
+ * 在 plain() 剝掉控制序列之前，掃描原始輸出裡最後一筆合法的 OSC 7501 轉義序列：
+ * `\e]7501;state=working|blocked|done|idle[;wait=permission|question][;agent=agy][;msg=...]\e\\`（或 `\x07` 結尾）。
+ */
+export function parseOsc7501(raw: string): Osc7501Signal | null {
+  const text = String(raw ?? '')
+  if (!text.includes('\u001b]7501;')) return null
+  let found: Osc7501Signal | null = null
+  for (const m of text.matchAll(OSC_7501_RE)) {
+    const body = m[1] ?? ''
+    const kv = new Map<string, string>()
+    for (const part of body.split(';')) {
+      const eq = part.indexOf('=')
+      if (eq <= 0) continue
+      const k = part.slice(0, eq).trim().toLowerCase()
+      const v = part.slice(eq + 1).trim()
+      if (k && v) kv.set(k, v)
+    }
+    const rawState = (kv.get('state') ?? '').toLowerCase() as Osc7501State
+    if (!OSC_7501_STATES.has(rawState)) continue
+    const rawWait = (kv.get('wait') ?? kv.get('reason') ?? kv.get('waitingfor') ?? '').toLowerCase()
+    const waitsFor: 'permission' | 'question' | undefined = rawWait === 'permission' ? 'permission' : rawWait === 'question' ? 'question' : rawState === 'blocked' ? 'permission' : undefined
+    const agent = plain(kv.get('agent') ?? kv.get('runner') ?? '').trim() || undefined
+    const message = plain(kv.get('msg') ?? kv.get('message') ?? '').trim() || undefined
+    found = {
+      state: rawState,
+      ...(waitsFor ? { waitsFor } : {}),
+      ...(agent ? { agent } : {}),
+      ...(message ? { message } : {}),
+    }
+  }
+  return found
+}
+
 /**
  * 外部來的文字（Agent 記錄、檢查輸出、卡片）進畫面前清乾淨：拿掉所有終端機控制序列與控制字元。
  * 引擎會整個拒畫含控制字元的文字，面板就會變成一片空白。

@@ -18,6 +18,11 @@ description: desk 工作桌的開卡、規格與歸檔：new <分支> <卡名> [
     - 專案的 dispatch.json 設 `"card": { "changelog": { "format": "keepachangelog" } }` 時改依 Keep a Changelog：`## [Unreleased]` 的手寫內容與片段一起移進 `## [<版本>] - <今天>` 段（版本照輸入保留，`v26.2.7` 就是 `[v26.2.7]`），`[Unreleased]` 留空標題；條目依動詞分進 `### Added／Changed／Removed／Fixed／Security`（新增→Added、調整→Changed、移除→Removed、修復→Fixed、修補→Security），同類手寫在前、片段在後，其他手寫小節（如工程專區）原樣排最後。片段動詞不在對照表會指出檔名與條目並報錯；版本段已存在、沒有片段且 `[Unreleased]` 是空的也報錯，都不改檔。
 - `spec <目標> ok`：執行 `card.py spec-ok <目標>`（清關卡、狀態改「規格已確認…，可派實作」、記 Decisions／History），輸出原樣給使用者；輸出結尾有「同檔預警：…」行（實作計畫跟其他進行中的卡改同一個檔，已記進 History、不擋確認）時一樣原樣轉給使用者。確認後，這個回合結束時面板照 t 的規則自動派實作（只有使用者明確說要確認時才跑，subagent 跑的不派）。只有使用者明確說要確認時才跑，不要自己判斷規格夠好就替使用者確認。
 - `done <目標> <狀態一句>`：執行 `card.py done <目標> <狀態一句>`，輸出原樣給使用者。在主對話（不派背景 Agent）改了檔案、commit、跑了測試或做了決策，告一段落時用：狀態改成那句（60 字內，沒驗證的寫「待確認」）；下一步依關卡四選一：關卡是依審查修完寫的未複審結論（`review：…` 的結論含「未複審」），寫「到面板照「輪到你」接著做」（流程可能還在重新測試、修正輪用完停下或已過關，看不到是哪一種）；驗收已過關（關卡 `review：…` 四個分級都有數字、CRITICAL 與 HIGH 都是 0）而且 `.task/REVIEW.md` 寫好之後有新 commit，寫「等自動重新測試；沒動靜就到面板按 v」；驗收已過關但之後沒有新 commit（或沒有審查檔，關卡是對話自己寫的），寫「到面板照「輪到你」開 PR 或合併」；其他寫「到面板按 v 執行測試」；History 記一筆「<人>：<狀態> → <結果>（commit <HEAD>）」，前面帶寫入當下的時間（有未提交的檔會在結果後註明幾個）；「等你」「關卡」「檢查」不動。規格還沒確認（關卡是 `spec：…` 或認不到填好的 AC）會拒絕。狀態只寫發生了什麼：那句含 commit（7～40 碼英數混合的 hex）、`AC-數字` 或 `D-數字` 時也會拒絕、卡片不動，這些代號寫在 History。它不會把測試或驗收標成通過，那由面板 `v` 與自動流程記錄。整段流程見 `/desk:flow`。
+- `emit`、`read`、`wait`、`send`（跨 Agent 協作與狀態推播）：直接執行 `card.py <args>`。
+  - `emit <目標> <working|blocked|done|idle> [訊息] [--agent <名>] [--wait <permission|question>] [--pid <PID>]`：向 stdout 輸出 Herdr 相容的 OSC 7501 序列，並原子寫入 `.task/agent-state.json`（有訊息時一併追加到 `.task/AGENT-OUT.md`），讓面板即時感知外部 Agent（如 `agy`）的執行與阻塞狀態。
+  - `read <目標> [--source <out|review|security|report|spec|card|state>] [--lines <N>] [--json]`：讀取目標任務的 `.task/AGENT-OUT.md` 或產物，自動剝除終端機控制碼並解析最後一筆 OSC 7501 狀態。
+  - `wait <目標> --until <done|blocked|gate|ready|idle> [--timeout <秒>] [--interval <秒>] [--json]`：阻塞輪詢目標任務直到達成指定狀態；等待 `done` 時若目標進入 `blocked` 或卡片「等你」有題目會提前返回（exit 2）。
+  - `send <目標> --to <claude|agy|cmd> <提示詞或指令> [--bg] [--agent-cmd <執行檔>] [--json]`：在目標 worktree 啟動指定 Agent，自動維護 `.task/agent-state.json` 並將輸出導向 `.task/AGENT-OUT.md`（面板可按 `l` 檢視）。
 - `spec <目標> [需求描述]`：照下面「產生規格」做。
 - 沒帶參數就印用法，不猜。
 

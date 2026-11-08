@@ -14,8 +14,8 @@ export type Verify = { command: string; at: number; ok: boolean; exitCode: numbe
 /** 一件任務的狀態詞：等你 > 回覆／批准權限 > 關卡 > 進行 > 失敗 > 可做 > 閒置 > 無卡。 */
 export type CaseState = 'ask' | 'reply' | 'approve' | 'gate' | 'running' | 'failed' | 'ready' | 'done' | 'idle' | 'nocard'
 
-/** 任務根目錄裡跑著的背景 agent（`claude agents --json --all`）。 */
-export type AgentInfo = { id?: string; name: string; sessionId?: string; state: string; status: string; waitingFor?: string; startedAt?: number; /** `claude logs` 的最後一句，進行中才讀。 */ last?: string; /** 這是工作桌派出去、做完後停在提問的那一次。 */ asks?: boolean; /** 停下來在等什麼：權限提示（waitingFor 提到 permission）或提問；沒停下來就沒有。 */ waitsFor?: 'permission' | 'question'; /** 工作桌派的那一次是什麼工作（對得上最後一次派工才有）。 */ kind?: ChainInfo['lastKind'] }
+/** 任務根目錄裡跑著的背景 agent（`claude agents --json --all`）或外部 CLI 信標（`.task/agent-state.json`／OSC 7501）。 */
+export type AgentInfo = { id?: string; name: string; sessionId?: string; state: string; status: string; waitingFor?: string; startedAt?: number; /** `claude logs` 或 `.task/AGENT-OUT.md` 的最後一句，進行中才讀。 */ last?: string; /** 這是工作桌派出去、做完後停在提問的那一次。 */ asks?: boolean; /** 停下來在等什麼：權限提示（waitingFor 提到 permission）或提問；沒停下來就沒有。 */ waitsFor?: 'permission' | 'question'; /** 工作桌派的那一次是什麼工作（對得上最後一次派工才有）。 */ kind?: ChainInfo['lastKind']; /** 執行器名稱（如 claude、agy）。 */ runner?: string; /** 狀態來源（claude-bg、osc7501、beacon）。 */ source?: 'claude-bg' | 'osc7501' | 'beacon'; /** 外部 Agent 的 PID（存活檢查用）。 */ pid?: number }
 
 export type StageId = 'spec' | 'build' | 'check' | 'review' | 'merge' | 'ship'
 /** done 過了・active 有人在做・wait 等你或等下一步・fail 卡住・todo 還沒到・na 這件任務不適用 */

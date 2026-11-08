@@ -3,9 +3,9 @@
 import { parseCard, parseGate } from './card'
 
 const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
-const CARD_FILE = /(^|\/)(\.desk\/CARD\.md|\.console\/STATUS\.md)$/
-/** Bash 指令裡出現這些就重讀：卡片腳本、卡片與登錄表檔名。 */
-const CARD_TOUCH = /card\.py|\.desk\/CARD\.md|\.console\/STATUS\.md|projects-scope\.md/
+const CARD_FILE = /(^|\/)(\.desk\/CARD\.md|\.console\/STATUS\.md|\.task\/agent-state\.json)$/
+/** Bash 指令裡出現這些就重讀：卡片腳本、卡片與登錄表檔名、外部 Agent 狀態信標。 */
+const CARD_TOUCH = /card\.py|\.desk\/CARD\.md|\.console\/STATUS\.md|\.task\/agent-state\.json|projects-scope\.md/
 /** git 子指令前的選項：-C <路徑>（可加引號）、-c k=v、--git-dir=…、--no-pager 等。 */
 const GIT_OPTS = String.raw`(?:\s+(?:-C\s+(?:"[^"]*"|'[^']*'|\S+)|-c\s+\S+|--?[\w-]+(?:=\S+)?))*`
 /** 會改 HEAD、tag、暫存區或遠端分支的 git 子指令。 */
