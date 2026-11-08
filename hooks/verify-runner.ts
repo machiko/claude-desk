@@ -9,6 +9,7 @@ import { feedPush, tellPanel, me, loadChains, loadJobs, saveChain, VERIFIES_KEY,
 import { paused } from './chain'
 import { isMerged, pipeline, finalState } from './pipeline'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './dispatch'
+import { writeStats } from './run-stats'
 import { addRunTime } from './run-time'
 import { normalizeRoot } from './settings'
 import { stateOf } from './model'
@@ -123,11 +124,12 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   return true
 }
 
-/** 檢查跑完：這次花的時間加進這件的總執行時間。記不下來只少算這一次，不擋檢查結果。 */
+/** 檢查跑完：這次花的時間加進這件的總執行時間，統計檔跟著重寫。記不下來只少算這一次，不擋檢查結果。 */
 async function addCheckTime($: any, c: Case, ms: number) {
   const key = normalizeRoot(c.root)
   const all = await loadJobs($)
-  await $.store.set(JOBS_KEY, { ...all, [key]: addRunTime(all[key], ms, c.git?.branch) }).catch(() => {})
+  const saved = await $.store.set(JOBS_KEY, { ...all, [key]: addRunTime(all[key], ms, c.git?.branch) }).then(() => true, () => false)
+  if (saved) await writeStats($, key)
 }
 
 /**

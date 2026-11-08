@@ -6,6 +6,7 @@ import { endedHow, runSeen } from './agents'
 import { JOBS_KEY, loadJobs } from './desk-io'
 import type { JobRecord, RootJobs } from './dispatch'
 import { worktreeMark } from './probes'
+import { writeStats } from './run-stats'
 import { addRunTime, dispatchRunMs, observeRun, runOf } from './run-time'
 import type { RunShown } from './run-time'
 import { normalizeRoot } from './settings'
@@ -19,7 +20,7 @@ const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
  *   同時把這次派工在跑的時間加進總執行時間：只在第一次記下 ended 時加，同一次派工不會重複算；
  *   最多算到最後看到它在跑之後 grace（工作桌關著時結束的，不把關著的時間算進去）。
  * - 還在跑或停下來等人：記下最後看到在跑的時間、等人時暫停（見 observeRun），等的時間不算。
- * 記下之後同步更新這一輪的畫面（畫面在記下之前就算好了），總執行不會晚一輪才跟上。
+ * 記下之後同步更新這一輪的畫面（畫面在記下之前就算好了），總執行不會晚一輪才跟上；結束的那次也把統計寫進 worktree 的 .task/stats.json（見 writeStats）。
  */
 export async function noteRuns($: any, list: readonly any[], roots: readonly string[], now: number, grace: number, branches: Readonly<Record<string, string>>) {
   for (const key of new Set(roots.map(normalizeRoot))) {
@@ -36,6 +37,7 @@ export async function noteRuns($: any, list: readonly any[], roots: readonly str
     const timed = addRunTime(all[key], dispatchRunMs(cur, now, grace), branches[key])
     const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } }
     await $.store.set(JOBS_KEY, { ...all, [key]: next })
+    await writeStats($, key)
     await restageRun($, key, next, grace)
   }
 }
