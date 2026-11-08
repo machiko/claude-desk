@@ -8,7 +8,7 @@ import { errorLine } from './text'
 import { REVIEW_FILE } from './dispatch'
 import { normalizeRoot } from './settings'
 import type { DispatchKind, FixReason } from './dispatch'
-import { CODE_V1, CODE_V2, CODE_V3, REVIEW_1, REVIEW_2, REVIEW_3, SIM_MS, TEST_V1, TEST_V2, TUTORIAL_BRANCH, TUTORIAL_CHECK, TUTORIAL_INTRO, TUTORIAL_RELEASE, TUTORIAL_SLUG, TUTORIAL_TAG, cardAfter, cardAfterDecision, cardAfterTag, cardText, gitCommit, isTutorialDir, registryText, settingsText, setupScript, tutorialPaths, tutorialStep } from './tutorial'
+import { CODE_V1, CODE_V2, CODE_V3, REVIEW_1, REVIEW_2, REVIEW_3, SIM_MS, TEST_V1, TEST_V2, TEST_V3, TUTORIAL_BRANCH, TUTORIAL_CHECK, TUTORIAL_INTRO, TUTORIAL_RELEASE, TUTORIAL_SLUG, TUTORIAL_TAG, cardAfter, cardAfterDecision, cardAfterTag, cardText, gitCommit, isTutorialDir, registryText, settingsText, setupScript, tutorialPaths, tutorialStep } from './tutorial'
 import type { SimWork, TutorialState } from './tutorial'
 import { CHAIN_KEY, JOBS_KEY, TRUST_KEY, VERIFIES_KEY, feedPush, loadChains, loadJobs } from './desk-io'
 import type { Timer } from './desk-io'
@@ -113,22 +113,32 @@ export async function resumeTutorial($: any, options: PluginOptions) {
   startSim($, options, { root: p.wt, statusPath: p.card } as Case, last.kind, last.launchName, await $.clock.now(), fix ? { fix } : {})
 }
 
-/** 教學的決策：直接寫回卡片，不送到主對話；選 C（現在改）就扮演主對話改程式並 commit，流程會看到新 commit 而重新檢查、審查。 */
+/**
+ * 教學的決策：直接寫回卡片，不送到主對話。選 C（修掉）就扮演修正 Agent 改程式並 commit：這條分支驗收過了，
+ * 流程看到新 commit 只重新測試、不再重新驗收（跟真實任務一樣）。B、D 只寫回卡片，提示實際使用時會怎樣。
+ */
 export async function tutorialDecision($: any, c: Case, answer: string) {
   const text = await $.fs.read(c.statusPath).catch(() => null)
   if (typeof text !== 'string') { $.ui.toast('教學卡片讀不到；輸入 /desk tutorial end 後重新開始'); return }
   const day = new Date(await $.clock.now()).toISOString().slice(0, 10)
   if (answer === 'C') {
     await $.fs.write(`${c.root}/discount.py`, CODE_V3)
-    await $.process.run(['git', '-C', c.root, 'add', 'discount.py'], { timeoutMs: 30_000 }).catch(() => null)
-    const r = await $.process.run(gitCommit(c.root, 'refactor: 金卡折扣率改成常數 GOLD_RATE'), { timeoutMs: 30_000 }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
+    await $.fs.write(`${c.root}/test_discount.py`, TEST_V3)
+    await $.process.run(['git', '-C', c.root, 'add', 'discount.py', 'test_discount.py'], { timeoutMs: 30_000 }).catch(() => null)
+    const r = await $.process.run(gitCommit(c.root, 'fix: 金卡金額四捨五入'), { timeoutMs: 30_000 }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
     if (r.exitCode !== 0 && !/nothing to commit|nothing added/i.test(`${r.stdout}${r.stderr}`)) { $.ui.toast(`教學改程式失敗：${String(r.stderr || r.stdout).trim() || 'git commit 失敗'}`, { timeoutMs: 10_000 }); return }
   }
   await $.fs.write(c.statusPath, cardAfterDecision(text, answer, day, (await loadSettings($, optionsRef!)).user))
-  $.ui.toast(answer === 'C'
-    ? '已改程式並 commit（實際使用時由主對話照你的決定改）。驗收後有新 commit，流程會自動重新測試與驗收。'
-    : `已寫回卡片：${answer}。實際使用時這一步會填入輸入框，按 Enter 送給主對話。`, { timeoutMs: 8000 })
+  $.ui.toast(decisionToast(answer), { timeoutMs: 8000 })
   await refresh($, optionsRef!)
+}
+
+/** 教學決策寫回後的提示：教學做了什麼，實際使用時又會怎樣。 */
+export function decisionToast(answer: string): string {
+  if (answer === 'C') return '已修掉並 commit（實際使用時工作桌會自動派 Agent 修）。這條分支驗收過了，流程只重新測試、不再重新驗收。'
+  if (answer === 'B') return '已寫回卡片：B。實際使用時這一步會送給主對話，由對話開一張疊在這條分支上的後續卡，這張先合併。'
+  if (answer === 'D') return '已寫回卡片：D。實際使用時這一步會送給主對話，由對話改規格。'
+  return `已寫回卡片：${answer}。實際使用時這一步會填入輸入框，按 Enter 送給主對話。`
 }
 
 /** 教學按鈕 t：確認規格（真的執行 /desk:card 的腳本，確認後自動派模擬 Agent）、本機合併、打 tag。 */
