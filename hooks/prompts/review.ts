@@ -6,9 +6,9 @@ import { pitfallsRule } from './rules'
 export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
 
-/** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單與過去審查紀錄在哪。 */
+/** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單在哪（只有整條分支的程式碼審查讀）。 */
 export type ReviewOpts = {
-  round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; history: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string; /** 審查前置指令的 `{root}`；沒給用任務根目錄。 */ root?: string
+  round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string; /** 審查前置指令的 `{root}`；沒給用任務根目錄。 */ root?: string
   /** 工作桌自己跑的完成檢查（指令與卡片相同）已在這個 HEAD 通過、HEAD 沒動：審查不重跑整套。 */
   verifiedHead?: string
   /** 分支相對基準分支改了幾個檔（review.preflightMinFiles 的門檻用）；不知道就沒有。 */
@@ -82,11 +82,30 @@ function wantsPreflight(words: ReviewWords, r: ReviewOpts | undefined): boolean 
   return r?.files === undefined || r.files >= min
 }
 
+/**
+ * 這次只看上次審查之後的增量 diff：重新審查（recheck）或修正後的複審（第 1 輪以上），而且有可用的 base。
+ * 沒有 base（這輪流程還沒審查過，例如檢查沒過、自動修過一輪後的第一次審查；或舊紀錄存的是分支名稱）就是整條分支審查。
+ */
+function incrementalScope(r: ReviewOpts | undefined): 'recheck' | 'rereview' | null {
+  if (!r?.base) return null
+  if (r.recheck) return 'recheck'
+  return r.round > 0 ? 'rereview' : null
+}
+
+/**
+ * 整條分支的程式碼審查（含高風險分支併資安重點那次）才讀常犯錯誤清單：跟 scope 用同一個判斷，不看輪數。
+ * 只看增量 diff 的複審與重新審查、只看資安項目的資安審查都不讀；清單的新條目由歸檔回顧確認後追加，審查不回寫。
+ */
+function reviewReadsPitfalls(r: ReviewOpts): boolean {
+  return !r.security && incrementalScope(r) === null
+}
+
 export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
-  const scope = r?.base && r.recheck
+  const incremental = incrementalScope(r)
+  const scope = r?.base && incremental === 'recheck'
     ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。${mergedBase(r.base, r.target)}先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 LOW 與標「不修」的項目不要再提；${RECHECK_ASKED}`
-    : r?.base && r.round > 0
+    : r?.base && incremental === 'rereview'
     ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列，卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」的項目不要再提，標「（等你決定）」的照原樣再列（過關時要在 等你 問）。`
     : r?.target ? `看這個分支相對 ${r.target} 的 diff（從 git merge-base 起算）。` : '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。'
   return [
@@ -94,14 +113,13 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
     `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。${checkRule(c.verify, r?.verifiedHead)}`,
     ...(wantsPreflight(words, r) ? [preflightRule(words.preflight!, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file)] : []),
     scope,
-    ...(r?.pitfalls ? [pitfallsRule(r.pitfalls)] : []),
+    ...(r?.pitfalls && reviewReadsPitfalls(r) ? [pitfallsRule(r.pitfalls)] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
     ...(r?.securityFocus && !r.security ? [`這是高風險分支，這次審查同時做資安審查（過關後不另派）：另外逐項看 ${words.security}，有問題照下面的分級列進 ${file}。`] : []),
     `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
     MEDIUM_RULE,
     ...(r?.security ? [SECURITY_KEEP_ASK] : []),
     '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>',
-    ...(r?.pitfalls && r.history ? [`審完後看 ${r.history} 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 ${r.pitfalls} 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。`] : []),
     '不改程式、不 commit。',
   ].join('\n')
 }

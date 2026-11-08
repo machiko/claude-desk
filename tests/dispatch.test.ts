@@ -154,32 +154,116 @@ test('prompts carry the case, the card rules and the environment limits', () => 
   expect(buildPrompt(c, 'review')).not.toContain('先讀卡片「## 規格」')
 })
 
-test('review prompt: pitfalls first, later rounds diff-only without repeats, security scope, learning write-back', () => {
+/** review-slim AC-5：第一次程式碼審查照舊先讀常犯錯誤清單；高風險分支併資安重點那次也讀。 */
+test('review prompt: pitfalls first, later rounds diff-only without repeats, security scope', () => {
   const c = mk('寫測試')
-  const first = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '/h/pitfalls.md', history: '/h/reviews' })
+  const first = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '/h/pitfalls.md' })
   expect(first).toContain('先讀專案常犯錯誤清單 /h/pitfalls.md')
   expect(first).toContain('從 git merge-base 起算')
   expect(first).toContain('[等級][類別] 檔案:行')
-  expect(first).toContain('在 /h/pitfalls.md 檔尾追加一行')
   expect(first).toContain('.task/REVIEW.md')
-  const later = buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '/h/pitfalls.md', history: '/h/reviews' })
+  const later = buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '/h/pitfalls.md' })
   expect(later).toContain('只看 `git diff abc123..HEAD`')
   expect(later).toContain('不要再提')
-  const sec = buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '/h/reviews' })
+  const sec = buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '' })
   expect(sec.startsWith('資安審查')).toBe(true)
   expect(sec).toContain('.task/SECURITY.md')
   expect(sec).not.toContain('常犯錯誤清單')
+  const focus = buildPrompt(c, 'review', '', undefined, { round: 0, securityFocus: true, pitfalls: '/h/pitfalls.md' })
+  expect(focus).toContain('先讀專案常犯錯誤清單 /h/pitfalls.md，逐條對照這次的改動。')
+  expect(focus).toContain('這次審查同時做資安審查')
+  // 沒有可用的 base 就是整條分支審查，不看輪數：檢查沒過、自動修過一輪後的第一次審查（round 1）與拿不到 base 的重新審查都讀清單
+  const wholeBranch = [
+    buildPrompt(c, 'review', '', undefined, { round: 1, target: 'origin/main', pitfalls: '/h/pitfalls.md' }),
+    buildPrompt(c, 'review', '', undefined, { round: 2, pitfalls: '/h/pitfalls.md' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, recheck: true, target: 'origin/main', pitfalls: '/h/pitfalls.md' }),
+    buildPrompt(c, 'review', '', undefined, { round: 1, recheck: true, securityFocus: true, pitfalls: '/h/pitfalls.md' }),
+  ]
+  for (const p of wholeBranch) {
+    expect(p).toContain('從 git merge-base 起算')
+    expect(p).not.toContain('這是修正後的複審')
+    expect(p).not.toContain('重新審查')
+    expect(p).toContain('先讀專案常犯錯誤清單 /h/pitfalls.md，逐條對照這次的改動。')
+  }
+})
+
+const PITFALLS = '/h/pitfalls.md'
+const READ_PITFALLS = '先讀專案常犯錯誤清單'
+
+/** review-slim AC-1：修正後的複審（第 1 輪以上）不讀常犯錯誤清單，照舊只看上次審查之後的 diff。 */
+test('review prompt: re-review after a fix does not read the pitfalls list', () => {
+  const c = mk('寫測試')
+
+  const rounds = [1, 2].map(round => buildPrompt(c, 'review', '', undefined, { round, base: 'abc123', pitfalls: PITFALLS }))
+
+  for (const p of rounds) {
+    expect(p).not.toContain(READ_PITFALLS)
+    expect(p).not.toContain(PITFALLS)
+    expect(p).toContain('這是修正後的複審')
+    expect(p).toContain('只看 `git diff abc123..HEAD`')
+  }
+})
+
+/** review-slim AC-2：審查過關後又有新 commit 的重新審查不讀常犯錯誤清單，照舊只看上次審查之後的 diff。 */
+test('review prompt: recheck after new commits does not read the pitfalls list', () => {
+  const c = mk('寫測試')
+
+  const p = buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, pitfalls: PITFALLS })
+
+  expect(p).not.toContain(READ_PITFALLS)
+  expect(p).not.toContain(PITFALLS)
+  expect(p).toContain('這是審查通過後又有新 commit 的重新審查：只看 `git diff abc123..HEAD`')
+})
+
+/** review-slim AC-3：高風險分支的資安審查不讀常犯錯誤清單，照舊寫資安審查只看的項目。 */
+test('review prompt: security review does not read the pitfalls list', () => {
+  const c = mk('寫測試')
+
+  const prompts = [
+    buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: PITFALLS }),
+    // 修過一輪、這輪還沒資安審查過（沒有 base）：仍是資安審查，照樣不讀
+    buildPrompt(c, 'review', '', undefined, { round: 1, security: true, pitfalls: PITFALLS }),
+    buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', security: true, pitfalls: PITFALLS }),
+  ]
+
+  for (const p of prompts) {
+    expect(p.startsWith('資安審查')).toBe(true)
+    expect(p).not.toContain(READ_PITFALLS)
+    expect(p).not.toContain(PITFALLS)
+    expect(p).toContain('資安審查只看：')
+  }
+})
+
+/** review-slim AC-4：每一種審查都不叫審查翻過去的審查紀錄、不叫它在清單檔尾追加；結尾照舊是「不改程式、不 commit。」 */
+test('review prompt: no review asks to scan past reviews or append to the pitfalls list', () => {
+  const c = mk('寫測試')
+
+  const prompts = [
+    buildPrompt(c, 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: PITFALLS }),
+    buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: PITFALLS }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, pitfalls: PITFALLS }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: PITFALLS }),
+  ]
+
+  expect(prompts[0]).toContain(READ_PITFALLS)
+  for (const p of prompts) {
+    const head = p.split('\n任務：')[0]!
+    expect(head).not.toContain('過去的審查紀錄')
+    expect(head).not.toContain('檔尾追加')
+    expect(head).not.toContain('根目錄外檔案')
+    expect(head.endsWith('不改程式、不 commit。')).toBe(true)
+  }
 })
 
 test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
   const c = mk('寫測試')
   const custom = parseSettings(JSON.stringify({ review: { template: '/p/review-contract.md' } }))
   const prompts = [
-    buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }),
-    buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '', history: '' }),
-    buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, pitfalls: '', history: '' }),
-    buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }),
-    buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, custom),
+    buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, pitfalls: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '' }, custom),
   ]
   expect(prompts[4]).toContain('契約：/p/review-contract.md')
   for (const p of prompts) {
@@ -213,7 +297,7 @@ test('test_fix_prompt_names_only_the_finished_review_file_when_fixing_review_fin
 test('test_review_prompt_counts_every_medium_when_medium_rule_has_three_points', () => {
   const c = mk('寫測試')
 
-  const prompts = [0, 1, 2].map(round => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', history: '' }))
+  const prompts = [0, 1, 2].map(round => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '' }))
 
   for (const p of prompts) {
     expect(p).toContain('都算進關卡的 MEDIUM 數')
@@ -228,10 +312,10 @@ test('prompts use the configured name, project rules and review words', () => {
   expect(p).toContain('要 Alex 決定的事寫進 等你')
   expect(p.endsWith('測試只能用 make test\n只改 api/')).toBe(true)
   expect(buildPrompt(c, 'reply', '用 B', undefined, undefined, s)).toContain('Alex 的回覆：用 B')
-  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, s)
+  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '' }, s)
   expect(review).toContain('HIGH（漏寫稽核）')
   expect(review).toContain('（例如 金流、稽核）')
-  expect(buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }, s)).toContain('資安審查只看：金流與退款；')
+  expect(buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '' }, s)).toContain('資安審查只看：金流與退款；')
   // 別的任務不帶這件任務的規則
   expect(buildPrompt({ ...c, root: '/p/b' }, 'continue', '', undefined, undefined, s)).not.toContain('只改 api/')
 })
@@ -327,7 +411,7 @@ test('test_publish_prompt_states_history_example_once', () => {
 test('agent push: sync and review prompts still forbid push and PR', () => {
   const c = mk('push 後開 PR')
 
-  const prompts = [buildPrompt(c, 'sync'), buildPrompt(c, 'review'), buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' })]
+  const prompts = [buildPrompt(c, 'sync'), buildPrompt(c, 'review'), buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '' })]
 
   for (const p of prompts) {
     expect(p).toContain('不 push、不開 PR')
@@ -419,8 +503,8 @@ test('test_agent_prompts_keep_their_wording', () => {
     continue: buildPrompt(c, 'continue'),
     fixCheck: buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: ['boom'] }),
     fixReview: buildPrompt(c, 'continue', '', { from: 'review', round: 1 }),
-    review: buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }),
-    security: buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }),
+    review: buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '' }),
+    security: buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '' }),
   }
   expect(prompts.continue).toContain('完成檢查')
   expect(prompts.fixCheck).toContain('完成檢查')
@@ -456,7 +540,7 @@ test('sync prompt: no new facts means no History line and untouched fields', () 
 // 工作桌與主對話撞同一個 worktree：Agent 要知道自己的名字；派工前分辨未提交改動是不是上一個 Agent 留下的。
 test('prompts tell the agent its own launch name', () => {
   const c = mk('寫測試')
-  for (const p of [buildPrompt(c, 'continue', '', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'reply', '用 B', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'sync', '', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, undefined, 'desk-abc-1')]) {
+  for (const p of [buildPrompt(c, 'continue', '', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'reply', '用 B', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'sync', '', undefined, undefined, undefined, 'desk-abc-1'), buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '' }, undefined, 'desk-abc-1')]) {
     expect(p).toContain('你的背景 Agent 名字是 desk-abc-1')
     expect(p).toContain('清單裡這個名字就是你自己')
   }
@@ -627,7 +711,7 @@ test('code dispatch leaves full check to desk verify', () => {
     // 專案規則仍接在最後
     expect(p.endsWith('測試只能用 make test')).toBe(true)
   }
-  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, s)
+  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '' }, s)
   expect(review).toContain('自己重跑完成檢查 `node test.mjs`')
   expect(review.endsWith('測試只能用 make test')).toBe(true)
   for (const p of [review, buildPrompt(c, 'sync', '', undefined, undefined, s), buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12), undefined, undefined, s)]) {
@@ -654,7 +738,7 @@ const AGY = parseSettings(JSON.stringify({ review: { preflight: 'agy-review --ro
 
 /** AC-1：第一次程式碼審查，佔位代換成任務根目錄與 diff 基準；前置句在契約那行之後，含候選、逐條驗證、第一行紀錄與失敗照審。 */
 test('test_review_prompt_includes_preflight_with_substitution', () => {
-  const p = buildPrompt(mkAt('/w/x'), 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '', history: '' }, AGY)
+  const p = buildPrompt(mkAt('/w/x'), 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '' }, AGY)
   const lines = p.split('\n')
   expect(lines[1]!.startsWith('契約：')).toBe(true)
   const pre = lines[2]!
@@ -672,15 +756,15 @@ test('test_review_prompt_includes_preflight_with_substitution', () => {
 /** AC-2：複審、重新審查、資安審查都附前置句；複審與重新審查的 {base} 是那次看的基準，基準不明時代換成空字串。 */
 test('test_review_prompt_preflight_on_rereview_and_security', () => {
   const c = mkAt('/w/x')
-  const rereview = buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', target: 'origin/main', pitfalls: '', history: '' }, AGY)
-  const recheck = buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, target: 'origin/main', pitfalls: '', history: '' }, AGY)
-  const security = buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }, AGY)
+  const rereview = buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', target: 'origin/main', pitfalls: '' }, AGY)
+  const recheck = buildPrompt(c, 'review', '', undefined, { round: 0, base: 'abc123', recheck: true, target: 'origin/main', pitfalls: '' }, AGY)
+  const security = buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '' }, AGY)
   for (const p of [rereview, recheck]) expect(p).toContain('先執行 `agy-review --root /w/x --base abc123`')
   expect(security).toContain('先執行 `agy-review --root /w/x --base`')
   expect(security).toContain('.task/SECURITY.md 第一行記「前置：成功')
   for (const p of [rereview, recheck, security]) expect(p).toContain('「前置：失敗（原因）」')
   // 資安審查有基準分支時用它
-  expect(buildPrompt(c, 'review', '', undefined, { round: 0, security: true, target: 'origin/main', pitfalls: '', history: '' }, AGY)).toContain('--base origin/main`')
+  expect(buildPrompt(c, 'review', '', undefined, { round: 0, security: true, target: 'origin/main', pitfalls: '' }, AGY)).toContain('--base origin/main`')
 })
 
 /** 加這個功能之前的審查提示詞（到「任務：」之前），用來確認沒設前置時逐字不變。 */
@@ -694,7 +778,6 @@ const SNAPSHOT = {
     '看這個分支相對 origin/main 的 diff（從 git merge-base 起算）。',
     '先讀專案常犯錯誤清單 /h/pitfalls.md，逐條對照這次的改動。',
     SNAP_GRADES('.task/REVIEW.md'), SNAP_MEDIUM, SNAP_GATE,
-    '審完後看 /h/reviews 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 /h/pitfalls.md 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。',
     '不改程式、不 commit。',
   ],
   security: [
@@ -721,9 +804,9 @@ test('test_review_prompt_without_preflight_unchanged', () => {
   for (const s of unset) {
     expect(s.review.preflight).toBe('')
     const prompts = {
-      code: buildPrompt(c, 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '/h/pitfalls.md', history: '/h/reviews' }, s),
-      security: buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '', history: '' }, s),
-      rereview: buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '', history: '' }, s),
+      code: buildPrompt(c, 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '/h/pitfalls.md' }, s),
+      security: buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: '' }, s),
+      rereview: buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', pitfalls: '' }, s),
     }
     for (const [k, p] of Object.entries(prompts)) {
       expect(p).not.toContain('前置')
@@ -750,9 +833,9 @@ test('test_preflight_unknown_placeholder_kept', () => {
   const broken = parseSettings('{"review": {"preflight": "x"')
   expect(broken.review.preflight).toBe('')
   expect(broken.review.pitfalls).toBe('')
-  expect(buildPrompt(mk('寫測試'), 'review', '', undefined, { round: 0, pitfalls: '', history: '' }, broken)).not.toContain('前置')
+  expect(buildPrompt(mk('寫測試'), 'review', '', undefined, { round: 0, pitfalls: '' }, broken)).not.toContain('前置')
   const s = parseSettings(JSON.stringify({ review: { preflight: 'lint {unknown} --root {root} {base} {ROOT} $& {root}' } }))
-  const p = buildPrompt(mkAt('/w/x'), 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '', history: '' }, s)
+  const p = buildPrompt(mkAt('/w/x'), 'review', '', undefined, { round: 0, target: 'origin/main', pitfalls: '' }, s)
   expect(p).toContain('先執行 `lint {unknown} --root /w/x origin/main {ROOT} $& /w/x`')
 })
 

@@ -63,6 +63,50 @@ test('continue → auto check → auto review → fix round 1 on HIGH → check 
   expect(data.mcpCalls.every(c => c.server === 'bitbucket' && c.tool === 'bb_get')).toBe(true)
 })
 
+/** review-slim 審查 HIGH：檢查沒過、自動修過一輪後派的第一次審查（流程輪數已是 1、這輪還沒審查過）是整條分支審查，照樣讀常犯錯誤清單 */
+test('first review after a check fix still reads the pitfalls list', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.files['/home/u/.claude/handoffs/shop/review-pitfalls.md'] = '# 清單'
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.agents = []
+  let n = 0
+  data.launch = async (e: any) => {
+    n++
+    const id = `c000000${n}`
+    data.agents = [{ id, kind: 'background', cwd: '/home/u/wt/alpha', name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, id)
+  }
+  const step = async () => { await clock.advance(2500); await clock.settle() }
+  const finish = async () => {
+    data.agents = data.agents.map(a => ({ ...a, status: 'idle', state: 'done' }))
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    await clock.settle(); await step(); await step(); await step()
+  }
+  const prompt = (i: number) => String(data.launches[i].argv[data.launches[i].argv.length - 1])
+
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  // 實作結束、檢查沒過：自動修正第 1 輪
+  data.run = async () => result(1, '', 'FAIL test_audit')
+  await finish()
+  expect(data.launches.length).toBe(2)
+  expect(prompt(1).startsWith('修正第 1／2 輪：完成檢查')).toBe(true)
+
+  // 修完檢查過了：派第一次審查，流程輪數是 1，但範圍是整條分支、要讀清單
+  data.run = async () => result(0, 'ok')
+  data.git['/home/u/wt/alpha']!.head = 'h2'
+  await finish()
+  expect(data.launches.length).toBe(3)
+  expect((data.store.chains as any)['/home/u/wt/alpha'].round).toBe(1)
+  expect(prompt(2).startsWith('程式碼審查')).toBe(true)
+  expect(prompt(2)).toContain('從 git merge-base 起算')
+  expect(prompt(2)).not.toContain('這是修正後的複審')
+  expect(prompt(2)).toContain('先讀專案常犯錯誤清單 /home/u/.claude/handoffs/shop/review-pitfalls.md，逐條對照這次的改動。')
+})
+
 test('two rounds of HIGH stop the chain and say why', async ($, on) => {
   const { data, clock } = fixture(on)
   data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')

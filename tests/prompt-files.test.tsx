@@ -87,8 +87,8 @@ test('review preflight skipped on recheck', () => {
   const c = buildCase({ name: 'A', statusPath: '/w/x/.desk/CARD.md' }, '<!-- DESK -->\n- 狀態：x\n- 檢查：`true`\n- 等你：無\n- 下一步：寫測試\n- 關卡：無\n<!-- /DESK -->', 1, {}, undefined)
   const gated = dispatch.parseSettings(JSON.stringify(PREFLIGHT))
   const always = dispatch.parseSettings(JSON.stringify({ review: { preflight: 'agy-review --base {base}' } }))
-  const rereview = { round: 1, base: 'abc123', files: 40, pitfalls: '', history: '' }
-  const recheck = { round: 0, base: 'abc123', recheck: true, files: 40, pitfalls: '', history: '' }
+  const rereview = { round: 1, base: 'abc123', files: 40, pitfalls: '' }
+  const recheck = { round: 0, base: 'abc123', recheck: true, files: 40, pitfalls: '' }
   for (const r of [rereview, recheck]) {
     expect(dispatch.buildPrompt(c, 'review', '', undefined, r, gated)).not.toContain('審查前置')
     expect(dispatch.buildPrompt(c, 'review', '', undefined, r, always)).toContain('審查前置：先執行 `agy-review --base abc123`')
