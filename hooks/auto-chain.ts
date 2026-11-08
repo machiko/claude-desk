@@ -190,7 +190,7 @@ async function settleExternal($: any, options: PluginOptions, c: Case, run: Chai
   if (!last || !ext || ext.settled || last.handled) return false
   const beacon = parseBeaconJson(await $.fs.read(`${c.root}/${BEACON_FILE}`).catch(() => null))
   // 只收這次外部驗收自己寫的 blocked 信標：之後另外派給外部 Agent 的工作寫的信標不動。
-  if (beacon && externalEndOf(beacon, last.startedAt) === 'blocked') await $.fs.write(`${c.root}/${BEACON_FILE}`, idleBeacon(ext.agent, at)).catch(() => {})
+  if (externalEndOf(beacon, last) === 'blocked') await $.fs.write(`${c.root}/${BEACON_FILE}`, idleBeacon(ext.agent, at)).catch(() => {})
   const [text, stat] = await Promise.all([
     $.fs.read(`${c.root}/${REVIEW_FILE}`).catch(() => null) as Promise<string | null>,
     $.fs.stat(`${c.root}/${REVIEW_FILE}`).catch(() => null) as Promise<{ mtimeMs?: number } | null>,

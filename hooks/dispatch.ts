@@ -50,9 +50,11 @@ export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish' 
 export type ExternalEnd = 'done' | 'blocked' | 'gone'
 /**
  * 外部 Agent（review.agent）跑的這次驗收：agent 是執行器名稱（信標與動態用），pid 是 card.py send 的背景行程；
+ * beaconAt 是這次寫的信標的 startedAt（card.py send 開工的時間；派出時讀信標記下，讀不到就在看到它結束時補記）：
+ * 之後你另外派給外部 Agent 的工作會覆寫同一份信標，靠它分辨信標是不是這次的。
  * end 是看到它結束時記下的；settled 是結論已寫回卡片關卡（之後照 Claude 驗收的結論往下走）。
  */
-export type ExternalRun = { agent: string; pid?: number; end?: ExternalEnd; settled?: true }
+export type ExternalRun = { agent: string; pid?: number; beaconAt?: number; end?: ExternalEnd; settled?: true }
 /** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
 export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 自動流程已接手這次（開跑自動檢查，或停在檢查段後你重開）：之後「等你」出現的題目不是它做完時寫的。 */ chained?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 這次驗收派給外部 Agent（不是 claude --bg）。 */ external?: ExternalRun; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' }; /** 之前幾段在跑的時間加起來（停下來等人時收進來）。 */ busyMs?: number; /** 現在這段開始在跑的時間；沒有就是派出的時間。 */ runAt?: number; /** 這段最後一次看到它在跑（最多每 RUN_SEEN_STEP_MS 記一次）。 */ seenAt?: number; /** 停下來等人（提問、權限提示）：現在這段不算，再看到它在跑才重新起算。 */ paused?: true }
 export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string; /** 這條分支已結束的派工與自動檢查總共跑了幾毫秒（不含正在跑的）。 */ runMs?: number; /** runMs 算的是哪條分支；同一個資料夾換了分支就從 0 起算。 */ runBranch?: string }

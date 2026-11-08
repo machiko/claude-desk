@@ -58,7 +58,7 @@ async function toReview($: any, data: any, clock: any) {
 test('test_review_dispatches_external_agent_when_review_agent_set', async ($, on) => {
   const { data, clock } = fixture(on)
   const feed = feedLog(on)
-  externalWorld(data, clock)
+  const world = externalWorld(data, clock)
   await toReview($, data, clock)
 
   // 驗收用 card.py send 在 Alpha 的 worktree 背景啟動 agy，沒有多開 claude --bg（只有一開始的實作那次）
@@ -75,7 +75,8 @@ test('test_review_dispatches_external_agent_when_review_agent_set', async ($, on
 
   // 派工紀錄記成驗收、標明是外部 Agent；動態寫派給外部 Agent
   expect(lastJob(data).kind).toBe('review')
-  expect(lastJob(data).external).toEqual({ agent: 'agy', pid: PID })
+  // 派出時讀到這次的信標，記下它的開工時間（之後另派給外部 Agent 的信標靠它分辨）
+  expect(lastJob(data).external).toEqual({ agent: 'agy', pid: PID, beaconAt: world.sentAt })
   expect(feed.has('Alpha 自動派驗收（外部 Agent agy）')).toBe(true)
 
   // 面板：重新整理後照信標顯示處理中、Agent 在驗收
@@ -423,4 +424,64 @@ test('test_external_review_result_writes_gate_and_continues_chain：處理完之
   const shown = await paneText($)
   expect(shown).toContain(flat('y 回覆'))
   expect(JSON.parse(data.files[BEACON]!).state).toBe('blocked')
+})
+
+// ── 複審第 1 輪 HIGH：認「這次的信標」看記下的開工時間，之後另派給外部 Agent 的信標（開工更晚）不藏、不改寫、不當成這次結束 ──
+
+/** 你另外用 card.py send 派 agy，它停在提問：同一份信標被覆寫，開工時間更晚。 */
+function laterSendAsks(data: any, at: number) {
+  data.files[BEACON] = JSON.stringify({ state: 'blocked', agent: 'agy', startedAt: at, updatedAt: at, waitsFor: 'question', message: '要改哪個檔？' })
+}
+
+test('test_external_review_respects_paused_chain：暫停中沒有結果、之後另派 agy 停在提問照樣顯示', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const world = externalWorld(data, clock)
+  const h = await toReview($, data, clock)
+  data.store.chains = { [ROOT]: { ...chainOf(data), stopped: '你暫停了流程' } }
+
+  // 這次外部驗收回報失敗：暫停中不改派；它自己的 blocked 信標收成 idle
+  agentEnds(data, clock, world, null, 'blocked')
+  await h.refresh(); await h.step()
+  expect(data.launches.length).toBe(1)
+  expect(JSON.parse(data.files[BEACON]!).state).toBe('idle')
+
+  // 一分鐘後另派 agy、停在提問：結論還沒處理，但這份不是這次的信標——照樣顯示等回覆，信標不被改寫
+  await clock.advance(60_000)
+  laterSendAsks(data, clock.now())
+  await h.refresh(); await h.step(); await h.refresh()
+  expect(JSON.parse(data.files[BEACON]!).state).toBe('blocked')
+  expect(await paneText($)).toContain(flat('y 回覆'))
+  expect(data.launches.length).toBe(1)
+})
+
+test('test_external_review_respects_paused_chain：派出時沒記到開工時間，看到結束時補記', async ($, on) => {
+  const { data, clock } = fixture(on)
+  endedExternal(data, clock, OWNER, { stopped: '你暫停了流程' })
+  data.files[BEACON] = JSON.stringify({ state: 'blocked', agent: 'agy', startedAt: NOW - 59_000, updatedAt: NOW })
+  const h = helpers($, data, clock)
+
+  await h.refresh(); await h.step()
+  expect(lastJob(data).external.end).toBe('blocked')
+  expect(lastJob(data).external.beaconAt).toBe(NOW - 59_000)
+
+  await clock.advance(60_000)
+  laterSendAsks(data, clock.now())
+  await h.refresh(); await h.step(); await h.refresh()
+  expect(JSON.parse(data.files[BEACON]!).state).toBe('blocked')
+  expect(await paneText($)).toContain(flat('y 回覆'))
+})
+
+test('test_external_review_falls_back_to_claude_once_on_failure：跑到一半信標被另派的工作覆寫，不當成這次失敗', async ($, on) => {
+  const { data, clock } = fixture(on)
+  externalWorld(data, clock)
+  const h = await toReview($, data, clock)
+
+  // 外部驗收還在跑（行程在），你另派 agy、它停在提問：不是這次回報失敗，不改派、不藏
+  await clock.advance(60_000)
+  laterSendAsks(data, clock.now())
+  await h.refresh(); await h.step(); await h.step()
+  expect(lastJob(data).ended).toBeUndefined()
+  expect(data.launches.length).toBe(1)
+  expect(JSON.parse(data.files[BEACON]!).state).toBe('blocked')
+  expect(await paneText($)).toContain(flat('y 回覆'))
 })

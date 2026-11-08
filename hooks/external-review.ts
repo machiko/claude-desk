@@ -12,12 +12,25 @@ export function runnerOf(agent: string): string {
   return first.split('/').filter(Boolean).pop() ?? first
 }
 
+/** 認信標要看的那次派工：派出時間與外部驗收紀錄（有 beaconAt 就看它）。 */
+export type ExternalJob = Pick<JobRecord, 'startedAt' | 'external'>
+
 /**
- * 信標說的外部驗收結束方式：只認這次派工之後寫的信標（startedAt 不早於派工時間）；blocked 是回報失敗，done／idle 是完成。
- * 信標還是 working、或還不是這次寫的，回 null（還在跑，或行程已經不在、要另外看 pid，見 probes 的 externalEnd）。
+ * 這份信標是不是這次外部驗收寫的：記了 beaconAt 就要 startedAt 相同（之後另外派給外部 Agent 的會更晚）；
+ * 還沒記到（派出時讀不到信標）才退回「不早於派工時間」。不是就回 null。
  */
-export function externalEndOf(beacon: AgentBeacon | null, startedAt: number): ExternalEnd | null {
-  const own = beacon && (beacon.startedAt ?? 0) >= startedAt ? beacon : null
+export function ownBeacon(beacon: AgentBeacon | null | undefined, job: ExternalJob): AgentBeacon | null {
+  if (!beacon) return null
+  const at = job.external?.beaconAt
+  return (at !== undefined ? beacon.startedAt === at : (beacon.startedAt ?? 0) >= job.startedAt) ? beacon : null
+}
+
+/**
+ * 信標說的外部驗收結束方式：只認這次的信標（ownBeacon）；blocked 是回報失敗，done／idle 是完成。
+ * 信標還是 working、或不是這次寫的，回 null（還在跑，或行程已經不在、要另外看 pid，見 probes 的 externalEnd）。
+ */
+export function externalEndOf(beacon: AgentBeacon | null | undefined, job: ExternalJob): ExternalEnd | null {
+  const own = ownBeacon(beacon, job)
   if (!own || own.state === 'working') return null
   return own.state === 'blocked' ? 'blocked' : 'done'
 }
@@ -96,13 +109,12 @@ export function withExternalResult(text: string, gate: string, ask: string | nul
  * 面板上這個信標 Agent 要怎麼對到最後一次派工（外部驗收）：
  * - hide：這次外部驗收自己寫的 blocked 信標（回報失敗）、結論還沒處理——不是在等你，由自動流程改派 Claude 驗收；
  * - review：這次外部驗收還沒結束、信標是這次寫的、Agent 在跑——標成在驗收；
- * - keep：其他照原樣顯示（跑到一半停在權限或提問、處理完之後你另外派給外部 Agent 的工作、別的信標）。
+ * - keep：其他照原樣顯示（跑到一半停在權限或提問、你另外派給外部 Agent 的工作——不管這次處理完了沒、別的信標）。
  */
 export function externalBeaconView(agent: Pick<AgentInfo, 'status'>, beacon: AgentBeacon | undefined, last: Pick<JobRecord, 'startedAt' | 'external' | 'ended' | 'handled'> | undefined): 'hide' | 'review' | 'keep' {
-  const ext = last?.external
-  if (!ext || !beacon || (beacon.startedAt ?? 0) < last!.startedAt) return 'keep'
-  if (externalEndOf(beacon, last!.startedAt) === 'blocked') return !ext.settled && !last!.handled ? 'hide' : 'keep'
-  return !last!.ended && agent.status === 'busy' ? 'review' : 'keep'
+  if (!last?.external || !ownBeacon(beacon, last)) return 'keep'
+  if (externalEndOf(beacon, last) === 'blocked') return !last.external.settled && !last.handled ? 'hide' : 'keep'
+  return !last.ended && agent.status === 'busy' ? 'review' : 'keep'
 }
 
 /** 處理過的外部信標改寫成 idle：回報失敗（blocked）的信標留著，面板會一直當成外部 Agent 在等你。 */

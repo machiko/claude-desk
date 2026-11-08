@@ -507,13 +507,15 @@ export async function pidAlive($: any, pid: number | undefined): Promise<boolean
 }
 
 /**
- * 外部驗收（派工紀錄標了 external）結束了沒：先看這個根目錄的信標（externalEndOf）；信標還沒說結束時，
+ * 外部驗收（派工紀錄標了 external）結束了沒：先看這個根目錄的信標（externalEndOf，只認這次的）；信標還沒說結束、或已被之後另派的覆寫時，
  * card.py 的背景行程已經不在就算 gone（沒回報完成就結束）。還在跑回 null。
+ * 信標說結束時一併回傳它的 startedAt（beaconAt），派出時沒讀到的在這裡補記。
  */
-export async function externalEnd($: any, root: string, record: Pick<JobRecord, 'startedAt' | 'external'>): Promise<ExternalEnd | null> {
-  const said = externalEndOf(parseBeaconJson(await $.fs.read(`${root}/${BEACON_FILE}`).catch(() => null)), record.startedAt)
-  if (said) return said
-  return await pidAlive($, record.external?.pid) ? null : 'gone'
+export async function externalEnd($: any, root: string, record: Pick<JobRecord, 'startedAt' | 'external'>): Promise<{ end: ExternalEnd; beaconAt?: number } | null> {
+  const beacon = parseBeaconJson(await $.fs.read(`${root}/${BEACON_FILE}`).catch(() => null))
+  const said = externalEndOf(beacon, record)
+  if (said) return { end: said, ...(beacon?.startedAt !== undefined ? { beaconAt: beacon.startedAt } : {}) }
+  return await pidAlive($, record.external?.pid) ? null : { end: 'gone' }
 }
 
 /** 探測 worktree 裡的外部 Agent 信標（`.task/agent-state.json`）與即時輸出（`.task/AGENT-OUT.md`）。 */

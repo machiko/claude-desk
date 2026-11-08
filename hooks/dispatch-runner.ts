@@ -9,11 +9,11 @@ import type { DispatchKind, JobRecord, QueueOpts, RootJobs, ReviewOpts, Untruste
 import type { DispatchSettings } from './settings'
 import type { RawAgent } from './agents'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
-import { loadSettings, deskPaths, diffBase, diffFiles, gitProbe, home, originRemote, riskOf, worktreeMark } from './probes'
+import { BEACON_FILE, loadSettings, deskPaths, diffBase, diffFiles, gitProbe, home, originRemote, riskOf, worktreeMark } from './probes'
 import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, runGraceMs, JOBS_KEY } from './desk-io'
 import { hasAgentQueue, isAgentQueued, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
 import { startSim } from './tutorial-run'
-import { BEACON_ID_PREFIX, rawAgents, supersede, agentInfo, agentsByRoot, launchName, runningDeskAgents } from './agents'
+import { BEACON_ID_PREFIX, parseBeaconJson, rawAgents, supersede, agentInfo, agentsByRoot, launchName, runningDeskAgents } from './agents'
 import { runnerOf } from './external-review'
 import { slugOf } from './text'
 import { isBusy, untrustedKey } from './turn'
@@ -224,9 +224,10 @@ const EXTERNAL_LAUNCH_MS = 30_000
 /**
  * 外部驗收的啟動：在任務的 worktree 跑 `card.py send <slug> --to <執行器> [--agent-cmd <review.agent>] --bg --json <提示>`，
  * card.py 在背景開外部 Agent、寫 `.task/agent-state.json`。review.agent 帶參數或路徑時整串交給 --agent-cmd，--to 只當執行器名稱。
- * 回傳背景行程的 pid（讀不到是 undefined）；card.py 失敗丟 LaunchError（訊息是輸出最後一行）。
+ * 回傳背景行程的 pid 與這次信標的 startedAt（card.py 回來前已寫好 working 信標，pid 對得上才算；讀不到都是 undefined）；
+ * card.py 失敗丟 LaunchError（訊息是輸出最後一行）。
  */
-async function launchExternal($: any, options: PluginOptions, c: Case, prompt: string, agent: string): Promise<number | undefined> {
+async function launchExternal($: any, options: PluginOptions, c: Case, prompt: string, agent: string): Promise<{ pid?: number; beaconAt?: number }> {
   const runner = runnerOf(agent)
   const cmd = agent.trim()
   const env = { DESK_SETTINGS: (await deskPaths($, options)).settings }
@@ -234,8 +235,16 @@ async function launchExternal($: any, options: PluginOptions, c: Case, prompt: s
   const r = await $.process.run(argv, { cwd: c.root, timeoutMs: EXTERNAL_LAUNCH_MS, env })
   const lines = `${r.stdout ?? ''}`.trim().split(/\r?\n/).filter(Boolean)
   if (r.exitCode !== 0) throw new LaunchError(`${r.stderr || r.stdout || ''}`.trim().split(/\r?\n/).pop() || `card.py send 失敗（exit ${r.exitCode}）`, false)
+  const pid = pidOf(lines.pop() ?? '')
+  if (pid === undefined) return {}
+  const beacon = parseBeaconJson(await $.fs.read(`${c.root}/${BEACON_FILE}`).catch(() => null))
+  return { pid, ...(beacon?.pid === pid && beacon.startedAt !== undefined ? { beaconAt: beacon.startedAt } : {}) }
+}
+
+/** card.py send --json 那一行的 pid；不是 JSON 或不是正整數回 undefined。 */
+function pidOf(line: string): number | undefined {
   try {
-    const pid = JSON.parse(lines.pop() ?? '')?.pid
+    const pid = JSON.parse(line)?.pid
     return Number.isInteger(pid) && pid > 0 ? pid : undefined
   } catch {
     return undefined
@@ -322,8 +331,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     let agent: AgentInfo
     if (external) {
       // 外部 Agent 不在 claude agents 清單：派工紀錄標成外部，在跑與結束看它的信標（.task/agent-state.json）。
-      const pid = await launchExternal($, options, c, prompt, external)
-      record = { launchName: name, nativeId: pid ? String(pid) : name, sessionId: '', kind, startedAt: now, fresh, owner, external: { agent: runner, ...(pid ? { pid } : {}) } }
+      const { pid, beaconAt } = await launchExternal($, options, c, prompt, external)
+      record = { launchName: name, nativeId: pid ? String(pid) : name, sessionId: '', kind, startedAt: now, fresh, owner, external: { agent: runner, ...(pid ? { pid } : {}), ...(beaconAt !== undefined ? { beaconAt } : {}) } }
       agent = { id: `${BEACON_ID_PREFIX}${c.root}`, name: runner, runner, source: 'beacon', state: 'working', status: 'busy', kind: doing, startedAt: now, ...(pid ? { pid } : {}) }
     } else {
       const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launchMarked($, c, prompt, { model, effort, sessionId, name, mcp }, recent)

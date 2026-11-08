@@ -37,7 +37,7 @@ export async function noteRuns($: any, list: readonly any[], roots: readonly str
     const cur = all[key]?.last
     if (!cur || cur.launchName !== last.launchName || cur.ended) continue
     const timed = addRunTime(all[key], dispatchRunMs(cur, now, grace), branches[key])
-    const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how }, ...(cur.external && external ? { external: { ...cur.external, end: external } } : {}) } }
+    const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how }, ...(cur.external && external ? { external: { ...cur.external, end: external.end, ...(cur.external.beaconAt === undefined && external.beaconAt !== undefined ? { beaconAt: external.beaconAt } : {}) } } : {}) } }
     await $.store.set(JOBS_KEY, { ...all, [key]: next })
     await writeStats($, key)
     await restageRun($, key, next, grace)
