@@ -24,6 +24,8 @@
                                                「到面板照「輪到你」接著做」，其他寫「到面板按 v 執行測試」；
                                                History 記一筆「<人>：<狀態> → <結果>（commit <HEAD>）」（有未提交的檔就註明幾個）；規格還沒確認就拒絕
   card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
+                                               worktree 有 .task/stats.json 或登錄表旁 reviews/ 有這張卡的審查留檔時，輸出與已歸檔那行帶
+                                               「統計：總執行 N 分・修正 n 輪・驗收 n 輪（資安 n）」，只列有資料的部分（壞掉的欄位略過）；
                                                可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
                                                移除已併入主 repo 目前分支、沒有未提交改動的 worktree（git worktree remove）與分支（git branch -d），
                                                不用 --force／-D、不碰遠端；主 worktree 不移除。只有一個例外：worktree 含 submodule 時 git 不加
@@ -1130,8 +1132,61 @@ def cmd_archive(slugs, cleanup_after=False):
         archive_one(slug, path, root, cleanup_after)
 
 
+# 工作桌寫的卡片統計（hooks/run-stats.ts 的 STATS_FILE）與審查留檔（hooks/probes.ts 的 archiveReview：<資料夾名>-<年月日>-<時分>-code|security.md）。
+STATS_FILE = os.path.join('.task', 'stats.json')
+REVIEW_KINDS = ('code', 'security')
+
+
+def run_minutes_text(ms):
+    """總執行給人看：跟面板（hooks/text.ts 的 runMinutesText）同一套寫法，整分往下取。"""
+    m = int(max(0, ms) // 60_000)
+    if m < 1:
+        return '不到 1 分'
+    return f'{m} 分' if m < 60 else f'{m // 60} 小時 {m % 60} 分'
+
+
+def stats_count(value):
+    """stats.json 的數字欄位：非負的數字才算（布林、字串、負數都不算），回傳整數或 None。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or value < 0 or value == float('inf'):
+        return None
+    return int(value)
+
+
+def card_stats(root):
+    """讀 worktree 的 .task/stats.json：回傳 (總執行毫秒, 修正輪數)；沒有檔、不是 JSON、欄位不是非負數字的那項是 None。"""
+    try:
+        data = json.loads(read(os.path.join(root, STATS_FILE)))
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    return stats_count(data.get('runMs')), stats_count(data.get('fixRounds'))
+
+
+def review_counts(root):
+    """登錄表旁 reviews/ 裡這張卡（worktree 資料夾名）的審查留檔份數：(程式碼審查, 資安審查)。"""
+    folder = os.path.basename(os.path.normpath(root))
+    reviews = os.path.join(os.path.dirname(REG), 'reviews') if REG else ''
+    names = os.listdir(reviews) if reviews and os.path.isdir(reviews) else []
+    pattern = re.compile(rf'{re.escape(folder)}-\d{{8}}-\d{{4}}-({"|".join(REVIEW_KINDS)})\.md')
+    kinds = [m.group(1) for m in map(pattern.fullmatch, names) if m]
+    return tuple(kinds.count(k) for k in REVIEW_KINDS)
+
+
+def stats_line(root):
+    """歸檔的統計句「統計：總執行 N 分・修正 n 輪・驗收 n 輪（資安 n）」；只列有資料的部分，都沒有是空字串。"""
+    run_ms, fixes = card_stats(root)
+    code, security = review_counts(root)
+    parts = ([f'總執行 {run_minutes_text(run_ms)}'] if run_ms is not None else []) \
+        + ([f'修正 {fixes} 輪'] if fixes is not None else []) \
+        + ([f'驗收 {code} 輪' + (f'（資安 {security}）' if security else '')] if code or security else [])
+    return f'統計：{"・".join(parts)}' if parts else ''
+
+
 def archive_one(slug, path, root, cleanup_after):
     os.makedirs(ARCHIVE, exist_ok=True)
+    # 統計檔在 worktree 裡，清理會一起刪掉：先讀。
+    stats = stats_line(root)
     dest = os.path.join(ARCHIVE, f'{slug}-CARD.md')
     card = read(path)
     write(dest, card)
@@ -1158,7 +1213,7 @@ def archive_one(slug, path, root, cleanup_after):
     lines = read(REG).split('\n')
     removed = [l for l in lines if l.startswith('|') and f'`{path}`' in l]
     lines = [l for l in lines if not (l.startswith('|') and f'`{path}`' in l)]
-    note = f'- {slug}：{datetime.date.today().isoformat()} 歸檔；卡片在 `{dest}`{suffix}'
+    note = f'- {slug}：{datetime.date.today().isoformat()} 歸檔；卡片在 `{dest}`' + (f'；{stats}' if stats else '') + suffix
     head = next((i for i, l in enumerate(lines) if l.startswith('## 已歸檔的卡')), None)
     if head is None:
         lines += ['', '## 已歸檔的卡（worktree 刪除後，卡片留存供查閱）', '', note]
@@ -1175,6 +1230,8 @@ def archive_one(slug, path, root, cleanup_after):
         text = append_line(text, '## 提醒', f'- 清理 {slug}：{kept}' + (f'；看過後自己刪：{todo}' if todo else ''))
     write(REG, text)
     print(f'歸檔完成：{dest}（登錄表移除 {len(removed)} 列）')
+    if stats:
+        print(stats)
     # 部署步驟跟著卡片歸檔：只提醒，不自動搬（隨發版線發版的卡，步驟要在發版線部署時做）。
     steps = deploy_steps(card)
     if steps:

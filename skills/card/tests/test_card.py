@@ -1697,6 +1697,77 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(len(re.findall(r'(?m)^- gamma：', reg)), 1, reg)
         self.assertNotRegex(reg, r'(?m)^- (Beta|Gamma)：')
 
+    def archived_line(self, slug):
+        """登錄表「已歸檔的卡」段裡這張卡的那行。"""
+        reg = read(self.reg)
+        return next(l for l in reg[reg.index('## 已歸檔的卡'):].splitlines() if l.startswith(f'- {slug}：'))
+
+    def write_reviews(self, folder, kinds):
+        """登錄表旁 reviews/ 放這張卡的審查留檔（檔名照 hooks/probes.ts 的 archiveReview）。"""
+        reviews = os.path.join(self.t, 'reviews')
+        os.makedirs(reviews, exist_ok=True)
+        for i, kind in enumerate(kinds):
+            write(os.path.join(reviews, f'{folder}-20261108-14{i:02d}-{kind}.md'), '整版\n')
+
+    def test_archive_records_stats_line_in_output_and_registry(self):
+        """卡片統計 AC-2：有 stats.json、2 份程式碼審查與 1 份資安審查留檔：輸出與已歸檔那行都帶統計句。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        task = os.path.join(self.main + '-worktrees', 'order-export', '.task')
+        write(os.path.join(task, 'stats.json'), json.dumps({'branch': 'feature/order-export', 'runMs': 14 * 60_000 + 30_000, 'fixRounds': 1}))
+        self.write_reviews('order-export', ['code', 'security', 'code'])
+        # 別張卡（資料夾名開頭相同）的留檔不算
+        self.write_reviews('order-export-v2', ['code'])
+
+        r = self.run_card('archive', 'order-export')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        line = '統計：總執行 14 分・修正 1 輪・驗收 2 輪（資安 1）'
+        self.assertIn(line, r.stdout.splitlines())
+        self.assertTrue(self.archived_line('order-export').endswith(f'；{line}'), read(self.reg))
+
+    def test_archive_omits_stats_when_no_data(self):
+        """卡片統計 AC-3：沒有 stats.json 也沒有審查留檔：照舊歸檔、不印統計；只有一種資料時只列有的那部分。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        self.run_card('new', 'feature/refund', '退款', 'origin/main')
+        self.run_card('new', 'feature/coupon', '折價券', 'origin/main')
+        write(os.path.join(self.main + '-worktrees', 'refund', '.task', 'stats.json'), json.dumps({'runMs': 30_000, 'fixRounds': 0}))
+        self.write_reviews('coupon', ['code'])
+
+        plain = self.run_card('archive', 'order-export')
+        stats_only = self.run_card('archive', 'refund')
+        reviews_only = self.run_card('archive', 'coupon')
+
+        for r in (plain, stats_only, reviews_only):
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('統計', plain.stdout)
+        self.assertNotIn('統計', self.archived_line('order-export'))
+        self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', 'order-export-CARD.md')))
+        self.assertIn('統計：總執行 不到 1 分・修正 0 輪', stats_only.stdout.splitlines())
+        self.assertTrue(self.archived_line('refund').endswith('；統計：總執行 不到 1 分・修正 0 輪'))
+        self.assertIn('統計：驗收 1 輪', reviews_only.stdout.splitlines())
+        self.assertTrue(self.archived_line('coupon').endswith('；統計：驗收 1 輪'))
+
+    def test_archive_ignores_malformed_stats_file(self):
+        """卡片統計 AC-4：stats.json 不是 JSON、或數字欄位是字串：照舊歸檔，略過執行時間與修正輪數，審查輪數照列。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        self.run_card('new', 'feature/refund', '退款', 'origin/main')
+        write(os.path.join(self.main + '-worktrees', 'order-export', '.task', 'stats.json'), '{not json')
+        write(os.path.join(self.main + '-worktrees', 'refund', '.task', 'stats.json'), json.dumps({'runMs': '600000', 'fixRounds': True}))
+        self.write_reviews('refund', ['code', 'code'])
+
+        broken = self.run_card('archive', 'order-export')
+        strings = self.run_card('archive', 'refund')
+
+        for r in (broken, strings):
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn('Traceback', r.stderr)
+        self.assertNotIn('統計', broken.stdout)
+        self.assertNotIn('統計', self.archived_line('order-export'))
+        self.assertIn('統計：驗收 2 輪', strings.stdout.splitlines())
+        self.assertTrue(self.archived_line('refund').endswith('；統計：驗收 2 輪'))
+        for slug in ('order-export', 'refund'):
+            self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', f'{slug}-CARD.md')))
+
     def test_unknown_target_lists_cases(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         r = self.run_card('card', 'nope')
@@ -2144,6 +2215,19 @@ class ReleaseDocsTest(unittest.TestCase):
         readme = read(os.path.join(REPO, 'README.md'))
         row = next(l for l in readme.splitlines() if l.startswith('| `/desk update` |'))
         self.assertIn('desk 自己發版後，工作桌會在回合結束自動跑一次', row)
+
+
+class ReleaseStatsDocsTest(unittest.TestCase):
+    """skills/release/SKILL.md 的清理段：歸檔後把各卡統計整理成表放進最後回報。"""
+
+    def test_release_skill_reports_card_stats(self):
+        """卡片統計 AC-5：清理段寫明歸檔之後在最後回報列「各卡統計」表、依總執行由多到少排。"""
+        text = read(os.path.join(REPO, 'skills', 'release', 'SKILL.md'))
+        cleanup = text[text.index('## 清理'):text.index('## 不做的事')]
+        rule = next((l for l in cleanup.splitlines() if '各卡統計' in l), '')
+        for part in ('統計：', '最後回報', '依總執行由多到少排'):
+            self.assertIn(part, rule)
+        self.assertLess(cleanup.find('--cleanup'), cleanup.find('各卡統計'))
 
 
 class CardOrderingDocsTest(unittest.TestCase):
