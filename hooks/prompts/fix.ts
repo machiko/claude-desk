@@ -1,6 +1,6 @@
 // 修正派工的提示詞：自動流程的修正輪（檢查沒過、審查要修）與手動按 g 修。
 import type { Case } from '../../types'
-import { AGENT_STOPPED, MAX_FIX_ROUNDS, MEDIUM_FIX_NOT_SENT } from '../chain'
+import { AGENT_STOPPED, MAX_FIX_ROUNDS, MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT } from '../chain'
 import type { FixReason } from '../dispatch'
 import { UNREVIEWED_GATE } from '../card'
 import { parseVerdict, toFix } from '../pipeline'
@@ -60,6 +60,8 @@ export function manualFix(c: Case, ci: boolean): ManualFix {
   if (ci) return repair(`修正：PR #${c.pr!.id} 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。`)
   const stopped = c.chain?.stopped
   if (stopped === MEDIUM_FIX_NOT_SENT) return repair(`修正：${mediumPickedStep(mediumFiles(c.chain?.mediumSecurity))}`)
+  // 審查 CRITICAL／HIGH 的自動修正沒派出：照按 g 修審查結論派，不把停下原因（按 g 重派）交給 Agent。
+  if (stopped === REVIEW_FIX_NOT_SENT) return repair(`修正：${reviewFixStep(REVIEW_FILE)}`)
   if (stopped === AGENT_STOPPED) return { head: '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。', repairs: false }
   // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
   if (isQuotaHold(stopped)) return quotaRestart(c)

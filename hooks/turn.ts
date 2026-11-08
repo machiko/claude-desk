@@ -1,11 +1,11 @@
 // 輪到誰、該做什麼：依六段與任務狀態產生一句給你看的話，以及這一刻該出現哪些動作。
 // 卡片的「下一步」是寫給 Agent 的；這裡的句子才是寫給人的，現在卡最上方與摘要列都用它。
 import type { Case, SentRecord } from '../types'
-import { isQuotaHold, QUOTA_RESTART, quotaHeld } from './model'
+import { isQuotaHold, QUOTA_RESTART, quotaHeld, stateOf } from './model'
 import { agentWaits, approvalWait, approveText } from './agents'
 import { slugOf } from './text'
 import { CARD_CMD, choiceCount, parseDecisions, parseGate, saysNone } from './card'
-import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, releaseStep, runningKind, shipsWith, standingVerdict } from './pipeline'
+import { awaitsSpecOk, canArchive, canRelease, finalState, isMerged, isReleaseLine, needsPr, needsPush, parseVerdict, releaseStep, runningKind, shipsWith, standingVerdict } from './pipeline'
 import { tutorialStep, tutorialTurn } from './tutorial'
 import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, CHECK_CHANGED, CHECK_CHANGED_WHY, CHECK_UNAPPROVED, CHECK_UNAPPROVED_WHY } from './chain'
 import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext, untrustedSteps } from './dispatch'
@@ -237,6 +237,16 @@ const heldOnRow = (c: Case, kind: DispatchKind): ActionId | undefined => {
 }
 
 /**
+ * 把流程當成已停下的這件：沒停的流程補上停下原因。卡片上有審查結論時 state 跟著重算：流程沒停時有擋的結論算 running（等自動修正），
+ * 不重算就一直是處理中、算不出 g；沒有結論的照原本的 state（重算會把停下的流程一律算成 failed，自動派驗收那種就說不出 w）。
+ */
+function stoppedCopy(c: Case): Case {
+  if (!c.chain || c.chain.stopped) return c
+  const stopped = { ...c, chain: { ...c.chain, stopped: UNTRUSTED_STOP } }
+  return parseVerdict(c.gate) ? { ...stopped, state: finalState({ ...stopped, state: stateOf(stopped, undefined) }) } : stopped
+}
+
+/**
  * 還沒信任時 ③ 要按的動作：手動派的就是剛按的那個，前提是它還派得出去（actionsFor 用同一個 heldOnRow 列它）；
  * 失敗後卡片改成派不出去了，跟自動流程派的一樣照「輪到你」取派工動作，沒有就說重新派工。
  * 自動流程派的照「這一步沒派出去」時的「輪到你」取派工動作：派工當下的快照還說「接著自動驗收」（沒有動作），所以算的時候把流程當成已停下；
@@ -246,8 +256,7 @@ function untrustedAction(c: Case, hold: NonNullable<TurnCtx['hold']>, ctx: TurnC
   const held = hold.auto ? undefined : heldOnRow(c, hold.dispatch)
   if (held) return held
   const { hold: _, ...rest } = ctx
-  const paused = c.chain && !c.chain.stopped ? { ...c, chain: { ...c.chain, stopped: UNTRUSTED_STOP } } : c
-  const action = turnOf(paused, rest).action
+  const action = turnOf(stoppedCopy(c), rest).action
   return action && DISPATCH_ACTIONS.has(action) ? action : undefined
 }
 

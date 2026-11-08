@@ -25,6 +25,11 @@ export const shownStopped = (stopped: string): string => LEGACY_HELD[stopped] ??
 export const AGENT_STOPPED = 'Agent 被停止，未完成；看過 worktree 後按 g 重開'
 /** 你在「等你」選了修掉審查 MEDIUM，工作桌自動派修正只試一次、確定沒派出去：流程停下，按 g 重派（g 派的就是那幾條 MEDIUM 的修正）。 */
 export const MEDIUM_FIX_NOT_SENT = '你選了修掉的審查 MEDIUM 沒派出修正：按 g 重派'
+/**
+ * 審查有 CRITICAL／HIGH，自動流程派修正確定沒派出去（啟動失敗、還沒信任，直接派或從隊伍派出都算）：流程停下，按 g 重派（g 派的就是依審查檔的修正）。
+ * 不用括號：「輪到你」的 fixPaused 會把它包進括號裡。
+ */
+export const REVIEW_FIX_NOT_SENT = '依審查修正沒派出，失敗原因見動態：按 g 重派'
 /** 停在提問的那次派工，題目已在對話處理（卡片「等你」清掉）：審查要修的不自動派修正。 */
 export const ASK_HANDED_OVER = '提問已在對話處理，不自動派修正'
 /** 拿早先看到的流程紀錄（版本）做決定，寫入時版本已被別的對話改過：不寫，回這句。 */

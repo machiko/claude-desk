@@ -17,6 +17,7 @@ import { loadSettings, worktreeMark } from './probes'
 import { QUOTA_RESTART_CATCHUP, quotaHold, quotaLow } from './model'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, notify, restage, verifyPending } from './register'
+import { pauseUnsentReviewFix } from './auto-chain'
 
 /** 畫面用：排隊中的卡片路徑，依序。 */
 const agentQueueAtom = atom({ plugin: 'desk', key: 'agentQueue' } as const, [])
@@ -165,7 +166,11 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     // 名額被別處搶走：dispatch 已把它放回原位，這一輪不再派。
     if (isAgentQueued(entry.statusPath)) break
     if (sent) { running++; launched = true }
-    else await restage($, entry.statusPath)
+    else {
+      // 自動排的審查修正從隊伍派出卻沒派成：跟直接派一樣停下這個對話的流程（不在隊伍、不是已啟動未列出才停）。
+      if (entry.opts.auto && entry.opts.fix?.from === 'review') await pauseUnsentReviewFix($, c!, mine, s.at)
+      await restage($, entry.statusPath)
+    }
   }
   return launched
 }
