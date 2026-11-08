@@ -1,7 +1,8 @@
 // build-like-review：會改程式的派工（實作、回覆、修正）交出前先做審查會做的檢查；同步、審查、推送、解衝突不帶。
 import { expect, test } from 'claude-code/testing'
-import { buildPrompt, openPrRequest, pushRequest, writesCode, writesWithPitfalls } from '../hooks/dispatch'
-import { MEDIUM_FIX_NOT_SENT } from '../hooks/chain'
+import { buildPrompt, openPrRequest, pushRequest, readsPitfalls, writesCode } from '../hooks/dispatch'
+import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT } from '../hooks/chain'
+import { QUOTA_NOTHING_TO_FIX } from '../hooks/prompts/fix'
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
 import type { Case, Verify } from '../types'
@@ -76,10 +77,11 @@ test('test_writing_prompts_include_pitfalls_when_list_exists: writes code covers
   expect(writesCode('continue', { from: 'check', round: 1 })).toBe(true)
   expect(writesCode('continue', { from: 'review', round: 2, security: true })).toBe(true)
   for (const kind of ['sync', 'review', 'publish', 'catchup'] as const) expect(writesCode(kind)).toBe(false)
-  expect(writesWithPitfalls('continue')).toBe(true)
-  expect(writesWithPitfalls('reply')).toBe(true)
-  for (const from of ['check', 'review', 'medium'] as const) expect(writesWithPitfalls('continue', { from, round: 1 })).toBe(false)
-  for (const kind of ['sync', 'review', 'publish', 'catchup'] as const) expect(writesWithPitfalls(kind)).toBe(false)
+  const c = mk('依規格實作')
+  expect(readsPitfalls(c, 'continue')).toBe(true)
+  expect(readsPitfalls(c, 'reply')).toBe(true)
+  for (const from of ['check', 'review', 'medium'] as const) expect(readsPitfalls(c, 'continue', { from, round: 1 })).toBe(false)
+  for (const kind of ['sync', 'review', 'publish', 'catchup'] as const) expect(readsPitfalls(c, kind)).toBe(false)
 })
 
 /** AC-1：真的派回覆（Agent 停在提問、/desk reply）：清單在就帶路徑。 */
@@ -130,20 +132,71 @@ test('test_writing_prompts_include_pitfalls_when_list_exists: auto fix round dis
   expect(p).toContain(SELF_CHECK)
 })
 
-/** dispatch-slim AC-1：設了清單、檔案也在，派修正（檢查沒過、依審查、資安審查、你選修掉 MEDIUM）不叫 Agent 讀清單；整類列出與自我檢查照舊。 */
+/** 停在失敗的卡（按 g 派修正的那種）：`gate` 是關卡，`chain` 是流程紀錄；下一步只剩等待，g 派出去的開頭才走修正句。 */
+function failed(gate = '無', chain?: Case['chain'], over: Partial<Case> = {}): Case {
+  const base = buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, `<!-- DESK -->\n- 狀態：ok\n- 檢查：\`npm test\`\n- 等你：無\n- 下一步：等審查\n- 關卡：${gate}\n<!-- /DESK -->`, 1, {}, undefined)
+  return { ...base, state: 'failed', ...(chain ? { chain } : {}), ...over } as Case
+}
+const BLOCKED_GATE = 'review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；不過'
+const QUOTA_STOP = '5 小時額度剩 25%，低於門檻 30%，14:00 重置後按 g 重開'
+
+/** dispatch-slim AC-1：設了清單、檔案也在，派修正（檢查沒過、依審查、資安審查、你選修掉 MEDIUM；自動流程的與按 g 派的）不叫 Agent 讀清單；整類列出與自我檢查照舊。 */
 test('test_fix_prompts_skip_pitfalls_list', () => {
   const c = mk('依規格實作')
   const P = '/h/pitfalls.md'
   const fix = (f: Parameters<typeof buildPrompt>[3]) => buildPrompt(c, 'continue', '', f, undefined, undefined, '', P)
+  const byG = (x: Case) => buildPrompt(x, 'continue', '', undefined, undefined, undefined, '', P)
   const check = fix({ from: 'check', round: 1, tail: ['boom'] })
   const byReview = [fix({ from: 'review', round: 1 }), fix({ from: 'review', round: 2, security: true }), fix({ from: 'medium', round: 3 }), fix({ from: 'medium', round: 3, security: true })]
-  for (const p of [check, ...byReview]) {
+  // 按 g：檢查沒過、審查 HIGH 還在、流程停下、選了修掉 MEDIUM 沒派出、額度煞車擋下時審查還要修、PR 的 CI 失敗
+  const gCheck = byG(failed())
+  const gByReview = [
+    byG(failed(BLOCKED_GATE)),
+    byG(failed(BLOCKED_GATE, { round: 2, lastKind: 'fix', stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' } as Case['chain'])),
+    byG(failed('無', { round: 0, passed: true, stopped: MEDIUM_FIX_NOT_SENT } as Case['chain'])),
+    byG(failed(BLOCKED_GATE, { round: 1, stopped: QUOTA_STOP } as Case['chain'])),
+  ]
+  const ciCase = { ...atMerge(), pr: { id: 7, state: 'OPEN', ci: 'fail' } } as Case
+  const gCi = byG({ ...ciCase, next: '等 CI' } as Case)
+  for (const p of [check, ...byReview, gCheck, ...gByReview, gCi]) {
     expect(p.split('\n')[0]).toContain('修正')
     expect(p).not.toContain(READ_LIST)
     expect(p).not.toContain(P)
     expect(p).toContain(SELF_CHECK)
   }
-  for (const p of byReview) expect(p).toContain(WHOLE_CLASS)
+  for (const p of [...byReview, ...gByReview]) expect(p).toContain(WHOLE_CLASS)
+  for (const x of [failed(), failed(BLOCKED_GATE), ciCase]) expect(readsPitfalls(x, 'continue')).toBe(false)
+})
+
+/** dispatch-slim AC-1 的另一面：按 g 但不是在修東西（Agent 被停止後重開、額度煞車擋在派驗收前沒東西要修）照實作讀清單。 */
+test('test_fix_prompts_skip_pitfalls_list: restarts that fix nothing still read the list', () => {
+  const P = '/h/pitfalls.md'
+  const stopped = failed('無', { round: 0, stopped: AGENT_STOPPED } as Case['chain'])
+  const quotaIdle = failed('無', { round: 0, stopped: QUOTA_STOP } as Case['chain'], { pipeline: { current: 'review' } } as Partial<Case>)
+  const restart = buildPrompt(stopped, 'continue', '', undefined, undefined, undefined, '', P)
+  const resume = buildPrompt(quotaIdle, 'continue', '', undefined, undefined, undefined, '', P)
+  expect(restart.startsWith('上一個 Agent 被停止')).toBe(true)
+  expect(resume.startsWith(QUOTA_NOTHING_TO_FIX)).toBe(true)
+  for (const p of [restart, resume]) expect(p).toContain(PITFALLS_LINE(P))
+})
+
+/** dispatch-slim AC-1：真的按 g 派出去（檢查沒過、卡片下一步只剩等待）：清單檔在也不帶。 */
+test('test_fix_prompts_skip_pitfalls_list: g dispatch on a failed check', async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[PITFALLS_FILE] = '# 清單'
+  data.files[CARD_A] = setFields(data.files[CARD_A]!, { 等你: '無', 下一步: '等檢查' })
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
+  data.store.verifies = { [CARD_A]: { command: 'node test.mjs', at: NOW - 60_000, ok: false, exitCode: 1, tail: ['boom'], truncated: false } }
+  data.agents = []
+  data.launch = async () => result(0, 'g0000001')
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  const p = String(data.launches[0].argv.at(-1))
+  expect(p.startsWith('修正：完成檢查 `node test.mjs` 未通過')).toBe(true)
+  expect(p).not.toContain(READ_LIST)
+  expect(p).toContain(SELF_CHECK)
 })
 
 /** build-like-review AC-2：實作、回覆與修正的提示要求交出前自我檢查（突變檢查、對照 main 跑相鄰路徑、寫進歷程），有沒有清單都要。 */
