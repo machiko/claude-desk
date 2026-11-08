@@ -172,6 +172,19 @@ test('review prompt: pitfalls first, later rounds diff-only without repeats, sec
   const focus = buildPrompt(c, 'review', '', undefined, { round: 0, securityFocus: true, pitfalls: '/h/pitfalls.md' })
   expect(focus).toContain('先讀專案常犯錯誤清單 /h/pitfalls.md，逐條對照這次的改動。')
   expect(focus).toContain('這次審查同時做資安審查')
+  // 沒有可用的 base 就是整條分支審查，不看輪數：檢查沒過、自動修過一輪後的第一次審查（round 1）與拿不到 base 的重新審查都讀清單
+  const wholeBranch = [
+    buildPrompt(c, 'review', '', undefined, { round: 1, target: 'origin/main', pitfalls: '/h/pitfalls.md' }),
+    buildPrompt(c, 'review', '', undefined, { round: 2, pitfalls: '/h/pitfalls.md' }),
+    buildPrompt(c, 'review', '', undefined, { round: 0, recheck: true, target: 'origin/main', pitfalls: '/h/pitfalls.md' }),
+    buildPrompt(c, 'review', '', undefined, { round: 1, recheck: true, securityFocus: true, pitfalls: '/h/pitfalls.md' }),
+  ]
+  for (const p of wholeBranch) {
+    expect(p).toContain('從 git merge-base 起算')
+    expect(p).not.toContain('這是修正後的複審')
+    expect(p).not.toContain('重新審查')
+    expect(p).toContain('先讀專案常犯錯誤清單 /h/pitfalls.md，逐條對照這次的改動。')
+  }
 })
 
 const PITFALLS = '/h/pitfalls.md'
@@ -206,12 +219,19 @@ test('review prompt: recheck after new commits does not read the pitfalls list',
 test('review prompt: security review does not read the pitfalls list', () => {
   const c = mk('寫測試')
 
-  const p = buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: PITFALLS })
+  const prompts = [
+    buildPrompt(c, 'review', '', undefined, { round: 0, security: true, pitfalls: PITFALLS }),
+    // 修過一輪、這輪還沒資安審查過（沒有 base）：仍是資安審查，照樣不讀
+    buildPrompt(c, 'review', '', undefined, { round: 1, security: true, pitfalls: PITFALLS }),
+    buildPrompt(c, 'review', '', undefined, { round: 1, base: 'abc123', security: true, pitfalls: PITFALLS }),
+  ]
 
-  expect(p.startsWith('資安審查')).toBe(true)
-  expect(p).not.toContain(READ_PITFALLS)
-  expect(p).not.toContain(PITFALLS)
-  expect(p).toContain('資安審查只看：')
+  for (const p of prompts) {
+    expect(p.startsWith('資安審查')).toBe(true)
+    expect(p).not.toContain(READ_PITFALLS)
+    expect(p).not.toContain(PITFALLS)
+    expect(p).toContain('資安審查只看：')
+  }
 })
 
 /** review-slim AC-4：每一種審查都不叫審查翻過去的審查紀錄、不叫它在清單檔尾追加；結尾照舊是「不改程式、不 commit。」 */
