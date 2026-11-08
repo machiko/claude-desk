@@ -277,7 +277,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
       const base = recorded && recorded !== c.git?.branch ? recorded : undefined
       const template = settings.review.template || `${$.plugin.root}/templates/review.md`
       const recheck = !!opts.auto && !!run?.recheck && !opts.security
-      review = { round, template, ...(tutorial ? {} : await reviewScope($, c, probed, settings, !!opts.security)), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls, history: paths.reviews }
+      review = { round, template, ...(tutorial ? {} : await reviewScope($, c, probed, settings, !!opts.security)), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls }
     }
     const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls)
     const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind

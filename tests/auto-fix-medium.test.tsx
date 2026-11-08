@@ -102,7 +102,7 @@ test('test_behavior_medium_alone_passes_and_asks_instead_of_auto_fix', async ($,
 /** AC-2：不分第幾輪（第一次、複審、輪數用完、通過後重新審查、資安審查），可能影響行為的 MEDIUM 一律標「（等你決定）」寫進等你，不說會自動派修正 */
 test('test_review_prompt_always_asks_behavior_medium', () => {
   const c = buildCase({ name: 'A', statusPath: CARD_A }, '- 狀態：x\n- 檢查：`npm test`\n- 等你：無\n- 下一步：寫測試\n- 關卡：無', 1, {}, undefined)
-  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', history: '', ...more })
+  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', ...more })
   const prompts = [review(0), review(1), review(2), review(3), review(0, { base: 'abc123', recheck: true }), review(0, { security: true }), review(1, { security: true }), review(2, { security: true })]
   for (const p of prompts) {
     expect(p).toContain(ASK_RULE)
@@ -645,7 +645,7 @@ async function answerMedium($: any, data: any, key: string) {
 test('test_medium_ask_offers_follow_up_card_first', () => {
   const c = buildCase({ name: 'A', statusPath: CARD_A }, '- 狀態：x\n- 檢查：`npm test`\n- 等你：無\n- 下一步：寫測試\n- 關卡：無', 1, {}, undefined)
   const blocked = buildCase({ name: 'A', statusPath: CARD_A }, '<!-- DESK -->\n- 狀態：x\n- 檢查：`npm test`\n- 等你：無\n- 下一步：等審查\n- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；不過\n<!-- /DESK -->', 1, {}, undefined)
-  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', history: '', ...more })
+  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', ...more })
   const prompts = [
     review(0), review(1), review(0, { base: 'abc123', recheck: true }), review(0, { security: true }),
     buildPrompt({ ...blocked, state: 'failed' }, 'continue'),

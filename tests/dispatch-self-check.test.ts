@@ -43,7 +43,7 @@ test('test_writing_prompts_include_pitfalls_when_list_exists', async ($, on) => 
   for (const p of [withPath.continue, withPath.reply]) expect(p).toContain(PITFALLS_LINE('/h/pitfalls.md'))
   for (const p of Object.values(writingPrompts(c))) expect(p).not.toContain(READ_LIST)
   // 實作與審查讀清單是同一句（逐字）
-  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '/h/pitfalls.md', history: '/h/reviews' })
+  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '/h/pitfalls.md' })
   const line = (p: string) => p.split('\n').find(l => l.includes(READ_LIST) && l.startsWith('先讀'))
   expect(line(review)).toBe(PITFALLS_LINE('/h/pitfalls.md'))
   expect(line(withPath.continue)).toBe(line(review))
@@ -253,7 +253,7 @@ test('test_fix_prompts_require_fixing_the_whole_class', () => {
 /** build-like-review AC-4：同步、審查、推送、解衝突不帶清單、自我檢查與整類修那三句；審查照舊讀清單。 */
 test('test_non_writing_prompts_skip_self_check_rules', () => {
   const c = mk('依規格實作')
-  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '/h/pitfalls.md', history: '/h/reviews' }, undefined, '', '/h/pitfalls.md')
+  const review = buildPrompt(c, 'review', '', undefined, { round: 0, pitfalls: '/h/pitfalls.md' }, undefined, '', '/h/pitfalls.md')
   const others = [
     buildPrompt(c, 'sync', '', undefined, undefined, undefined, '', '/h/pitfalls.md'),
     review,

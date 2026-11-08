@@ -118,6 +118,16 @@ class ReviewContractTest(unittest.TestCase):
         self.assertIn('不修／另開卡修（推薦）／修掉／改規格', workflow)
         self.assertIn('卡名「<原卡名>：審查 MEDIUM」', workflow)
 
+    def test_workflow_docs_say_pitfalls_grow_only_through_archive_retro(self):
+        """review-slim AC-4：WORKFLOW 常犯錯誤清單段不再說審查會追加，寫明新條目由歸檔回顧確認後追加；只有第一次審查讀清單。"""
+        text = section(read(WORKFLOW), '讓審查越來越準')
+        line = next(l for l in text.splitlines() if l.startswith('- **常犯錯誤清單**'))
+
+        self.assertNotIn('審查對話會在檔尾追加', line)
+        self.assertNotIn('過去的審查紀錄', line)
+        self.assertIn('新條目由歸檔回顧提出、你確認後追加', line)
+        self.assertIn('第一次審查先讀（複審、重新審查、資安審查不讀）', line)
+
 
 if __name__ == '__main__':
     unittest.main()

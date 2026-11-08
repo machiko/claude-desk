@@ -6,9 +6,9 @@ import { pitfallsRule } from './rules'
 export const REVIEW_FILE = '.task/REVIEW.md'
 export const SECURITY_FILE = '.task/SECURITY.md'
 
-/** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單與過去審查紀錄在哪。 */
+/** 審查的參數：第幾輪、複審只看哪個 commit 之後、是不是資安審查、常犯錯誤清單在哪（只有第一次程式碼審查讀）。 */
 export type ReviewOpts = {
-  round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; history: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string; /** 審查前置指令的 `{root}`；沒給用任務根目錄。 */ root?: string
+  round: number; base?: string; /** 第一次審查的 diff 基準分支（例如 origin/main）；不知道就請審查自己找。 */ target?: string; security?: boolean; /** 審查通過後又有新 commit 的重新審查：只看 base 之後的 diff。 */ recheck?: boolean; pitfalls: string; /** 審查契約檔；沒給就用設定檔的 review.template。 */ template?: string; /** 審查前置指令的 `{root}`；沒給用任務根目錄。 */ root?: string
   /** 工作桌自己跑的完成檢查（指令與卡片相同）已在這個 HEAD 通過、HEAD 沒動：審查不重跑整套。 */
   verifiedHead?: string
   /** 分支相對基準分支改了幾個檔（review.preflightMinFiles 的門檻用）；不知道就沒有。 */
@@ -82,6 +82,14 @@ function wantsPreflight(words: ReviewWords, r: ReviewOpts | undefined): boolean 
   return r?.files === undefined || r.files >= min
 }
 
+/**
+ * 第一次程式碼審查（含高風險分支併資安重點那次）：才讀常犯錯誤清單。複審與重新審查只看增量 diff，
+ * 資安審查只看資安項目，都不讀；清單的新條目由歸檔回顧確認後追加，審查不回寫。
+ */
+function isFirstReview(r: ReviewOpts): boolean {
+  return r.round === 0 && !r.recheck && !r.security
+}
+
 export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefined): string {
   const file = r?.security ? SECURITY_FILE : REVIEW_FILE
   const scope = r?.base && r.recheck
@@ -94,14 +102,13 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
     `契約：${reviewTask(c) || r?.template || words.template || 'templates/review.md'}。${checkRule(c.verify, r?.verifiedHead)}`,
     ...(wantsPreflight(words, r) ? [preflightRule(words.preflight!, { root: r?.root || c.root, base: r?.base ?? r?.target ?? '' }, file)] : []),
     scope,
-    ...(r?.pitfalls ? [pitfallsRule(r.pitfalls)] : []),
+    ...(r?.pitfalls && isFirstReview(r) ? [pitfallsRule(r.pitfalls)] : []),
     ...(r?.security ? [`資安審查只看：${words.security}；其他交給程式碼審查。`] : []),
     ...(r?.securityFocus && !r.security ? [`這是高風險分支，這次審查同時做資安審查（過關後不另派）：另外逐項看 ${words.security}，有問題照下面的分級列進 ${file}。`] : []),
     `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（${words.high}）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 ${words.categories}）。寫進 ${file}（整份覆寫）。`,
     MEDIUM_RULE,
     ...(r?.security ? [SECURITY_KEEP_ASK] : []),
     '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>',
-    ...(r?.pitfalls && r.history ? [`審完後看 ${r.history} 裡過去的審查紀錄：這次某條發現的類別若過去已出現過、而清單沒有，在 ${r.pitfalls} 檔尾追加一行「- 類別：怎麼避免」。這是唯一可以寫的根目錄外檔案；不要改既有條目。`] : []),
     '不改程式、不 commit。',
   ].join('\n')
 }
