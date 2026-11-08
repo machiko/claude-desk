@@ -364,6 +364,37 @@ test('test_untrusted_auto_fix_after_failed_check_toast_names_the_same_key_as_tur
   await ui.unmount()
 })
 
+/** 驗收卡住 AC-2：審查 HIGH 後自動派修正遇到未信任，toast、動態的 ③ 與「輪到你」說同一個鍵（g），不說「重新派工」；面板不顯示 Agent 在驗收。 */
+test('test_untrusted_auto_fix_after_review_high_toast_names_the_same_key_as_turn', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  const log = feedLog(on)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace(/- 關卡：.*$/m, '- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
+  data.files[`${ROOT}/.task/REVIEW.md`] = '- [HIGH][稽核] a.ts:1 — 漏寫稽核紀錄'
+  data.store.verifies = { [CARD_A]: { command: 'node test.mjs', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'h1' } }
+  data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: 0, round: 0, reviewHead: 'h1', reviewBranch: 'feature/alpha' } }
+  data.store.jobs = { [ROOT]: { sessionId: 'a0000001-0000-4000-8000-000000000000', last: { launchName: 'desk-rv-0', nativeId: 'r0000001', sessionId: 'r0000001-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', ended: { how: 'finished' } } } }
+  data.launch = async () => result(1, '', UNTRUSTED_OUTPUT)
+  const h = helpers($, data, clock)
+
+  // 審查剛結束、有 HIGH → 自動派修正，派的時候遇到未信任
+  await h.refresh()
+  await h.step()
+
+  expect(data.launches).toHaveLength(1)
+  const steps = untrustedSteps(ROOT, 'g')
+  expect(data.toasts).toContain(`Alpha：${steps}`)
+  expect(data.toasts.some(t => t.includes('回面板再重新派工'))).toBe(false)
+  expect(log.list.some(e => e.text === `Alpha：${steps}` && e.tone === 'error')).toBe(true)
+  const ui = await $.ui.mount(PANE(96))
+  await ui.press({ key: `row-${CARD_A}` })
+  const shown = await screen(ui)
+  expect(shown).toContain(flat(`▶ 輪到你 ${steps}`))
+  expect(shown).not.toContain(flat('Agent 在驗收'))
+  await ui.unmount()
+})
+
 /** 審查 MEDIUM：手動按 g 遇到未信任後，卡片被改成派不出去（關卡改成 spec）：③ 不再說按 g，說的鍵一定在列上，列上也沒有 g。 */
 test('test_untrusted_manual_hold_drops_key_when_card_can_no_longer_dispatch_it', () => {
   const hold = { hold: { dispatch: 'continue' as const, auto: false } }

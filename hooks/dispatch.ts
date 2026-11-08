@@ -2,7 +2,7 @@
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
-import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, shownStopped } from './chain'
+import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT, shownStopped } from './chain'
 import type { ChainRun } from './chain'
 import { UUID, agentWaits, approvalWait } from './agents'
 import { slugOf } from './text'
@@ -127,10 +127,10 @@ export type FixReason = { /** medium：你在「等你」對審查 MEDIUM 題選
 /** 會改程式的派工（繼續、回覆、修正）：多帶規格、CHANGELOG、測試與自我檢查的規則。 */
 export const writesCode = (kind: DispatchKind, fix?: FixReason): boolean => !!fix || kind === 'continue' || kind === 'reply'
 
-/** 按 g 派、開頭走 manualFix 的那份（fixByG 且下一步只剩等待或派審查，或選了修掉 MEDIUM 沒派出）；其他派工是 undefined。 */
+/** 按 g 派、開頭走 manualFix 的那份（fixByG 且下一步只剩等待或派審查，或選了修掉 MEDIUM、審查要修的自動修正沒派出）；其他派工是 undefined。 */
 function manualFixOf(c: Case, kind: DispatchKind, fix?: FixReason): ManualFix | undefined {
   if (fix || kind !== 'continue' || isPlaceholder(c.next) || !fixByG(c)) return undefined
-  return idleNext(c.next) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT ? manualFix(c, ciFailed(c)) : undefined
+  return idleNext(c.next) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT || c.chain?.stopped === REVIEW_FIX_NOT_SENT ? manualFix(c, ciFailed(c)) : undefined
 }
 
 /**

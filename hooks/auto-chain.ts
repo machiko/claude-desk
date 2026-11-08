@@ -14,7 +14,7 @@ import { normalizeRoot } from './settings'
 import type { DispatchSettings } from './settings'
 import { blocking, checkStands, isMerged, parseVerdict } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
-import { MEDIUM_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, skipsReview } from './chain'
+import { MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, skipsReview } from './chain'
 import type { ChainRun, ChainStep } from './chain'
 import { trustedChecks } from './approve-check'
 import { tutorial } from './tutorial-run'
@@ -161,10 +161,26 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
       if (!(await saveChain($, key, r => r ? { ...withoutMedium(r), ...counted(r), round: step.round, ...(step.reason === 'review' ? { reviewFix: true } : {}) } : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
       // 審查修正帶著剛結束的是不是資安審查：提示只寫那一份審查檔（SECURITY.md 或 REVIEW.md）。提示的「第 n／2 輪」是整張卡累計的。
       const fix: FixReason | undefined = step.reason ? { from: step.reason as 'check' | 'review', round: total, ...(step.reason === 'check' ? { tail: fresh?.tail ?? [] } : {}), ...(step.reason === 'review' && last.security ? { security: true } : {}) } : undefined
-      await dispatch($, options, { ...c, state: 'ready' }, step.dispatch, { fix, auto: true, ...(step.security ? { security: true } : {}) })
+      const sent = await dispatch($, options, { ...c, state: 'ready' }, step.dispatch, { fix, auto: true, ...(step.security ? { security: true } : {}) })
+      // 依審查修正沒派出（不在隊伍、不是已啟動未列出）：停下流程，不然面板一直算成處理中。派審查、檢查失敗後的修正不在這裡停。
+      if (!sent && fix?.from === 'review') await pauseUnsentReviewFix($, c, mine, s.at)
     }
   }
   if (acted) refreshSoon($, options)
+}
+
+/**
+ * 審查有 CRITICAL／HIGH、自動派的修正沒派出（直接派與從派工隊伍派出共用）：確定沒啟動才停下這個對話的流程、記原因，
+ * 不然結論還擋著、流程沒停，面板一直算成處理中。排回隊伍的（名額被搶走）、已啟動只是 agents 清單還沒列出的（Agent 可能在跑）、
+ * 這件另有派工還在啟動的（同時派了兩次，由那次決定）不停。
+ * 流程是別的對話的、或已經停下就不動；真的停下才寫動態與系統通知（同一件不會寫兩次）。回傳這次有沒有停下。
+ */
+export async function pauseUnsentReviewFix($: any, c: Case, mine: string, at: number): Promise<boolean> {
+  if (isAgentQueued(c.statusPath) || unconfirmed.has(c.statusPath) || await starting($, c.statusPath)) return false
+  if (!(await saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, REVIEW_FIX_NOT_SENT)))) return false
+  await feedPush($, [{ at, text: `${c.name} 流程已暫停：${REVIEW_FIX_NOT_SENT}`, tone: 'error', card: c.statusPath }])
+  notify($, `${c.name}：流程已暫停，${REVIEW_FIX_NOT_SENT}`)
+  return true
 }
 
 /**
