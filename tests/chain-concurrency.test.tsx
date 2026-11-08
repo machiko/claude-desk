@@ -3,7 +3,7 @@ import { fixture, PANE, CARD_A, REGISTRY, result, text, flat, feedLog } from './
 import { screen } from './world'
 import { AGENT_STOPPED } from '../hooks/chain'
 import { TURN_TEXT } from '../hooks/turn'
-import { endedHow } from '../hooks/model'
+import { endedHow, issueOf } from '../hooks/model'
 
 // 工作桌與主對話撞同一個 worktree：被停掉的 Agent 不算做完；別人留下的未提交改動擋住派工；Agent 知道自己的名字。
 const ROOT = '/home/u/wt/alpha'
@@ -107,9 +107,53 @@ test('pressing k and an outside stop leave the same pause', async ($, on) => {
   ui = await $.ui.mount(PANE(160))
   const shown = await screen(ui)
   expect(shown).toContain(flat(`▶ 輪到你  ${TURN_TEXT.agentStopped()}`))
-  // 停止的原因照樣記進動態（警告）；之後 Agent 離開清單記的「Agent 已完成」是一般事件，問題列跟著收掉，原因看「輪到你」那列。
+  // 停止的原因照樣記進動態（警告）；之後 Agent 離開清單記的「Agent 已停止」是一般事件，問題列不會被它收掉，原因看「輪到你」那列。
   expect(log.list.some(e => e.tone === 'warning' && e.text.startsWith(`Alpha ${AGENT_STOPPED}`))).toBe(true)
   await ui.unmount()
+})
+
+/** 停字樣卡 AC-1、AC-3：按兩次 k 停掉、Agent 離開「在跑」：動態寫「Agent 已停止」（淡色），不寫「Agent 已完成」；問題列不被它收掉 */
+test('test_stopped_agent_feed_says_stopped_not_finished', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  alphaOnly(data, clock)
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.go()
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `${PREFIX}stop` }); await clock.settle()
+  await ui.press({ key: `${PREFIX}stop` }); await clock.settle()
+  await ui.unmount()
+  expect(data.stops).toEqual(['a0000001'])
+
+  // 清單裡變成停止、離開「在跑」
+  await h.stopOutside()
+  const stoppedLine = log.list.find(e => e.text === 'Alpha Agent 已停止')
+  expect(stoppedLine?.tone).toBe('subtle')
+  expect(log.has('Alpha Agent 已完成')).toBe(false)
+  // 按 k 當下的停止原因警告照樣在
+  expect(log.list.some(e => e.tone === 'warning' && e.text.startsWith(`Alpha ${AGENT_STOPPED}`))).toBe(true)
+
+  // AC-3：問題列不會被「Agent 已停止」收掉：還是按 k 當下那筆停止原因
+  const issue = issueOf(log.list as any, { statusPath: CARD_A, state: 'failed' } as any)
+  expect(issue?.text).toContain(AGENT_STOPPED)
+  expect(issue?.text).not.toContain('Agent 已停止')
+})
+
+/** 停字樣卡 AC-2：沒按 k、在終端機 claude stop 停掉：動態寫「Agent 已停止」，不寫「Agent 已完成」 */
+test('test_agent_stopped_outside_feed_says_stopped', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  alphaOnly(data, clock)
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.go()
+  await h.refresh()
+  expect(data.stops).toEqual([])
+
+  await h.stopOutside()
+  expect(log.has('Alpha Agent 已停止')).toBe(true)
+  expect(log.has('Alpha Agent 已完成')).toBe(false)
 })
 
 /** AC-2（手動）、AC-5 */
