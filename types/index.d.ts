@@ -87,6 +87,8 @@ export type Case = {
   runUntil?: number
   /** 審查檔第一行的前置結果（「成功，候選 n 條，採用 m 條」或「失敗（原因）」）。 */
   preflight?: string
+  /** 最後一次派工怎麼結束的：已記下的，或這一輪 Agent 清單看得出來的（被 `claude stop` 停掉是 stopped）；還沒結束、沒派過工就沒有。 */
+  lastEnded?: 'finished' | 'stopped'
 }
 
 /** footer 版本格的四種狀態。 */

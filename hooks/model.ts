@@ -6,7 +6,7 @@ import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, s
 import { STATE } from './theme'
 import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, releasingStep, standingVerdict, toFix } from './pipeline'
 import { RUN_WARN_MS, spanMs } from './run-time'
-import { MEDIUM_FIX_NOT_SENT } from './chain'
+import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT } from './chain'
 import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
 import type { Limit } from './quota-words'
 import { fit, plain, resetText, runMinutesText } from './text'
@@ -207,16 +207,19 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning', 'reply')
     else if (c.state === 'approve' && p.state !== 'approve') push(`${c.name} Agent 等你批准權限`, 'warning', 'approve')
     else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning', 'gate')
-    // 發版在對話裡跑，不是 Agent：說開始發版、發版步驟結束，不說開始執行、Agent 已完成。
+    // 發版在對話裡跑，不是 Agent：說開始發版、發版步驟結束，不說開始執行、Agent 已完成或已停止。
     else if (c.releasing && !p.releasing) push(`${c.name} 開始發版`, 'suggestion')
     else if (p.releasing && !c.releasing) push(`${c.name} 發版步驟結束`, 'subtle')
     else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
-    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent 已完成`, 'subtle')
+    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent ${stoppedAgent(c) ? '已停止' : '已完成'}`, 'subtle')
     // 流程暫停、檢查沒過、檢查中斷、容器沒起都已寫了原因、跳了 toast；只剩審查結論擋下、流程沒停（手動審查）要在這裡說。
     else if (c.state === 'failed' && p.state !== 'failed' && reviewBlocks(c)) push(`${c.name} 驗收有要修的問題`, 'error')
   }
   return out
 }
+
+/** 這件的 Agent 是被停掉的（面板按 k 停下流程，或 `claude stop`），不是做完：動態寫「已停止」。 */
+const stoppedAgent = (c: Case): boolean => c.chain?.stopped === AGENT_STOPPED || c.lastEnded === 'stopped'
 
 /** 每件（與不屬於任何一件的）各留最近幾筆動態：忙的那件不會把別件的擠掉。 */
 export const FEED_KEEP = 12
@@ -240,7 +243,7 @@ function reviewBlocks(c: Case): boolean {
 
 const isIssue = (e: FeedEvent | undefined): e is FeedEvent => !!e && (e.tone === 'error' || e.tone === 'warning')
 
-/** 淡色事件（加入工作桌、Agent 已完成）不代表問題解決了：按 k 停掉後 Agent 離開清單，不能把停止原因收掉。 */
+/** 淡色事件（加入工作桌、Agent 已完成、Agent 已停止）不代表問題解決了：按 k 停掉後 Agent 離開清單，不能把停止原因收掉。 */
 const latest = (feed: readonly FeedEvent[], match: (e: FeedEvent) => boolean) => feed.find(e => match(e) && e.tone !== 'subtle')
 
 /**

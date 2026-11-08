@@ -137,7 +137,7 @@ function mk(status: string, extra: Partial<Case> = {}, agoMs = 60_000): Case {
 }
 const snap = (c: Case, at = NOW): Snapshot => ({ at, cases: [c], error: null, contextPercent: null })
 
-/** AC-5：發版開始寫「開始發版」，結束（狀態改寫、打了 tag）寫「發版步驟結束」，不寫開始執行、Agent 已完成。 */
+/** AC-5：發版開始寫「開始發版」，結束（狀態改寫、打了 tag）寫「發版步驟結束」，不寫開始執行、Agent 已完成或已停止（停字樣卡 AC-5）。 */
 test('feed says release started and ended instead of agent', () => {
   const merged = mk('Beta 已合併')
   const running = mk(IN_REVIEW)
@@ -150,6 +150,7 @@ test('feed says release started and ended instead of agent', () => {
   const ended = events(snap(running), snap(done)).map(e => e.text)
   expect(ended).toEqual(['Beta 發版步驟結束'])
   expect(ended.join()).not.toContain('Agent 已完成')
+  expect(ended.join()).not.toContain('Agent 已停止')
 })
 
 /**
