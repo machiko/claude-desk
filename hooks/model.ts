@@ -135,7 +135,7 @@ export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: n
   return { ...base, state: stateOf(base, verify) }
 }
 
-/** 工作桌的順序：先需要人的，再正在跑的，最後閒置；同狀態新的在前。 */
+/** 挑現在卡用的急迫度順序：先需要人的，再正在跑的，最後閒置；同狀態新的在前。全部任務清單不用它，照登錄表順序排。 */
 export function sorted(cases: readonly Case[]): Case[] {
   return [...cases].sort((a, b) => STATE[a.state].weight - STATE[b.state].weight || (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
 }
