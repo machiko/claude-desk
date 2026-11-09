@@ -366,6 +366,33 @@ class CardScriptTest(unittest.TestCase):
             self.assertNotIn('- 基準：origin/feature/order-export', card)
             self.assertIn('基準：origin/release/v26.2.8（疊在「訂單匯出」的分支上，沿用它的基準）', r.stdout)
 
+    def test_new_stacked_card_records_stacked_on(self):
+        """stack-gate AC-1：base 是另一張進行中卡的分支時，新卡 DESK 區塊多一行「疊放於：<原卡分支>」（去掉 origin/），
+        接在基準欄之後；輸出寫明疊在哪張卡上。base 不是任何卡的分支時沒有這一行。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        git('push', '-q', 'origin', 'feature/order-export', cwd=os.path.join(self.main + '-worktrees', 'order-export'))
+
+        local = self.run_card('new', 'feature/order-export-medium', '訂單匯出：審查 MEDIUM', 'feature/order-export')
+        remote = self.run_card('new', 'feature/order-export-medium2', '訂單匯出：審查 MEDIUM 2', 'origin/feature/order-export')
+        plain = self.run_card('new', 'feature/other', '其他', 'origin/main')
+
+        for slug, r in (('order-export-medium', local), ('order-export-medium2', remote)):
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('- 基準：origin/main\n- 疊放於：feature/order-export\n<!-- /DESK -->', read(self.card_path(slug)))
+            self.assertIn('疊放於：feature/order-export（疊在「訂單匯出」上，原卡合併後才派實作）', r.stdout)
+        self.assertNotIn('疊放於', read(self.card_path('other')))
+        self.assertNotIn('疊放於', plain.stdout)
+
+    def test_new_stacked_on_card_without_base_still_records_stacked_on(self):
+        """stack-gate AC-1：原卡沒有基準欄（後續卡不記基準）時，「疊放於」照樣接在關卡之後、自己帶換行。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        parent_card = self.card_path('order-export')
+        write(parent_card, read(parent_card).replace('- 基準：origin/main\n', ''))
+
+        self.run_card('new', 'feature/order-export-medium', '訂單匯出：審查 MEDIUM', 'feature/order-export')
+
+        self.assertIn('- 關卡：無\n- 疊放於：feature/order-export\n<!-- /DESK -->', read(self.card_path('order-export-medium')))
+
     def test_new_stacked_on_card_without_base_records_no_base(self):
         """審查 HIGH：原卡是沒有基準欄的舊卡時，後續卡不記基準欄（工作桌照舊順序找），不記原卡分支。"""
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')

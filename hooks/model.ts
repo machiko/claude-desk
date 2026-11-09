@@ -116,6 +116,12 @@ const cardBaseOf = (card: Record<string, string> | null): string => {
   return saysNone(value) ? '' : value
 }
 
+/** 卡片「疊放於」欄的原卡分支：去掉反引號與 origin/（跟原卡 worktree 的分支名比對）；沒有或寫「無」是空字串。 */
+const stackedOnOf = (card: Record<string, string> | null): string => {
+  const value = plain(card?.['疊放於'] ?? '').replace(/`/g, '').trim().replace(/^origin\//, '')
+  return saysNone(value) ? '' : value
+}
+
 /** `now`：判斷發版進行中有沒有逾時用；沒給（示範資料、只看卡片的測試）就不算發版中。 */
 export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: number | null, agents: Record<string, AgentInfo>, verify: Verify | undefined, now?: number): Case {
   const row = { ...rawRow, name: plain(rawRow.name) }
@@ -123,12 +129,13 @@ export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: n
   const root = projectRoot(row.statusPath)
   const agent = agents[root]
   const branchBase = cardBaseOf(card)
+  const stackedOn = stackedOnOf(card)
   const status = plain(card?.['狀態'] ?? '')
   const releasing = now === undefined ? null : releasingStep(status, mtime, now)
   const base: Omit<Case, 'state'> = {
     name: row.name, statusPath: row.statusPath, root, hasCard: card !== null, ...(row.manual ? { manual: true } : {}),
     status, verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: plain(card?.['關卡'] ?? ''),
-    ...(branchBase ? { base: branchBase } : {}),
+    ...(branchBase ? { base: branchBase } : {}), ...(stackedOn ? { stackedOn } : {}),
     updatedAt: mtime, ...(releasing ? { releasing } : {}), ...(agent ? { agent } : {}),
     ...(cardText !== null && hasSpec(cardText) && !filledAc(cardText).length ? { specGap: true as const } : {}),
   }

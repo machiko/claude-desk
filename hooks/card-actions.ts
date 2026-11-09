@@ -24,6 +24,7 @@ import { alreadyQueued } from './dispatch-runner'
 import { sentState } from './turn'
 import { readSent } from './prompt-sync'
 import { trustCheck } from './approve-check'
+import { STACK_AUTO_NEXT } from './stack'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
 
 // 示範任務那句搬到 theme.ts；呼叫端與測試照舊從這裡匯入也行。
@@ -320,11 +321,43 @@ export async function dispatchAfterSpec($: any, options: PluginOptions, statusPa
   if (!c || c.demo || parseGate(c.gate)?.kind === 'spec') return false
   await trustCheck($, c)
   const refused = afterSpecRefusal(c)
+  // 疊放卡只差原卡還沒合併（其他條件都過）：記在流程紀錄，原卡合併後自動流程派一次實作（擁有者是這個對話）。教學沒有疊放卡。
+  if (refused && c.stackWait && !tutorial && !afterSpecRefusal({ ...c, stackWait: undefined })) {
+    // 記號沒寫進去（流程紀錄一直被別的對話蓋掉）就不說會自動接著做，照手動派工的下一步。
+    const next = await holdForStack($, c) ? STACK_AUTO_NEXT : refused.next
+    await notDispatched($, c, `規格已確認；無法自動派實作（${refused.why}）${next ? `；${next}` : ''}`)
+    return false
+  }
   if (refused) { await notDispatched($, c, `規格已確認；無法自動派實作（${refused.why}）${refused.next ? `；${refused.next}` : ''}`); return false }
   return dispatch($, options, c, 'continue')
 }
 
-/** 確認規格後沒有派實作：提示、動態、下一則提示告訴對話都說同一句。 */
+/**
+ * 疊放卡確認規格後等原卡合併：流程紀錄記下「合併後派實作」，擁有者改成這個對話（確認規格跟按 g 一樣算這個對話接手）。
+ * 回傳有沒有記下（已經是這個對話記的也算）。
+ */
+async function holdForStack($: any, c: Case): Promise<boolean> {
+  const owner = await me($)
+  const now = await $.clock.now()
+  const key = normalizeRoot(c.root)
+  const saved = await saveChain($, key, r => r?.stackDispatch && r.owner === owner ? r : { ...(r ?? { startedAt: now, round: 0 }), owner, stackDispatch: true })
+  if (saved) return true
+  const cur = (await loadChains($))[key]
+  return !!cur?.stackDispatch && cur.owner === owner
+}
+
+/**
+ * 疊放卡不用再等原卡（原卡合併、從登錄表消失，或你刪了「疊放於」）、這個對話記著要派：照確認規格後的規則派一次實作。
+ * 呼叫端已拿掉記號（只試一次）。「等你」有事或手動派也不能派的只說原因；其餘當手動派工交給 dispatch（檢查改過沒核准、worktree 有別人的改動照按 g 擋）。
+ */
+export async function dispatchAfterStack($: any, options: PluginOptions, c: Case): Promise<boolean> {
+  const refused = afterSpecRefusal(c)
+  if (refused) { await notDispatched($, c, `不用再等原卡；無法自動派實作（${refused.why}）${refused.next ? `；${refused.next}` : ''}`); return false }
+  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 不用再等原卡，自動派實作`, tone: 'suggestion', card: c.statusPath }])
+  return dispatch($, options, c, 'continue')
+}
+
+/** 確認規格後（或疊放卡不用再等原卡時）沒有派實作：提示、動態、下一則提示告訴對話都說同一句。 */
 async function notDispatched($: any, c: Case, text: string) {
   const now = await $.clock.now()
   $.ui.toast(`${c.name}：${text}`, { timeoutMs: 10_000 })

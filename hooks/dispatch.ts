@@ -18,6 +18,7 @@ import type { ManualFix } from './prompts/fix'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext } from './next-words'
 import { shipTurn, stageActions } from './turn'
 import { KIND_LABEL } from './kind-label'
+import { STACK_NEXT, stackWaitWhy } from './stack'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
 export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
@@ -169,7 +170,8 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
   const selfCheck = [...(pitfalls && readsPitfalls(c, kind, fix) ? [pitfallsRule(pitfalls)] : []), SELF_CHECK_RULE]
   const rules = writes ? [SPEC_RULE, ...selfCheck, changelogRule(c), testRule(c), ...base] : base
   const who = self ? [`你的背景 Agent 名字是 ${self}；查同一個 worktree 有沒有別的 Agent 時，清單裡這個名字就是你自己。`] : []
-  return [head, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
+  const stacked = !fix && kind === 'continue' && c.stackedOn ? [stackMergeStep(c, settings)] : []
+  return [head, ...stacked, `任務：${c.name}`, `根目錄：${c.root}`, `卡片：${c.statusPath}`, ...who, ...rules].join('\n')
 }
 
 /** PR 開著、CI 失敗、本機沒有待 push 的 commit：「輪到你」叫你按 g 修正。 */
@@ -185,6 +187,15 @@ export const fixesByG = (c: Case): boolean => fixByG(c) && c.chain?.stopped !== 
 /** 已合併、停在上線段（還沒上線）：分支已進基準分支，不派實作、審查，也不跑檢查。發版線沒有合併段，不算。 */
 export const mergedUnshipped = (c: Case): boolean => c.pipeline?.current === 'ship' && isMerged(c)
 
+/**
+ * 疊放卡的實作提示第一步：原卡合併後，把基準分支 merge 進來（不 rebase），已經包含就略過。基準看卡片「基準」欄，
+ * 沒有就用 card.base，再沒有用 origin/main。每次派實作都帶：已經包含時 Agent 照句略過。
+ */
+export function stackMergeStep(c: Pick<Case, 'stackedOn' | 'base'>, settings: Pick<DispatchSettings, 'cardBase'>): string {
+  const into = c.base || settings.cardBase || 'origin/main'
+  return `第一步：這張卡疊在 ${c.stackedOn} 上，先把基準分支併進來：git fetch origin 後，${into} 還沒包含在 HEAD（git merge-base --is-ancestor ${into} HEAD 不成立）就用 git merge --no-ff ${into} 併進來，不要 rebase；有衝突就解完再 commit；已經包含就略過這步。`
+}
+
 /** 現在可以派哪些：進行中一律不派；等回覆只給回覆；規格未確認或沒有完成檢查不能派實作；同步隨時可。 */
 export function dispatchable(c: Case): DispatchKind[] {
   if (c.manual || c.state === 'running' || c.state === 'nocard') return []
@@ -197,6 +208,8 @@ export function dispatchable(c: Case): DispatchKind[] {
   if (parseGate(c.gate)?.kind === 'spec') return ['sync']
   // 規格段還是範本、六段停在規格段：一樣只能同步（已經審查過、合併、打 tag 的不擋）。
   if (specBlocks(c)) return ['sync']
+  // 疊放卡的原卡還沒合併：不派實作、審查，也不推送，只能同步。
+  if (c.stackWait) return ['sync']
   const out: DispatchKind[] = []
   // 「輪到你」叫你按 g 修（檢查失敗、CI 失敗）：下一步只剩等待或派審查也照樣能派，不然 g 是死路。
   if (!reviewTask(c) && c.next && c.state !== 'idle' && c.verify && (fixByG(c) || !idleNext(c.next))) out.push('continue')
@@ -281,6 +294,7 @@ export function refusalOf(c: Case, kind: DispatchKind): Refusal | null {
   if (parseGate(c.gate)?.kind === 'spec') return { why: '規格還沒確認', next: `看過規格（o）後按 t 確認，或輸入 ${CARD_CMD} spec ${slugOf(c)} ok` }
   // 走到這裡規格已過：只差檢查欄。
   if (!c.verify) return { why: MISSING_CHECK_WHY, next: MISSING_CHECK_NEXT }
+  if (c.stackWait) return { why: stackWaitWhy(c.stackWait), next: STACK_NEXT }
   // 等回覆、等批准、已上線先講卡片狀態：下一步寫什麼都不是這時該按的鍵。
   if (kind === 'continue' && !STATE_FIRST.has(c.state)) {
     const idle = idleNext(c.next)
@@ -326,6 +340,8 @@ export const NO_PUSH_NEEDED = '已不需要推送（PR 已開且分支已是最�
 export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
   if (!entry.opts.auto) return dispatchRefusal(c, entry.kind)
   if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
+  // 疊放卡的原卡還沒合併：自動排的一律不派（手動排的由 dispatchRefusal 擋）。
+  if (c.stackWait) return stackWaitWhy(c.stackWait)
   if (entry.kind === 'publish') return isMerged(c) ? '已經合併' : !needsPr(c) && !needsPush(c) ? NO_PUSH_NEEDED : ''
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
   if (run.stopped) return `流程已暫停（${shownStopped(run.stopped)}）`

@@ -96,6 +96,11 @@ export type ChainRun = {
   catchupHead?: string
   /** 額度煞車擋下的那一步（派審查、資安審查或修正）：按 g 重開時直接派這一步，不多派實作。 */
   resume?: QuotaResume
+  /**
+   * 疊放卡在這個對話確認了規格、被「等原卡合併」擋下沒派實作：原卡合併（或從登錄表消失）後自動流程派一次實作。
+   * 只試一次：派之前就拿掉；按 g 開新一輪時整筆紀錄換掉，也就沒了。
+   */
+  stackDispatch?: boolean
 }
 /** 額度煞車擋下時本來要派的那步：流程裡的派工只有實作（修正）與審查兩種。 */
 export type QuotaResume = { dispatch: 'continue' | 'review'; round: number; security?: boolean; reason?: string }

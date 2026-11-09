@@ -81,6 +81,23 @@ export default [
     "deploySteps": []
   },
   {
+    "name": "疊放卡：基準之後多一欄「疊放於」（card.py new 寫的格式）",
+    "card": "<!-- DESK -->\n- 狀態：開卡\n- 檢查：`npm test`\n- 等你：無\n- 下一步：依規格實作\n- 關卡：無\n- 基準：origin/main\n- 疊放於：feature/order-export\n<!-- /DESK -->\n",
+    "fields": {
+      "狀態": "開卡",
+      "驗證": "`npm test`",
+      "等你": "無",
+      "下一步": "依規格實作",
+      "關卡": "無",
+      "基準": "origin/main",
+      "疊放於": "feature/order-export"
+    },
+    "placeholder": {
+      "下一步": false
+    },
+    "deploySteps": []
+  },
+  {
     "name": "沒有 DESK／CARD 區塊",
     "card": "# 隨手筆記\n\n- 狀態：不是卡片\n",
     "fields": null,

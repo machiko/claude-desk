@@ -9,7 +9,8 @@
   card.py new <分支> <卡名> [base]             從主 repo 建 worktree（資料夾名取分支最後一段）、DESK 卡、登錄表列；
                                                沒給 base 時用主 repo 當下的分支（origin 有同名分支就用 origin/<分支>），
                                                主 repo 是 detached HEAD 時用 card.base；用到的基準寫進 DESK 區塊的「基準」欄。
-                                               base 是登錄表上另一張卡的分支（疊放的後續卡）時，基準欄改記那張卡的基準（它沒有就不記）
+                                               base 是登錄表上另一張卡的分支（疊放的後續卡）時，基準欄改記那張卡的基準（它沒有就不記），
+                                               並加一欄「疊放於：<那張卡的分支>」：工作桌等那張卡合併後才派實作
                                                --trivial（任何位置）：瑣事卡，規格段標「類型：瑣事」、關卡設 spec：待確認規格（瑣事）；驗收情境維持範本，由 spec 步驟預填
   card.py card <slug|任務名|main>                印出卡片資訊（path、root、format、branch、spec、gate、check、專案規則）
   card.py spec-init <slug|任務名|main>           沒有「## 規格」就插入模板的空白規格段
@@ -469,6 +470,8 @@ LEGACY_NAME_SLOT = '<案名>'  # 0.24.0 以前模板的卡名佔位：自訂模�
 
 
 BASE_FIELD = '基準'
+# 疊在另一張卡分支上的後續卡記原卡分支（去掉 origin/）：工作桌在原卡合併前不派實作，合併後才接著做。
+STACKED_FIELD = '疊放於'
 
 
 def main_repo_base():
@@ -510,16 +513,17 @@ def recorded_base(base):
     return '', f'不記（疊在「{name}」的分支上，那張卡沒有基準欄，工作桌照舊順序找）'
 
 
-def insert_base_field(path, base):
-    """DESK 區塊「關卡」行之後插一行「- 基準：<ref>」；沒有關卡行（自訂模板）就接在區塊最後。新行自己帶換行。"""
+def insert_desk_field(path, name, value):
+    """DESK 區塊「關卡」行之後插一行「- <欄名>：<值>」，已經有基準欄就接在基準之後（關卡、基準、疊放於的順序）；
+    兩行都沒有（自訂模板）就接在區塊最後。新行自己帶換行。"""
     text = read(path)
     _, start, end = block(text)
     body = text[start:end]
-    line = f'- {BASE_FIELD}：{base}'
-    gate = field_lines(body, '關卡')
-    if gate:
+    line = f'- {name}：{value}'
+    anchors = [i for key in ('關卡', BASE_FIELD) for i, _, _ in field_lines(body, key)]
+    if anchors:
         lines = body.split('\n')
-        at = gate[-1][0] + 1
+        at = max(anchors) + 1
         body = '\n'.join(lines[:at] + [line] + lines[at:])
     else:
         body = (body if body.endswith('\n') or not body else body + '\n') + line + '\n'
@@ -557,7 +561,11 @@ def cmd_new(branch, name, base=None, trivial=False):
     write(card, content)
     record, shown_base = recorded_base(base)
     if record:
-        insert_base_field(card, record)
+        insert_desk_field(card, BASE_FIELD, record)
+    parent = stacked_on(base)
+    parent_branch = base[len('origin/'):] if base.startswith('origin/') else base
+    if parent:
+        insert_desk_field(card, STACKED_FIELD, parent_branch)
     if trivial:
         # 開卡就設 spec 關卡：spec 步驟預填驗收情境後，確認前也不會派工。驗收情境不在這裡預填，面板才會像一般卡提示去寫規格。
         set_gate(card, TRIVIAL_GATE)
@@ -572,6 +580,8 @@ def cmd_new(branch, name, base=None, trivial=False):
     print(f'開卡完成：{wt}')
     print(f'  卡片：{card}')
     print(f'  基準：{shown_base}')
+    if parent:
+        print(f'  {STACKED_FIELD}：{parent_branch}（疊在「{parent[0]}」上，原卡合併後才派實作）')
     check = cfg('check').replace('{slug}', slug)
     print(f'  建議完成檢查：{check}' if check else f'  完成檢查：{CMD} spec 會一起補上')
     print(f'  下一步：{CMD} spec {slug} 產生規格，確認後 /desk refresh')
