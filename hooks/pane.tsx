@@ -2,7 +2,7 @@
 // 只有 content（現在卡、全部任務進度表、歷程、說明）捲動。content 一列一個元素，desk 自己決定顯示哪幾列（ui.scroll）。
 // 階層靠字重與明暗；顏色只給需要你、執行中、通過、未通過，以及偏低的額度。
 import type { Case, FeedEvent, Picks, Snapshot, Verify, SentRecord, HistoryEntry } from '../types'
-import { LIMIT_NAME, focusCase, isRunLong, issueOf, modelLabel, sorted, stateCounts, summary, totalRunMs, waitingBesides } from './model'
+import { LIMIT_NAME, focusCase, isRunLong, issueOf, modelLabel, stateCounts, summary, totalRunMs, waitingBesides } from './model'
 import { displayWidth, elapsedText, fit, hhmm, pad, resetText, runMinutesText, ago } from './text'
 export { resetText } from './text'
 import { COLOR, SPINNER, STATE, WORD, STAGE_COLOR } from './theme'
@@ -523,7 +523,8 @@ function contentRows(ui: any, view: PaneView, width: number, act: PaneActions): 
   // 沒有任務（含還沒有登錄表）時說明頁也要看得到。
   if (!s.cases.length) return [...(s.error ? [] : wrapText(WORD.empty, width).map(l => <Text color={COLOR.dim} wrap="truncate-end">{l}</Text>)), ...helpRows(ui, view, act, width)]
   const focus = focusOf(view)
-  const list = sorted(s.cases)
+  // 全部任務照開卡順序（登錄表順序）固定排列：狀態或修改時間變了也不跳動，數字鍵永遠對同一件。現在卡另依急迫度挑。
+  const list = s.cases
   const wide = view.columns >= WIDE
   const tail = [...historyRows(ui, view, focus, width), ...helpRows(ui, view, act, width)]
   if (!wide) {
