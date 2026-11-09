@@ -2,7 +2,7 @@
 
 Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張面板只放「現在該看的那一件」，並告訴你輪到誰、該按什麼。從規格、實作、測試、驗收、合併到上線，中間的實作、測試、驗收、修正由背景 Agent 自動走完流程。
 
-> **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, check, review, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the check, review in a fresh session and fix CRITICAL/HIGH and behaviour-affecting MEDIUM findings for up to two rounds. The UI and prompts are in Traditional Chinese.
+> **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, test, acceptance, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the tests, review for acceptance in a fresh session and automatically fix only CRITICAL/HIGH findings, for up to two rounds per card. MEDIUM findings that may affect behaviour are not auto-fixed; they are left for you to decide. Background agents run with your own Claude Code permissions and no sandbox — see "安全須知" below. The UI and prompts are in Traditional Chinese.
 
 ```
  desk 0.18.0  5 小時 剩 78%  本週 剩 31%            教學模式 · 20:00 讀取
@@ -105,6 +105,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | `/desk:release <卡名與 PR>（<清理對象>）` | 發版規則：按兩次 z（「⚑ 發版」）填的就是這行，帶「已在面板確認」段就不出題、照慣例版號依序發版到 CI 通過再清理；手打的或判斷不了版號才出一題 A／B／C 寫進那幾張卡的「等你」；失敗就停 |
 | `/desk:card archive <slug>… [--cleanup]` | 卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree）；發版時帶 `--cleanup` 再移除已合併又乾淨的 worktree 與分支（`git worktree remove`、`git branch -d`），保留的寫進登錄表「## 提醒」 |
 | `/desk:card changelog <版本>` | 發版：把 `changelog.d/*.md` 片段合併成 CHANGELOG.md 的 `## <版本>` 段並刪掉片段檔（在要發版的那份 main 執行：主 repo，照「⚑ 發版」流程時是從 origin/main 開的暫存 worktree；沒有片段、版本段已存在、片段格式錯都不改檔） |
+| `/desk:card emit\|read\|wait\|send <目標> …` | 跨 Agent 協作：`emit` 推播 Agent 狀態（面板即時看得到外部 Agent 在跑或卡住）、`read` 讀任務的 Agent 輸出或審查檔等產物、`wait` 等任務到某個狀態、`send` 在任務 worktree 啟動另一個 Agent（`claude`、`agy` 或任意指令）；參數見 [/desk:card](skills/card/SKILL.md) |
 
 焦點：`/desk` 或 ctrl+x tab 移到面板；面板裡按 Esc（或 ctrl+x tab）回輸入框，面板留著。面板裡按 `i` 看完整快捷鍵。
 
@@ -170,12 +171,19 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 - desk 自己的更新（`/desk update`）：GitHub marketplace 安裝更新 marketplace 再更新 plugin；本機資料夾安裝要在預設分支、沒有未提交改動、沒有 GitHub 上沒有的 commit，才快轉預設分支再更新 plugin，否則什麼都不動並說明原因。不 stash、不切換分支、不 push；更新成功後自動執行 `/reload-plugins`，不重新啟動 Claude Code。desk 自己發版後，工作桌會在回合結束自動跑一次（同一版只跑一次，失敗只回報不重試）。
 - desk 自己不跑 `git push`、不開或合併 PR、不會部署；push、開 PR 交給它派的 Agent，合併由你按。合併段會 `git fetch origin <基準分支>`（只更新遠端追蹤分支）並用 `git merge-tree` 試合併，不動工作區與 HEAD。
 
+## 安全須知
+
+- 背景 Agent 沒有沙盒：用 `claude --bg` 啟動，權限照你的 Claude Code 設定（允許清單、權限模式），能讀寫的檔案、能跑的指令、能連的網路都跟你自己開的對話一樣；desk 不另外加限制。
+- 推送限制只靠提示：只推這件任務自己的分支、不 force push、不推別的分支、不合併 PR、不打 tag、不碰正式環境、不啟動容器，這些都只寫在給 Agent 的提示詞裡，Agent 不照做時 desk 擋不下來。要真的擋住，用 Claude Code 權限設定的 deny 清單（例如 `git push --force`、部署指令）與 git 平台的分支保護。
+- 自動流程會在你沒看著時派 Agent 改程式；完成檢查的指令要你核准過（按兩次 `v`，或確認規格時一起核准）才會執行，改過要重新核准。
+- `dispatch.json` 裡的指令（`review.preflight`、`card.specPreflight`、`card.retro`、`pr.open`）由 Agent 或 `/desk:card` 照字面執行，desk 不檢查內容；只放你信任的指令，也只在信任過的 repo 派工。
+
 ## 限制
 
 - 介面、提示詞與卡片欄位都是繁體中文。
 - 預設的發版慣例：發版線是 `release/*` 分支、上線看 `v*` tag。用 main 直接發版也可以，只是「開發中版本」那一欄不會出現。
 - PR 狀態只讀 GitHub 與 Bitbucket；其他平台（或沒裝 `gh`）的合併靠 git 判斷，只認得 merge commit，squash、rebase、fast-forward 合併看不出來，要自己在卡片寫回。其他平台要讓推送 Agent 開 PR，在專案 `dispatch.json` 設 `pr.open`，沒設就只 push、留網址給你開。
-- 背景 Agent 的權限照你的 Claude Code 設定；desk 只在提示詞裡限制 push 的範圍（只推自己的分支、不合併）與不碰正式環境，不是沙盒。
+- 背景 Agent 沒有沙盒，push 範圍與不碰正式環境只靠提示詞，見上面「安全須知」。
 - 背景 Agent 停在權限提示時，面板只會標「等批准」並告訴你到終端機跑 `claude agents` 批准；Claude Code 沒有給面板代為批准的介面。
 
 ## 設定
@@ -215,7 +223,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 {
   "model": "opus",
   "effort": "high",
-  "sync": { "claude": { "model": "haiku" }, "session": "fresh" },
+  "sync": { "claude": { "model": "haiku", "effort": "low" }, "session": "fresh" },
   "kinds": { "review": { "effort": "xhigh" }, "publish": { "model": "haiku", "effort": "low" } },
   "projects": { "~/code/shop-worktrees/order-export": { "effort": "xhigh", "rules": ["只改 api/ 底下"] } },
   "user": "Alex",
@@ -230,7 +238,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
     "security": "授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩、機密與金鑰",
     "categories": "授權、稽核、個資、測試、命名",
     "template": "~/my-templates/review.md",
-    "preflight": "agy-review --root {root} --base {base}",
+    "preflight": "my-review-tool --root {root} --base {base}",
     "pitfalls": "~/code/shop/docs/review-pitfalls.md"
   },
   "risk": { "high": [{ "pattern": "(^|/)Billing/", "label": "金流" }] },
@@ -242,8 +250,9 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
     "check": "make test-worktree SLUG={slug}",
     "template": "~/my-templates/DESK-template.md",
     "specRules": ["寫入操作的「則」要包含稽核紀錄"],
-    "specPreflight": "agy-spec --root {root} --card {card} --paths {paths}",
-    "retro": "desk-retro {slug}"
+    "specPreflight": "my-spec-tool --root {root} --card {card} --paths {paths}",
+    "retro": "desk-retro {slug}",
+    "changelog": { "format": "keepachangelog" }
   }
 }
 ```
@@ -251,7 +260,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | 鍵 | 作用 |
 |---|---|
 | `model`／`effort`、`projects.<根目錄>` | 派工用的模型與 effort，任務可以覆寫 |
-| `sync` | 同步用的模型；`session: fresh` 每次開新對話 |
+| `sync` | 同步用的模型與 effort：`sync.claude.model`、`sync.claude.effort`，沒設的沿用任務覆寫或全域；`session: fresh` 每次開新對話 |
 | `kinds.<種類>` | 依派工種類各設 `model`／`effort`，可設 `continue`（繼續、修正輪與自動解衝突）、`reply`（回覆）、`review`（審查與資安審查）、`publish`（推送）；只寫其中一個的，另一個沿用任務覆寫或全域。優先順序：種類 > 任務覆寫 > 全域；同步仍用 `sync`。面板狀態列在「派工」後列出跟派工不同的種類 |
 | `user` | 寫進提示詞與卡片的人名（預設「使用者」） |
 | `maxAgents` | 同時在跑的工作桌背景 Agent 上限（預設 3，`0`＝不限）；整台機器一起算（別的專案、別的對話派的也算），停在提問或等批准的不算。超過的派工（含自動流程）排隊，面板寫第幾位、有空位依序派出，`k` 取消排隊；隊伍只在這個對話，重新載入就清空 |
@@ -274,6 +283,19 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `card.specPreflight` | 規格前審指令：`/desk:card spec` 讀現況後提示執行，輸出當候選清單（`.task/SPEC-gemini.md`）供對話篩選併入規格；在背景執行，對話同時繼續讀程式與擬草稿，相關檔少於 `card.specPreflightMinFiles` 的小卡跳過；指令失敗跳過照常寫規格。任何會輸出規格候選的工具都行。`{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成相關模組檔案路徑（逗號分隔），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
 | `card.specPreflightMinFiles` | 規格前審的檔數門檻：相關檔少於這個數就不跑 `card.specPreflight`；正整數，預設 3 |
 | `card.retro` | 歸檔回顧指令：`card.py archive` 複製完 `.task` 檔後、清理 worktree 之前執行，`{slug}` 換成任務名稱，stdout 原樣印出；指令失敗印一行警示但不中斷歸檔。任何會做歸檔統計或產出回顧的工具都行。desk 不執行也不檢查這條指令；空白＝不加 |
+| `card.changelog.format` | `/desk:card changelog` 合併片段的格式：不設是「## 未發布」加扁平條目；`"keepachangelog"` 改依 Keep a Changelog，片段與「## [Unreleased]」的手寫內容一起移進「## [<版本>] - <日期>」段，條目依動詞分進 Added（新增）、Changed（調整）、Removed（移除）、Fixed（修復）、Security（修補） |
+
+### 環境變數
+
+多半是測試或特殊安裝才用，平常不用設：
+
+| 變數 | 作用 |
+|---|---|
+| `DESK_SETTINGS` | `/desk:card` 讀的全域 `dispatch.json` 路徑（預設 `~/.claude/handoffs/dispatch.json`；從面板呼叫時帶 plugin 選項 `dispatchSettingsPath`） |
+| `DESK_PROJECT_DIR` | `/desk:card` 的專案資料夾，取代依所在 repo 算出的 `~/.claude/handoffs/<repo 資料夾名>/`（測試用） |
+| `DESK_CARD_MAIN`、`DESK_CARD_REGISTRY`、`DESK_CARD_TEMPLATE`、`DESK_CARD_ARCHIVE` | 覆寫 `card.main`、`card.registry`、`card.template`、`card.archive` |
+| `DESK_AGENT` | `/desk:card emit` 沒帶 `--agent` 時記的 Agent 名（預設 `agy`） |
+| `DESK_CLAUDE_CMD`、`DESK_AGY_CMD` | `/desk:card send --to claude`／`--to agy` 啟動的執行檔（預設 `claude`、`agy`，可帶參數） |
 
 ## 開發
 
