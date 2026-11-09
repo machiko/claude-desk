@@ -1,6 +1,7 @@
 // 派工設定：dispatch.json 解析成 DispatchSettings、各種派工用的模型與 effort、常犯錯誤清單路徑。純函式。
 import type { DispatchKind } from './dispatch'
 import { expandHome } from './card'
+import type { FeedEvent, SettingsChecked } from '../types'
 
 /** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
 export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
@@ -287,4 +288,35 @@ export function settingsFeedText(path: string, problems: readonly string[]): str
   const shown = problems.slice(0, SETTINGS_PROBLEMS_SHOWN).join('；')
   const more = problems.length > SETTINGS_PROBLEMS_SHOWN ? ` 等 ${problems.length} 條` : ''
   return `設定檔 ${path} 有問題：${shown}${more}`
+}
+
+/** 一份 dispatch.json 這一輪讀到的內容與問題；讀不到（不存在）時 text 是 null。 */
+export type SettingsReport = { path: string; text: string | null; problems: string[] }
+
+/**
+ * 這一輪的設定檔動態與要記下的檢查結果（純函式）：
+ * - 內容跟上次檢查過的一樣：不報。
+ * - 新內容有問題：報一筆錯誤（排在最前面，問題列顯示它）。
+ * - 上次有問題、這次沒了（改正、檔案刪掉、不再屬於目前專案）：報一筆說明，問題列才不會一直掛著舊錯誤；
+ *   另一份之前報過、還沒改正時，那份的問題接在後面、照樣是錯誤。
+ */
+export function settingsNotices(reports: readonly SettingsReport[], before: SettingsChecked, at: number): { checked: SettingsChecked; events: FeedEvent[] } {
+  const checked: SettingsChecked = {}
+  const broken: FeedEvent[] = []
+  const gone: string[] = []
+  for (const r of reports) {
+    const was = before[r.path]
+    if (r.text === null) { if (was?.problems.length) gone.push(`設定檔 ${r.path} 已移除，不再報錯`); continue }
+    checked[r.path] = { text: r.text, problems: r.problems }
+    if (was?.text === r.text) continue
+    if (r.problems.length) broken.push({ at, text: settingsFeedText(r.path, r.problems), tone: 'error' })
+    else if (was?.problems.length) gone.push(`設定檔 ${r.path} 已改正`)
+  }
+  for (const [path, was] of Object.entries(before)) {
+    if (!reports.some(r => r.path === path) && was.problems.length) gone.push(`設定檔 ${path} 不屬於目前專案，不再報錯`)
+  }
+  const reportedNow = new Set(reports.filter(r => r.text !== null && r.text !== before[r.path]?.text).map(r => r.path))
+  const still = Object.entries(checked).filter(([path, v]) => v.problems.length && !reportedNow.has(path)).map(([path, v]) => settingsFeedText(path, v.problems))
+  const cleared = gone.map((text): FeedEvent => still.length ? { at, text: [text, ...still].join('；'), tone: 'error' } : { at, text, tone: 'success' })
+  return { checked, events: [...broken, ...cleared] }
 }

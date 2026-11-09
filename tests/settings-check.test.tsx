@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, PANE, PROJECT_DIR } from './fixture'
-import { parseSettings, settingsFeedText, settingsProblems } from '../hooks/settings'
+import { fixture, feedLog, flat, PANE, PROJECT_DIR, text } from './fixture'
+import { parseSettings, settingsFeedText, settingsNotices, settingsProblems } from '../hooks/settings'
 import { mergeSettingsText } from '../hooks/project'
+import { issueOf } from '../hooks/model'
+import type { FeedEvent } from '../types'
 
 // 設定檔驗證（卡片「設定檔驗證」AC-1～AC-5）：dispatch.json 寫錯時面板說出哪個檔、哪個鍵、改用了什麼；解析結果不變。
 const SETTINGS = '/home/u/.claude/handoffs/dispatch.json'
@@ -155,8 +157,66 @@ test('refresh reports a broken dispatch.json in the feed once', async ($, on) =>
   expect(reports()).toHaveLength(2)
   expect(reports()[0]!.text).toBe(`設定檔 ${SETTINGS} 有問題：認不得的鍵，已略過：executor`)
 
-  // 改正後不再報
+  // 改正後不再報錯，記一筆「已改正」，問題列不再掛著舊錯誤
   data.files[SETTINGS] = JSON.stringify({ model: 'sonnet' })
   await refresh()
-  expect(reports()).toHaveLength(2)
+  await refresh()
+  expect(reports().filter(e => e.tone === 'error')).toHaveLength(2)
+  expect(reports()).toHaveLength(3)
+  expect(reports()[0]).toMatchObject({ text: `設定檔 ${SETTINGS} 已改正`, tone: 'success' })
+  expect(issueOf(feed.list as FeedEvent[], null)).toBeNull()
+})
+
+test('refresh reports a broken project dispatch.json and the global one still applies', async ($, on) => {
+  const { data } = fixture(on)
+  const feed = feedLog(on)
+  data.files[SETTINGS] = JSON.stringify({ model: 'opus', effort: 'high' })
+  data.files[PROJECT_SETTINGS] = '{ "autoPr": true'
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const line = `設定檔 ${PROJECT_SETTINGS} 有問題：${JSON_BROKEN}`
+  expect(feed.list.filter(e => e.text.includes(PROJECT_SETTINGS))).toEqual([expect.objectContaining({ text: line, tone: 'error' })])
+  expect(data.toasts).toContain(line)
+  expect(feed.list.some(e => e.text.includes(SETTINGS))).toBe(false)
+  const ui = await $.ui.mount(PANE(90))
+  expect(await ui.find({ type: 'Text', text: '派工 opus high' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a reported dispatch.json that is fixed or removed no longer shows on the issue row', async ($, on) => {
+  const { data } = fixture(on)
+  const feed = feedLog(on)
+  const refresh = () => $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const screen = async () => { const ui = await $.ui.mount(PANE(120)); const s = flat(text(await ui.drawn())); await ui.unmount(); return s }
+  data.files[SETTINGS] = '{'
+  data.files[PROJECT_SETTINGS] = JSON.stringify({ executor: 'agy' })
+  await refresh()
+  expect(await screen()).toContain(flat(`設定檔 ${SETTINGS} 有問題`))
+
+  // 全域那份改正、專案那份還壞著：問題列改顯示還壞著的那份，不是「已改正」就收掉
+  data.files[SETTINGS] = JSON.stringify({ model: 'opus' })
+  await refresh()
+  const still = `設定檔 ${SETTINGS} 已改正；設定檔 ${PROJECT_SETTINGS} 有問題：認不得的鍵，已略過：executor`
+  expect(feed.list[0]).toMatchObject({ text: still, tone: 'error' })
+  expect(issueOf(feed.list as FeedEvent[], null)?.text).toBe(still)
+
+  // 專案那份刪掉：兩份都沒問題了，問題列收掉
+  delete data.files[PROJECT_SETTINGS]
+  await refresh()
+  expect(feed.list[0]).toMatchObject({ text: `設定檔 ${PROJECT_SETTINGS} 已移除，不再報錯`, tone: 'success' })
+  expect(issueOf(feed.list as FeedEvent[], null)).toBeNull()
+  expect(await screen()).not.toContain(flat('有問題'))
+
+  // 再建一份同樣的壞檔：再報一次
+  data.files[PROJECT_SETTINGS] = JSON.stringify({ executor: 'agy' })
+  await refresh()
+  expect(feed.list[0]).toMatchObject({ text: `設定檔 ${PROJECT_SETTINGS} 有問題：認不得的鍵，已略過：executor`, tone: 'error' })
+})
+
+test('settingsNotices clears a reported file that no longer belongs to this project', () => {
+  const before = { '/p/shop/dispatch.json': { text: '{', problems: [JSON_BROKEN] }, [SETTINGS]: { text: '{}', problems: [] } }
+  const { checked, events } = settingsNotices([{ path: SETTINGS, text: '{}', problems: [] }], before, 1)
+  expect(events).toEqual([{ at: 1, text: '設定檔 /p/shop/dispatch.json 不屬於目前專案，不再報錯', tone: 'success' }])
+  expect(checked).toEqual({ [SETTINGS]: { text: '{}', problems: [] } })
+  // 沒有之前報過的：什麼都不報
+  expect(settingsNotices([{ path: SETTINGS, text: '{}', problems: [] }], {}, 1).events).toEqual([])
 })

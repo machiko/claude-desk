@@ -9,7 +9,7 @@ import { summarizeCheck } from './verify-summary'
 import { MODEL_KINDS, modelFor, normalizeRoot, parseSettings, settingsProblems } from './settings'
 import { REVIEW_FILE, SECURITY_FILE } from './prompts/review'
 import { markOf } from './worktree-mark'
-import type { DispatchSettings, ModelKind } from './settings'
+import type { DispatchSettings, ModelKind, SettingsReport } from './settings'
 import type { WorktreeMark } from './worktree-mark'
 import { READ_TOOL, ciOf, mcpJson, pickPr, prQuery, repoOf, statusQuery } from './bitbucket'
 import type { Repo } from './bitbucket'
@@ -536,9 +536,6 @@ export async function loadSettings($: any, options: PluginOptions, preloaded?: D
   const [own, project] = await Promise.all([read(paths.settings), read(paths.projectSettings)])
   return parseSettings(mergeSettingsText(own, project))
 }
-
-/** 一份 dispatch.json 讀到的內容與問題；讀不到（不存在）時 text 是 null、沒有問題。 */
-export type SettingsReport = { path: string; text: string | null; problems: string[] }
 
 /** 全域與目前專案的 dispatch.json（路徑同 loadSettings）各自檢查；不疊加，問題才知道是哪一份的。 */
 export async function settingsReport($: any, options: PluginOptions): Promise<SettingsReport[]> {

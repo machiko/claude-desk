@@ -3,7 +3,7 @@
 // 不寫卡、不碰正式環境。教學模式的執行在 tutorial-run.tsx，自動流程在 auto-chain.ts，派工執行時間紀錄在 run-notes.ts，不依賴模組狀態的 I/O 小工具在 desk-io.ts。
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
-import type { AgentInfo, Case, FeedEvent, Snapshot, Verify } from '../types'
+import type { AgentInfo, Case, FeedEvent, SettingsChecked, Snapshot, Verify } from '../types'
 import { CARD_CMD, parseRegistry } from './card'
 import { buildCase, caseNamed, demoCases, events, feedOnDesk, stateOf, settleMergedAsk } from './model'
 import { plain, errorText, parseOsc7501 } from './text'
@@ -15,7 +15,7 @@ import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, refusalOf, refusalText } from './dispatch'
 import { runOf } from './run-time'
 import { launchName, runningDeskAgents, agentsByRoot, applyOscToAgent, endedAlive, endedHow, rawAgents, supersede, asksFor, agentInfo, askClearedOnCard } from './agents'
-import { modelFor, normalizeRoot, pitfallsFor, settingsFeedText } from './settings'
+import { modelFor, normalizeRoot, pitfallsFor, settingsNotices } from './settings'
 import type { DispatchKind, QueueOpts, ReviewOpts, UntrustedHold } from './dispatch'
 import type { RawAgent } from './agents'
 import type { RunShown } from './run-time'
@@ -72,6 +72,8 @@ const helpAtom = atom({ plugin: 'desk', key: 'isHelp' } as const, false)
 const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, null)
 /** 核准過的完成檢查（卡片路徑 → 指令全文）：每輪重新整理讀一次 store 放進來，面板重繪讀這裡；這個對話核准時 approve-check 也會更新。 */
 const trustedAtom = atom({ plugin: 'desk', key: 'trusted' } as const, {} as Record<string, string>)
+/** 設定檔驗證上次檢查過的 dispatch.json（路徑 → 內容與問題）：跟動態放在同一處，動態裡的舊錯誤在，這份紀錄也在。 */
+const settingsCheckedAtom = atom({ plugin: 'desk', key: 'settingsChecked' } as const, {} as SettingsChecked)
 /** 最近一次畫面 content 最多能捲到第幾列；捲動 hook 用它夾住位置（模組變數，重載後下一次畫就補上）。 */
 let maxOffset = 0
 
@@ -102,24 +104,18 @@ let idleSkips = 0
 export let optionsRef: PluginOptions | undefined
 /** 卡片解析結果：卡片內容與修改時間都沒變才沿用（歷程的未來時間看修改時間判斷）。 */
 const cardParseCache = new Map<string, { raw: string; mtime: number | null; steps: string[]; history: any[] }>()
-/** dispatch.json 路徑 → 這個對話上次檢查過的內容：內容沒變就不再報，改了（變成別種錯、改正）才重新看。 */
-const settingsSeen = new Map<string, string>()
 const reviewTextCache = new Map<string, { raw: string; top: any[]; preflight: string | undefined }>()
 
 /**
- * 設定檔的新問題（不屬於任何一件的錯誤動態）：內容跟上次檢查過的一樣就不報；沒問題的內容也記下，之後改壞了才報。
- * 讀不到（刪掉）的忘掉，再建同樣的壞檔會再報一次。只報告，派工與流程照舊用解析出的設定。
+ * 設定檔的新動態（不屬於任何一件）：同一份內容只報一次；之前報過的改正、刪掉或不再屬於目前專案時報一筆，問題列跟著收掉。
+ * 只報告，派工與流程照舊用解析出的設定。
  */
 async function settingsNews($: any, options: PluginOptions, at: number): Promise<FeedEvent[]> {
-  const reports = await settingsReport($, options).catch(() => [])
-  const news: FeedEvent[] = []
-  for (const r of reports) {
-    if (r.text === null) { settingsSeen.delete(r.path); continue }
-    if (settingsSeen.get(r.path) === r.text) continue
-    settingsSeen.set(r.path, r.text)
-    if (r.problems.length) news.push({ at, text: settingsFeedText(r.path, r.problems), tone: 'error' })
-  }
-  return news
+  const reports = await settingsReport($, options).catch(() => null)
+  if (!reports) return []
+  const { checked, events } = settingsNotices(reports, await read($, settingsCheckedAtom), at)
+  await update($, settingsCheckedAtom, () => checked)
+  return events
 }
 
 /** 讀一輪：登錄表 → 每張卡＋檔案時間 → 背景 agent → 快照；差異進動態與 toast。 */
@@ -474,7 +470,6 @@ export const register: Register = (on, options) => {
     publishRequeried.clear()
     cardParseCache.clear()
     reviewTextCache.clear()
-    settingsSeen.clear()
     setTutorial(null)
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined
