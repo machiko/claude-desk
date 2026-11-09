@@ -1,0 +1,24 @@
+name: Agent Agreements Audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Agent Guardrail Audit
+        run: |
+          if [ -f "scripts/audit.sh" ]; then
+            bash scripts/audit.sh --commit HEAD
+          else
+            echo "Notice: scripts/audit.sh not found."
+          fi
