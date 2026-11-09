@@ -1,0 +1,1 @@
+- 調整 README 與 plugin 說明：六段說法統一成測試／驗收，補齊 /desk:card 的 emit／read／wait／send 子指令、DESK_* 環境變數與 card.changelog.format、sync.claude.effort 設定，並新增背景 Agent 的安全須知
