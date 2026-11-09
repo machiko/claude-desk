@@ -1,4 +1,4 @@
-// 自動流程：實作做完 → 自動檢查 → 綠了自動審查 → 有 CRITICAL／HIGH 自動修正（MEDIUM 交給「等你」），整條分支最多自動修兩輪，碰不到合併與上線。
+// 自動流程：實作做完 → 自動檢查 → 綠了自動審查 → 有 CRITICAL／HIGH 自動修正（MEDIUM 只記錄、不問），整條分支最多自動修兩輪，碰不到合併與上線。
 // 每張卡只審查一次：修完只跑測試、綠了就過關（高風險照舊複審）；卡片之間的交互由發版前的整版審查看。
 // 純函式：給它上一次派工、檢查結果、審查結論，它說下一步做什麼。
 import type { ReviewVerdict } from '../types'
@@ -216,7 +216,7 @@ function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, c
   }
   if (finished === 'review') {
     if (!verdict) return { kind: 'stop', reason: '驗收結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' }
-    // 只有 CRITICAL／HIGH 會自動修；可能影響行為的 MEDIUM 由審查寫進「等你」，流程照樣過關。
+    // 只有 CRITICAL／HIGH 會自動修；MEDIUM 審查只記錄、不在「等你」問，流程照樣過關。
     if (blocking(verdict) === 0) {
       if (high && !ctx.lastWasSecurity && !ctx.combineSecurity) return { kind: 'dispatch', dispatch: 'review', round: run.round, security: true }
       return high ? { kind: 'pass', needsHuman: high } : { kind: 'pass' }

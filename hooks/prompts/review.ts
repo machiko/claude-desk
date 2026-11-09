@@ -24,23 +24,28 @@ export function reviewTask(c: Case): string {
 }
 
 // 專案可以用 review.template 換掉契約檔，換了也要拿得到這條，所以放在提示裡。
-const MEDIUM_RECORD = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查：MEDIUM n 條記錄不修 → 見審查檔」；'
 /**
- * 審查 MEDIUM 題的寫法與選項：B 另開卡修是推薦（這張先過關、修正在後續卡做），C 修掉是在這張卡多一輪修正。
- * 審查、修正提示與 templates/review.md 同一組；工作桌照選項開頭認 B（另開卡）與 C（修掉），見 card.ts 的 picksMediumFollowUp／picksMediumFix。
+ * 審查 MEDIUM 一律記錄、不問：不管影不影響行為（拿不準、AC 無法驗證、要改規格才能修的也一樣），都標「（記錄、不修）」、
+ * 記一筆歷程、不寫進「等你」；流程照常往開 PR 走，推送 Agent 開 PR 時把審查檔的 MEDIUM 列進 PR 說明（publish.ts 的 MEDIUM_IN_PR）。
+ */
+const MEDIUM_RULE = 'MEDIUM 一律記錄、不問：只關於規格紀錄、文件、命名、重複、註解、可維護性的，跟可能影響行為的（拿不準的、驗收情境無法驗證的、要改規格才能修的也一樣），都在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查：MEDIUM n 條記錄不修 → 見審查檔」；工作桌不會自動修 MEDIUM，流程照常往開 PR 走，開 PR 時會列進 PR 說明。都算進關卡的 MEDIUM 數。'
+/**
+ * 舊卡相容：這條規則之前的審查會把 MEDIUM 標「（等你決定）」並在「等你」問 A～D（題目寫法見 MEDIUM_ASK_FORM）。
+ * 審查不再新增這種標法與題目；上一份審查檔已有的照下面處理，卡片「等你」已有的題目由你照舊回答（card.ts 的 picksMediumFix 等）。
+ */
+const OLD_ASKED_KEEP = '上一份已有標「（等你決定）」的（這條規則之前的舊卡）照原樣再列；不新增這種標法，也不在 等你 新增題目。'
+/**
+ * 舊卡的 MEDIUM 題寫法與選項：B 另開卡修是推薦（這張先過關、修正在後續卡做），C 修掉是在這張卡多一輪修正。
+ * 審查與修正提示不再要求寫這題；留著給 card.ts 認舊卡「等你」裡的題目（picksMediumFollowUp／picksMediumFix 照選項開頭認 B、C）。
  */
 export const MEDIUM_ASK_FORM = '審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格'
-const MEDIUM_ASK = `在 等你 寫成「${MEDIUM_ASK_FORM}」`
-const MEDIUM_COUNT = '都算進關卡的 MEDIUM 數。'
 /**
- * 重新審查遇到標「（等你決定）」而沒被改到的 MEDIUM：你已回答不修、另開卡修或改規格的（卡片 Decisions 有記）不再問，
- * 還沒回答、或選了修掉卻沒被改到的照原樣再列。審查檔整份覆寫，不再列就等於把「等你」那題清掉。
+ * 重新審查遇到上一份標「（等你決定）」而沒被改到的 MEDIUM（舊卡）：你已回答不修、另開卡修或改規格的（卡片 Decisions 有記）改標不修，
+ * 還沒回答、或選了修掉卻沒被改到的照原樣再列。審查檔整份覆寫，不再列就等於把「等你」那題的依據清掉。
  */
-const RECHECK_ASKED = '標「（等你決定）」而沒被改到的：卡片 Decisions 已記你對那條選了不修、另開卡修或改規格的，改標「（不修，見 Decisions）」、不在 等你 再問；還沒回答、或選了修掉卻沒被改到的，照原樣再列（過關時要在 等你 問）。'
-/** 資安審查接在程式碼審查之後：等你可能已有程式碼審查問的 MEDIUM 題，不能因為這份沒有就清掉。 */
-const SECURITY_KEEP_ASK = '卡片 等你 已有程式碼審查問的 MEDIUM 題就保留；這份也有標「（等你決定）」的 MEDIUM 就跟它合成一題（摘要兩份都寫到），不要因為這份沒有就把 等你 寫成 無。'
-/** 工作桌只自動修 CRITICAL／HIGH：可能影響行為的 MEDIUM 不分第幾輪，一律標「（等你決定）」並在 等你 問一題。 */
-const MEDIUM_RULE = `${MEDIUM_RECORD}其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並${MEDIUM_ASK}（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。${MEDIUM_COUNT}`
+const RECHECK_ASKED = '上一份已有標「（等你決定）」而沒被改到的（這條規則之前的舊卡）：卡片 Decisions 已記你對那條選了不修、另開卡修或改規格的，改標「（不修，見 Decisions）」；還沒回答、或選了修掉卻沒被改到的，照原樣再列。不新增這種標法，也不在 等你 新增題目。'
+/** 資安審查接在程式碼審查之後：MEDIUM 一樣只記錄；「等你」已有的題目（例如舊卡程式碼審查問的 MEDIUM 題）不能因為這份沒有就清掉。 */
+const SECURITY_KEEP_ASK = '卡片 等你 已有的題目（例如舊卡程式碼審查問的 MEDIUM 題）照原樣保留，不要因為這份沒有就把 等你 寫成 無。'
 
 /**
  * 重新審查的那段含把基準分支併進來的 merge commit（例如自動解衝突）時：基準分支帶進來的改動不審，
@@ -106,7 +111,7 @@ export function reviewPrompt(c: Case, words: ReviewWords, r: ReviewOpts | undefi
   const scope = r?.base && incremental === 'recheck'
     ? `這是審查通過後又有新 commit 的重新審查：只看 \`git diff ${r.base}..HEAD\`。${mergedBase(r.base, r.target)}先讀現有 ${file} 當上一次結論，只判斷這段新 diff 有沒有問題、有沒有處理到上一次列的項目；上一次已列過且沒被改到的 LOW 與標「不修」的項目不要再提；${RECHECK_ASKED}`
     : r?.base && incremental === 'rereview'
-    ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列，卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」的項目不要再提，標「（等你決定）」的照原樣再列（過關時要在 等你 問）。`
+    ? `這是修正後的複審（第 ${r.round} 輪）：只看 \`git diff ${r.base}..HEAD\`。先讀現有 ${file} 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列；上一輪已列過的 LOW 與標「不修」的項目不要再提；${OLD_ASKED_KEEP}`
     : r?.target ? `看這個分支相對 ${r.target} 的 diff（從 git merge-base 起算）。` : '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。'
   return [
     `${r?.security ? '資安審查' : '程式碼審查'}：這是新的對話，不接續 Agent、不參考 Agent 的結論。`,

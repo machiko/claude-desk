@@ -226,7 +226,7 @@ test('test_self_check_rule_limits_mutations_to_one_per_ac', () => {
   }
 })
 
-/** build-like-review AC-3：依審查檔修（自動修正輪、資安修正輪、按 g 修審查結論、流程停下後按 g）都要求整類列出、每種都修並補測試、寫進歷程。 */
+/** build-like-review AC-3：依審查檔修（自動修正輪、資安修正輪、按 g 修審查結論、流程停下後按 g）都要求整類列出、每種都修並補測試、寫進歷程；驗收 MEDIUM 記錄後繼續 AC-5：要改規格才能修的 MEDIUM 只記錄、不寫等你。 */
 test('test_fix_prompts_require_fixing_the_whole_class', () => {
   const c = mk('依規格實作')
   const blocked = buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, '<!-- DESK -->\n- 狀態：ok\n- 檢查：`npm test`\n- 等你：無\n- 下一步：等審查\n- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；不過\n<!-- /DESK -->', 1, {}, undefined)
@@ -248,6 +248,17 @@ test('test_fix_prompts_require_fixing_the_whole_class', () => {
   }
   // 檢查沒過的修正輪不是依審查檔修：沒有這句
   expect(buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: ['boom'] })).not.toContain(WHOLE_CLASS)
+  // 驗收 MEDIUM 記錄後繼續 AC-5：修正中碰到要改規格才能修的 MEDIUM 只記錄（標記錄、不修、歷程記原因），不寫等你
+  const [autoFix, autoSecurityFix, gFix, stoppedFix] = fixes
+  for (const p of [gFix, stoppedFix]) {
+    expect(p).toContain('要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（記錄、不修）」、在卡片歷程記一筆「Agent：MEDIUM n 條要改規格才能修，記錄不修 → 見審查檔」，不寫進 等你，其他照修。')
+  }
+  for (const p of [autoFix, autoSecurityFix]) expect(p).toContain('（MEDIUM、LOW 不用修：MEDIUM 只記錄、不要改，也不寫進 等你）')
+  for (const p of fixes) {
+    expect(p).not.toContain('A) 不修，記錄原因')
+    expect(p).not.toContain('結尾標「（等你決定）」')
+    expect(p).not.toContain('MEDIUM 由你在卡片 等你 決定')
+  }
 })
 
 /** build-like-review AC-4：同步、審查、推送、解衝突不帶清單、自我檢查與整類修那三句；審查照舊讀清單。 */

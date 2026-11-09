@@ -119,7 +119,7 @@ export const TURN_TEXT = {
   verifyIdle: (after: string) => say('v 執行測試', `下一步只剩等測試，通過後${after}`, '要改程式先把下一步寫成要做的事'),
   verdict: () => '驗收有結論，接著自動修正或過關',
   autoReview: () => '接著自動驗收',
-  review: (stale: boolean, after: string) => say(stale ? 'w 重新驗收' : 'w 派驗收', '新對話', stale ? '驗收後有新 commit' : '', '有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你', `過關後${after}`),
+  review: (stale: boolean, after: string) => say(stale ? 'w 重新驗收' : 'w 派驗收', '新對話', stale ? '驗收後有新 commit' : '', '有 CRITICAL／HIGH 會自動修正、MEDIUM 只記錄', `過關後${after}`),
   nothing: () => '沒有待辦',
   publishPr: () => say('n 開 PR', '按兩次，派 Agent push 並開 PR'),
   publishPrRisky: () => say('n 開 PR', '高風險改動，先看過審查檔 e 再按兩次，派 Agent push 並開 PR'),
@@ -216,7 +216,7 @@ function checkTurnText(c: Case): string {
   return TURN_TEXT.verify(willAutoReview(c) ? autoAfterCheck(c) : '按 w 派驗收')
 }
 
-/** 審查段：按 w，以及審查之後會怎樣：CRITICAL／HIGH 自動修正、影響行為的 MEDIUM 寫進「等你」，過關後合併開著的 PR，沒有 PR 就開 PR。 */
+/** 審查段：按 w，以及審查之後會怎樣：CRITICAL／HIGH 自動修正、MEDIUM 只記錄（開 PR 時列進 PR 說明），過關後合併開著的 PR，沒有 PR 就開 PR。 */
 function reviewTurnText(c: Case): string {
   return TURN_TEXT.review(!!c.chain?.stale, c.pr?.state === 'OPEN' ? '合併 PR' : '開 PR')
 }

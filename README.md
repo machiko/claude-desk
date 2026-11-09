@@ -2,7 +2,7 @@
 
 Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張面板只放「現在該看的那一件」，並告訴你輪到誰、該按什麼。從規格、實作、測試、驗收、合併到上線，中間的實作、測試、驗收、修正由背景 Agent 自動走完流程。
 
-> **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, test, acceptance, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the tests, review for acceptance in a fresh session and automatically fix only CRITICAL/HIGH findings, for up to two rounds per card. MEDIUM findings that may affect behaviour are not auto-fixed; they are left for you to decide. Background agents run with your own Claude Code permissions and no sandbox — see "安全須知" below. The UI and prompts are in Traditional Chinese.
+> **English summary.** desk is a Claude Code mod (a plugin of function hooks) that turns each feature branch into a card with six stages — spec, build, test, acceptance, merge, ship. A pane shows whose turn it is and which key to press; background agents (`claude --bg`) build, run the tests, review for acceptance in a fresh session and automatically fix only CRITICAL/HIGH findings, for up to two rounds per card. MEDIUM findings are only recorded (never auto-fixed, never asked) and listed in the pull request description. Background agents run with your own Claude Code permissions and no sandbox — see "安全須知" below. The UI and prompts are in Traditional Chinese.
 
 ```
  desk 0.18.0  5 小時 剩 78%  本週 剩 31%            教學模式 · 20:00 讀取
@@ -58,8 +58,8 @@ Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張�
 1. 規格：看過預先寫好的規格，按 `t` 確認（實際使用時按兩次 `t`，或輸入 `/desk:card spec <slug> ok`）。
 2. 實作：確認規格後自動派 Agent（實際使用時一樣，不用再按 `g`）。教學裡的 Agent 和驗收由腳本扮演，不花額度，也不需要信任資料夾。
 3. 測試：自動執行，會真的跑 `python3 -m unittest`。
-4. 驗收：第一輪會挑出一條 HIGH，自動修正、重新測試後重新驗收一次；過關後留一條會影響金額的 MEDIUM 讓你決定（跟真實審查一樣四個選項）。
-5. 合併：回答驗收建議，再按 `f` 寫回卡片；然後按 `t` 在本機合併。選 c（修掉）會改程式並 commit，接著只重新測試、不再重新驗收，測試通過後輪到合併。
+4. 驗收：第一輪會挑出一條 HIGH，自動修正後只重新測試（每張卡只驗收一次）；那條會影響金額的 MEDIUM 跟真實審查一樣只記錄、不問你。
+5. 合併：測試通過後按 `t` 在本機合併（實際使用時是開 PR，PR 說明會列出驗收記錄的 MEDIUM）。
 6. 上線：按 `t` 打 tag，再按兩次 `u` 確認上線。
 
 做完輸入 `/desk tutorial end`，沙盒會刪除，面板回到你自己的任務。需要 `git` 與 `python3`。
@@ -123,7 +123,7 @@ desk 一次只看一個專案：你在哪個 repo（或它的 worktree）開 `/d
 | ⇡ 開 PR／⇡ push | 合併段才出現、快捷鍵 `n`，**按兩次確認**：派推送 Agent push 分支並對基準分支開 PR，或 PR 已開時只 push（不合併、不打 tag）。專案設了 `autoPr` 時驗收過關會自動派，按鈕照樣可用 |
 | ⚑ 發版 | 上線段、還沒打 tag 時出現、快捷鍵 `z`，按兩次（第二次就算同意照慣例版號）把一行 `/desk:release …` 短請求（所有待發版的卡名與 PR、發版後要歸檔並移除 worktree 與分支的卡；有 `release：` 關卡的卡改由按 `u` 歸檔）填入輸入框；Enter 送出後對話照 [`/desk:release`](skills/release/SKILL.md) 的規則做（帶確認段就不出題照做到底；判斷不了版號才出題；失敗處理都寫在那裡），desk 自己的發版步驟見 [docs/WORKFLOW.md](docs/WORKFLOW.md)。面板不打 tag、不 push |
 | ⌫ 歸檔 | 可歸檔時出現、快捷鍵 `q`，**按兩次確認**：卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段（不刪 worktree 與分支） |
-| t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`），確認後自動派實作（確認同時核准檢查欄的指令，不再多問；「等你」有事、manual、worktree 有別人的改動時只確認不派；Agent 已滿就排隊）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
+| t | 確認規格：停在 `spec：…` 關卡、沒有 Agent 在跑時出現，按兩次（同 `/desk:card spec <slug> ok`），確認後自動派實作（確認同時核准檢查欄的指令，不再多問；「等你」有事、manual、worktree 有別人的改動時只確認不派；疊放卡等原卡合併後才派；Agent 已滿就排隊）；教學模式則是下一步（確認規格、合併、打 tag，按一次） |
 | x／m／i | 展開全文（歷程每筆換行看全文）／更多動作／說明 |
 | r | 重新整理（在 `m` 更多動作裡；平常定時、每回合結束、對話改了卡片或跑了 git 之後都會自動重讀） |
 

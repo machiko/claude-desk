@@ -1,12 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 import { feedLog, fixture, PANE, PROJECT_DIR, result, text, flat } from './fixture'
 declare const console: { log: (...args: unknown[]) => void }
-import { cardAfter, cardAfterDecision, cardText, setFields, tutorialPaths, TUTORIAL_INTRO, TUTORIAL_MEDIUM_ASK, TUTORIAL_TAG } from '../hooks/tutorial'
+import { cardAfter, cardAfterDecision, cardText, setFields, tutorialPaths, TUTORIAL_INTRO, TUTORIAL_TAG } from '../hooks/tutorial'
 
 const P = tutorialPaths('/home/u')
 const KEY = (what: string) => `case-${P.card}-${what}`
-/** 驗收過關時「等你」的四個選項，跟真實審查（prompts/review.ts 的 MEDIUM_ASK_FORM）同一組。 */
-const FOUR_OPTIONS = /^- 等你：審查 MEDIUM 1 條（金卡金額尾數 \.5 怎麼捨入）怎麼處理：A\) 不修，記錄原因 B\) 另開卡修（推薦，這張先過關） C\) 修掉（在這張卡修，多一輪修正） D\) 改規格$/m
 /** 模擬驗收寫進卡片 History 的筆數（每輪驗收一筆）。 */
 const reviewRounds = (card: string | undefined) => (String(card).match(/（教學驗收）/g) ?? []).length
 
@@ -49,29 +47,25 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   expect(data.files[`${P.wt}/discount.py`]).toContain('def discount')
   data.git[P.wt]!.head = 'h1'
 
-  // 3 檢查（真的執行卡片的指令）→ 4 審查：第一輪 HIGH → 自動修正 → 檢查 → 複審過關、MEDIUM 等你
-  for (let i = 0; i < 12 && !String(data.files[P.card]).includes('MEDIUM 1、LOW 0；過'); i++) {
+  // 3 檢查（真的執行卡片的指令）→ 4 驗收：第一輪 HIGH → 自動修正 → 只重新測試就過關（跟真實流程一樣，每張卡只驗收一次）
+  for (let i = 0; i < 12 && !flat(text(await ui.drawn())).includes(flat('按 t 合併到 release/v1.0')); i++) {
     if (String(data.files[`${P.wt}/test_discount.py`] ?? '').includes('negative')) data.git[P.wt]!.head = 'h2'
     await step()
   }
   expect(data.processCalls.some((c: any) => c.argv[0] === 'sh' && c.argv[2] === 'python3 -m unittest -q')).toBe(true)
-  expect(data.files[`${P.wt}/.task/REVIEW.md`]).toContain('複審')
   expect(data.files[`${P.wt}/discount.py`]).toContain('ValueError')
-  // 第一輪：HIGH 1（負數金額）與 MEDIUM 1；HIGH 自動修正後只重新驗收一次
+  // 第一輪：HIGH 1（負數金額）與 MEDIUM 1；HIGH 自動修正後只重新測試，不再驗收
   expect(data.files[P.card]).toContain('（教學驗收）HIGH 1、MEDIUM 1')
-  expect(reviewRounds(data.files[P.card])).toBe(2)
-  // MEDIUM 是會影響金額的捨入問題（規格沒寫）並標「等你決定」；過關時「等你」是跟真實審查同一組四個選項
-  expect(data.files[`${P.wt}/.task/REVIEW.md`]).toMatch(/^- \[MEDIUM\]\[規格\].*銀行家捨入.*金卡金額 5 會算成 4.*（等你決定）$/m)
-  expect(data.files[P.card]).toMatch(FOUR_OPTIONS)
-
-  // 5 合併：先決定 MEDIUM（寫回卡片，不送主對話），再按 t 本機合併
-  await turn(ui, '按選項字母 → f 寫回卡片')
-  await ui.press({ key: `case-${P.card}-opt0A` })
-  await ui.press({ key: KEY('fill') })
-  expect(data.fills.length).toBe(0)
+  expect(reviewRounds(data.files[P.card])).toBe(1)
+  // 驗收 MEDIUM 記錄後繼續 AC-4：會影響金額的捨入問題（規格沒寫）只記錄、不問：審查檔標「記錄、不修」，等你留 無
+  expect(data.files[`${P.wt}/.task/REVIEW.md`]).toMatch(/^- \[MEDIUM\]\[規格\].*銀行家捨入.*金卡金額 5 會算成 4.*（記錄、不修）$/m)
+  expect(data.files[`${P.wt}/.task/REVIEW.md`]).not.toContain('等你決定')
   expect(data.files[P.card]).toContain('- 等你：無')
-  expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：驗收 MEDIUM → A/)
-  await turn(ui, '按 t 合併到 release/v1.0')
+
+  // 5 合併：不用回答 MEDIUM，直接按 t 本機合併
+  await turn(ui, '已修正・未重新驗收；按 t 合併到 release/v1.0')
+  expect(flat(text(await ui.drawn())).includes(flat('按選項字母'))).toBe(false)
+  expect(data.fills.length).toBe(0)
   // 「⇡ 開 PR」按兩次也不派真的 Agent，只提示照教學按 t
   const sim = data.launches.length
   await ui.press({ key: KEY('open-pr') })
@@ -116,91 +110,6 @@ test('the tutorial walks all six stages with scripted agents, never launches cla
   const screen = text(await ui.drawn())
   if (/已確認上線|已合併|已打 v1\.0\.0/.test(screen)) console.log(screen)
   expect(/已確認上線|已合併|已打 v1\.0\.0/.test(screen)).toBe(false)
-  await ui.unmount()
-})
-
-/** 開始教學、確認規格，一路走到驗收過關、MEDIUM 等你決定（停在 HEAD h2）。 */
-async function toMediumAsk($: any, on: any) {
-  const { data, clock } = fixture(on)
-  data.git[P.wt] = { branch: 'feature/discount', head: 'h0' }
-  data.git[P.main] = { branch: 'release/v1.0', head: 'm0' }
-  data.run = async (e: any) => {
-    if (e.argv.includes('spec-ok')) { data.files[P.card] = setFields(data.files[P.card]!, { 關卡: '無', 狀態: '規格已確認（AC-1～AC-3），可派實作' }); return result(0, 'ok\n') }
-    return result(0, '')
-  }
-  const step = async () => { await clock.advance(2500); await clock.settle() }
-  await $.command.run({ command: 'desk', args: 'tutorial' } as any)
-  const ui = await $.ui.mount(PANE(72))
-  await ui.press({ key: KEY('tutorial') })
-  await step()
-  data.git[P.wt]!.head = 'h1'
-  for (let i = 0; i < 12 && !String(data.files[P.card]).includes('MEDIUM 1、LOW 0；過'); i++) {
-    if (String(data.files[`${P.wt}/test_discount.py`] ?? '').includes('negative')) data.git[P.wt]!.head = 'h2'
-    await step()
-  }
-  expect(data.files[P.card]).toMatch(FOUR_OPTIONS)
-  const checks = () => data.processCalls.filter((c: any) => c.argv[0] === 'sh' && c.argv[2] === 'python3 -m unittest -q').length
-  const commits = () => data.gitCalls.filter((c: any) => c.root === P.wt && c.args.includes('commit')).length
-  const screen = async () => flat(text(await ui.drawn()))
-  /** 一直走到畫面出現「按 t 合併」（最多幾步）。 */
-  const untilMerge = async () => { for (let i = 0; i < 12 && !(await screen()).includes(flat('按 t 合併到 release/v1.0')); i++) await step() }
-  return { data, clock, ui, step, checks, commits, screen, untilMerge }
-}
-
-test('choosing C in the tutorial commits the fix and only reruns the tests before merge', async ($, on) => {
-  const { data, clock, ui, checks, commits, screen, untilMerge } = await toMediumAsk($, on)
-  const reviewBefore = data.files[`${P.wt}/.task/REVIEW.md`]
-  const roundsBefore = reviewRounds(data.files[P.card])
-
-  // 選 C：扮演修正 Agent 把金卡金額改成四捨五入、補測試並 commit
-  await ui.press({ key: `case-${P.card}-opt0C` })
-  await ui.press({ key: KEY('fill') })
-  expect(data.files[`${P.wt}/discount.py`]).toContain('ROUND_HALF_UP')
-  expect(data.files[`${P.wt}/test_discount.py`]).toContain('def test_gold_rounds_half_up')
-  expect(data.gitCalls.some((c: any) => c.root === P.wt && c.args.includes('commit') && c.args.includes('fix: 金卡金額四捨五入'))).toBe(true)
-  expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：驗收 MEDIUM → C/)
-  expect(data.files[P.card]).toContain('- 下一步：等重新測試')
-  const before = checks()
-  // fixture 不執行 git：commit 的效果由 HEAD 前進代表
-  data.git[P.wt]!.head = 'h3'
-  await $.command.run({ command: 'desk', args: 'refresh' } as any)
-  await clock.settle()
-
-  // 驗收過關後的新 commit：自動重新測試，通過就過關，不再派驗收
-  await untilMerge()
-  expect(checks()).toBeGreaterThan(before)
-  expect(data.files[`${P.wt}/.task/REVIEW.md`]).toBe(reviewBefore)
-  expect(reviewRounds(data.files[P.card])).toBe(roundsBefore)
-  const shown = await screen()
-  if (!shown.includes(flat('測試通過・未重新驗收'))) console.log(text(await ui.drawn()))
-  expect(shown.includes(flat('測試通過・未重新驗收'))).toBe(true)
-  expect(shown.includes(flat('按 t 合併到 release/v1.0'))).toBe(true)
-  expect(data.launches.length).toBe(0)
-  await ui.unmount()
-})
-
-test('choosing B in the tutorial records a follow-up card and goes straight to merge', async ($, on) => {
-  const { data, ui, checks, commits, screen, untilMerge } = await toMediumAsk($, on)
-  const commitsBefore = commits()
-  const checksBefore = checks()
-  const codeBefore = data.files[`${P.wt}/discount.py`]
-  const agentRounds = () => (String(data.files[P.card]).match(/（教學 Agent）/g) ?? []).length
-  const agentsBefore = agentRounds()
-
-  await ui.press({ key: `case-${P.card}-opt0B` })
-  await ui.press({ key: KEY('fill') })
-  expect(data.files[P.card]).toContain('- 等你：無')
-  expect(data.files[P.card]).toMatch(/- D-02 \d{4}-\d{2}-\d{2} 使用者：驗收 MEDIUM → B/)
-  expect(data.toasts.some(t => t.includes('實際使用時') && t.includes('疊在這條分支上的後續卡'))).toBe(true)
-
-  // 程式沒有新 commit、沒有派 Agent，接著輪到按 t 合併
-  await untilMerge()
-  expect(commits()).toBe(commitsBefore)
-  expect(data.files[`${P.wt}/discount.py`]).toBe(codeBefore)
-  expect(agentRounds()).toBe(agentsBefore)
-  expect(checks()).toBe(checksBefore)
-  expect(data.launches.length).toBe(0)
-  expect((await screen()).includes(flat('按 t 合併到 release/v1.0'))).toBe(true)
   await ui.unmount()
 })
 
@@ -282,7 +191,7 @@ test('tutorial mode reports no dispatch.json problems even when the real ones ar
   await ui.unmount()
 })
 
-/** 六段說法（別張卡的 AC-5）：教學卡片寫回的狀態與下一步用「測試」「驗收」，審查檔本文不動；說明照現行規則（教學規則卡 AC-4）。 */
+/** 六段說法（別張卡的 AC-5）：教學卡片寫回的狀態與下一步用「測試」「驗收」，審查檔本文不動；說明照現行規則（教學規則卡 AC-4、驗收 MEDIUM 記錄後繼續 AC-4）。 */
 test('the tutorial card writes back test and acceptance words', () => {
   const day = '2030-01-05'
   const base = cardText(day)
@@ -290,22 +199,26 @@ test('the tutorial card writes back test and acceptance words', () => {
   const built = cardAfter(base, 'build', day)
   expect(field(built, '下一步')).toBe('等測試與驗收')
   const fixed = cardAfter(built, 'fix', day)
-  expect(field(fixed, '下一步')).toBe('等重新驗收')
+  expect(field(fixed, '下一步')).toBe('等重新測試')
   expect(field(fixed, '狀態')).toBe('已修正驗收的 HIGH：負數金額丟出 ValueError')
   expect(field(cardAfter(fixed, 'review-2', day), '狀態')).toBe('重新驗收通過：三條驗收情境都做到')
-  const changed = cardAfterDecision(cardAfter(fixed, 'review-2', day), 'C', day, '使用者')
-  expect(field(changed, '下一步')).toBe('等重新測試')
-  expect(field(cardAfter(fixed, 'review-2', day), '等你')).toBe(TUTORIAL_MEDIUM_ASK)
-  expect(field(cardAfterDecision(cardAfter(fixed, 'review-2', day), 'A', day, '使用者'), '狀態')).toBe('驗收通過，可開 PR')
+  // 驗收的 MEDIUM 只記錄、不問：手動重新驗收（review-2）也不在等你出題，下一步直接開 PR
+  expect(field(cardAfter(fixed, 'review-2', day), '等你')).toBe('無')
+  expect(field(cardAfter(fixed, 'review-2', day), '下一步')).toBe('開 PR 合併')
+  // 你自己在教學卡片寫了題目、在面板回答：只記下選項、清掉等你
+  const asked = setFields(fixed, { 等你: '要先發 beta 嗎？A) 要 B) 不要' })
+  const changed = cardAfterDecision(asked, 'A', day, '使用者')
+  expect(field(changed, '等你')).toBe('無')
+  expect(changed).toMatch(/^- D-02 2030-01-05 使用者：決策 → A$/m)
   const old = /完成檢查|重新檢查|複審|審查通過|審查建議|審查發現|教學審查/
   for (const text of [built, fixed, cardAfter(fixed, 'review-1', day), cardAfter(fixed, 'review-2', day), cardAfter(fixed, 'review-3', day), changed]) {
     // 只看寫回時改動或新增的列（卡片範本本身不在這次範圍）
     const added = text.split('\n').filter(l => !base.split('\n').includes(l)).join('\n')
     expect(added).not.toMatch(old)
   }
-  // 第一輪 HIGH 自動修正後重新驗收一次、留一條 MEDIUM 讓你決定；選 c 修掉後只重新測試、不再重新驗收
-  expect(TUTORIAL_INTRO).toContain('自動修正後重新驗收一次，留一條會影響金額的 MEDIUM 讓你決定')
-  expect(TUTORIAL_INTRO).toContain('選 c 修掉會改程式並 commit，接著只重新測試、不再重新驗收')
+  // 驗收 MEDIUM 記錄後繼續 AC-4：第一輪 HIGH 自動修正後只重新測試；MEDIUM 只記錄、不問；開場說明不再要你回答 a、b、c 或 d
+  expect(TUTORIAL_INTRO).toContain('第一輪會挑出一條 HIGH，自動修正後只重新測試（每張卡只驗收一次）；會影響金額的那條 MEDIUM 只記錄、不問你')
+  expect(TUTORIAL_INTRO).not.toMatch(/a、b、c 或 d|選 c 修掉/)
   expect(TUTORIAL_INTRO).not.toContain('現在改')
   expect(TUTORIAL_INTRO).not.toMatch(old)
 })
