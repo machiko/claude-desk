@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, result, text, flat } from './fixture'
+import { feedLog, fixture, PANE, PROJECT_DIR, result, text, flat } from './fixture'
 declare const console: { log: (...args: unknown[]) => void }
 import { cardAfter, cardAfterDecision, cardText, setFields, tutorialPaths, TUTORIAL_INTRO, TUTORIAL_MEDIUM_ASK, TUTORIAL_TAG } from '../hooks/tutorial'
 
@@ -265,6 +265,20 @@ test('while the scripted agent works, a refresh still sees it busy and runs no c
   await clock.settle()
   expect(data.processCalls.some((c: any) => c.argv[0] === 'sh' && c.argv[2] === 'python3 -m unittest -q')).toBe(false)
   expect(String(text(await ui.drawn())).replace(/\s+/g, '')).toContain('Agent在寫程式')
+  await ui.unmount()
+})
+
+/** 設定檔驗證卡 AC-7：教學模式不讀也不報設定錯誤；真的設定檔與教學沙盒的設定檔都壞著也一樣。 */
+test('tutorial mode reports no dispatch.json problems even when the real ones are broken', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const feed = feedLog(on)
+  for (const path of ['/home/u/.claude/handoffs/dispatch.json', `${PROJECT_DIR}/dispatch.json`, P.settings]) data.files[path] = '{ "executor": '
+  const ui = await toBuilding($, data)
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.advance(1000); await clock.settle()
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  expect(feed.list.some(e => e.text.includes('設定檔'))).toBe(false)
+  expect(data.toasts.some(t => t.includes('設定檔'))).toBe(false)
   await ui.unmount()
 })
 

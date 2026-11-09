@@ -142,6 +142,9 @@ export type SentRecord = { ask: string; during?: string; by?: string; done?: boo
 /** 你在面板做、會改變任務狀態的一個操作（成功或失敗）：等下一則你打的提示附給對話。name：哪件任務，建立登錄表、更新版本這類不屬於任何一件的不填。 */
 export type PanelAction = { at: number; name?: string; text: string }
 
+/** 設定檔驗證：dispatch.json 路徑 → 上次檢查過的內容與問題（同一份內容只報一次、改正時收掉問題列）。 */
+export type SettingsChecked = Record<string, { text: string; problems: string[] }>
+
 declare module 'claude-code' {
   interface PluginState {
     desk: {
@@ -155,6 +158,8 @@ declare module 'claude-code' {
       /** 你在面板做了、對話還不知道的操作（依時間順序，最多 20 筆）：下一則你打的提示附上後清掉。 */
       panelActions: PanelAction[]
       feed: FeedEvent[]
+      /** 設定檔驗證上次檢查過的每份 dispatch.json；跟動態一起留在這個對話，同一份內容不再報。 */
+      settingsChecked: SettingsChecked
       picks: Picks
       verifies: Record<string, Verify>
       /** 正在跑驗證的任務：卡片路徑 → 開始時間。 */

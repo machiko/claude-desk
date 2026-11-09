@@ -297,6 +297,8 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `DESK_AGENT` | `/desk:card emit` 沒帶 `--agent` 時記的 Agent 名（預設 `agy`） |
 | `DESK_CLAUDE_CMD`、`DESK_AGY_CMD` | `/desk:card send --to claude`／`--to agy` 啟動的執行檔（預設 `claude`、`agy`，可帶參數） |
 
+`dispatch.json` 有 JSON 語法錯誤、認不得的鍵（`$schema` 與 `_` 開頭的註解鍵除外）或型別、範圍不對的值時，面板在動態報一筆錯誤並跳通知，寫出是哪個檔、哪個鍵、改用了什麼值；設定照舊改用預設值繼續，不擋派工。同一份內容只報一次，內容改了再看；報過的檔改正、刪掉或不再屬於目前專案時記一筆，問題列跟著收掉。
+
 ## 開發
 
 ```
