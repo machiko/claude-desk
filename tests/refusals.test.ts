@@ -41,7 +41,7 @@ const FOLLOW_TURN = '照「輪到你」做'
 /** 下一步裡提到的鍵：「按 X」與「（X）」。 */
 const keysIn = (next: string): string[] => [...next.matchAll(/按\s*([a-z])(?![a-z])|（([a-z])）/g)].map(m => (m[1] ?? m[2])!)
 
-/** 派工被拒的 19 種，每種一件停在它典型階段的任務。 */
+/** 派工被拒的 20 種，每種一件停在它典型階段的任務。 */
 const CASES: [string, Case, DispatchKind][] = [
   ['登錄表設為 manual', mk({}, { extra: { manual: true } }), 'continue'],
   ['Agent 處理中', mk({}, { agent: BUSY }), 'continue'],
@@ -63,6 +63,8 @@ const CASES: [string, Case, DispatchKind][] = [
   ['發版線按 w', mk({}, { extra: { git: { branch: 'release/v1.4', head: 'h1' } } }), 'review'],
   ['Agent 沒有在等你卻按回覆', mk({}), 'reply'],
   ['其他（手動派解衝突）', mk({}), 'catchup'],
+  // stack-gate AC-3：疊放卡的原卡還沒合併
+  ['等原卡合併', mk({}, { extra: { stackedOn: 'feature/order-export', stackWait: '訂單匯出' } }), 'continue'],
 ]
 
 /** 被拒、有原因與下一步，下一步提到的鍵此刻面板都列著；沒提鍵就要是指令或照「輪到你」做。回傳拒絕。 */
@@ -83,7 +85,7 @@ function expectOfferedNext(label: string, c: Case, kind: DispatchKind): Refusal 
 
 /** AC-3 */
 test('every dispatch refusal has a next step the panel offers', () => {
-  expect(CASES).toHaveLength(19)
+  expect(CASES).toHaveLength(20)
   const whys = new Set<string>()
   for (const [label, c, kind] of CASES) whys.add(expectOfferedNext(label, c, kind).why)
   // 每一種都有自己的原因，沒有被併成同一句通稱

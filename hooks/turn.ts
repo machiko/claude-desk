@@ -107,6 +107,8 @@ export const TURN_TEXT = {
   checkFailed: () => say('g 讓 Agent 修正', '測試未通過，也可自己修好後按 v 重跑'),
   unknownGate: (detail: string) => say('o 開卡片處理關卡', `關卡寫「${detail}」`),
   specOk: (cmd: string) => say('t 確認規格並派實作', `先按 o 看過規格，或輸入 ${cmd}`),
+  specOkStacked: (cmd: string, parent: string) => say('t 確認規格', `原卡「${parent}」合併後才派實作`, `先按 o 看過規格，或輸入 ${cmd}`),
+  stackWait: (parent: string, auto: boolean) => say(`等原卡「${parent}」合併`, auto ? '合併後自動派實作' : '合併後按 g 派實作'),
   specGap: (cmd: string) => say('輸入指令寫驗收情境與實作計畫', cmd),
   missingCheck: () => say('o 開卡片填測試指令', `${MISSING_CHECK_WHY}，在「檢查」欄填一條修之前會紅、修好會綠的指令`),
   idle: () => say('閒置', '卡片沒有下一步'),
@@ -331,12 +333,15 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
     case 'spec':
       if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
       // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
-      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: TURN_TEXT.specOk(`${CARD_CMD} spec ${slugOf(c)} ok`), action: 'spec-ok' }
+      // 疊放卡的原卡還沒合併：照樣能確認規格，只是確認後要等原卡合併才派實作。
+      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: c.stackWait ? TURN_TEXT.specOkStacked(`${CARD_CMD} spec ${slugOf(c)} ok`, c.stackWait) : TURN_TEXT.specOk(`${CARD_CMD} spec ${slugOf(c)} ok`), action: 'spec-ok' }
       if (c.specGap) return { who: 'you', text: TURN_TEXT.specGap(`${CARD_CMD} spec ${slugOf(c)}`) }
       // 規格沒問題（或舊卡沒有規格段），停在這段只因為檢查欄空白、還是 `<…>` 範本佔位或說明文字：請人填一條真的指令。
       return { who: 'you', text: TURN_TEXT.missingCheck(), action: 'open' }
     case 'build':
       if (saysNone(c.next)) return { who: 'none', text: TURN_TEXT.idle() }
+      // 疊放卡的原卡還沒合併：不派實作。這個對話確認規格時記下了就會自動派，否則合併後要你按 g。
+      if (c.stackWait) return { who: 'none', text: TURN_TEXT.stackWait(c.stackWait, !!c.chain?.stackDispatch) }
       // 流程會自動接審查（autoReview）：檢查通過就派審查。不會（主對話開發、done 寫的下一步、別的對話開的流程）：v 只記結果，審查要再按 w。
       // 下一步是派審查：g 派的是繼續，不會審查；先 v 檢查，通過後 w（或流程自動接）。
       if (reviewNext(c.next)) return { who: 'you', text: TURN_TEXT.verifyThenReview(willAutoReview(c) ? autoAfterCheck(c) : '按 w 派驗收'), action: 'verify' }

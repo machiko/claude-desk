@@ -22,7 +22,7 @@ import { checking, isQueued, verifyPending, runVerify } from './verify-runner'
 import { starting, dispatch, unconfirmed } from './dispatch-runner'
 import { JOBS_KEY, feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
 import { isAgentQueued } from './agent-queue'
-import { autoPublish } from './card-actions'
+import { autoPublish, dispatchAfterStack } from './card-actions'
 import { autoPrApplies, autoPrPlan, passWords } from './auto-pr'
 import type { AutoPrPlan } from './auto-pr'
 import { notify, refreshSoon } from './register'
@@ -52,6 +52,14 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     const agentBusy = !!c.agent && !c.agent.asks
     // 寫流程紀錄時整張表一直被別的對話蓋掉、放棄寫入：動態寫一筆（同一件只寫一次）。
     const saveOpts = { warn: { at: s.at, name: c.name, card: c.statusPath } }
+    // 疊放卡的原卡還沒合併：不重新檢查、不派審查、修正或解衝突，停在原地（流程不暫停，原卡合併後照常）。
+    if (c.stackWait) continue
+    // 這個對話確認規格時被原卡擋下、現在不用再等：派一次實作（只試一次，派之前拿掉記號）。
+    // 最後一次派工剛結束、還沒處理（同步不在流程裡、不會標處理過）：先讓下面照常處理那次，處理完下次重新整理再派，不然 jobs.last 被這次蓋掉。
+    if (run?.stackDispatch && run.owner === mine && !tutorial && (!last || !!last.handled || last.kind === 'sync')) {
+      if (await releaseStacked($, options, c, key, mine, s, preloaded)) acted = true
+      continue
+    }
     // 規格沒有驗收情境、六段停在規格段：跟面板一樣不重新檢查、不派審查或修正，流程停下寫原因（停過就不再寫）。
     // 停下後也要跳過：下面審查通過後有新 commit 的重新檢查不看 stopped。
     if (run && run.owner === mine && specBlocks(c)) {
@@ -167,6 +175,25 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     }
   }
   if (acted) refreshSoon($, options)
+}
+
+/**
+ * 疊放卡不用再等原卡、這個對話記著要派實作：沒有 Agent 在跑、排隊、啟動或檢查在跑時，拿掉記號再派一次（只試一次）。
+ * 額度低於門檻不派，動態與提示寫原因、叫你按 g（記號照樣拿掉，不會每次重新整理都重來）。回傳有沒有動作。
+ */
+async function releaseStacked($: any, options: PluginOptions, c: Case, key: string, mine: string, s: Snapshot, preloaded?: DispatchSettings): Promise<boolean> {
+  if (c.agent || c.statusPath in (await read($, verifyingAtom)) || verifyPending(c.statusPath) || isAgentQueued(c.statusPath) || await starting($, c.statusPath)) return false
+  const clear = (r: ChainRun | undefined) => { if (!r?.stackDispatch || r.owner !== mine) return r; const { stackDispatch: _, ...rest } = r; return rest }
+  if (!(await saveChain($, key, clear))) return false
+  const low = quotaLow(s.limits, (await loadSettings($, options, preloaded)).chainQuotaStop, s.at)
+  if (low) {
+    const why = `不用再等原卡，但${low}，沒有自動派實作；要派請按 g`
+    await feedPush($, [{ at: s.at, text: `${c.name} ${why}`, tone: 'warning', card: c.statusPath }])
+    $.ui.toast(`${c.name}：${why}`, { timeoutMs: 10_000 })
+    return true
+  }
+  await dispatchAfterStack($, options, c)
+  return true
 }
 
 /**

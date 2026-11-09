@@ -45,6 +45,7 @@ import { lastLaunches, noteCardAsks, stopEnded, stopSuperseded } from './stale-a
 import { cancelQueued, clearAgentQueue, drainAgentQueue, enqueueDispatch, hasAgentQueue, notSent, queuePosition, readAgentQueue, requeue } from './agent-queue'
 import { archiveCase, confirmShipped, confirmSpec, createRegistry, fillDecision, fillRelease, publishPr, publishPush, openCard, reply, resumeQuotaHeld, stopAgent } from './card-actions'
 import { autoChain } from './auto-chain'
+import { withStackWait } from './stack'
 import { branchesOf, noteRuns } from './run-notes'
 
 const PANE = 'desk'
@@ -135,7 +136,7 @@ export async function refresh($: any, options: PluginOptions) {
     const cardBase = settings?.cardBase ?? ''
     /** Agent id → 這一輪讀到的 `claude logs` 整份輸出：最後一句與打開的 log 檢視共用，同一個 Agent 只讀一次。 */
     const logs = new Map<string, string | null>()
-    const cases: Case[] = await Promise.all(rows.map(async row => {
+    const built: Case[] = await Promise.all(rows.map(async row => {
       const [card, stat] = await Promise.all([
         $.fs.read(row.statusPath).catch(() => null) as Promise<string | null>,
         $.fs.stat(row.statusPath).catch(() => null) as Promise<{ mtimeMs?: number } | null>,
@@ -184,6 +185,8 @@ export async function refresh($: any, options: PluginOptions) {
       const chain = run
         ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: shownStopped(run.stopped), ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.fixTotal ? { fixTotal: run.fixTotal } : {}), ...(run.stopped === MEDIUM_FIX_NOT_SENT && run.mediumFixSecurity ? { mediumSecurity: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(run.passed && run.unreviewed ? { unreviewed: true, ...(run.reviewFix ? { reviewFix: true } : {}) } : {}), ...(skip ? { reviewed: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
         : selfReview ? { round: 0, selfReview: true } : undefined
+      // 這個對話確認疊放卡規格時記下、原卡合併後要自動派實作：「輪到你」才說得出會自動接著做。
+      const stackChain = chain && run?.stackDispatch && run.owner === self ? { ...chain, stackDispatch: true } : chain
       const gitState = probe.git ? await gitStatus($, base.root) : undefined
       // 最後一次 commit 比卡片新：提示按 s 同步。教學的卡片由腳本寫，不提示。
       const commit = probe.git && !tutorial ? await commitTime($, base.root, probe.git.head) : undefined
@@ -218,7 +221,7 @@ export async function refresh($: any, options: PluginOptions) {
       // 最後一次派工怎麼結束：還沒記下時看這一輪的清單（記下 ended 排在發動態之後，`claude stop` 停掉的那一輪靠清單才寫得出「已停止」）。
       const lastEnded = last ? last.ended?.how ?? endedHow(list, last.launchName) : null
       const runTime: RunShown = tutorial ? { runMs: 0 } : runOf(jobs[normalizeRoot(base.root)], probe.git?.branch, runGraceMs(options))
-      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...(runTime.runMs ? { runMs: runTime.runMs } : {}), ...(runTime.runFrom !== undefined ? { runFrom: runTime.runFrom, runUntil: runTime.runUntil } : {}), ...probe, ...(pr ? { pr } : {}), ...(chain ? { chain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}), ...(lastEnded ? { lastEnded } : {}) }
+      const withAgent = { ...rest, ...(agent ? { agent } : {}), ...(runTime.runMs ? { runMs: runTime.runMs } : {}), ...(runTime.runFrom !== undefined ? { runFrom: runTime.runFrom, runUntil: runTime.runUntil } : {}), ...probe, ...(pr ? { pr } : {}), ...(stackChain ? { chain: stackChain } : {}), ...(gitState ? { gitState } : {}), ...(commit ? { commitAt: commit.at, changedAt: commit.changedAt } : {}), ...(steps.length ? { deploySteps: steps } : {}), ...(history.length ? { history } : {}), ...(top.length ? { reviewTop: top } : {}), ...(preflight ? { preflight } : {}), ...(lastEnded ? { lastEnded } : {}) }
       const withState = { ...withAgent, state: stateOf(withAgent, verifies[row.statusPath]) }
       const short = withState.status ? summaries[textKey(withState.status)] ?? compactStatus(withState.status) : undefined
       const stages = (x: Case) => pipeline(x, verifies[row.statusPath], row.statusPath in verifying, isQueued(row.statusPath))
@@ -238,6 +241,8 @@ export async function refresh($: any, options: PluginOptions) {
       const settled = settleMergedAsk(piped, verifies[row.statusPath])
       return { ...settled, state: finalState(settled) }
     }))
+    // 疊放卡要看原卡合併了沒：所有 case 都建好才找得到原卡（教學沒有疊放卡）。
+    const cases: Case[] = tutorial ? built : withStackWait(built)
     // 檢查關閉時當作沒查過：沒有提示，版本格是「檢查並更新」。
     const [usage, deskVersions, check, model, boxes] = await Promise.all([
       $.session.usage().catch(() => null), versions($, cases),
