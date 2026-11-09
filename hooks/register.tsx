@@ -3,11 +3,11 @@
 // 不寫卡、不碰正式環境。教學模式的執行在 tutorial-run.tsx，自動流程在 auto-chain.ts，派工執行時間紀錄在 run-notes.ts，不依賴模組狀態的 I/O 小工具在 desk-io.ts。
 import { atom, read, update } from 'claude-code'
 import type { Register, PluginOptions } from 'claude-code'
-import type { AgentInfo, Case, Snapshot, Verify } from '../types'
+import type { AgentInfo, Case, FeedEvent, Snapshot, Verify } from '../types'
 import { CARD_CMD, parseRegistry } from './card'
 import { buildCase, caseNamed, demoCases, events, feedOnDesk, stateOf, settleMergedAsk } from './model'
 import { plain, errorText, parseOsc7501 } from './text'
-import { agentLog, beaconProbe, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLineOf, loadSettings, logTail, logTailOf, mergedProbe, models, prProbe, riskOf, versions, verifyResult } from './probes'
+import { agentLog, beaconProbe, clearProbeCaches, commitTime, conflictProbe, containers, deskPaths, diffBase, gitProbe, gitStatus, home, lastLineOf, loadSettings, logTail, logTailOf, mergedProbe, models, prProbe, riskOf, settingsReport, versions, verifyResult } from './probes'
 import { deploySteps, historyEntries, parseReminders, preflightLine, reviewTop } from './extras'
 import { layoutBand, renderBand } from './band'
 import { renderPane, picksKey, moreKeyOf } from './pane'
@@ -15,7 +15,7 @@ import type { PaneActions, PaneView } from './pane'
 import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatchRefusal, refusalOf, refusalText } from './dispatch'
 import { runOf } from './run-time'
 import { launchName, runningDeskAgents, agentsByRoot, applyOscToAgent, endedAlive, endedHow, rawAgents, supersede, asksFor, agentInfo, askClearedOnCard } from './agents'
-import { modelFor, normalizeRoot, pitfallsFor } from './settings'
+import { modelFor, normalizeRoot, pitfallsFor, settingsFeedText } from './settings'
 import type { DispatchKind, QueueOpts, ReviewOpts, UntrustedHold } from './dispatch'
 import type { RawAgent } from './agents'
 import type { RunShown } from './run-time'
@@ -102,7 +102,25 @@ let idleSkips = 0
 export let optionsRef: PluginOptions | undefined
 /** 卡片解析結果：卡片內容與修改時間都沒變才沿用（歷程的未來時間看修改時間判斷）。 */
 const cardParseCache = new Map<string, { raw: string; mtime: number | null; steps: string[]; history: any[] }>()
+/** dispatch.json 路徑 → 這個對話上次檢查過的內容：內容沒變就不再報，改了（變成別種錯、改正）才重新看。 */
+const settingsSeen = new Map<string, string>()
 const reviewTextCache = new Map<string, { raw: string; top: any[]; preflight: string | undefined }>()
+
+/**
+ * 設定檔的新問題（不屬於任何一件的錯誤動態）：內容跟上次檢查過的一樣就不報；沒問題的內容也記下，之後改壞了才報。
+ * 讀不到（刪掉）的忘掉，再建同樣的壞檔會再報一次。只報告，派工與流程照舊用解析出的設定。
+ */
+async function settingsNews($: any, options: PluginOptions, at: number): Promise<FeedEvent[]> {
+  const reports = await settingsReport($, options).catch(() => [])
+  const news: FeedEvent[] = []
+  for (const r of reports) {
+    if (r.text === null) { settingsSeen.delete(r.path); continue }
+    if (settingsSeen.get(r.path) === r.text) continue
+    settingsSeen.set(r.path, r.text)
+    if (r.problems.length) news.push({ at, text: settingsFeedText(r.path, r.problems), tone: 'error' })
+  }
+  return news
+}
 
 /** 讀一輪：登錄表 → 每張卡＋檔案時間 → 背景 agent → 快照；差異進動態與 toast。 */
 export async function refresh($: any, options: PluginOptions) {
@@ -259,7 +277,7 @@ export async function refresh($: any, options: PluginOptions) {
       await update($, feedAtom, list => feedOnDesk(list, cur.cases))
     }
     const prev = await read($, snapshot)
-    const fresh = events(prev, cur)
+    const fresh = [...events(prev, cur), ...(tutorial ? [] : await settingsNews($, options, now))]
     await update($, snapshot, () => cur)
     if (approvals === trustWrites) await update($, trustedAtom, () => trusted)
     // 失敗之後這件又有 Agent 開過：「還沒信任」不再成立，三步不再出現。
@@ -456,6 +474,7 @@ export const register: Register = (on, options) => {
     publishRequeried.clear()
     cardParseCache.clear()
     reviewTextCache.clear()
+    settingsSeen.clear()
     setTutorial(null)
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined

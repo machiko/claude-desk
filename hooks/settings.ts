@@ -146,3 +146,145 @@ export function modelFor(settings: DispatchSettings, root: string, kind: Dispatc
   // 推送只要分支與卡片，開新對話就夠了，不接任務那個越來越長的 session。
   return { model: byKind.model ?? base.model, effort: byKind.effort ?? base.effort, fresh: kind === 'review' || kind === 'publish' }
 }
+
+// ── 設定檔驗證：指出 dispatch.json 哪裡寫錯、改用了什麼。只報告，不改 parseSettings 的解析結果。──
+
+/** card.py 的 DEFAULT_SPEC_PREFLIGHT_MIN_FILES：card.specPreflightMinFiles 不合法時 card.py 改用的值，兩邊要一致。 */
+const CARD_SPEC_PREFLIGHT_MIN_FILES = 3
+/** card.py 的 KAC：card.changelog.format 唯一認得的值。 */
+const CHANGELOG_FORMAT = 'keepachangelog'
+
+/** 檢查一個值；認不得的鍵記進 unknown（完整路徑），寫錯的值記進 bad（含改用的值）。 */
+type Found = { unknown: string[]; bad: string[] }
+type Check = (v: unknown, path: string, found: Found) => void
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+/** `$schema` 與 `_` 開頭的鍵是註解，不算認不得。 */
+const isNoteKey = (k: string) => k === '$schema' || k.startsWith('_')
+/** null 跟沒寫一樣：解析時都落到預設值，不報。 */
+const unset = (v: unknown) => v === undefined || v === null
+
+const aString = (instead: string): Check => (v, path, found) => {
+  if (!unset(v) && typeof v !== 'string') found.bad.push(`${path} 不是字串，${instead}`)
+}
+const textList: Check = (v, path, found) => {
+  if (unset(v)) return
+  if (!Array.isArray(v)) found.bad.push(`${path} 不是字串陣列，視為沒設`)
+  else if (v.some(x => typeof x !== 'string')) found.bad.push(`${path} 有不是字串的項目，那幾項略過`)
+}
+const onlyTrue: Check = (v, path, found) => {
+  if (!unset(v) && typeof v !== 'boolean') found.bad.push(`${path} 只認 JSON 的 true，視為關`)
+}
+const onlyFalse: Check = (v, path, found) => {
+  if (!unset(v) && typeof v !== 'boolean') found.bad.push(`${path} 只認 JSON 的 false，視為開`)
+}
+const intAtLeast = (min: number, words: string, used: number): Check => (v, path, found) => {
+  if (!unset(v) && !(Number.isInteger(v) && (v as number) >= min)) found.bad.push(`${path} 不是${words}，改用 ${used}`)
+}
+const shape = (fields: Record<string, Check>): Check => (v, path, found) => {
+  if (unset(v)) return
+  if (!isPlainObject(v)) { found.bad.push(`${path} 不是物件，整段略過`); return }
+  for (const [k, x] of Object.entries(v)) {
+    if (isNoteKey(k)) continue
+    const at = path ? `${path}.${k}` : k
+    const check = Object.prototype.hasOwnProperty.call(fields, k) ? fields[k] : undefined
+    if (check) check(x, at, found)
+    else found.unknown.push(at)
+  }
+}
+/** 鍵由使用者自訂（根目錄、指令名）的物件：每個值照 each 檢查。 */
+const mapOf = (each: Check): Check => (v, path, found) => {
+  if (unset(v)) return
+  if (!isPlainObject(v)) { found.bad.push(`${path} 不是物件，整段略過`); return }
+  for (const [k, x] of Object.entries(v)) if (!isNoteKey(k)) each(x, `${path}.${k}`, found)
+}
+
+const modelEffort = { model: aString('視為沒設'), effort: aString('視為沒設') }
+
+const riskHigh: Check = (v, path, found) => {
+  if (unset(v)) return
+  if (!Array.isArray(v)) { found.bad.push(`${path} 不是陣列，整段略過`); return }
+  v.forEach((r, i) => {
+    const at = `${path}[${i}]`
+    if (!isPlainObject(r)) { found.bad.push(`${at} 不是物件，這條略過`); return }
+    shape({ pattern: () => {}, label: () => {} })(r, at, found)
+    if (!str(r.pattern) || !str(r.label)) { found.bad.push(`${at} 少了 pattern 或 label，這條略過`); return }
+    try { new RegExp(str(r.pattern)) } catch (e) { found.bad.push(`${at} 的正規式寫錯（${e instanceof Error ? e.message : String(e)}），這條略過`) }
+  })
+}
+
+const syncSession: Check = (v, path, found) => {
+  if (!unset(v) && v !== 'fresh') found.bad.push(`${path} 只認 "fresh"，視為接著任務原本的對話`)
+}
+const updateCheck: Check = (v, path, found) => {
+  if (unset(v) || typeof v === 'boolean' || (typeof v === 'string' && v.trim().toLowerCase() === 'off')) return
+  found.bad.push(`${path} 只認 "off"，照常檢查新版本`)
+}
+const chainQuotaStop: Check = (v, path, found) => {
+  const off = v === false || (typeof v === 'string' && v.trim().toLowerCase() === 'off')
+  if (unset(v) || off || (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100)) return
+  found.bad.push(`${path} 要是 1–100 的整數或 "off"，改用 ${DEFAULT_CHAIN_QUOTA_STOP}`)
+}
+const changelogFormat: Check = (v, path, found) => {
+  if (unset(v)) return
+  if (typeof v !== 'string') found.bad.push(`${path} 不是字串，照原本的格式`)
+  else if (v.trim() && v.trim() !== CHANGELOG_FORMAT) found.bad.push(`${path} 只能是 "${CHANGELOG_FORMAT}"，合併 changelog 時會停下報錯`)
+}
+
+/** dispatch.json 認得的鍵：parseSettings 讀的，加上 card.py 讀的 card.*（README 與 card.py 說明列的那些）。 */
+const SETTINGS_SHAPE = shape({
+  ...modelEffort,
+  sync: shape({ claude: shape(modelEffort), session: syncSession }),
+  kinds: shape(Object.fromEntries(MODEL_KINDS.map(k => [k, shape(modelEffort)]))),
+  projects: mapOf(shape({ ...modelEffort, rules: textList })),
+  user: aString(`改用「${DEFAULT_USER}」`),
+  rules: textList,
+  review: shape({
+    high: aString('改用預設'), security: aString('改用預設'), categories: aString('改用預設'),
+    template: aString('改用內附的'), preflight: aString('視為沒設'), pitfalls: aString('視為沒設'),
+    preflightMinFiles: intAtLeast(0, '非負整數', 0), combineSecurity: onlyTrue,
+  }),
+  risk: shape({ high: riskHigh }),
+  checkServices: mapOf(textList),
+  composeDir: aString('視為沒設'),
+  card: shape({
+    main: aString('視為沒設'), worktrees: aString('改用預設'), base: aString('視為沒設'), check: aString('視為沒設'),
+    registry: aString('改用預設'), template: aString('改用內附的'), archive: aString('改用預設'),
+    specRules: textList, specPreflight: aString('視為沒設'),
+    specPreflightMinFiles: intAtLeast(1, '正整數', CARD_SPEC_PREFLIGHT_MIN_FILES),
+    retro: aString('視為沒設'), changelog: shape({ format: changelogFormat }),
+  }),
+  pr: shape({ open: aString('視為沒設') }),
+  updateCheck,
+  maxAgents: intAtLeast(0, '非負整數', DEFAULT_MAX_AGENTS),
+  autoPr: onlyTrue,
+  mcp: onlyTrue,
+  stopDone: onlyFalse,
+  chainQuotaStop,
+})
+
+/**
+ * 一份 dispatch.json 的問題，每條一句：JSON 語法錯、最外層不是物件（整份沒套用）、認不得的鍵（完整路徑，已略過）、
+ * 型別或範圍錯的值（寫出實際改用的值）、risk.high 寫錯的正規式。空檔與只有空白跟沒有這份一樣，不報。
+ * 只報告：解析照 parseSettings、疊加照 mergeSettingsText，結果不因這裡改變。
+ */
+export function settingsProblems(text: string): string[] {
+  const body = text.replace(/^\uFEFF/, '')
+  if (!body.trim()) return []
+  let d: unknown
+  try { d = JSON.parse(body) } catch { return ['JSON 格式錯誤，這份設定沒有套用'] }
+  if (!isPlainObject(d)) return ['最外層不是物件，這份設定沒有套用']
+  const found: Found = { unknown: [], bad: [] }
+  SETTINGS_SHAPE(d, '', found)
+  return [...(found.unknown.length ? [`認不得的鍵，已略過：${found.unknown.join('、')}`] : []), ...found.bad]
+}
+
+/** 最多列幾條問題，其餘寫「等 n 條」。 */
+export const SETTINGS_PROBLEMS_SHOWN = 3
+
+/** 動態的一句：哪份檔、前幾條問題。 */
+export function settingsFeedText(path: string, problems: readonly string[]): string {
+  const shown = problems.slice(0, SETTINGS_PROBLEMS_SHOWN).join('；')
+  const more = problems.length > SETTINGS_PROBLEMS_SHOWN ? ` 等 ${problems.length} 條` : ''
+  return `設定檔 ${path} 有問題：${shown}${more}`
+}

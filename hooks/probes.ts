@@ -6,7 +6,7 @@ import { expandHome } from './card'
 import { beaconAgentInfo, beaconRootOf, isBeaconId, parseBeaconJson } from './agents'
 import { lastMeaningful, parseOsc7501, plain } from './text'
 import { summarizeCheck } from './verify-summary'
-import { MODEL_KINDS, modelFor, normalizeRoot, parseSettings } from './settings'
+import { MODEL_KINDS, modelFor, normalizeRoot, parseSettings, settingsProblems } from './settings'
 import { REVIEW_FILE, SECURITY_FILE } from './prompts/review'
 import { markOf } from './worktree-mark'
 import type { DispatchSettings, ModelKind } from './settings'
@@ -535,6 +535,19 @@ export async function loadSettings($: any, options: PluginOptions, preloaded?: D
   const read = (path: string | null) => path ? $.fs.read(path).catch(() => null) as Promise<string | null> : Promise.resolve(null)
   const [own, project] = await Promise.all([read(paths.settings), read(paths.projectSettings)])
   return parseSettings(mergeSettingsText(own, project))
+}
+
+/** 一份 dispatch.json 讀到的內容與問題；讀不到（不存在）時 text 是 null、沒有問題。 */
+export type SettingsReport = { path: string; text: string | null; problems: string[] }
+
+/** 全域與目前專案的 dispatch.json（路徑同 loadSettings）各自檢查；不疊加，問題才知道是哪一份的。 */
+export async function settingsReport($: any, options: PluginOptions): Promise<SettingsReport[]> {
+  const paths = await deskPaths($, options)
+  const files = [...new Set([paths.settings, ...(paths.projectSettings ? [paths.projectSettings] : [])])]
+  return Promise.all(files.map(async path => {
+    const text = await ($.fs.read(path) as Promise<string>).catch(() => null)
+    return { path, text, problems: text === null ? [] : settingsProblems(text) }
+  }))
 }
 
 /** 主工作區的容器：docker compose ps；Docker 沒開或讀不到就記錯誤，不擋其他東西。 */
