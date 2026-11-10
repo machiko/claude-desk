@@ -14,6 +14,7 @@ import { CHAIN_KEY, JOBS_KEY, TRUST_KEY, VERIFIES_KEY, feedPush, loadChains, loa
 import type { Timer } from './desk-io'
 import { refreshing, refresh, openPane, optionsRef } from './register'
 import { dispatchAfterSpec } from './card-actions'
+import { engineWarningLine } from './engine-version'
 
 // 引擎規定：read／update 的 atom 必須在同一個檔案用 const 宣告（同 plugin、同 key 就是同一份狀態）。
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
@@ -213,9 +214,16 @@ export async function tutorialEnd($: any, options: PluginOptions): Promise<strin
     removed = !!r && r.exitCode === 0
   }
   await clearView($, null)
+  await restoreEngineWarning($)
   await refresh($, options)
   if (!existed) return '目前沒有教學沙盒。'
   return removed ? '教學已結束，沙盒已刪除；面板回到你的任務。' : `教學已結束，但沙盒刪不掉，請自己刪除 ${p.dir}`
+}
+
+/** 教學結束清掉動態後，Claude Code 太舊（或讀不到版本）的那行警告補回動態：不帶卡片、不跳 toast（開對話時已經跳過）；版本夠新不補。 */
+async function restoreEngineWarning($: any) {
+  const line = await engineWarningLine($)
+  if (line) await feedPush($, [{ at: await $.clock.now(), text: line, tone: 'warning' }])
 }
 
 /** 一件任務在 desk 自己 store 裡的紀錄（派工、流程、檢查結果）全部清掉。 */

@@ -38,6 +38,7 @@ import { SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadC
 import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
+import { t } from './i18n'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
 import { noteReleased, noteReleasedNow } from './release-update'
 import { checkEngineVersion } from './engine-version'
@@ -78,7 +79,7 @@ const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, nul
 const trustedAtom = atom({ plugin: 'desk', key: 'trusted' } as const, {} as Record<string, string>)
 /** 設定檔驗證上次檢查過的 dispatch.json（路徑 → 內容與問題）：跟動態放在同一處，動態裡的舊錯誤在，這份紀錄也在。 */
 const settingsCheckedAtom = atom({ plugin: 'desk', key: 'settingsChecked' } as const, {} as SettingsChecked)
-/** 已報過的較新格式（卡片、登錄表 → 版號）：跟動態一起在教學開始／結束與 /desk off 清掉，同一份檔同一個版號只報一次。 */
+/** 已報過的較新格式（卡片、登錄表 → 版號）：跟動態一起在教學開始／結束清掉，同一份檔同一個版號只報一次；/desk off 不清動態，紀錄也留著。 */
 const formatsSeenAtom = atom({ plugin: 'desk', key: 'formatsSeen' } as const, {} as FormatsSeen)
 /** 最近一次畫面 content 最多能捲到第幾列；捲動 hook 用它夾住位置（模組變數，重載後下一次畫就補上）。 */
 let maxOffset = 0
@@ -411,7 +412,6 @@ async function stop($: any) {
   soonTimer?.cancel(); soonTimer = undefined
   cancelPromptSync()
   await clearAgentQueue($)
-  await update($, formatsSeenAtom, () => ({}))
   $.ui.status(undefined)
   await update($, snapshot, () => null)
   await $.ui.close({ id: PANE }).catch(() => {})
@@ -532,7 +532,7 @@ export const register: Register = (on, options) => {
     await clearAgentQueue($)
     // 載入計數：更新後 /reload-plugins 被拒時，看新版是不是其實已經載入了。
     await markLoaded($)
-    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 回輸入框）；close 收起；refresh 重新整理；go|sync|review|reply <任務名> [回覆] 派工；verify|open <任務名> 執行測試／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範任務）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <任務名>|bar|update|tutorial [end]|off]' })
+    await $.command.register({ name: 'desk', description: t('register.deskDescription'), argumentHint: t('register.deskArgumentHint') })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
     const id = await $.session.id().catch(() => null)
     const list = ((await $.store.get(SESSIONS_KEY).catch(() => null)) as string[] | null) ?? []

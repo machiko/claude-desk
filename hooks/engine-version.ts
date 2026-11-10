@@ -1,8 +1,10 @@
 // Claude Code 最低版本檢查：互動對話開始時看引擎版本，比 desk 支援的舊（或讀不到）就提示一次要更新到哪一版；只提示，不擋 desk 啟動。
 // 每個引擎版本只報一次，報過的版號記在 $.store（各對話共用），重開對話、重新載入都不再報；換成另一個仍太舊的版本才再報。
+// 教學開始／結束會清掉動態：教學結束時把目前版本該有的那行補回動態（engineWarningLine），不再跳 toast、不改報過的紀錄。
 // 最低版本跟 README「需要什麼」與 CI 安裝的版本是同一個，三處一起改（scripts/tests/test_min_claude_code_version.py 會比對）。
 // 跨檔傳 $ 的函式一律用 function 宣告（箭頭函式會被引擎掃描拒絕載入）。
 
+import { t } from './i18n'
 import { compareVersions } from './update'
 
 export const MIN_CLAUDE_CODE = '2.1.302'
@@ -11,8 +13,8 @@ export const ENGINE_NOTIFIED_KEY = 'engineVersionNotified'
 /** 讀不到版本時記在 store 的版號：只報一次。 */
 export const UNKNOWN_VERSION = 'unknown'
 
-export const tooOldText = (version: string) => `Claude Code ${version} 比 desk 需要的最低版本 ${MIN_CLAUDE_CODE} 舊，請更新 Claude Code（claude update）`
-export const unknownVersionText = `讀不到 Claude Code 版本，desk 以 ${MIN_CLAUDE_CODE} 開發，太舊可能無法使用`
+export const tooOldText = (version: string) => t('engineVersion.tooOld', { version, min: MIN_CLAUDE_CODE })
+export const unknownVersionText = t('engineVersion.unknown', { min: MIN_CLAUDE_CODE })
 
 export type VersionNotice = { key: string; text: string }
 
@@ -34,6 +36,18 @@ async function engineVersion($: any): Promise<string | null> {
     const v = await $.session.version().catch(() => null)
     const base = typeof v?.base === 'string' && v.base.trim() ? v.base : null
     return base ?? (typeof v?.version === 'string' && v.version.trim() ? v.version : null)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 目前引擎版本該有的那句警告（夠新回 null），不看也不記 store 的報過紀錄：教學結束清掉動態後補回那一行用。
+ * 讀不到版本時是讀不到的那句；出錯回 null，不丟例外。
+ */
+export async function engineWarningLine($: any): Promise<string | null> {
+  try {
+    return versionNotice(await engineVersion($), null)?.text ?? null
   } catch {
     return null
   }

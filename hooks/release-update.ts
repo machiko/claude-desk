@@ -8,6 +8,7 @@ import type { PluginOptions } from 'claude-code'
 import { parseCard, parseRegistry, projectRoot } from './card'
 import type { RegistryRow } from './card'
 import { feedPush, tellPanel } from './desk-io'
+import { t } from './i18n'
 import { deskPaths, home } from './probes'
 import { isNewer } from './update'
 import { runUpdate } from './update-run'
@@ -19,6 +20,7 @@ export const RELEASE_UPDATE_KEY = 'releaseUpdate'
 export type ReleaseUpdate = { version: string; name: string; handled: boolean }
 type Released = { version: string; name: string }
 
+/** 解析契約：認卡片狀態裡發版步驟寫的「已發版 v<版號>」，不是顯示用的句子，不搬進字串目錄。 */
 const RELEASED = /已發版\s*v?(\d+(?:\.\d+)+)/
 
 /** 卡片狀態寫的「已發版 v<版號>」裡的版號；沒寫就是 null。 */
@@ -82,7 +84,7 @@ export async function afterReleaseUpdate($: any, loadedVersion: string | undefin
   await $.store.set(RELEASE_UPDATE_KEY, handled)
   if (loadedVersion && !isNewer(noted.version, loadedVersion)) return
   const now = await $.clock.now()
-  const text = `${noted.name} 已發版 v${noted.version}：自動更新 desk`
+  const text = t('releaseUpdate.autoUpdate', { name: noted.name, version: noted.version })
   await feedPush($, [{ at: now, text, tone: 'suggestion' }])
   await tellPanel($, now, text)
   await runUpdate($)

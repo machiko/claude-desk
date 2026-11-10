@@ -23,7 +23,7 @@ test('test_new_card_and_registry_carry_format_marker', () => {
   expect(registryFormat('# 任務登錄表\n\n| Project | 卡片路徑 |\n| --- | --- |\n')).toBe(1)
 })
 
-/** 格式版本標記 AC-2：較新格式的卡警告一次（寫卡名）、照常顯示、不自動派工；手動派工也拒絕。/desk off 清掉報過的紀錄，重開再報。 */
+/** 格式版本標記 AC-2：較新格式的卡警告一次（寫卡名）、照常顯示、不自動派工；手動派工也拒絕。/desk off 之後不再報見 0.63 收尾卡 AC-1 的測試。 */
 test('test_newer_card_format_warns_once_and_blocks_auto_dispatch', async ($, on) => {
   const { data, clock } = fixture(on)
   const feed = feedLog(on)
@@ -76,17 +76,56 @@ test('test_newer_card_format_warns_once_and_blocks_auto_dispatch', async ($, on)
   expect(data.launches.length).toBe(1)
   expect(data.toasts).toContain(`Alpha：無法繼續（${NEWER_CARD_WHY}）；輸入 /desk update 更新 desk`)
 
-  // /desk off 清掉報過的紀錄：重開後再報一次
-  await $.command.run({ command: 'desk', args: 'off' } as any)
-  await refresh()
-  expect(warnings()).toHaveLength(2)
-  await refresh()
-  expect(warnings()).toHaveLength(2)
-
   // 卡片回到認得的格式：不再擋派工、不再報
   data.files[CARD_A] = data.files[CARD_A]!.replace('<!-- DESK 格式=2：工作桌只讀這個區塊。 -->', '<!-- DESK 格式=1：工作桌只讀這個區塊。 -->')
   await refresh()
-  expect(warnings()).toHaveLength(2)
+  expect(warnings()).toHaveLength(1)
+})
+
+/** 較新格式的卡：Alpha 的開頭標記改成格式 2；回傳面板會報的那一句。 */
+function newerAlpha(data: { files: Record<string, string> }): string {
+  data.files[CARD_A] = data.files[CARD_A]!.replace('<!-- DESK -->', '<!-- DESK 格式=2：工作桌只讀這個區塊。 -->')
+  return newerFormatText({ kind: 'card', path: CARD_A, name: 'Alpha', format: 2 })
+}
+
+/** 0.63 收尾卡 AC-1：/desk off 不清動態，報過的紀錄也留著；再打開 /desk 不重複寫動態、不再跳 toast。 */
+test('test_desk_off_and_on_does_not_repeat_newer_format_warning', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const feed = feedLog(on)
+  const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
+  const warning = newerAlpha(data)
+  await refresh()
+  expect(feed.list.filter(e => e.text === warning)).toHaveLength(1)
+
+  await $.command.run({ command: 'desk', args: 'off' } as any)
+  await clock.settle()
+  await refresh()
+  await refresh()
+
+  expect(feed.list.filter(e => e.text === warning)).toHaveLength(1)
+  expect(data.toasts.filter(t => t === warning)).toHaveLength(1)
+})
+
+/** 0.63 收尾卡 AC-1：教學開始／結束清掉動態時報過的紀錄一起清；清除點之前只報一次，之後照舊再報一次（同樣只一次）。 */
+test('test_tutorial_clear_point_reports_newer_format_again', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const feed = feedLog(on)
+  const refresh = async () => { await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle() }
+  const warning = newerAlpha(data)
+  await refresh()
+  await refresh()
+  expect(feed.list.filter(e => e.text === warning)).toHaveLength(1)
+  expect(data.toasts.filter(t => t === warning)).toHaveLength(1)
+
+  await $.command.run({ command: 'desk', args: 'tutorial' } as any)
+  await clock.settle()
+  expect(feed.list.filter(e => e.text === warning)).toHaveLength(0)
+  await $.command.run({ command: 'desk', args: 'tutorial end' } as any)
+  await clock.settle()
+  await refresh()
+
+  expect(feed.list.filter(e => e.text === warning)).toHaveLength(1)
+  expect(data.toasts.filter(t => t === warning)).toHaveLength(2)
 })
 
 /** 格式版本標記 AC-4：登錄表標記是格式 2 時動態警告一次，表格照常讀；格式 1 與沒有標記不報。 */
