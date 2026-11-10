@@ -114,6 +114,6 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 
 ## 面板文字（改 desk 自己時）
 
-- 面板、動態、toast 與指令說明的句子集中在字串目錄 `hooks/i18n/zh-TW.ts`：鍵用「檔名.用途」（例如 `update.notice`、`stack.waitWhy`），參數寫成 `{name}`，程式用 `t('stack.waitWhy', { name })` 取。目錄沒有的鍵、少給參數，型別檢查就不過。
+- 面板、動態、toast 與指令說明的句子集中在字串目錄 `hooks/i18n/zh-TW.ts`：鍵用「檔名.用途」（例如 `update.notice`、`stack.waitWhy`），參數寫成 `{name}`，程式用 `t('stack.waitWhy', { name })` 取。目錄沒有的鍵、少給或多給參數，`scripts/tests/test_i18n_types.py` 會紅（CI 與完成檢查都跑）：能單獨編的檔用 tsc 檢查，要 Claude Code 型別的檔逐一比對 `t()` 呼叫，所以參數要寫成物件字面值。
 - 不搬進目錄的：卡片欄位名（「狀態」「等你」…）、解析用的句子與正規式（例如「已發版 v<版號>」）、教學卡片本文、給 Agent 的提示（`hooks/prompts/`）。
 - 已搬完的檔列在 `scripts/tests/test_i18n_migrated.py` 的 `MIGRATED`：這些檔再直接寫中文，測試會列出「檔:行」；搬完一個檔就往清單加。刻意留在原處的字（欄位名、解析契約）寫進同一支的 `KEPT` 並註明原因。目錄裡沒人用的鍵也會讓測試失敗。

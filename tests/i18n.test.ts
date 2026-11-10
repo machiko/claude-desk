@@ -1,4 +1,4 @@
-// 字串目錄的取字：t(key, params) 照句子裡 {name} 的位置填參數，少給參數丟錯；目錄沒有的鍵與參數名由型別檢查擋（claude plugin test）。
+// 字串目錄的取字：t(key, params) 照句子裡 {name} 的位置填參數，少給參數丟錯；目錄沒有的鍵與參數名由型別檢查擋（claude plugin test 不做型別檢查，由 scripts/tests/test_i18n_types.py 跑 tsc）。
 import { expect, test } from 'claude-code/testing'
 import { t } from '../hooks/i18n'
 
