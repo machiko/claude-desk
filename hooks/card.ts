@@ -207,7 +207,7 @@ export function picksOf(decisions: Decision[], answer: string): Record<string, s
   return Object.fromEntries(tokens.map(t => t.match(/^(\d+)-?([A-Za-z]|\d{1,2})$/)).filter((m): m is RegExpMatchArray => !!m).map(m => [String(Number(m[1]) - 1), m[2]!.toUpperCase()]))
 }
 
-/** 審查寫進「等你」的 MEDIUM 題：寫法見 prompts/review.ts 的 MEDIUM_ASK_FORM（A 不修／B 另開卡修／C 修掉／D 改規格）。 */
+/** 舊卡「等你」裡的 MEDIUM 題（新審查不再出題）：寫法見 prompts/review.ts 的 MEDIUM_ASK_FORM（A 不修／B 另開卡修／C 修掉／D 改規格）。 */
 const REVIEW_MEDIUM_ASK = /^審查 MEDIUM \d+ 條/
 
 /** 這次送出的答案裡，審查 MEDIUM 那題選的選項文字以 `prefix` 開頭：照文字認，不照字母（舊卡的題目可能還是舊的字母順序）。 */
