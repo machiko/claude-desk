@@ -3,8 +3,8 @@ import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
 import { shownStopped } from './chain'
-import { specGapStop as specGapStopOf, stopCodeOf, stopText } from './stop-reason'
-import type { StopReason } from './stop-reason'
+import { specGapStop as specGapStopOf, stopCodeOf } from './stop-reason'
+import type { StopCause, StopReason } from './stop-reason'
 import type { ChainRun } from './chain'
 import { UUID, agentWaits, approvalWait } from './agents'
 import { slugOf } from './text'
@@ -230,7 +230,6 @@ export const specBlocks = (c: Case) => !!c.specGap && (c.pipeline ? c.pipeline.c
 /** specBlocks 時不能派工的原因：手動派工的拒絕與自動流程停下都用這句。 */
 /** 規格沒有驗收情境的停下原因（流程紀錄存代碼）與同一句的顯示。 */
 export const specGapStop = (c: Case): StopReason => specGapStopOf(slugOf(c))
-export const specGapReason = (c: Case) => stopText(specGapStop(c))
 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 export const PUBLISH_ONLY_AT_MERGE = '只有合併段還要 push 或開 PR 時才能推送'
@@ -347,8 +346,9 @@ export const NO_PUSH_NEEDED = '已不需要推送（PR 已開且分支已是最�
  * 不看 state——審查有 CRITICAL／HIGH、流程還在時 stateOf 回 running，看 state 會把排隊的修正當成執行中丟掉。
  * 停在權限提示的 Agent 也算（同一個 worktree 不多開一個），原因寫在等權限批准，你才知道要去批准。
  * 自動排的推送（審查過關後）不看流程：過關後流程不再動，只看還要不要推。
+ * 規格缺口回代碼（StopReason）：沒派出時會寫進流程紀錄，跟 autoChain 直接停下存的一樣；其他原因照舊是句子。
  */
-export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
+export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): StopCause {
   if (!entry.opts.auto || c.newerFormat) return dispatchRefusal(c, entry.kind)
   if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
   // 疊放卡的原卡還沒合併：自動排的一律不派（手動排的由 dispatchRefusal 擋）。
@@ -356,7 +356,7 @@ export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, 
   if (entry.kind === 'publish') return isMerged(c) ? '已經合併' : !needsPr(c) && !needsPush(c) ? NO_PUSH_NEEDED : ''
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
   if (run.stopped) return `流程已暫停（${shownStopped(run.stopped, run.stopArgs)}）`
-  if (specBlocks(c)) return specGapReason(c)
+  if (specBlocks(c)) return specGapStop(c)
   if (isMerged(c)) return '已經合併'
   return ''
 }

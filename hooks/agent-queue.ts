@@ -16,7 +16,7 @@ import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
 import { loadSettings, worktreeMark } from './probes'
 import { quotaHold, quotaLow } from './model'
 import { causeText } from './stop-reason'
-import type { StopCause } from './stop-reason'
+import type { StopCause, StopReason } from './stop-reason'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, notify, restage, verifyPending } from './register'
 import { pauseUnsentReviewFix } from './auto-chain'
@@ -131,10 +131,11 @@ function queuedOpts(c: Case, entry: QueueEntry): QueueEntry['opts'] {
 /**
  * 排隊的自動項目被額度煞車擋下的原因：推送寫要推請按哪個鈕（不暫停流程）；解衝突照直接派被擋時的結尾（合併段沒有 g，在對話處理）；其他按 g 重開。
  */
-function queuedHold(entry: QueueEntry, c: Case | undefined, s: Snapshot, threshold: number): StopCause {
+function queuedHold(entry: QueueEntry, c: Case | undefined, hold: StopReason, s: Snapshot, threshold: number): StopCause {
+  // 推送不暫停流程（不寫進流程紀錄），原因只進動態，照舊是句子。
   if (entry.kind === 'publish') return `${quotaLow(s.limits, threshold, s.at)}，要推請按 ${c?.pr?.state === 'OPEN' ? '⇡ push' : '⇡ 開 PR'}`
-  // 呼叫端先看過 quotaLow 不是空的：這裡一定有停下原因。
-  return quotaHold(s.limits, threshold, s.at, entry.kind === 'catchup') ?? quotaLow(s.limits, threshold, s.at)
+  // 會停下流程的一律存代碼：hold 是呼叫端算好的審查段煞車，解衝突換成合併段那種（同一份額度，一定也低於門檻）。
+  return entry.kind === 'catchup' ? quotaHold(s.limits, threshold, s.at, true) ?? hold : hold
 }
 
 /**
@@ -147,7 +148,7 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
   const settings = await loadSettings($, options, preloaded)
   const max = settings.maxAgents
   // 額度煞車：自動流程排的（含自動推送）輪到時額度低於門檻就不派；你手動排的不看額度。
-  const low = quotaLow(s.limits, settings.chainQuotaStop, s.at)
+  const hold = quotaHold(s.limits, settings.chainQuotaStop, s.at)
   const chains = await loadChains($)
   const mine = await me($)
   const trusted = await trustedChecks($)
@@ -160,7 +161,7 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     if (why) { await drop($, entry, c, why, s.at, mine); continue }
     // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開，改寫要推請按哪個鈕（跟過關時直接派被擋的說法一樣）。
     // 你按 g 接續的那筆（resumed）是手動派的：不看額度。
-    if (low && entry.opts.auto && !entry.opts.resumed) { await drop($, entry, c, queuedHold(entry, c, s, settings.chainQuotaStop), s.at, mine, true, queuedResume(entry, chains[normalizeRoot(c.root)])); continue }
+    if (hold && entry.opts.auto && !entry.opts.resumed) { await drop($, entry, c, queuedHold(entry, c, hold, s, settings.chainQuotaStop), s.at, mine, true, queuedResume(entry, chains[normalizeRoot(c.root)])); continue }
     if (verifyPending(entry.statusPath)) continue
     const foreign = await foreignChanges($, c!, entry)
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }

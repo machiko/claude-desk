@@ -261,6 +261,31 @@ test('queued auto dispatches recheck the worktree and keep an existing pause rea
   await ui.unmount()
 })
 
+const TEMPLATE_SPEC = '\n## 規格\n\n- 目標：<一句話>\n\n### 驗收情境\n\n| # | 給定 | 當 | 則 | 對應測試 |\n| --- | --- | --- | --- | --- |\n| AC-1 | <前提> | <操作> | <看得到的結果> | `<測試名稱>` |\n'
+
+/** 審查 HIGH（i18n 現在卡 AC-2）：排隊期間規格變成擋著：不派，流程紀錄存規格缺口的代碼與參數（不存中文句），畫面照舊顯示原句。 */
+test('a queued auto dispatch blocked by a spec gap stores the stop as a code', async ($, on) => {
+  const { data, clock } = fixture(on)
+  setup(data, clock)
+  const h = helpers($, data, clock)
+  await queueTwoAutoReviews(data, clock, h)
+
+  // 排隊期間：Gamma 的規格段變回範本（認不到驗收情境）
+  data.files[CARD_C] = data.files[CARD_C]! + TEMPLATE_SPEC
+  h.finishOne(); h.finishOne()
+  await h.refresh()
+
+  expect(data.launches.map((l: any) => l.init.cwd)).not.toContain(GAMMA)
+  const run = (data.store.chains as any)[GAMMA]
+  expect(storedStop(run)).toEqual({ code: 'specGap', slug: 'gamma' })
+  expect(/[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/.test(JSON.stringify({ stopped: run.stopped, stopArgs: run.stopArgs }))).toBe(false)
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_C}` })
+  const shown = await screen(ui)
+  await ui.unmount()
+  expect(shown).toContain(flat('Gamma 排隊的驗收沒有派出：規格沒有驗收情境：先輸入 /desk:card spec gamma'))
+})
+
 /** 審查 MEDIUM：排隊的自動派工因 worktree 被改而停下流程時，跟自動流程一樣跳提示並發系統通知；沒停下的那件不出聲。 */
 test('a queued auto dispatch stopped by foreign changes alerts like the chain does', async ($, on) => {
   const { data, clock } = fixture(on)
