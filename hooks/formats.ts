@@ -1,7 +1,9 @@
 // 格式版本：卡片、dispatch.json、登錄表各自的版號與標記（docs/FORMATS.md）。純函式，不碰磁碟。
 // 沒有標記的檔一律視為格式 1，不自動補標記；讀到比這版認得的新的格式時，面板動態警告一次、這張卡不派工，card.py 拒絕寫卡。
 // skills/card/scripts/card.py 有同樣的常數與讀法（CARD_FORMAT、card_format），scripts/tests/test_formats_doc.py 核對兩端與文件一致。
+// 標記裡的「格式=n」「desk 登錄表」是解析契約（正規式），不搬進字串目錄；給人看的句子在 hooks/i18n/zh-TW.ts 的 formats.*。
 import type { FeedEvent } from '../types'
+import { t } from './i18n'
 
 /** 這版 desk 寫出、也認得的卡片格式：DESK 區塊開頭標記寫 `<!-- DESK 格式=1：…-->`。 */
 export const CARD_FORMAT = 1
@@ -32,9 +34,9 @@ export function registryFormat(text: string): number {
 }
 
 /** 比這版認得的新的卡片擋派工時的原因：手動派工的拒絕、面板「輪到你」都用這句。 */
-export const NEWER_CARD_WHY = '這張卡是較新版 desk 的格式'
+export const NEWER_CARD_WHY = t('formats.newerCardWhy')
 /** 拒絕句後面接的下一步。 */
-export const UPDATE_DESK_NEXT = '輸入 /desk update 更新 desk'
+export const UPDATE_DESK_NEXT = t('formats.updateDeskNext')
 
 /** 一份比這版認得的新的檔：卡片（帶任務名）或登錄表。 */
 export type NewerFormat = { kind: 'card' | 'registry'; path: string; format: number; name?: string }
@@ -46,8 +48,8 @@ const keyOf = (f: NewerFormat) => `${f.kind}:${f.path}`
 /** 動態的那一句。 */
 export function newerFormatText(f: NewerFormat): string {
   return f.kind === 'card'
-    ? `「${f.name ?? f.path}」${NEWER_CARD_WHY}（格式 ${f.format}），請更新 desk；這張卡照常顯示但不派工`
-    : `登錄表 ${f.path} 是較新版 desk 的格式（格式 ${f.format}），請更新 desk`
+    ? t('formats.newerCard', { name: f.name ?? f.path, why: NEWER_CARD_WHY, format: f.format })
+    : t('formats.newerRegistry', { path: f.path, format: f.format })
 }
 
 /**

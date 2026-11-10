@@ -4,6 +4,7 @@
 // 最低版本跟 README「需要什麼」與 CI 安裝的版本是同一個，三處一起改（scripts/tests/test_min_claude_code_version.py 會比對）。
 // 跨檔傳 $ 的函式一律用 function 宣告（箭頭函式會被引擎掃描拒絕載入）。
 
+import { t } from './i18n'
 import { compareVersions } from './update'
 
 export const MIN_CLAUDE_CODE = '2.1.302'
@@ -12,8 +13,8 @@ export const ENGINE_NOTIFIED_KEY = 'engineVersionNotified'
 /** 讀不到版本時記在 store 的版號：只報一次。 */
 export const UNKNOWN_VERSION = 'unknown'
 
-export const tooOldText = (version: string) => `Claude Code ${version} 比 desk 需要的最低版本 ${MIN_CLAUDE_CODE} 舊，請更新 Claude Code（claude update）`
-export const unknownVersionText = `讀不到 Claude Code 版本，desk 以 ${MIN_CLAUDE_CODE} 開發，太舊可能無法使用`
+export const tooOldText = (version: string) => t('engineVersion.tooOld', { version, min: MIN_CLAUDE_CODE })
+export const unknownVersionText = t('engineVersion.unknown', { min: MIN_CLAUDE_CODE })
 
 export type VersionNotice = { key: string; text: string }
 
