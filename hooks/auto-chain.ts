@@ -6,13 +6,12 @@ import type { Case, Snapshot } from '../types'
 import { saysNone } from './card'
 import { quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
 import { archiveReview, loadSettings, prProbe, riskOf, worktreeMark } from './probes'
-import { mediumToDecide } from './extras'
-import { REVIEW_FILE, markRefusal, specBlocks, specGapReason } from './dispatch'
+import { markRefusal, specBlocks, specGapReason } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs } from './dispatch'
 import { askClearedOnCard, askedOnCardAtEnd } from './agents'
 import { normalizeRoot } from './settings'
 import type { DispatchSettings } from './settings'
-import { blocking, checkStands, isMerged, parseVerdict } from './pipeline'
+import { checkStands, isMerged, parseVerdict } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
 import { MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, skipsReview } from './chain'
 import type { ChainRun, ChainStep } from './chain'
@@ -35,7 +34,7 @@ const CATCHUP_NOT_SENT = '解衝突沒派出（失敗原因見動態），排除
 
 /**
  * 自動流程（第二到第四段）：只處理這個對話自己派出去、剛結束、還沒處理過的那一次（別的對話開的流程不碰）。
- * 做完實作 → 跑完成檢查 → 綠了派審查 → 有 CRITICAL／HIGH 派修正（MEDIUM 由審查寫進「等你」），
+ * 做完實作 → 跑完成檢查 → 綠了派審查 → 有 CRITICAL／HIGH 派修正（MEDIUM 只記錄、不寫進「等你」，開 PR 時列進 PR 說明），
  * 整條分支最多自動修兩輪；停下來就寫進動態並提醒。preloaded：重新整理這一輪已讀好的設定，有就不再讀 dispatch.json。
  */
 export async function autoChain($: any, options: PluginOptions, s: Snapshot, preloaded?: DispatchSettings) {
@@ -84,7 +83,7 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
       acted = true
       continue
     }
-    // 你在「等你」對審查 MEDIUM 題選了修掉、對話清掉了「等你」：派一次修正（不受上限擋）。
+    // 舊卡：你在「等你」對審查 MEDIUM 題選了修掉、對話清掉了「等你」：派一次修正（不受上限擋）。
     // 流程還在進行、剛結束的派工還沒處理（例如高風險卡在資安審查跑時回答 B）就先讓下面照常處理那次結論（歸檔、有 HIGH 派修正），處理完下次重新整理再派：
     // 不然 jobs.last 被這次修正蓋掉，那次審查結論沒人算。資安審查的修正換了 HEAD，這筆紀錄會在 fixPickedMedium 照規則拿掉。
     // 流程已過關或停下就不等：之後才派的推送／開 PR、同步、解衝突，下面的主判斷不會標成已處理，等它會永遠派不出去。
@@ -121,9 +120,8 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     acted = true
     // 這次審查看的是派審查時的 HEAD；之後有新 commit，結論就不算數。寫入放棄就先不處理這次（不歸檔、不標處理過），下次重新整理再試。
     // 程式碼審查有結論（不是高風險）：記下這條分支審查過，之後的修正與新 commit 只跑測試、不複審；教學也一樣（審查存底照舊不寫）。
-    // 例外（舊卡）：還有 CRITICAL／HIGH 又有標「（等你決定）」的 MEDIUM：那題留在審查檔、要修正後的審查過關時才問，這次先不記，照舊複審一次。
-    // MEDIUM 改成一律記錄、不問之後，新的審查不再這樣標，HIGH 修完一律只跑測試。
-    const markReviewed = finished === 'review' && !last.security && risk?.level !== 'high' && c.git?.branch && await reviewSettled($, c) ? { reviewedBranch: c.git.branch } : {}
+    // MEDIUM 只記錄、不問：舊卡審查檔裡標「（等你決定）」的 MEDIUM 也一樣，留在審查檔、開 PR 時列進 PR 說明，不為它複審。
+    const markReviewed = finished === 'review' && !last.security && risk?.level !== 'high' && c.git?.branch && reviewSettled(c) ? { reviewedBranch: c.git.branch } : {}
     if (finished === 'review' && !stoppedAgent && !(await saveChain($, key, r => r ? { ...r, ...judgedAt(r, !!last.security, c.git), ...markReviewed } : r, saveOpts))) { acted = actedBefore; continue }
     // 被停掉的審查沒寫完：不歸檔、不算判過。
     if (finished === 'review' && !stoppedAgent && planned.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
@@ -211,19 +209,13 @@ export async function pauseUnsentReviewFix($: any, c: Case, mine: string, at: nu
   return true
 }
 
-/**
- * 程式碼審查的結論可以算「這條分支審查過」：讀得出分級，而且沒有「還有 CRITICAL／HIGH、又有標（等你決定）的 MEDIUM」
- * （那題要等修正後的審查過關時才在「等你」問，拿掉複審就沒人問了；只有舊卡會這樣標）。
- */
-async function reviewSettled($: any, c: Case): Promise<boolean> {
-  const verdict = parseVerdict(c.gate)
-  if (!verdict) return false
-  if (blocking(verdict) === 0) return true
-  return mediumToDecide(await $.fs.read(`${c.root}/${REVIEW_FILE}`).catch(() => null)) === 0
+/** 程式碼審查的結論可以算「這條分支審查過」：關卡讀得出分級就算（MEDIUM 只記錄，不管有沒有 CRITICAL／HIGH）。 */
+function reviewSettled(c: Case): boolean {
+  return !!parseVerdict(c.gate)
 }
 
 /**
- * 你在「等你」對審查 MEDIUM 題選了修掉（送出時記下 HEAD 在 mediumFixAt）、對話把「等你」清掉了：派一次依審查檔修那幾條 MEDIUM 的修正。
+ * 舊卡：你在「等你」對審查 MEDIUM 題選了修掉（送出時記下 HEAD 在 mediumFixAt）、對話把「等你」清掉了：派一次依審查檔修那幾條 MEDIUM 的修正。
  * 你主動要的修正不受上限擋；派出去才算一輪（dispatch 的 countedFix），修完的 commit 由「審查通過後有新 commit」的重新測試與驗收接手。
  * 這之後 HEAD 變了（對話自己修了、或你改了別的）就不派，拿掉紀錄；worktree 有別人的未提交改動先不派，下次重新整理再看。
  * 你主動要的：照按 g 接續的規則派（resumed），排隊時不看額度。自動只試一次：派之前就拿掉紀錄（啟動一直失敗也不會每次重新整理都重派）。

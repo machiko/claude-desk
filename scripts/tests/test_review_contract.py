@@ -103,7 +103,7 @@ class ReviewContractTest(unittest.TestCase):
         self.assertIn('- 都算進關卡的 MEDIUM 數。', text)
         self.assertNotIn('兩種都算進', text)
 
-    def test_medium_ask_offers_follow_up_card_first(self):
+    def test_review_contract_no_longer_asks_medium_and_keeps_old_answers(self):
         """lean-fix-loop AC-2（驗收 MEDIUM 記錄後繼續 AC-6 改）：審查契約不再出 MEDIUM 題，舊卡已回答的照 Decisions 改標；/desk:flow 與 WORKFLOW 寫舊卡選項（B 另開卡修推薦、C 修掉在這張卡修）的行為。"""
         text = read(CONTRACT)
 

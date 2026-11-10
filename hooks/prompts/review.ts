@@ -36,7 +36,8 @@ const MEDIUM_RULE = 'MEDIUM 一律記錄、不問：只關於規格紀錄、文�
 const OLD_ASKED_KEEP = '上一份已有標「（等你決定）」的（這條規則之前的舊卡）照原樣再列；不新增這種標法，也不在 等你 新增題目。'
 /**
  * 舊卡的 MEDIUM 題寫法與選項：B 另開卡修是推薦（這張先過關、修正在後續卡做），C 修掉是在這張卡多一輪修正。
- * 審查與修正提示不再要求寫這題；留著給 card.ts 認舊卡「等你」裡的題目（picksMediumFollowUp／picksMediumFix 照選項開頭認 B、C）。
+ * 審查與修正提示不再要求寫這題，程式也沒有讀這個常數：card.ts 用自己的 REVIEW_MEDIUM_ASK 認舊卡「等你」裡的題目、照選項文字認 B、C。
+ * 保留當舊題寫法的紀錄，定義位置由 scripts/tests/test_prompt_files.py 鎖住。
  */
 export const MEDIUM_ASK_FORM = '審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格'
 /**

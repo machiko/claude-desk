@@ -149,7 +149,7 @@ test('test_review_prompt_records_behavior_medium_without_asking', () => {
   expect(review(0)).not.toContain(keep)
 })
 
-/** AC-1：有 HIGH 也有 MEDIUM：自動修正只修 CRITICAL／HIGH，MEDIUM 不在這輪改；修完複審只剩 MEDIUM 就過關 */
+/** AC-1：有 HIGH 也有 MEDIUM：自動修正只修 CRITICAL／HIGH，MEDIUM 不在這輪改（修完之後怎麼走見下一支） */
 test('test_high_with_medium_fixes_only_critical_and_high', async ($, on) => {
   const { data, clock } = fixture(on)
   const h = helpers($, data, clock)
@@ -176,24 +176,55 @@ test('test_high_with_medium_fixes_only_critical_and_high', async ($, on) => {
   expect(run.fixTotal).toBe(1)
   expect(run.fixBranch).toBe('feature/alpha')
   expect(run.mediumFix).toBeUndefined()
-  // 有 HIGH 又有等你決定的 MEDIUM：那題要等修正後的審查過關時才問，先不記「這條分支審查過」（每張卡只審查一次的例外）
-  expect(run.reviewedBranch).toBeUndefined()
+})
 
-  // 修完：自動檢查 → 複審；複審只剩等你決定的 MEDIUM，審查在等你問 → 過關，只用了 1 輪
-  setCard(data, CARD_A, '無')
+/**
+ * MEDIUM 收尾 AC-1：舊卡的審查檔有 HIGH 1 條、又有一條 MEDIUM 標「（等你決定）」：審查結束就記為這條分支審查過；
+ * 修完 commit 只重新跑測試、不派複審；那條 MEDIUM 留在審查檔，開 PR 時跟其他 MEDIUM 一起列進 PR 說明。
+ */
+test('test_old_card_your_decision_medium_with_high_reruns_tests_only_after_fix', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const h = helpers($, data, clock)
+  data.agents = []
+  data.files[`${PROJECT_DIR}/dispatch.json`] = JSON.stringify({ autoPr: true })
+  data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1', remote: 'git@github.com:acme/shop.git', upstream: false }
+  data.gh = []
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  launchOneAtATime(data, clock)
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 1、MEDIUM 2、LOW 0；漏稽核')
+  const review = [
+    '- [HIGH][稽核] a.ts:1 — 漏寫稽核紀錄',
+    '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理（等你決定）',
+    '- [MEDIUM][命名] c.ts:3 — 變數名不清（記錄、不修）',
+  ].join('\n')
+  data.files[`${ALPHA}/.task/REVIEW.md`] = review
+  reviewJustFinished(data, ALPHA, 0)
+  await h.refresh()
+
+  // 派修正第 1／2 輪，同時記下這條分支審查過（不再因為等你決定的 MEDIUM 留著複審）
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0).startsWith('修正第 1／2 輪：')).toBe(true)
+  expect((data.store.chains as any)[ALPHA].reviewedBranch).toBe('feature/alpha')
+
+  // 修正 Agent 照提示寫回關卡、commit；完成檢查通過 → 不派複審，流程過關
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 0；已依審查修正、未複審（發版時整版審查）')
   data.git[ALPHA]!.head = 'h2'
   await h.finish(1)
-  expect(data.launches).toHaveLength(2)
-  expect(h.prompt(1).startsWith('程式碼審查')).toBe(true)
-  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可', ASK)
-  data.files[`${ALPHA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理（等你決定）'
-  await h.finish()
-  expect(data.launches).toHaveLength(2)
+  expect(data.launches.filter((l: any) => String(l.argv.at(-1)).startsWith('程式碼審查'))).toHaveLength(0)
+  const run = (data.store.chains as any)[ALPHA]
+  expect(run.passed).toBe(true)
+  expect(run.unreviewed).toBe(true)
+  expect(run.stopped).toBeUndefined()
+  expect(data.files[CARD_A]).toContain('- 等你：無')
+  // 那條 MEDIUM 留在審查檔，沒人把它清掉
+  expect(data.files[`${ALPHA}/.task/REVIEW.md`]).toContain('空字串沒處理（等你決定）')
+
+  // 過關後自動派推送 Agent 開 PR：審查檔的 MEDIUM（含等你決定的那條）列進 PR 說明
+  await h.step()
+  const published = data.launches.filter((l: any) => String(l.argv.at(-1)).startsWith('推送：push feature/alpha 並'))
+  expect(published).toHaveLength(1)
+  expect(String(published[0].argv.at(-1))).toContain('另讀 .task/REVIEW.md，有 .task/SECURITY.md 也讀，把裡面的 MEDIUM 逐條列在「驗收記錄的 MEDIUM」段')
   expect(h.fixes()).toHaveLength(1)
-  expect((data.store.chains as any)[ALPHA].passed).toBe(true)
-  expect(data.files[CARD_A]).toContain(`- 等你：${ASK}`)
-  // 複審有結論、沒有 CRITICAL／HIGH：這次記下，之後的新 commit 只跑測試
-  expect((data.store.chains as any)[ALPHA].reviewedBranch).toBe('feature/alpha')
 })
 
 /** 審查 MEDIUM 第 3 條：自動派的修正提示只寫剛結束那份審查的審查檔（程式碼審查 → REVIEW.md、資安審查 → SECURITY.md），兩份檔都在也不混 */

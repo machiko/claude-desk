@@ -167,10 +167,10 @@ export function preflightLine(text: string | null): string | null {
 }
 
 /**
- * 審查檔裡要自動修的 MEDIUM 條數：「- [MEDIUM]…」開頭的行（不分大小寫，跟 reviewTop 同一種比對），行尾是註記就不算：
+ * 審查檔裡沒標註記的 MEDIUM 條數：「- [MEDIUM]…」開頭的行（不分大小寫，跟 reviewTop 同一種比對），行尾是註記就不算：
  * 結尾的括號以「不修」或「等你決定」收尾（「（記錄、不修）」「（不修）」「（等你決定）」「（上一輪已列，等你決定）」，後面可以接句號、空白）。
- * 說明裡的括號照算，不管在中間或結尾（例如「（parse 失敗後不修正預設值）」「（不修會 crash）」「（若不修正會顯示前一天）」），
- * 免得影響行為的 MEDIUM 既不修也不問。沒有檔案回 0。
+ * 說明裡的括號照算，不管在中間或結尾（例如「（parse 失敗後不修正預設值）」「（不修會 crash）」「（若不修正會顯示前一天）」）。沒有檔案回 0。
+ * 原本給 MEDIUM 自動修正輪算條數；MEDIUM 改成一律記錄之後沒有流程呼叫（舊卡選 C 修掉的修正也不靠它），留著當舊審查檔標法的紀錄。
  */
 export function mediumToFix(text: string | null): number {
   if (!text) return 0
@@ -180,9 +180,9 @@ export function mediumToFix(text: string | null): number {
 }
 
 /**
- * 審查檔裡標「（等你決定）」的 MEDIUM 條數：「- [MEDIUM]…」開頭、行尾括號以「等你決定」收尾（「（上一輪已列，等你決定）」也算，後面可以接句號、空白）。
- * 有 CRITICAL／HIGH 時這幾題留在審查檔、等你留無，靠修正後的審查過關時問；沒有檔案回 0。
- * 只有舊卡會有：MEDIUM 改成一律記錄、不問之後，新的審查不再這樣標（prompts/review.ts 的 MEDIUM_RULE）。
+ * 審查檔裡標「（等你決定）」的 MEDIUM 條數：「- [MEDIUM]…」開頭、行尾括號以「等你決定」收尾（「（上一輪已列，等你決定）」也算，後面可以接句號、空白）。沒有檔案回 0。
+ * 只算得到舊卡：MEDIUM 改成一律記錄、不問之後，新的審查不再這樣標（prompts/review.ts 的 MEDIUM_RULE）。目前沒有流程呼叫：
+ * 舊卡有 CRITICAL／HIGH 時這幾條也只記錄、開 PR 時列進 PR 說明，修完不再為它複審。
  */
 export function mediumToDecide(text: string | null): number {
   if (!text) return 0

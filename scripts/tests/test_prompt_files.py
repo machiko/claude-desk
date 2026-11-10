@@ -2,6 +2,7 @@
 
 執行：python3 -m unittest discover -s scripts/tests
 """
+import json
 import os
 import re
 import unittest
@@ -21,6 +22,17 @@ PROMPT_HOME = {
 MOVED_LOGIC = ['idleNext', 'reviewNext', 'markOf', 'markRefusal']
 # 比對跨檔重複時只看夠長的字串常值，短的（空字串、分隔符）本來就會重複
 MIN_LITERAL = 20
+# MEDIUM 一律記錄之後，自動流程、卡片答題、審查檔計數、審查提示這幾處的說明不能再講審查會在「等你」問 MEDIUM
+MEDIUM_NOTE_FILES = [os.path.join(ROOT, 'hooks', f) for f in ('auto-chain.ts', 'card.ts', 'extras.ts', os.path.join('prompts', 'review.ts'))]
+OLD_MEDIUM_NOTES = [
+    r'MEDIUM 由審查寫進「等你」',
+    r'審查寫進「等你」的 MEDIUM 題',
+    r'既不修也不問',
+    r'審查過關時(?:才)?(?:在「等你」)?問',
+    r'照舊複審一次',
+]
+PLUGIN_JSON = os.path.join(ROOT, '.claude-plugin', 'plugin.json')
+WORKFLOW = os.path.join(ROOT, 'docs', 'WORKFLOW.md')
 
 
 def read(path):
@@ -53,6 +65,24 @@ class PromptFilesTest(unittest.TestCase):
             for s in literals(t):
                 self.assertNotIn(s, seen, f'{f} 與 {seen.get(s)} 都有這段字串')
                 seen[s] = f
+
+    def test_comments_do_not_describe_review_asking_medium(self):
+        for path in MEDIUM_NOTE_FILES:
+            text = read(path)
+            for pattern in OLD_MEDIUM_NOTES:
+                self.assertIsNone(re.search(pattern, text), f'{os.path.relpath(path, ROOT)} 還有舊說法：{pattern}')
+        # 新說法：自動流程寫 MEDIUM 只記錄、不寫進「等你」；卡片答題的 MEDIUM 題標明只在舊卡
+        self.assertIn('MEDIUM 只記錄、不寫進「等你」', read(MEDIUM_NOTE_FILES[0]))
+        self.assertRegex(read(MEDIUM_NOTE_FILES[1]), r'舊卡「等你」裡的 MEDIUM 題（新審查不再出題）.*\nconst REVIEW_MEDIUM_ASK')
+
+    def test_plugin_pitfalls_description_matches_workflow(self):
+        desc = json.loads(read(PLUGIN_JSON))['userConfig']['pitfallsPath']['description']
+        self.assertTrue(desc.startswith('第一次審查才讀；新條目由歸檔回顧提出、你確認後追加到檔尾。'), desc)
+        self.assertNotIn('每次', desc)
+        # WORKFLOW 也是這兩件事：第一次審查才讀、新條目由歸檔回顧提出並經你確認
+        workflow = read(WORKFLOW)
+        self.assertIn('第一次審查先讀（複審、重新審查、資安審查不讀）', workflow)
+        self.assertIn('新條目由歸檔回顧提出、你確認後追加', workflow)
 
 
 if __name__ == '__main__':

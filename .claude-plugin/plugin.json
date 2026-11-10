@@ -42,7 +42,7 @@
     "pitfallsPath": {
       "type": "string",
       "title": "常犯錯誤清單",
-      "description": "審查每次都先讀；重複出現的問題由審查對話追加到檔尾。留空＝目前專案資料夾裡的 review-pitfalls.md。",
+      "description": "第一次審查才讀；新條目由歸檔回顧提出、你確認後追加到檔尾。留空＝目前專案資料夾裡的 review-pitfalls.md。",
       "default": ""
     },
     "reviewsDir": {
