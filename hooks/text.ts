@@ -1,6 +1,7 @@
 // 純文字與時間工具：清掉控制字元、重播終端機畫面、算寬度與裁切、多久以前與重置時間、指令失敗的原因句、任務代號。
-// 葉節點：不在執行期 import 任何 hooks 模組（model、dispatch 與畫面都從這裡拿）。
+// 葉節點：執行期只 import 字串目錄 hooks/i18n（它也是葉節點），不 import 其他 hooks 模組（model、dispatch 與畫面都從這裡拿）。
 import type { Case } from '../types'
+import { t } from './i18n'
 
 /** 任務的代號：worktree 資料夾名，也是 /desk:card 指令裡的 <slug>。 */
 export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolean).pop() ?? ''
@@ -9,14 +10,14 @@ export const slugOf = (c: Pick<Case, 'root'>) => c.root.split('/').filter(Boolea
  * card.py 失敗時的原因：它把原因印在第一行，後面才接細節（例如整份登錄表）。
  * 未預期的 Python 例外則是 Traceback 開頭、例外印在最後一行，這時取最後一行。
  */
-export function reasonLine(r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') {
+export function reasonLine(r: { stderr?: string; stdout?: string } | null | undefined, fallback = t('word.noOutput')) {
   const lines = String(r?.stderr || r?.stdout || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
   const traceback = lines.some(l => l.startsWith('Traceback (most recent call last)'))
   return (traceback ? lines.at(-1) : lines[0]) || fallback
 }
 
 /** 指令失敗時給人看的那一行：stderr（沒有就 stdout）的最後一行。 */
-export const errorLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = '沒有輸出') =>
+export const errorLine = (r: { stderr?: string; stdout?: string } | null | undefined, fallback = t('word.noOutput')) =>
   String(r?.stderr || r?.stdout || '').trim().split(/\r?\n/).pop() || fallback
 
 export const STALE_MS = 3 * 24 * 60 * 60_000
@@ -205,51 +206,51 @@ export function fit(text: string, columns: number): string {
 export const pad = (text: string, columns: number) => text + ' '.repeat(Math.max(0, columns - displayWidth(text)))
 
 /** 多久以前：剛剛、5 分鐘前、3 小時前、2 天前（帶「前」，看得出是過去的時間）。 */
-export function ago(t: number | null, now: number): string {
-  if (t === null) return ''
-  const s = Math.max(0, Math.round((now - t) / 1000))
-  if (s < 60) return '剛剛'
+export function ago(at: number | null, now: number): string {
+  if (at === null) return ''
+  const s = Math.max(0, Math.round((now - at) / 1000))
+  if (s < 60) return t('time.justNow')
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m} 分鐘前`
+  if (m < 60) return t('time.minutesAgo', { n: m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小時前`
-  return `${Math.floor(h / 24)} 天前`
+  if (h < 24) return t('time.hoursAgo', { n: h })
+  return t('time.daysAgo', { n: Math.floor(h / 24) })
 }
 
 /** 跑了多久：12 秒、4 分 12 秒、1 小時 3 分（一小時以上不寫秒）。 */
 export function elapsedText(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
-  if (s < 60) return `${s} 秒`
+  if (s < 60) return t('time.seconds', { s })
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m} 分 ${s % 60} 秒`
-  return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+  if (m < 60) return t('time.minutesSeconds', { m, s: s % 60 })
+  return t('time.hoursMinutes', { h: Math.floor(m / 60), m: m % 60 })
 }
 
 /** 總執行時間只到分：不到 1 分、13 分、1 小時 3 分。 */
 export function runMinutesText(ms: number): string {
   const m = Math.floor(Math.max(0, ms) / 60_000)
-  if (m < 1) return '不到 1 分'
-  if (m < 60) return `${m} 分`
-  return `${Math.floor(m / 60)} 小時 ${m % 60} 分`
+  if (m < 1) return t('time.underMinute')
+  if (m < 60) return t('time.minutes', { m })
+  return t('time.hoursMinutes', { h: Math.floor(m / 60), m: m % 60 })
 }
 
-export const hhmm = (t: number) => {
-  const d = new Date(t)
+export const hhmm = (at: number) => {
+  const d = new Date(at)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 /** 重置時間：今天只寫時分，明天寫「明天」，7 天內寫星期，更遠寫日期；short 只留哪一天（今天、明天、週三、1/12）。 */
-const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
+const WEEKDAY = [t('time.sun'), t('time.mon'), t('time.tue'), t('time.wed'), t('time.thu'), t('time.fri'), t('time.sat')]
 const DAY_MS = 86_400_000
 const WEEK_DAYS = 7
 export function resetText(iso: string | undefined, now: number, short = false): string {
-  const t = iso ? Date.parse(iso) : NaN
-  if (!Number.isFinite(t)) return ''
-  const d = new Date(t)
+  const at = iso ? Date.parse(iso) : NaN
+  if (!Number.isFinite(at)) return ''
+  const d = new Date(at)
   const n = new Date(now)
   // 比日曆日：兩邊都取當地午夜再相減（四捨五入吸收日光節約的一小時）。
   const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()) / DAY_MS)
-  const day = days <= 0 ? '' : days === 1 ? '明天' : days < WEEK_DAYS ? `週${WEEKDAY[d.getDay()]}` : `${d.getMonth() + 1}/${d.getDate()}`
-  if (short) return day || '今天'
-  return `${day ? `${day} ` : ''}${hhmm(t)} 重置`
+  const day = days <= 0 ? '' : days === 1 ? t('time.tomorrow') : days < WEEK_DAYS ? WEEKDAY[d.getDay()] : `${d.getMonth() + 1}/${d.getDate()}`
+  if (short) return day || t('time.today')
+  return t('time.resets', { when: `${day ? `${day} ` : ''}${hhmm(at)}` })
 }

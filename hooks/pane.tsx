@@ -16,6 +16,7 @@ import { noticeText } from './update'
 import type { Action } from './pane-card'
 import { KIND_LABEL } from './dispatch'
 import type { DispatchKind, UntrustedHold } from './dispatch'
+import { t } from './i18n'
 
 export { picksKey, shortCommand }
 
@@ -158,7 +159,7 @@ const QUOTA_LEVELS: QuotaLevel[] = [
 /** header 右側的額度：「5 小時（22:30 重置）剩 78%  本週（週三 09:00 重置）剩 31%」，放不下就照 QUOTA_LEVELS 縮。 */
 export function limitParts(s: Snapshot, now: number, room: number): Part[] {
   const limits = (s.limits ?? []).filter(l => LIMIT_NAME[l.kind])
-  if (!limits.length) return [{ text: '額度尚無資料', color: COLOR.faint }]
+  if (!limits.length) return [{ text: t('pane.quotaNoData'), color: COLOR.faint }]
   const one = (l: { kind: string; remaining: number; resetsAt?: string }, lv: QuotaLevel): Part[] => {
     const left = Math.max(0, Math.min(100, Math.round(l.remaining)))
     const reset = l.kind === 'seven_day'
@@ -166,8 +167,8 @@ export function limitParts(s: Snapshot, now: number, room: number): Part[] {
       : (lv.five ? resetText(l.resetsAt, now) : '')
     return [
       ...(lv.named ? [{ text: LIMIT_NAME[l.kind]!, color: COLOR.dim }] : []),
-      ...(lv.named && reset ? [{ text: `（${reset}）`, color: COLOR.faint }] : []),
-      { text: `${lv.named && !reset ? ' ' : ''}剩 ${left}%`, color: remainColor(left), bold: left <= 40 },
+      ...(lv.named && reset ? [{ text: t('word.paren', { text: reset }), color: COLOR.faint }] : []),
+      { text: `${lv.named && !reset ? ' ' : ''}${t('pane.quotaLeft', { n: left })}`, color: remainColor(left), bold: left <= 40 },
     ]
   }
   const join = (lv: QuotaLevel) => limits.flatMap((l, i) => [...(i ? [{ text: '  ', color: COLOR.faint }] : []), ...one(l, lv)])
@@ -203,9 +204,9 @@ function section(ui: any, label: string, width: number, right: string | Part[] =
 
 /** 全部任務標題列的狀態計數：「● 2 ◆ 1 ▶ 1 ○ 3」，各段用該狀態的顏色。 */
 function tallyParts(cases: readonly Case[]): Part[] {
-  return stateCounts(cases).flatMap((t, i) => [
+  return stateCounts(cases).flatMap((c, i) => [
     ...(i ? [{ text: ' ', color: COLOR.faint }] : []),
-    { text: `${STATE[t.state].glyph} ${t.count}`, color: STATE[t.state].color },
+    { text: `${STATE[c.state].glyph} ${c.count}`, color: STATE[c.state].color },
   ])
 }
 
@@ -225,7 +226,7 @@ function reminderRows(ui: any, view: PaneView, width: number): any[] {
   if (!list.length) return []
   if (view.showAll) return reminderList(ui, list, width)
   const first = list[0]!
-  const count = list.length > 1 ? `提醒 ${list.length} 件 · ` : ''
+  const count = list.length > 1 ? t('pane.reminderCount', { n: list.length }) : ''
   const when = reminderWhen(first) ? `  ${reminderWhen(first)}` : ''
   const text = first.text.replace(/（[^）]*）|\([^)]*\)/g, '').trim()
   return [
@@ -262,7 +263,7 @@ function reminderList(ui: any, list: Reminder[], width: number): any[] {
   if (rest > 0) rows.push(
     <Box flexDirection="row">
       <Text color={COLOR.attention} bold>{'◷ '}</Text>
-      <Text color={COLOR.dim}>{`還有 ${rest} 件：看登錄表「## 提醒」`}</Text>
+      <Text color={COLOR.dim}>{t('pane.reminderRest', { n: rest })}</Text>
     </Box>,
   )
   return rows
@@ -286,7 +287,7 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
   const { Box, Text } = ui
   const s = view.s
   const brand = `${WORD.brand}${s.versions?.desk ? ` ${s.versions.desk}` : ''}${s.project ? ` · ${s.project}` : ''}`
-  const time = `${s.demo ? '示範資料 · ' : s.tutorial ? '教學模式 · ' : ''}${hhmm(s.at)} ${WORD.readAt}`
+  const time = `${s.demo ? t('pane.demoData') : s.tutorial ? t('pane.tutorialMode') : ''}${hhmm(s.at)} ${WORD.readAt}`
   const notice = s.update ? `  ${noticeText(s.update.latest)}` : ''
   // 時間前固定空 3 格，品牌與額度之間至少留 2 格。
   const limits = limitParts(s, view.now, width - displayWidth(brand) - displayWidth(notice) - displayWidth(time) - 3 - 2)
@@ -304,9 +305,9 @@ function headerRows(ui: any, view: PaneView, width: number): any[] {
   rows.push(...reminderRows(ui, view, width))
   const k = s.containers
   if (k && (k.error || k.down.length || k.unhealthy.length)) {
-    rows.push(k.error ? <Text color={COLOR.attention} wrap="truncate-end">{`容器  ${k.error}`}</Text>
-      : k.down.length ? <Text wrap="truncate-end"><Text color={COLOR.bad} bold>{`✕ ${k.down.join('、')} 未啟動`}</Text><Text color={COLOR.faint}>{`   ${k.running}/${k.total} 執行中`}</Text></Text>
-      : <Text wrap="truncate-end"><Text color={COLOR.attention}>{`◆ ${k.unhealthy.join('、')} 狀態異常`}</Text><Text color={COLOR.faint}>{`   ${k.total} 個執行中`}</Text></Text>)
+    rows.push(k.error ? <Text color={COLOR.attention} wrap="truncate-end">{`${t('pane.containers')}  ${k.error}`}</Text>
+      : k.down.length ? <Text wrap="truncate-end"><Text color={COLOR.bad} bold>{t('pane.containersDown', { names: k.down.join(t('word.listSep')) })}</Text><Text color={COLOR.faint}>{`   ${t('pane.runningOf', { running: k.running, total: k.total })}`}</Text></Text>
+      : <Text wrap="truncate-end"><Text color={COLOR.attention}>{t('pane.containersUnhealthy', { names: k.unhealthy.join(t('word.listSep')) })}</Text><Text color={COLOR.faint}>{`   ${t('pane.runningCount', { n: k.total })}`}</Text></Text>)
   }
   // 新專案還沒有登錄表是正常的起點，不是錯誤：用一般字色，下方動作列有建立按鈕。
   if (s.error) rows.push(...wrapText(s.error, width).map(l => <Text color={s.missingRegistry ? COLOR.text : COLOR.bad} wrap="truncate-end">{l}</Text>))
@@ -343,7 +344,7 @@ function gridRows(ui: any, view: PaneView, cases: Case[], width: number, act: Pa
   const heads = (cases.find(c => c.pipeline)?.pipeline?.stages ?? STAGES).map(st => st.label)
   const rows: any[] = []
   // 教學模式的背景是示範任務：標題寫明只能看。
-  const title = cases.some(c => c.demo) ? `${WORD.list}（示範任務只能看）` : WORD.list
+  const title = cases.some(c => c.demo) ? t('pane.listDemo', { list: WORD.list }) : WORD.list
   if (narrow) rows.push(section(ui, title, width, tally))
   else {
     const letters = heads.map(h => pad(h, STAGE_COL)).join('').trimEnd()
@@ -438,17 +439,19 @@ function historyRows(ui: any, view: PaneView, focus: Case | null, width: number)
  * tests/plain-wording.test.ts 逐條檢查寫法與每個鍵都還在。
  */
 export const HELP: [string, string][] = [
-  ['1–9', '選任務（要操作某一件時，號碼依清單固定不會換，取消選取在「現在 · 你選的」那列或 m 裡）'], ['a b c d', '回答決策（「等你」有選項時）'], ['f', '填入決策（選好選項後，填進輸入框再按 Enter 送出）'],
-  ['g / w / s', '繼續／驗收／同步（按兩次確認，同步平常收在 m、卡片落後分支時才出現）'], ['y', '回覆 Agent（Agent 停下來問你時）'], ['k', '停止 Agent（按兩次確認，派工排隊中按一次是取消排隊）'], ['l', '看 Agent 輸出（想知道 Agent 做到哪時）'],
-  ['v', '執行測試（測試指令還沒核准或改過時按兩次，第一次列出全文）'], ['u', '確認上線（部署完、關卡是 release 時按兩次，清掉關卡）'], ['n', '⇡ 開 PR／⇡ push 派 Agent 推送（要開 PR 或 PR 有新 commit 時，按兩次確認）'], ['z', '⚑ 發版（合併後按兩次，把已確認照慣例版號的發版請求填進輸入框）'], ['q', '⌫ 歸檔（做完要收掉時，按兩次確認）'], ['m', '更多動作（要找這一段沒列出的動作時，按 m 展開全部）'], ['o / e / p', '開卡片／審查檔／PR（要看細節時）'], ['r', '重新整理（要馬上重讀時從 m 裡按，平常每 30 秒、每回合結束、對話改了卡片時自動重讀）'], ['⇡ 更新', '把 desk 更新到 GitHub 上的最新版本（看到「⇡ 更新到 <版本>」「⇡ 檢查並更新」時用點的，已是最新要重查輸入 /desk update）'], ['x', '展開全文（歷程要看每筆全文時）'], ['i', '說明（就是這份，再按 i 收起）'], ['h', '隱藏摘要列（說明開著時才能按，也可輸入 /desk bar）'],
-  ['t', '確認規格（規格看過、要派實作時按兩次，教學模式裡是確認規格／合併／打 tag 的下一步）'], ['↑ ↓ 滾輪', '捲動中間的內容（上下兩區固定不動）'], ['Esc', '回輸入框（面板留著）'], ['/desk close', '收起面板（不用時，也可點摘要列的 ⌗ desk）'],
-  ['● ◉ ◆ ✕ ○ ·', '已過／處理中／等你／卡住／未到／不適用（看六段走到哪時）'], ['✓（綠）', '六段全過、已上線（可以歸檔了）'],
+  ['1–9', t('pane.helpPick')], ['a b c d', t('pane.helpAnswer')], ['f', t('pane.helpFill')],
+  ['g / w / s', t('pane.helpContinue')], ['y', t('pane.helpReply')], ['k', t('pane.helpStop')], ['l', t('pane.helpLogs')],
+  ['v', t('pane.helpVerify')], ['u', t('pane.helpShip')], ['n', t('pane.helpPublish')], ['z', t('pane.helpRelease')], ['q', t('pane.helpArchive')], ['m', t('pane.helpMore')], ['o / e / p', t('pane.helpOpen')], ['r', t('pane.helpRefresh')], [t('pane.helpKeyUpdate'), t('pane.helpUpdate')], ['x', t('pane.helpExpand')], ['i', t('pane.helpHelp')], ['h', t('pane.helpBand')],
+  ['t', t('pane.helpSpecOk')], [t('pane.helpKeyScroll'), t('pane.helpScroll')], ['Esc', t('pane.helpEsc')], ['/desk close', t('pane.helpClose')],
+  ['● ◉ ◆ ✕ ○ ·', t('pane.helpGlyphs')], [t('pane.helpKeyDone'), t('pane.helpDone')],
 ]
 
 /** 說明頁鍵名欄的寬度：描述放不下時換到下一列，續列對齊描述欄。 */
 const HELP_KEY_WIDTH = 12
 /** 還沒有登錄表時才列的那條：n 建立空的登錄表（有登錄表時 n 是推送）。 */
-export const HELP_CREATE: [string, string] = ['n', `＋ ${WORD.createRegistry}（還沒有登錄表時）`]
+/** 建立登錄表按鈕的字樣：footer 的按鈕與說明頁那條共用。 */
+const createRegistryLabel = () => t('pane.createRegistryButton', { label: WORD.createRegistry })
+export const HELP_CREATE: [string, string] = ['n', t('pane.helpCreate', { button: createRegistryLabel() })]
 
 /** 說明的每一條：還沒有登錄表時，推送那條 n 之後多列建立登錄表的 n。 */
 function helpEntries(view: PaneView): [string, string][] {
@@ -470,9 +473,9 @@ function helpRows(ui: any, view: PaneView, act: PaneActions, width: number): any
   if (!view.isHelp) return []
   return [
     <Text> </Text>,
-    section(ui, '說明', width),
+    section(ui, t('pane.help'), width),
     ...helpEntries(view).flatMap(entry => helpEntryRows(ui, entry, width)),
-    <Box flexDirection="row"><Button key="band" plain dimColor hotkey="h" label="— 隱藏摘要列" onPress={act.toggleBand} /></Box>,
+    <Box flexDirection="row"><Button key="band" plain dimColor hotkey="h" label={t('pane.hideBand')} onPress={act.toggleBand} /></Box>,
   ]
 }
 
@@ -555,17 +558,17 @@ function statusParts(view: PaneView): Part[] {
   const s = view.s
   const groups: Part[][] = []
   const ctx = s.contextPercent
-  if (typeof ctx === 'number' && ctx >= 50) groups.push([{ text: `上下文已用 ${ctx}%`, color: ctx >= 70 ? COLOR.bad : COLOR.attention }])
+  if (typeof ctx === 'number' && ctx >= 50) groups.push([{ text: t('pane.contextUsed', { n: ctx }), color: ctx >= 70 ? COLOR.bad : COLOR.attention }])
   const k = s.containers
-  if (k && !k.error && k.total > 0 && !k.down.length && !k.unhealthy.length) groups.push([{ text: '●', color: COLOR.good }, { text: ` 容器 ${k.running}/${k.total} 執行中`, color: COLOR.dim }])
+  if (k && !k.error && k.total > 0 && !k.down.length && !k.unhealthy.length) groups.push([{ text: '●', color: COLOR.good }, { text: ` ${t('pane.containers')} ${t('pane.runningOf', { running: k.running, total: k.total })}`, color: COLOR.dim }])
   const m = s.models
-  if (m?.session) groups.push([{ text: '本對話 ', color: COLOR.faint }, { text: modelLabel(m.session), color: COLOR.dim, bold: true }, ...(m.effort ? [{ text: ` ${m.effort}`, color: COLOR.faint }] : [])])
-  if (m?.dispatch?.model) groups.push([{ text: `派工 ${m.dispatch.model}${m.dispatch.effort ? ` ${m.dispatch.effort}` : ''}`, color: COLOR.faint }])
+  if (m?.session) groups.push([{ text: `${t('pane.sessionModel')} `, color: COLOR.faint }, { text: modelLabel(m.session), color: COLOR.dim, bold: true }, ...(m.effort ? [{ text: ` ${m.effort}`, color: COLOR.faint }] : [])])
+  if (m?.dispatch?.model) groups.push([{ text: `${t('pane.dispatchModel')} ${m.dispatch.model}${m.dispatch.effort ? ` ${m.dispatch.effort}` : ''}`, color: COLOR.faint }])
   for (const k of m?.kinds ?? []) groups.push([{ text: `${KIND_LABEL[k.kind]} ${[k.model, k.effort].filter(Boolean).join(' ')}`, color: COLOR.faint }])
-  if (m?.sync?.model) groups.push([{ text: `同步 ${m.sync.model}${m.sync.effort ? ` ${m.sync.effort}` : ''}${m.sync.fresh ? '・新對話' : ''}`, color: COLOR.faint }])
+  if (m?.sync?.model) groups.push([{ text: `${KIND_LABEL.sync} ${m.sync.model}${m.sync.effort ? ` ${m.sync.effort}` : ''}${m.sync.fresh ? t('pane.freshSession') : ''}`, color: COLOR.faint }])
   const v = s.versions
-  if (v?.live) groups.push([{ text: `線上 ${v.live}`, color: COLOR.dim }])
-  if (v?.dev) groups.push([{ text: `開發中 ${v.dev}`, color: COLOR.running }])
+  if (v?.live) groups.push([{ text: t('pane.live', { version: v.live }), color: COLOR.dim }])
+  if (v?.dev) groups.push([{ text: t('pane.dev', { version: v.dev }), color: COLOR.running }])
   return groups.flatMap((g, i) => (i ? [{ text: ' · ', color: COLOR.faint }, ...g] : g))
 }
 
@@ -597,13 +600,13 @@ function footerRows(ui: any, view: PaneView, act: PaneActions, width: number, fo
     ...(view.showAll ? [{ key: 'refresh', hotkey: 'r', label: `↻ ${WORD.refresh}`, isDim: true, onPress: act.refresh, width: 0 }] : []),
     // 取消選取不綁快捷鍵：這裡只在「更多動作」展開、而且你選了任務時出現（區段標題列上另有一顆）。
     ...(view.showAll && view.selected ? [{ key: 'deselect', label: WORD.deselect, isDim: true, onPress: act.deselect, width: 0 }] : []),
-    { key: 'expand', hotkey: 'x', label: view.isExpanded ? '▴ 收合' : '▾ 展開', isDim: true, onPress: act.expand, width: 0 },
-    { key: 'more', hotkey: 'm', label: view.showAll ? '▴ 精簡動作' : '⋯ 更多動作', isDim: true, onPress: act.more, width: 0 },
-    { key: 'help', hotkey: 'i', label: view.isHelp ? '▴ 收起說明' : '? 說明', isDim: true, onPress: act.help, width: 0 },
+    { key: 'expand', hotkey: 'x', label: view.isExpanded ? t('pane.collapse') : t('pane.expand'), isDim: true, onPress: act.expand, width: 0 },
+    { key: 'more', hotkey: 'm', label: view.showAll ? t('pane.less') : t('pane.more'), isDim: true, onPress: act.more, width: 0 },
+    { key: 'help', hotkey: 'i', label: view.isHelp ? t('pane.hideHelp') : `? ${t('pane.help')}`, isDim: true, onPress: act.help, width: 0 },
   ].map(a => ({ ...a, width: displayWidth(a.label) + 3 }))
   const upd = updateSlot(view.s, act)
   // 還沒有任務、也還沒有登錄表：動作列只有建立空登錄表這一個主要動作。
-  const create = view.s.missingRegistry ? [button({ key: 'create-registry', hotkey: 'n', isBoxed: true, label: `＋ ${WORD.createRegistry}`, onPress: act.createRegistry })] : []
+  const create = view.s.missingRegistry ? [button({ key: 'create-registry', hotkey: 'n', isBoxed: true, label: createRegistryLabel(), onPress: act.createRegistry })] : []
   const mine = focus && view.s.cases.length ? caseActions(view, focus, act) : create
   const rule = hint ? `${'─'.repeat(Math.max(2, width - displayWidth(hint) - 1))} ${hint}` : '─'.repeat(Math.max(2, width))
   const status = statusParts(view)

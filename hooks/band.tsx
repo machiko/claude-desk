@@ -9,6 +9,7 @@ import { dueReminders, reminderWhen } from './extras'
 import { turnOf } from './turn'
 import type { TurnCtx } from './turn'
 import { noticeText } from './update'
+import { t } from './i18n'
 
 // 六段的顏色搬到 theme.ts；呼叫端與測試照舊從這裡匯入也行。
 export { STAGE_COLOR } from './theme'
@@ -44,12 +45,12 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   // 你在面板選的那件是對話的主角：前面標「已選」，提醒提示都會附上它的卡。
   const isPicked = !!selected && lead?.statusPath === selected
   const demo: BandPart[] = [
-    ...(s.demo ? [{ text: '示範  ', color: COLOR.faint }] : s.tutorial ? [{ text: '教學  ', color: COLOR.faint }] : []),
-    ...(isPicked ? [{ text: '已選  ', color: COLOR.dim }] : []),
+    ...(s.demo ? [{ text: `${t('band.demo')}  `, color: COLOR.faint }] : s.tutorial ? [{ text: `${t('band.tutorial')}  `, color: COLOR.faint }] : []),
+    ...(isPicked ? [{ text: `${t('band.picked')}  `, color: COLOR.dim }] : []),
   ]
 
   if (!lead) {
-    const quiet = s.cases.length ? `○ ${s.cases.length} 件都閒置` : '尚無任務'
+    const quiet = s.cases.length ? t('band.allIdle', { n: s.cases.length }) : t('band.noCases')
     return { lead: [...demo, { text: quiet, color: COLOR.faint }], wait: null, notice, button, buttonWidth }
   }
   const meta = STATE[lead.state]
@@ -61,18 +62,18 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
   // 摘要列的那句話跟現在卡最上方一樣：輪到你／處理中＋該做什麼。
   const turn = turnOf(lead, ctxOf(lead))
   // 處理中時摘要列只留主句（括號提示留在面板），把位置讓給六段與提醒。
-  const noteText = turn.who === 'you' ? `輪到你：${turn.text}` : turn.who === 'ai' ? `處理中：${turn.text.split(/[，（]/)[0]}` : turn.text
+  const noteText = turn.who === 'you' ? t('band.yourTurn', { text: turn.text }) : turn.who === 'ai' ? t('band.aiTurn', { text: turn.text.split(/[，（]/)[0] ?? '' }) : turn.text
   const note: BandPart[] = noteText ? [{ text: `  ${noteText}`, color: turn.who === 'you' ? COLOR.attention : COLOR.dim }] : []
   const more: BandPart[] = runningMore > 0 ? [{ text: `  +${runningMore}`, color: COLOR.running }] : []
   const waitPart = (max: number): BandPart | null => {
     const w = waiting[0]
     const due = dueReminders(s.reminders)[0]
     if (!w && due && max >= 14) {
-      const tail = `（${reminderWhen(due)}）`
+      const tail = t('word.paren', { text: reminderWhen(due) })
       return { text: `◷ ${fit(due.text, max - 2 - displayWidth(tail))}${tail}`, color: COLOR.attention, bold: true }
     }
     if (!w || max < 10) return null
-    const tail = ` 等你${waiting.length > 1 ? ` +${waiting.length - 1}` : ''}`
+    const tail = ` ${STATE.ask.label}${waiting.length > 1 ? ` +${waiting.length - 1}` : ''}`
     return { text: `● ${fit(w.name, max - 2 - displayWidth(tail))}${tail}`, color: COLOR.attention, bold: true }
   }
 
@@ -95,8 +96,8 @@ export function layoutBand(s: Snapshot, columns: number, paneOpen: boolean, ctxO
     () => ({ lead: [...head, name(16), { text: '  ', color: COLOR.dim }, ...strip(true), ...label], wait: null }),
     () => ({ lead: [...head, name(14), { text: '  ', color: COLOR.dim }, ...strip(true)], wait: null }),
   ]
-  for (const t of tries) {
-    const r = t()
+  for (const attempt of tries) {
+    const r = attempt()
     if (!r) continue
     const total = width(r.lead) + (r.wait ? displayWidth(r.wait.text) + 3 : 0)
     if (total <= room) return { ...r, notice, button, buttonWidth }

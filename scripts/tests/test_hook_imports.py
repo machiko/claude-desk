@@ -34,6 +34,8 @@ MOVED_ELSEWHERE = [
     ('theme', 'card-actions', ['DEMO_ONLY']),
     ('theme', 'band', ['STAGE_COLOR']),
 ]
+# text 這類葉節點執行期可以 import 的模組：字串目錄（'./i18n' 解析成 i18n）與它的語言檔；它們自己也只 import 彼此（見 test_text_module_is_a_leaf）
+LEAF_DEPS = {'i18n', 'i18n/index', 'i18n/zh-TW'}
 IMPORT_RE = re.compile(r"^\s*(import|export)\s+(type\s+)?([^'\"]*?)\s*from\s*['\"](\.[^'\"]*)['\"]", re.M)
 REEXPORT_RE = re.compile(r"^\s*export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['\"]\./([^'\"]+)['\"]", re.M)
 
@@ -89,9 +91,12 @@ class HookImportsTest(unittest.TestCase):
         self.assertEqual(found, [])
 
     def test_text_module_is_a_leaf(self):
+        """text 執行期只 import 字串目錄（i18n 外框那張卡：時間與單位改用 t()），而字串目錄只 import 自己的語言檔，不會繞回別的 hooks 模組。"""
         mods = modules()
         self.assertIn('text', set(mods))
-        self.assertEqual(runtime_imports('text', mods['text']), set())
+        self.assertEqual(runtime_imports('text', mods['text']) - LEAF_DEPS, set())
+        for dep in ('i18n/index', 'i18n/zh-TW'):
+            self.assertEqual(runtime_imports(dep, mods[dep]) - LEAF_DEPS, set(), dep)
 
     def test_moved_names_are_defined_once(self):
         mods = modules()
