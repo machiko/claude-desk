@@ -36,7 +36,7 @@ Claude Code 的工作桌：一行摘要列看有沒有任務在等你，一張�
 
 ## 需要什麼
 
-- Claude Code：以 2.1.302 開發與測試。mod API 仍是 early access，Claude Code 改版可能讓 desk 需要跟著更新。
+- Claude Code：以 2.1.302 開發與測試。mod API 仍是 early access，Claude Code 改版可能讓 desk 需要跟著更新。版本太舊時面板會提示要更新到哪一版。
 - macOS 或 Linux（開檔案用 `open`／`xdg-open`）；Windows 沒有測試過。
 - `git`、`python3`（`/desk:card` 用）。
 - 選用：讀 PR 與 CI——GitHub 的 repo 用 [`gh`](https://cli.github.com/)（要先 `gh auth login`，desk 自己只執行 `gh pr list`）、Bitbucket 的 repo 用 Bitbucket MCP 伺服器（desk 自己只呼叫 `bb_get`）；都沒有時合併改看 git。合併段派出的推送 Agent 開 PR 也看 origin：GitHub 用 `gh pr create`、Bitbucket 用 MCP 的 `bb_post`（這一種派工會載入 MCP）、其他平台只 push 並把開 PR 的網址寫進「等你」，或在專案 `dispatch.json` 設 `pr.open` 指定指令。`docker compose`（完成檢查前確認容器）。

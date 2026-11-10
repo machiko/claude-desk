@@ -38,6 +38,7 @@ import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
 import { noteReleased, noteReleasedNow } from './release-update'
+import { checkEngineVersion } from './engine-version'
 import { isBusy, sentState } from './turn'
 import { WORD, DEMO_ONLY } from './theme'
 import { cancelPromptSync, readSent, registerPromptSync, resetPromptSync } from './prompt-sync'
@@ -459,6 +460,24 @@ export async function refreshAfterWrite($: any, options: PluginOptions) {
   return refresh($, options)
 }
 
+/**
+ * 互動對話開始：Claude Code 比 desk 的最低版本舊（或讀不到版本）就記一筆動態（不帶卡片，不會被換卡清掉）並跳 toast；教學進行中不報。
+ * 回傳有沒有報出來；出錯回 false，不擋 desk 啟動（舊引擎上連動態或 toast 都可能不能用）。
+ */
+async function warnOldEngine($: any): Promise<boolean> {
+  try {
+    const lesson = (await $.store.get(TUTORIAL_KEY).catch(() => null)) as TutorialState | null
+    if (lesson && typeof lesson.dir === 'string') return false
+    const notice = await checkEngineVersion($)
+    if (!notice) return false
+    await feedPush($, [{ at: await $.clock.now(), text: notice.text, tone: 'warning' }])
+    $.ui.toast(notice.text, { timeoutMs: 8000 })
+    return true
+  } catch {
+    return false
+  }
+}
+
 const KIND_ARG: Record<string, DispatchKind> = { go: 'continue', continue: 'continue', sync: 'sync', review: 'review', reply: 'reply' }
 
 /** /desk 指令的任務名對不到：列出可用的任務名（示範任務只能看，不列）；一件都沒有就叫你開卡。 */
@@ -479,6 +498,8 @@ export const register: Register = (on, options) => {
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined
     spinTimer?.cancel(); spinTimer = undefined
+    // 最先檢查引擎版本：太舊的 Claude Code 後面的 API 可能先壞掉，壞掉前要先講清楚是版本的問題。
+    if (e.isInteractive !== false) await warnOldEngine($)
     await update($, verifyingAtom, () => ({}))
     await update($, launchingAtom, () => ({}))
     // 新對話（含 /clear）：重附卡片全文，之前送出的決策不帶著鎖進來。
