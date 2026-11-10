@@ -2,6 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, feedLog } from './fixture'
 import { ENGINE_NOTIFIED_KEY, MIN_CLAUDE_CODE, tooOldText, unknownVersionText, versionNotice } from '../hooks/engine-version'
+import { tutorialPaths } from '../hooks/tutorial'
 
 type Log = ReturnType<typeof feedLog>
 
@@ -130,4 +131,34 @@ test('test_tutorial_does_not_show_version_warning', async ($, on) => {
   await open()
   expect(versionToasts(data.toasts)).toEqual([tooOldText('2.1.250')])
   expect(versionFeed(log).length).toBe(1)
+})
+
+/** 0.63 收尾卡 AC-2：教學開始／結束清掉動態後，教學結束時把版本警告補回動態（只一行、不再跳 toast）；版本夠新時不補。 */
+test('test_version_warning_returns_to_feed_after_tutorial_clears_it', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  const { open } = sessions($, on)
+  const P = tutorialPaths('/home/u')
+  const tutorialRound = async () => {
+    await $.command.run({ command: 'desk', args: 'tutorial' } as any)
+    await clock.settle()
+    expect(versionFeed(log)).toEqual([])
+    await $.command.run({ command: 'desk', args: 'tutorial end' } as any)
+    await clock.settle()
+    delete data.files[P.dir]
+  }
+  data.engine = { version: '2.1.250', base: '2.1.250' }
+  await open()
+  expect(versionFeed(log).length).toBe(1)
+
+  await tutorialRound()
+
+  expect(versionFeed(log).map(e => [e.text, e.tone, e.card])).toEqual([[tooOldText('2.1.250'), 'warning', undefined]])
+  expect(versionToasts(data.toasts)).toEqual([tooOldText('2.1.250')])
+
+  // 對照：版本夠新時教學結束不補。
+  data.engine = { version: '2.1.302', base: '2.1.302' }
+  await tutorialRound()
+  expect(versionFeed(log)).toEqual([])
+  expect(versionToasts(data.toasts)).toEqual([tooOldText('2.1.250')])
 })

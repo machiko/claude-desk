@@ -1839,6 +1839,22 @@ class CardScriptTest(unittest.TestCase):
         self.assertEqual(info.returncode, 0, info.stderr)
         self.assertIn('format: DESK', info.stdout)
 
+    def test_new_card_from_custom_template_gets_format_marker(self):
+        """0.63 收尾卡 AC-3：自訂模板的開頭標記沒寫「格式=」時，開出來的卡補上格式 1，其餘照模板原文。"""
+        tpl = os.path.join(self.t, 'my-template.md')
+        write(tpl, '# <任務名> DESK\n<!-- DESK: 只讀這塊 -->\n- 狀態：開卡\n- 檢查：`make test`\n- 等你：無\n- 下一步：寫規格\n- 關卡：無\n<!-- /DESK -->\n')
+        self.write_settings({'card': {'template': tpl}})
+
+        r = self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(self.card_path())
+        self.assertEqual(text.split('\n')[1], '<!-- DESK 格式=1: 只讀這塊 -->')
+        self.assertEqual(load_card().card_format(text), 1)
+        expected = read(tpl).replace('<任務名>', '訂單匯出').replace('<!-- DESK:', '<!-- DESK 格式=1:')
+        # 開卡另外補的「基準」欄不算模板原文
+        self.assertEqual(re.sub(r'^- 基準：.*\n', '', text, flags=re.M), expected)
+
     def test_write_commands_refuse_newer_card_format(self):
         """格式版本標記 AC-3：卡片是格式 2 時，會寫卡的子指令不改檔、結束碼非 0，訊息叫你更新 desk。"""
         path = self.newer_card()

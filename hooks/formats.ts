@@ -12,7 +12,7 @@ export const REGISTRY_FORMAT = 1
 
 /** 區塊開頭標記（`<!-- DESK …-->`、舊的 `<!-- CARD …-->`）裡的「格式=n」；開頭標記的認法跟 parseCard 相同。 */
 const CARD_OPENER = /<!--\s*(?:DESK|CARD)([^>]*)-->/
-const LOGBOOK_MARK = /<!--\s*desk\s+登錄表([^>]*)-->/
+const REGISTRY_MARK = /<!--\s*desk\s+登錄表([^>]*)-->/
 const VERSION = /格式\s*[=＝]\s*([0-9]+)/
 
 const versionIn = (marker: string | undefined): number => {
@@ -28,7 +28,7 @@ export function cardFormat(text: string): number {
 
 /** 登錄表的格式版號：`<!-- desk 登錄表 格式=n -->`；沒有標記是 1。 */
 export function registryFormat(text: string): number {
-  return versionIn(text.match(LOGBOOK_MARK)?.[1])
+  return versionIn(text.match(REGISTRY_MARK)?.[1])
 }
 
 /** 比這版認得的新的卡片擋派工時的原因：手動派工的拒絕、面板「輪到你」都用這句。 */
@@ -38,7 +38,7 @@ export const UPDATE_DESK_NEXT = '輸入 /desk update 更新 desk'
 
 /** 一份比這版認得的新的檔：卡片（帶任務名）或登錄表。 */
 export type NewerFormat = { kind: 'card' | 'registry'; path: string; format: number; name?: string }
-/** 已報過的較新格式：`<kind>:<路徑>` → 報過的版號。跟動態放在同一處，動態清掉時一起清（教學開始／結束、/desk off）。 */
+/** 已報過的較新格式：`<kind>:<路徑>` → 報過的版號。跟動態放在同一處，動態清掉時一起清（教學開始／結束）；/desk off 不清動態，紀錄也留著。 */
 export type FormatsSeen = Record<string, number>
 
 const keyOf = (f: NewerFormat) => `${f.kind}:${f.path}`
