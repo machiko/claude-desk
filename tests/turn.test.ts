@@ -140,7 +140,7 @@ test('a review next step after a failed check still lets g fix it', () => {
   // 流程停下（修了兩輪仍有 HIGH）與 Agent 被停掉：一樣派修正或接著做，不引用下一步
   const stopped = mk({ next: '派審查' }, { state: 'failed', chain: { round: 2, lastKind: 'fix', stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' } })
   expect(dispatchable(stopped)).toContain('continue')
-  expect(buildPrompt(stopped, 'continue').split('\n')[0]).toBe('修正：流程已暫停（修了 2 輪仍有 CRITICAL 0、HIGH 1）。看 .task/REVIEW.md（有的話）與完成檢查 `npm test`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」，其他照修。），每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進 .task/REPORT.md。commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。')
+  expect(buildPrompt(stopped, 'continue').split('\n')[0]).toBe('修正：流程已暫停（修了 2 輪仍有 CRITICAL 0、HIGH 1）。看 .task/REVIEW.md（有的話）與完成檢查 `npm test`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（記錄、不修）」、在卡片歷程記一筆「Agent：MEDIUM n 條要改規格才能修，記錄不修 → 見審查檔」，不寫進 等你，其他照修。），每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進 .task/REPORT.md。commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。')
   const halted = mk({ next: '等審查' }, { state: 'failed', chain: { round: 0, lastKind: 'continue', stopped: AGENT_STOPPED } })
   expect(dispatchable(halted)).toContain('continue')
   expect(buildPrompt(halted, 'continue').split('\n')[0]).toBe('上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。')
@@ -156,7 +156,7 @@ test('a blocking review verdict without a chain sends a review fix, not a check 
     expect(c.state).toBe('failed')
     expect(dispatchable(c)).toContain('continue')
     const head = buildPrompt(c, 'continue').split('\n')[0]!
-    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進 .task/REPORT.md。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」，其他照修。修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM <沒修的條數>、LOW <原數>；已依審查修正、未複審（發版時整版審查）」，History 加一筆「Agent：依審查修好 <哪幾條> → 待測試（commit <頂端 commit 前 7 碼>）」，狀態寫一句修了什麼。')
+    expect(head).toBe('修正：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。每條要修的發現，先把同一類情況全部列出（同一個寫法、同一種輸入、相鄰的路徑），每種都修並補測試，不只修審查舉的例子；列了哪些情況寫進 .task/REPORT.md。要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（記錄、不修）」、在卡片歷程記一筆「Agent：MEDIUM n 條要改規格才能修，記錄不修 → 見審查檔」，不寫進 等你，其他照修。修完 commit，卡片 關卡 寫成「review：CRITICAL 0、HIGH 0、MEDIUM <沒修的條數>、LOW <原數>；已依審查修正、未複審（發版時整版審查）」，History 加一筆「Agent：依審查修好 <哪幾條> → 待測試（commit <頂端 commit 前 7 碼>）」，狀態寫一句修了什麼。')
     expect(head).not.toContain('未通過')
   }
 })
@@ -224,8 +224,8 @@ test('each user turn before merging says what happens after it', () => {
   // 審查段：有開著的 PR 過關後合併，沒有就開 PR。
   const openPr = mk({}, { pr: { id: 12, state: 'OPEN', ci: 'pass' } }, passed)
   expect(openPr.pipeline?.current).toBe('review')
-  expect(turnOf(openPr)).toEqual({ who: 'you', text: 'w 派驗收（新對話，有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後合併 PR）', action: 'review', key: 'w' })
-  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: 'w 派驗收（新對話，有 CRITICAL／HIGH 會自動修正、影響行為的 MEDIUM 寫進等你，過關後開 PR）', action: 'review', key: 'w' })
+  expect(turnOf(openPr)).toEqual({ who: 'you', text: 'w 派驗收（新對話，有 CRITICAL／HIGH 會自動修正、MEDIUM 只記錄，過關後合併 PR）', action: 'review', key: 'w' })
+  expect(turnOf(mk({}, {}, passed))).toEqual({ who: 'you', text: 'w 派驗收（新對話，有 CRITICAL／HIGH 會自動修正、MEDIUM 只記錄，過關後開 PR）', action: 'review', key: 'w' })
 })
 
 /** one-next-step D-04：審查後有新 commit，但流程會自己接手（自動排的重新檢查、修正輪剛做完）：新的一輪還沒過關，也照樣是自動重新審查 */
@@ -288,7 +288,7 @@ test('ship turn says archive once the tag exists without a release gate', () => 
   expect(shipTurn(mk({ gate: 'release：v0.29.0' }, { ...merged, tag: 'v0.29.0' }))).toEqual({ who: 'you', text: 'u 確認上線（部署 v0.29.0 後按，確認後歸檔）', action: 'ship', key: 'u' })
 })
 
-/** review-medium-record AC-3、AC-4：審查過關、MEDIUM 只剩記錄、不修的 → 直接開 PR 或合併；等你有 MEDIUM 那題時照舊要你選。 */
+/** review-medium-record AC-3、AC-4（驗收 MEDIUM 記錄後繼續 AC-2 沿用）：審查過關、MEDIUM 只剩記錄、不修的 → 直接開 PR 或合併；舊卡等你有 MEDIUM 那題時照舊要你選。 */
 test('turn: a passed review with only recorded MEDIUM goes straight to open PR or merge', () => {
   const gate = 'review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 1；可合併'
   const noPr = mk({ gate })
@@ -301,7 +301,7 @@ test('turn: a passed review with only recorded MEDIUM goes straight to open PR o
   const merging = mk({ gate }, { pr: { id: 12, state: 'OPEN', ci: 'pass', url: 'https://github.com/acme/shop/pull/12' }, gitState: { ahead: 0, behind: 0, changed: 0, untracked: 0, upstream: true } })
   expect(turnOf(merging)).toEqual({ who: 'you', text: 'p 合併 PR #12（在瀏覽器開啟，合併後打 tag 發版）', action: 'pr', key: 'p' })
 
-  // 對照組：可能影響行為的 MEDIUM 照舊寫進等你，輪到你是選選項填入
+  // 對照組：舊卡（MEDIUM 改成只記錄之前）等你已有 MEDIUM 題時，輪到你照舊是選選項填入
   const asked = mk({ gate, ask: '審查 MEDIUM 2 條（漏處理空清單）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格' })
   expect(turnOf(asked)).toMatchObject({ who: 'you', text: 'f 填入決策（先按選項字母，填入後按 Enter 送出）', key: 'f' })
   expect(stageActions(asked).has('fill')).toBe(true)

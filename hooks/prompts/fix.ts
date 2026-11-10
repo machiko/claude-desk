@@ -4,11 +4,11 @@ import { AGENT_STOPPED, MAX_FIX_ROUNDS, MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT
 import type { FixReason } from '../dispatch'
 import { UNREVIEWED_GATE } from '../card'
 import { parseVerdict, toFix } from '../pipeline'
-import { MEDIUM_ASK_FORM, REVIEW_FILE, SECURITY_FILE } from './review'
+import { REVIEW_FILE, SECURITY_FILE } from './review'
 import { isQuotaHold } from '../quota-words'
 
-/** 要改規格才能修的 MEDIUM：不改，交給你決定。修正提示共用。 */
-const MEDIUM_DECIDE = `要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（等你決定）」、在卡片 等你 寫成「${MEDIUM_ASK_FORM}」，其他照修。`
+/** 要改規格才能修的 MEDIUM：不改、只記錄（跟審查一樣標「記錄、不修」），歷程寫原因，不在「等你」問。修正提示共用。 */
+export const MEDIUM_SPEC_RECORD = '要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（記錄、不修）」、在卡片歷程記一筆「Agent：MEDIUM n 條要改規格才能修，記錄不修 → 見審查檔」，不寫進 等你，其他照修。'
 /**
  * 依審查檔修完的收尾：關卡寫成擋不住的分級（CRITICAL、HIGH 修掉了是 0）加上未複審的結論，History 照白話範本記一筆修了哪幾條。
  * 不改回 無：卡片與發版看得到這張卡是修完沒複審的（工作桌只認「未複審」三個字、當成沒有關卡，見 card.ts 的 parseGate）；
@@ -21,9 +21,9 @@ export const FIX_WHOLE_CLASS = '每條要修的發現，先把同一類情況全
  * 你按 g 修審查結論：依審查檔修 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM（你主動要修的照修，不受自動修正上限擋）。
  * `file` 是要依的那一份審查檔（接在資安審查之後是 SECURITY.md，其他是 REVIEW.md），提示只寫這一份，修正的 Agent 不用猜。
  */
-const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。${FIX_WHOLE_CLASS}${MEDIUM_DECIDE}${reviewFixDone('<沒修的條數>')}`
-/** 自動流程的審查修正：只修 CRITICAL、HIGH；MEDIUM 由你在「等你」決定，不在這輪改。 */
-const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）。${FIX_WHOLE_CLASS}${reviewFixDone('<原數>')}`
+const reviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH，與沒標「不修」「等你決定」的 MEDIUM（LOW 不用修）。${FIX_WHOLE_CLASS}${MEDIUM_SPEC_RECORD}${reviewFixDone('<沒修的條數>')}`
+/** 自動流程的審查修正：只修 CRITICAL、HIGH；MEDIUM 只記錄（開 PR 時列進 PR 說明），不在這輪改、也不在「等你」問。 */
+const autoReviewFixStep = (file: string) => `依 ${file} 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 只記錄、不要改，也不寫進 等你）。${FIX_WHOLE_CLASS}${reviewFixDone('<原數>')}`
 
 /**
  * 你在「等你」對審查 MEDIUM 題選了修掉：照卡片 Decisions 修那幾條 MEDIUM（你主動要的，不受自動修正上限擋）。
@@ -65,7 +65,7 @@ export function manualFix(c: Case, ci: boolean): ManualFix {
   if (stopped === AGENT_STOPPED) return { head: '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。', repairs: false }
   // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
   if (isQuotaHold(stopped)) return quotaRestart(c)
-  if (stopped) return repair(`修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_DECIDE}），${FIX_WHOLE_CLASS}commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`)
+  if (stopped) return repair(`修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_SPEC_RECORD}），${FIX_WHOLE_CLASS}commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`)
   // 審查結論還要修（CRITICAL＋HIGH，加上流程這輪要修的 MEDIUM）：檢查是過的，依審查檔修。
   const verdict = parseVerdict(c.gate)
   if (verdict && toFix(c, verdict) > 0) return repair(`修正：${reviewFixStep(REVIEW_FILE)}`)

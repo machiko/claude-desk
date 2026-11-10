@@ -255,7 +255,7 @@ test('review prompt: no review asks to scan past reviews or append to the pitfal
   }
 })
 
-test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
+test('review prompt: every MEDIUM is recorded, not asked', () => {
   const c = mk('寫測試')
   const custom = parseSettings(JSON.stringify({ review: { template: '/p/review-contract.md' } }))
   const prompts = [
@@ -270,13 +270,14 @@ test('review prompt: behavior-neutral MEDIUM is recorded, not asked', () => {
     expect(p).toContain('記錄、不修')
     expect(p).toContain('不寫進卡片 等你')
     expect(p).toContain('歷程')
-    expect(p).toContain('審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格')
+    // 驗收 MEDIUM 記錄後繼續：可能影響行為的也一樣只記錄，不再在等你出 A～D 的題目
+    expect(p).not.toContain('A) 不修，記錄原因')
     expect(p).toContain('都算進關卡的 MEDIUM 數')
     expect(p).toContain('review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>')
   }
-  // 自動流程的修正提示：只修 CRITICAL／HIGH，MEDIUM、LOW 不用修（MEDIUM 由你在等你決定）
+  // 自動流程的修正提示：只修 CRITICAL／HIGH，MEDIUM、LOW 不用修（MEDIUM 只記錄）
   const fix = buildPrompt(c, 'continue', '', { from: 'review', round: 1 })
-  expect(fix).toContain('修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）')
+  expect(fix).toContain('修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 只記錄、不要改，也不寫進 等你）')
   expect(fix).not.toContain('沒標「不修」「等你決定」的 MEDIUM')
 })
 
@@ -769,7 +770,7 @@ test('test_review_prompt_preflight_on_rereview_and_security', () => {
 
 /** 加這個功能之前的審查提示詞（到「任務：」之前），用來確認沒設前置時逐字不變。 */
 const SNAP_GRADES = (file: string) => `問題分 CRITICAL（資安、資料外洩、資料毀損）、HIGH（實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求）、MEDIUM（可維護性）、LOW（風格）四級。每條寫成「- [等級][類別] 檔案:行 — 說明」，類別用短詞（例如 授權、個資、測試、命名）。寫進 ${file}（整份覆寫）。`
-const SNAP_MEDIUM = 'MEDIUM 分兩種：只關於規格紀錄、文件、命名、重複、註解、可維護性（改不改程式行為都一樣）的，在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查：MEDIUM n 條記錄不修 → 見審查檔」；其他 MEDIUM（拿不準的也算可能影響行為）工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」（還有 CRITICAL／HIGH 時 等你 先留 無，修正後的複審照原樣再列，過關那次再問）。都算進關卡的 MEDIUM 數。'
+const SNAP_MEDIUM = 'MEDIUM 一律記錄、不問：只關於規格紀錄、文件、命名、重複、註解、可維護性的，跟可能影響行為的（拿不準的、驗收情境無法驗證的、要改規格才能修的也一樣），都在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你，在卡片歷程記一筆「審查：MEDIUM n 條記錄不修 → 見審查檔」；工作桌不會自動修 MEDIUM，流程照常往開 PR 走，開 PR 時會列進 PR 說明。都算進關卡的 MEDIUM 數。'
 const SNAP_GATE = '最後把卡片 關卡 寫成這個格式，四個數字都要有：review：CRITICAL <n>、HIGH <n>、MEDIUM <n>、LOW <n>；<一句結論>'
 const SNAP_CONTRACT = '契約：templates/review.md。自己重跑完成檢查 `true`。'
 const SNAPSHOT = {
@@ -785,13 +786,13 @@ const SNAPSHOT = {
     '看這個分支相對它要併進去的分支的 diff（從 git merge-base 起算；先看 PR 目標，沒有就看 origin/HEAD）。',
     '資安審查只看：授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩（log、匯出、版控）、機密與金鑰、檔案路徑、外部呼叫；其他交給程式碼審查。',
     SNAP_GRADES('.task/SECURITY.md'), SNAP_MEDIUM,
-    '卡片 等你 已有程式碼審查問的 MEDIUM 題就保留；這份也有標「（等你決定）」的 MEDIUM 就跟它合成一題（摘要兩份都寫到），不要因為這份沒有就把 等你 寫成 無。',
+    '卡片 等你 已有的題目（例如舊卡程式碼審查問的 MEDIUM 題）照原樣保留，不要因為這份沒有就把 等你 寫成 無。',
     SNAP_GATE,
     '不改程式、不 commit。',
   ],
   rereview: [
     '程式碼審查：這是新的對話，不接續 Agent、不參考 Agent 的結論。', SNAP_CONTRACT,
-    '這是修正後的複審（第 1 輪）：只看 `git diff abc123..HEAD`。先讀現有 .task/REVIEW.md 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列，卡片 等你 已在問的那條標「（等你決定）」；上一輪已列過的 LOW 與標「不修」的項目不要再提，標「（等你決定）」的照原樣再列（過關時要在 等你 問）。',
+    '這是修正後的複審（第 1 輪）：只看 `git diff abc123..HEAD`。先讀現有 .task/REVIEW.md 當上一輪結論，只判斷上一輪的 CRITICAL／HIGH 有沒有修好、這段新 diff 有沒有新問題；沒修好的照原樣再列；上一輪已列過的 LOW 與標「不修」的項目不要再提；上一份已有標「（等你決定）」的（這條規則之前的舊卡）照原樣再列；不新增這種標法，也不在 等你 新增題目。',
     SNAP_GRADES('.task/REVIEW.md'), SNAP_MEDIUM, SNAP_GATE,
     '不改程式、不 commit。',
   ],

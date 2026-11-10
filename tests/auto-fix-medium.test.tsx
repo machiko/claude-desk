@@ -1,12 +1,13 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat } from './fixture'
+import { fixture, PANE, PROJECT_DIR, CARD_A, CARD_B, CARD_C, result, text, flat } from './fixture'
 import { screen, busyAgent as busy } from './world'
 import { buildPrompt } from '../hooks/dispatch'
 import { buildCase } from '../hooks/model'
 import { decisionAnswerOf, picksMediumFix, picksMediumFollowUp } from '../hooks/card'
 import { MEDIUM_FIX_NOT_SENT } from '../hooks/chain'
 
-// 修正輪收斂：自動流程只修 CRITICAL／HIGH；可能影響行為的 MEDIUM 由審查標「（等你決定）」寫進「等你」，不自動派修正。
+// 修正輪收斂：自動流程只修 CRITICAL／HIGH；MEDIUM 一律由審查標「（記錄、不修）」，不自動派修正、也不在「等你」問。
+// 舊卡「等你」裡已有的 MEDIUM 題（A～D）照舊能答：選 C 自動派修正、B 開疊放的後續卡（下面 test_answer_b_* 等）。
 const ALPHA = '/home/u/wt/alpha'
 const BETA = '/home/u/wt/beta'
 const GAMMA = '/home/u/wt/gamma'
@@ -14,7 +15,8 @@ const ME = 'fixture-session'
 const IMPL = 'a0000001-0000-4000-8000-000000000000'
 const ASK = '審查 MEDIUM 1 條（空字串沒處理）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格'
 const AUTO = '工作桌會跟 CRITICAL／HIGH 一起自動派修正'
-const ASK_RULE = '工作桌不會自動修：審查檔那條結尾標「（等你決定）」並在 等你 寫成「審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格」'
+/** 審查提示的 MEDIUM 規則：可能影響行為的也只記錄、不問。 */
+const RECORD_RULE = 'MEDIUM 一律記錄、不問：只關於規格紀錄、文件、命名、重複、註解、可維護性的，跟可能影響行為的（拿不準的、驗收情境無法驗證的、要改規格才能修的也一樣），都在審查檔那條結尾標「（記錄、不修）」、不寫進卡片 等你'
 
 /** 卡片：等你清空（或換成指定的題目）、關卡寫成指定的審查結論。 */
 function setCard(data: any, card: string, gate: string, ask = '無') {
@@ -55,76 +57,94 @@ function launchOneAtATime(data: any, clock: any) {
   }
 }
 
-/** AC-1：CRITICAL／HIGH 為 0、只剩可能影響行為的 MEDIUM（審查檔有沒有註記都一樣）：不派修正、流程過關，等你那題留給你選 */
-test('test_behavior_medium_alone_passes_and_asks_instead_of_auto_fix', async ($, on) => {
+/**
+ * 驗收 MEDIUM 記錄後繼續 AC-2：審查結論 CRITICAL 0、HIGH 0、MEDIUM 2（可能影響行為的也照新規則標記錄、不修，等你 無）：
+ * 不派修正、流程過關，卡片不在等你；輪到你直接是開 PR。設了 autoPr 時過關就自動派推送 Agent 開 PR。
+ */
+test('test_behavior_medium_alone_passes_without_asking', async ($, on) => {
   const { data, clock } = fixture(on)
   const h = helpers($, data, clock)
   data.agents = []
   data.git[ALPHA] = { branch: 'feature/alpha', head: 'h1' }
   data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
   launchOneAtATime(data, clock)
-  // Alpha：第一次審查就只剩 MEDIUM；審查照提示在等你問了一題（漏標註記的那條也不會被自動修）
-  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 0；可', ASK)
+  // Alpha：第一次審查只剩 MEDIUM，審查照新規則全部記錄、不修，等你留 無
+  setCard(data, CARD_A, 'review：CRITICAL 0、HIGH 0、MEDIUM 2、LOW 0；可')
   data.files[`${ALPHA}/.task/REVIEW.md`] = [
-    '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理（等你決定）',
-    '- [MEDIUM][邊界] c.ts:5 — 上限沒擋',
+    '- [MEDIUM][邊界] b.ts:2 — 空字串沒處理（記錄、不修）',
+    '- [MEDIUM][規格] — AC-2 無法驗證：沒寫上限（記錄、不修）',
   ].join('\n')
   reviewJustFinished(data, ALPHA, 0)
-  // Beta：高風險卡的資安審查只剩一條 MEDIUM：一樣不派修正，過關但要你看
-  data.git[BETA] = { branch: 'feature/beta', head: 'b1', files: ['app/Http/Middleware/Admin.php'] }
-  setCard(data, CARD_B, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；輸入沒驗')
-  data.files[`${BETA}/.task/REVIEW.md`] = '- [LOW][風格] x.php:1 — 縮排'
-  data.files[`${BETA}/.task/SECURITY.md`] = '- [MEDIUM][輸入驗證] app/Http/Middleware/Admin.php:3 — 沒檢查長度'
-  reviewJustFinished(data, BETA, 0, { security: true })
   await h.refresh(); await h.step(); await h.step()
 
-  // 不派修正、流程不暫停：過關
+  // 不派修正、流程不暫停：過關，提醒開 PR
   expect(data.launches).toHaveLength(0)
-  expect(h.fixes()).toHaveLength(0)
   const alpha = (data.store.chains as any)[ALPHA]
   expect(alpha.passed).toBe(true)
   expect(alpha.round).toBe(0)
   expect(alpha.stopped).toBeUndefined()
-  expect(alpha.mediumFix).toBeUndefined()
   expect(data.toasts).toContain('Alpha：驗收通過，可以開 PR')
   expect(data.toasts.some((t: string) => t.includes('流程已暫停'))).toBe(false)
-  const beta = (data.store.chains as any)[BETA]
-  expect(beta.passed).toBe(true)
-  expect(beta.needsHuman).toContain('認證／中介層')
-  // 卡片「等你」那題還在，輪到你：f 填入決策（先按選項字母，填入後按 Enter 送出）
-  expect(data.files[CARD_A]).toContain(`- 等你：${ASK}`)
+  // 卡片不在等你：輪到你是開 PR，不是填入決策
+  expect(data.files[CARD_A]).toContain('- 等你：無')
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `row-${CARD_A}` })
-  expect(await screen(ui)).toContain(flat('f 填入決策（先按選項字母，填入後按 Enter 送出）'))
+  const shown = await screen(ui)
+  expect(shown).toContain(flat('n 開 PR（按兩次，派 Agent push 並開 PR）'))
+  expect(shown).not.toContain(flat('f 填入決策'))
   await ui.unmount()
+
+  // Beta：專案設了 autoPr，審查只剩記錄的 MEDIUM（含可能影響行為的）→ 過關就自動派推送 Agent 開 PR，不停下來問
+  data.files[`${PROJECT_DIR}/dispatch.json`] = JSON.stringify({ autoPr: true })
+  data.git[BETA] = { branch: 'feature/beta', head: 'b1', remote: 'git@github.com:acme/shop.git', upstream: false }
+  data.gh = []
+  setCard(data, CARD_B, 'review：CRITICAL 0、HIGH 0、MEDIUM 1、LOW 0；可')
+  data.files[`${BETA}/.task/REVIEW.md`] = '- [MEDIUM][邊界] x.php:3 — 沒檢查長度（記錄、不修）'
+  reviewJustFinished(data, BETA, 0)
+  await h.refresh(); await h.step()
+  const beta = (data.store.chains as any)[BETA]
+  expect(beta.passed).toBe(true)
+  expect(beta.stopped).toBeUndefined()
+  expect(data.files[CARD_B]).toContain('- 等你：無')
+  const published = data.launches.filter((l: any) => l.init.cwd === BETA)
+  expect(published).toHaveLength(1)
+  expect(String(published[0].argv.at(-1)).startsWith('推送：push feature/beta 並')).toBe(true)
+  // 記錄的 MEDIUM 列進 PR 說明（AC-3）
+  expect(String(published[0].argv.at(-1))).toContain('有 .task/SECURITY.md 也讀，把裡面的 MEDIUM 逐條列在「驗收記錄的 MEDIUM」段')
+  expect(h.fixes()).toHaveLength(0)
 })
 
-/** AC-2：不分第幾輪（第一次、複審、輪數用完、通過後重新審查、資安審查），可能影響行為的 MEDIUM 一律標「（等你決定）」寫進等你，不說會自動派修正 */
-test('test_review_prompt_always_asks_behavior_medium', () => {
+/**
+ * 驗收 MEDIUM 記錄後繼續 AC-1：不分第幾輪（第一次、複審、輪數用完、通過後重新審查、資安審查），可能影響行為的 MEDIUM（含 AC 無法驗證的）
+ * 一律標「（記錄、不修）」、記歷程、不寫進等你；提示裡不再有 A～D 的題目，也不再要求新標「（等你決定）」。
+ */
+test('test_review_prompt_records_behavior_medium_without_asking', () => {
   const c = buildCase({ name: 'A', statusPath: CARD_A }, '- 狀態：x\n- 檢查：`npm test`\n- 等你：無\n- 下一步：寫測試\n- 關卡：無', 1, {}, undefined)
   const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', ...more })
   const prompts = [review(0), review(1), review(2), review(3), review(0, { base: 'abc123', recheck: true }), review(0, { security: true }), review(1, { security: true }), review(2, { security: true })]
   for (const p of prompts) {
-    expect(p).toContain(ASK_RULE)
-    expect(p).not.toContain(AUTO)
-    expect(p).not.toContain('不加註記')
-    expect(p).not.toContain('這次不會自動修')
-    // 只關於紀錄、命名這類的照舊記錄、不修
-    expect(p).toContain('記錄、不修')
+    expect(p).toContain(RECORD_RULE)
+    expect(p).toContain('在卡片歷程記一筆「審查：MEDIUM n 條記錄不修 → 見審查檔」')
+    expect(p).toContain('流程照常往開 PR 走')
     expect(p).toContain('都算進關卡的 MEDIUM 數')
+    // 舊規則的題目與新標法都不再出現
+    expect(p).not.toContain('A) 不修，記錄原因')
+    expect(p).not.toContain('D) 改規格')
+    expect(p).not.toContain('標「（等你決定）」並')
+    expect(p).not.toContain('過關時要在 等你 問')
+    expect(p).not.toContain('過關那次再問')
+    expect(p).not.toContain(AUTO)
   }
-  // 複審：只確認 CRITICAL／HIGH 修好沒；等你決定的照原樣再列，過關時才問得到
+  // 複審：只確認 CRITICAL／HIGH 修好沒；舊卡已標「（等你決定）」的照原樣再列，但不新增
   const again = review(1)
   expect(again).toContain('只判斷上一輪的 CRITICAL／HIGH 有沒有修好')
-  expect(again).toContain('標「（等你決定）」的照原樣再列')
-  // 重新審查（過關後又有新 commit）：等你還沒回答、或剛選了修掉的那條 MEDIUM 也照原樣再列，不會被整份覆寫清掉
+  expect(again).toContain('上一份已有標「（等你決定）」的（這條規則之前的舊卡）照原樣再列；不新增這種標法，也不在 等你 新增題目。')
+  // 重新審查：舊卡已回答的改標不修，不在等你新增題目
   const recheck = review(0, { base: 'abc123', recheck: true })
-  expect(recheck).not.toContain('沒被改到的 MEDIUM／LOW 不要再提')
-  // 已回答不修、另開卡修或改規格的（卡片 Decisions 有記）不再問；選了修掉卻沒被改到的照原樣再列
-  expect(recheck).toContain('卡片 Decisions 已記你對那條選了不修、另開卡修或改規格的，改標「（不修，見 Decisions）」、不在 等你 再問')
-  expect(recheck).toContain('還沒回答、或選了修掉卻沒被改到的，照原樣再列')
-  // 資安審查接在程式碼審查之後：等你已有的程式碼審查 MEDIUM 題要保留
-  const keep = '卡片 等你 已有程式碼審查問的 MEDIUM 題就保留'
+  expect(recheck).toContain('卡片 Decisions 已記你對那條選了不修、另開卡修或改規格的，改標「（不修，見 Decisions）」')
+  expect(recheck).toContain('不新增這種標法，也不在 等你 新增題目。')
+  // 資安審查接在程式碼審查之後：等你已有的題目照原樣保留
+  const keep = '卡片 等你 已有的題目（例如舊卡程式碼審查問的 MEDIUM 題）照原樣保留'
   expect(review(0, { security: true })).toContain(keep)
   expect(review(0)).not.toContain(keep)
 })
@@ -147,9 +167,9 @@ test('test_high_with_medium_fixes_only_critical_and_high', async ($, on) => {
   reviewJustFinished(data, ALPHA, 0)
   await h.refresh()
 
-  // 派修正第 1／2 輪：只修 CRITICAL、HIGH，MEDIUM 交給你
+  // 派修正第 1／2 輪：只修 CRITICAL、HIGH，MEDIUM 只記錄
   expect(data.launches).toHaveLength(1)
-  expect(h.prompt(0).startsWith('修正第 1／2 輪：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 由你在卡片 等你 決定，不要改）')).toBe(true)
+  expect(h.prompt(0).startsWith('修正第 1／2 輪：依 .task/REVIEW.md 修正所有 CRITICAL、HIGH（MEDIUM、LOW 不用修：MEDIUM 只記錄、不要改，也不寫進 等你）')).toBe(true)
   expect(h.prompt(0)).not.toContain('沒標「不修」「等你決定」的 MEDIUM')
   const run = (data.store.chains as any)[ALPHA]
   expect(run.round).toBe(1)
@@ -627,7 +647,6 @@ test('test_answer_b_after_sync_still_dispatches_fix', async ($, on) => {
 })
 
 // lean-fix-loop：審查 MEDIUM 題多一個「另開卡修」（推薦），修掉從 B 移到 C。
-const FOLLOW_UP_FORM = '審查 MEDIUM n 條（摘要）怎麼處理：A) 不修，記錄原因 B) 另開卡修（推薦，這張先過關） C) 修掉（在這張卡修，多一輪修正） D) 改規格'
 const FOLLOW_UP_LINE = '/desk:card new feature/alpha-medium "Alpha：審查 MEDIUM" feature/alpha'
 
 /** 面板對審查 MEDIUM 題選 key、f 填入、送出；回傳送給對話的附加說明。 */
@@ -640,24 +659,6 @@ async function answerMedium($: any, data: any, key: string) {
   await ui.unmount()
   return (data.submitted.at(-1).context ?? []).join('\n')
 }
-
-/** lean-fix-loop AC-2：審查（第一次、複審、重新審查、資安）與修正（按 g 修審查結論、流程停下後按 g）提示裡的 MEDIUM 題是同一組選項，B 另開卡修排第一個可修的選項 */
-test('test_medium_ask_offers_follow_up_card_first', () => {
-  const c = buildCase({ name: 'A', statusPath: CARD_A }, '- 狀態：x\n- 檢查：`npm test`\n- 等你：無\n- 下一步：寫測試\n- 關卡：無', 1, {}, undefined)
-  const blocked = buildCase({ name: 'A', statusPath: CARD_A }, '<!-- DESK -->\n- 狀態：x\n- 檢查：`npm test`\n- 等你：無\n- 下一步：等審查\n- 關卡：review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；不過\n<!-- /DESK -->', 1, {}, undefined)
-  const review = (round: number, more: object = {}) => buildPrompt(c, 'review', '', undefined, { round, ...(round > 0 ? { base: 'abc123' } : {}), pitfalls: '', ...more })
-  const prompts = [
-    review(0), review(1), review(0, { base: 'abc123', recheck: true }), review(0, { security: true }),
-    buildPrompt({ ...blocked, state: 'failed' }, 'continue'),
-    buildPrompt({ ...blocked, state: 'failed', chain: { round: 2, lastKind: 'fix', stopped: '修了 2 輪仍有 CRITICAL 0、HIGH 1' } } as any, 'continue'),
-  ]
-  for (const p of prompts) {
-    expect(p).toContain(FOLLOW_UP_FORM)
-    expect(p).not.toContain('B) 修掉')
-  }
-  // 重新審查：選了另開卡修的（Decisions 有記）跟不修、改規格一樣不再問
-  expect(review(0, { base: 'abc123', recheck: true })).toContain('卡片 Decisions 已記你對那條選了不修、另開卡修或改規格的')
-})
 
 /** lean-fix-loop AC-3：選 B) 另開卡修送出：提示叫對話開疊在這條分支上的後續卡、寫進要修的 MEDIUM、原卡記新卡名並清等你；不記 HEAD、清掉等你後不派修正，原卡輪到開 PR */
 test('test_follow_up_pick_opens_card_without_fix_dispatch', async ($, on) => {

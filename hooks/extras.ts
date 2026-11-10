@@ -182,6 +182,7 @@ export function mediumToFix(text: string | null): number {
 /**
  * 審查檔裡標「（等你決定）」的 MEDIUM 條數：「- [MEDIUM]…」開頭、行尾括號以「等你決定」收尾（「（上一輪已列，等你決定）」也算，後面可以接句號、空白）。
  * 有 CRITICAL／HIGH 時這幾題留在審查檔、等你留無，靠修正後的審查過關時問；沒有檔案回 0。
+ * 只有舊卡會有：MEDIUM 改成一律記錄、不問之後，新的審查不再這樣標（prompts/review.ts 的 MEDIUM_RULE）。
  */
 export function mediumToDecide(text: string | null): number {
   if (!text) return 0

@@ -121,7 +121,8 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     acted = true
     // 這次審查看的是派審查時的 HEAD；之後有新 commit，結論就不算數。寫入放棄就先不處理這次（不歸檔、不標處理過），下次重新整理再試。
     // 程式碼審查有結論（不是高風險）：記下這條分支審查過，之後的修正與新 commit 只跑測試、不複審；教學也一樣（審查存底照舊不寫）。
-    // 例外：還有 CRITICAL／HIGH 又有標「（等你決定）」的 MEDIUM：那題留在審查檔、要修正後的審查過關時才問，這次先不記，照舊複審一次。
+    // 例外（舊卡）：還有 CRITICAL／HIGH 又有標「（等你決定）」的 MEDIUM：那題留在審查檔、要修正後的審查過關時才問，這次先不記，照舊複審一次。
+    // MEDIUM 改成一律記錄、不問之後，新的審查不再這樣標，HIGH 修完一律只跑測試。
     const markReviewed = finished === 'review' && !last.security && risk?.level !== 'high' && c.git?.branch && await reviewSettled($, c) ? { reviewedBranch: c.git.branch } : {}
     if (finished === 'review' && !stoppedAgent && !(await saveChain($, key, r => r ? { ...r, ...judgedAt(r, !!last.security, c.git), ...markReviewed } : r, saveOpts))) { acted = actedBefore; continue }
     // 被停掉的審查沒寫完：不歸檔、不算判過。
@@ -212,7 +213,7 @@ export async function pauseUnsentReviewFix($: any, c: Case, mine: string, at: nu
 
 /**
  * 程式碼審查的結論可以算「這條分支審查過」：讀得出分級，而且沒有「還有 CRITICAL／HIGH、又有標（等你決定）的 MEDIUM」
- * （那題要等修正後的審查過關時才在「等你」問，拿掉複審就沒人問了）。
+ * （那題要等修正後的審查過關時才在「等你」問，拿掉複審就沒人問了；只有舊卡會這樣標）。
  */
 async function reviewSettled($: any, c: Case): Promise<boolean> {
   const verdict = parseVerdict(c.gate)

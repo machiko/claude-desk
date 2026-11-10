@@ -1,8 +1,10 @@
 // 推送（publish）派工的提示詞：push 分支、開 PR。開 PR 的做法依 origin 是哪一家而定。
+import { REVIEW_FILE, SECURITY_FILE } from './review'
 
 /**
  * 推送只動遠端與卡片：審查結論（關卡）與完成檢查是之前判定的，改了六段會退回去。
- * 過關時「等你」可能還有題目（例如 MEDIUM 要不要修），自動開 PR 照樣派：原題目保留，要加的（開不了 PR 時的網址）接在後面。
+ * 審查的 MEDIUM 只記錄、不在「等你」問（列進 PR 說明，見 MEDIUM_IN_PR）；「等你」仍可能有別的題目（例如舊卡的 MEDIUM 題），
+ * 自動開 PR 照樣派：原題目保留，要加的（開不了 PR 時的網址）接在後面。
  */
 export const PUBLISH_CARD_RULE = '這次只推送：關卡與檢查欄保持原樣；狀態寫 PR 與 CI 的現況，下一步寫等 CI 與合併。等你 原有的題目保留，要加的用「；」接在後面，不覆寫。'
 
@@ -25,6 +27,11 @@ export function prHowOf(remote: OriginRemote, open = ''): PrHow {
 
 /** 開了 PR 之後歷程記的那一筆（白話範本：誰：做了什麼 → 結果（代號））。 */
 const PR_HISTORY = '歷程記一筆「Agent：push 並開 PR → 等 CI（PR #<編號>）」'
+/**
+ * 驗收記錄的 MEDIUM 列進 PR 說明：審查的 MEDIUM 一律只記錄、不在「等你」問，看 PR 的人要在說明裡看得到。
+ * 資安審查（高風險改動才有）的 SECURITY.md 也讀；兩份都沒有 MEDIUM 就不加這段。`field` 是 PR 說明那一欄的名稱（GitHub 內文、Bitbucket description）。
+ */
+const MEDIUM_IN_PR = (field: string) => `${field}另讀 ${REVIEW_FILE}，有 ${SECURITY_FILE} 也讀，把裡面的 MEDIUM 逐條列在「驗收記錄的 MEDIUM」段，兩份都沒有 MEDIUM 就不加這段`
 /** 開不了 PR 時的收尾：push 完把網址留給人開。 */
 const LEAVE_URL = 'push 完把開 PR 的網址寫進 等你 後結束'
 
@@ -33,11 +40,11 @@ export function openPrSteps(branch: string, target: string, how?: PrHow): string
   const fill = (s: string) => s.replace(/\{branch\}/g, branch).replace(/\{target\}/g, target)
   if (how?.open?.trim()) return `開 PR 用 \`${fill(how.open.trim())}\`，${PR_HISTORY}；指令失敗時${LEAVE_URL}`
   if (how?.host === 'github') {
-    return `開 PR 用 gh：先 \`gh pr list --head ${branch} --state open\` 確認沒有開著的 PR，再 \`gh pr create${target ? ` --base ${target}` : ''} --head ${branch}\`（標題用分支 commit 的主旨，內文寫改了什麼、怎麼測），${PR_HISTORY}；沒有 gh 或 gh 沒登入時，${LEAVE_URL}`
+    return `開 PR 用 gh：先 \`gh pr list --head ${branch} --state open\` 確認沒有開著的 PR，再 \`gh pr create${target ? ` --base ${target}` : ''} --head ${branch}\`（標題用分支 commit 的主旨，內文寫改了什麼、怎麼測），${MEDIUM_IN_PR('內文')}，${PR_HISTORY}；沒有 gh 或 gh 沒登入時，${LEAVE_URL}`
   }
   if (how?.host === 'bitbucket') {
     const path = `/repositories/${how.repo || '<workspace>/<repo>'}/pullrequests`
-    return `開 PR 用 Bitbucket MCP：先 \`bb_get ${path}\`（queryParams q=source.branch.name="${branch}" AND state="OPEN"）確認沒有開著的 PR，再 \`bb_post ${path}\`（body：title 用分支 commit 的主旨、source.branch.name=${branch}${target ? `、destination.branch.name=${target}` : ''}、description 寫改了什麼與怎麼測、close_source_branch=true），${PR_HISTORY}；沒有 bb_post 工具時，${LEAVE_URL}`
+    return `開 PR 用 Bitbucket MCP：先 \`bb_get ${path}\`（queryParams q=source.branch.name="${branch}" AND state="OPEN"）確認沒有開著的 PR，再 \`bb_post ${path}\`（body：title 用分支 commit 的主旨、source.branch.name=${branch}${target ? `、destination.branch.name=${target}` : ''}、description 寫改了什麼與怎麼測、close_source_branch=true），${MEDIUM_IN_PR('description ')}，${PR_HISTORY}；沒有 bb_post 工具時，${LEAVE_URL}`
   }
   return `開 PR，${PR_HISTORY}；沒有 gh 或平台開不了 PR 時，${LEAVE_URL}`
 }
