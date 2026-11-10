@@ -23,6 +23,11 @@ MIGRATED = (
     'hooks/formats.ts',
     'hooks/kind-label.ts',
     'hooks/stack.ts',
+    'hooks/theme.ts',
+    'hooks/text.ts',
+    'hooks/actions.ts',
+    'hooks/band.tsx',
+    'hooks/pane.tsx',
 )
 # (檔名, 只看符合這個正規式的行)
 MIGRATED_LINES = (
