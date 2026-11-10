@@ -1,6 +1,7 @@
 // TS 與 Python 共用的卡片範例：hooks/card.ts 的 parseCard／isPlaceholder、hooks/extras.ts 的 deploySteps
 // 與 card.py 的 parse_card／is_placeholder／deploy_steps 都拿它來斷言（只有假的卡片片段）。
 // fields：面板讀到的欄位（舊欄名換成正式欄名；沒有區塊是 null）；placeholder：該欄的值是不是 <…> 佔位；deploySteps：面板顯示的部署步驟。
+// format：hooks/formats.ts 的 cardFormat 與 card.py 的 card_format 讀到的格式版號（沒寫的範例是 1：沒有標記一律當格式 1）。
 // 測試環境不能 import .json，所以放在 .mjs；`export default` 之後是純 JSON，skills/card/tests/test_card.py 去掉前綴後用 json 讀。
 export default [
   {
@@ -96,6 +97,44 @@ export default [
       "下一步": false
     },
     "deploySteps": []
+  },
+  {
+    "name": "帶格式標記的新卡：開頭標記寫「格式=1」，欄位照舊",
+    "card": "# 訂單匯出 DESK\n\n<!-- DESK 格式=1：工作桌只讀這個區塊。 -->\n- 狀態：開卡\n- 檢查：`make test`\n- 等你：無\n- 下一步：<可以直接派給 Agent 的一件事>\n- 關卡：無\n<!-- /DESK -->\n",
+    "fields": {
+      "狀態": "開卡",
+      "驗證": "`make test`",
+      "等你": "無",
+      "下一步": "<可以直接派給 Agent 的一件事>",
+      "關卡": "無"
+    },
+    "placeholder": {
+      "下一步": true
+    },
+    "deploySteps": [],
+    "format": 1
+  },
+  {
+    "name": "較新版 desk 的卡：格式 2（全形等號、前後空白），欄位照樣讀得到",
+    "card": "<!-- DESK 格式 ＝ 2：工作桌只讀這個區塊。 -->\n- 狀態：新版開的卡\n- 關卡：無\n<!-- /DESK -->\n",
+    "fields": {
+      "狀態": "新版開的卡",
+      "關卡": "無"
+    },
+    "placeholder": {},
+    "deploySteps": [],
+    "format": 2
+  },
+  {
+    "name": "沒有格式標記的既有 DESK 卡：當格式 1",
+    "card": "<!-- DESK: 工作桌只讀這個區塊。 -->\n- 狀態：升級前開的卡\n- 關卡：無\n<!-- /DESK -->\n\n## History\n\n- 2026-11-01 09:00：格式=3 寫在內文不算\n",
+    "fields": {
+      "狀態": "升級前開的卡",
+      "關卡": "無"
+    },
+    "placeholder": {},
+    "deploySteps": [],
+    "format": 1
   },
   {
     "name": "沒有 DESK／CARD 區塊",

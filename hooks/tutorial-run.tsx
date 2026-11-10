@@ -19,6 +19,7 @@ import { dispatchAfterSpec } from './card-actions'
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
 const verifiesAtom = atom({ plugin: 'desk', key: 'verifies' } as const, {})
 const feedAtom = atom({ plugin: 'desk', key: 'feed' } as const, [])
+const formatsSeenAtom = atom({ plugin: 'desk', key: 'formatsSeen' } as const, {} as Record<string, number>)
 const picksAtom = atom({ plugin: 'desk', key: 'picks' } as const, {})
 const contentOffset = atom({ plugin: 'desk', key: 'contentOffset' } as const, 0)
 
@@ -186,6 +187,8 @@ export async function tutorialStart($: any, options: PluginOptions): Promise<str
 async function clearView($: any, pick: string | null) {
   await update($, selected, () => pick)
   await update($, feedAtom, () => [])
+  // 較新格式報過的紀錄跟動態一起清：動態清掉後同一件還要能再報。
+  await update($, formatsSeenAtom, () => ({}))
   await update($, picksAtom, () => ({}))
   await update($, contentOffset, () => 0)
 }

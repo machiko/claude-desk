@@ -75,6 +75,8 @@ export type Case = {
   statusShort?: string
   /** git status：領先、落後、未提交、未追蹤。 */
   gitState?: { ahead: number; behind: number; changed: number; untracked: number; upstream?: boolean }
+  /** 卡片標記的格式比這版 desk 認得的新（hooks/formats.ts 的 CARD_FORMAT）：值是卡片的版號。照常顯示，不派工；認得的格式就沒有這欄。 */
+  newerFormat?: number
   /** 卡片有「## 規格」段，卻認不到填好的驗收情境（AC-n）：停在規格段、不能派實作。沒有規格段的舊卡不算。 */
   specGap?: true
   /** 卡片「## 部署…」段落的步驟。 */
@@ -164,6 +166,8 @@ declare module 'claude-code' {
       feed: FeedEvent[]
       /** 設定檔驗證上次檢查過的每份 dispatch.json；跟動態一起留在這個對話，同一份內容不再報。 */
       settingsChecked: SettingsChecked
+      /** 已報過的較新格式（卡片、登錄表 → 版號）；跟動態一起清，同一份檔同一個版號只報一次。 */
+      formatsSeen: Record<string, number>
       picks: Picks
       verifies: Record<string, Verify>
       /** 正在跑驗證的任務：卡片路徑 → 開始時間。 */

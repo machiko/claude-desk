@@ -51,6 +51,9 @@
   card.py send <slug|任務名|main> --to <claude|agy|cmd> <提示詞或指令> [--bg] [--agent-cmd <執行檔>] [--json]
                                                跨 Agent 派工：在目標 worktree 啟動指定 Agent，自動維護 .task/agent-state.json 與 .task/AGENT-OUT.md
 
+卡片格式：DESK 區塊開頭標記寫「格式=n」（沒寫是 1，docs/FORMATS.md）。卡片的格式比這版 desk 認得的新時，
+會寫卡片的子指令（spec-init、gate、spec-ok、done、archive）不改檔、結束碼非 0，訊息叫你更新 desk；card、read、overlap 這些唯讀的照常。
+
 CHANGELOG 片段檔：每張卡只寫 changelog.d/<slug>.md（slug＝worktree 資料夾名），內容是一行或多行「- 」開頭、
 動詞開頭的條目，沒有標題；不改 CHANGELOG.md，發版時才用 changelog 合併，各分支就不會再搶「## 未發布」。
 
@@ -226,6 +229,37 @@ CARD_BLOCK = re.compile(r'<!--\s*(DESK|CARD)[^>]*-->(.*?)<!--\s*/\1\s*-->', re.S
 FIELD_LINE = re.compile(r'^\s*-\s*([^：:]+?)\s*[：:]\s*(.*)$')
 # 舊欄名對照（與 hooks/card.ts 的 FIELD_ALIAS 同一張表）：讀到左邊的欄名當成右邊那欄。
 FIELD_ALIAS = {'等使用者': '等你', '檢查': '驗證'}
+
+
+# 格式版本：與 hooks/formats.ts 的 CARD_FORMAT、SETTINGS_FORMAT、REGISTRY_FORMAT 同一組（docs/FORMATS.md 列版號與標記，
+# scripts/tests/test_formats_doc.py 核對兩端與文件一致）。沒有標記的檔一律視為格式 1，不自動補標記。
+CARD_FORMAT = 1
+SETTINGS_FORMAT = 1
+REGISTRY_FORMAT = 1
+# 區塊開頭標記（`<!-- DESK 格式=1：…-->`、舊的 `<!-- CARD -->`）裡的「格式=n」；開頭標記的認法與 CARD_BLOCK 相同。
+CARD_OPENER = re.compile(r'<!--\s*(?:DESK|CARD)([^>]*)-->')
+FORMAT_VERSION = re.compile(r'格式\s*[=＝]\s*([0-9]+)')
+
+
+def card_format(text):
+    """卡片的格式版號：區塊開頭標記的「格式=n」；沒有標記、沒有區塊都是 1。結果與 hooks/formats.ts 的 cardFormat 相同。"""
+    m = CARD_OPENER.search(text)
+    v = FORMAT_VERSION.search(m.group(1)) if m else None
+    n = int(v.group(1)) if v else 1
+    return n if n >= 1 else 1
+
+
+def resolve_writable(arg):
+    """會寫卡片的子指令用：照 resolve 找卡，卡片格式比這版認得的新就拒絕（不改檔、結束碼非 0）；唯讀的子指令照用 resolve。"""
+    name, path, root = resolve(arg)
+    refuse_newer_card(path)
+    return name, path, root
+
+
+def refuse_newer_card(path):
+    fmt = card_format(read(path))
+    if fmt > CARD_FORMAT:
+        fail(f'卡片格式 {fmt} 比這版 desk 新，請更新 desk；卡片未動：{path}')
 
 
 def canonical(name):
@@ -464,7 +498,7 @@ def insert_registry_row(row):
 
 
 # 與 hooks/card.ts 的 REGISTRY_TEMPLATE 同一份（面板的「建立空的登錄表」寫那份）。
-REGISTRY_TEMPLATE = '# 任務登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
+REGISTRY_TEMPLATE = '# 任務登錄表\n<!-- desk 登錄表 格式=1 -->\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
 NAME_SLOT = '<任務名>'
 LEGACY_NAME_SLOT = '<案名>'  # 0.24.0 以前模板的卡名佔位：自訂模板（card.template）可能還寫著它
 
@@ -620,7 +654,7 @@ def cmd_card(arg):
 
 
 def cmd_spec_init(arg):
-    _, path, _ = resolve(arg)
+    _, path, _ = resolve_writable(arg)
     text = read(path)
     if has_spec(text):
         print(f'已有「## 規格」：{path}')
@@ -642,7 +676,7 @@ def cmd_spec_init(arg):
 
 
 def cmd_gate(arg, value):
-    _, path, _ = resolve(arg)
+    _, path, _ = resolve_writable(arg)
     fmt = set_gate(path, value)
     print(f'關卡已改為「{value}」（{fmt}）：{path}')
 
@@ -654,7 +688,7 @@ def spec_ok_history(now):
 
 
 def cmd_spec_ok(arg):
-    _, path, _ = resolve(arg)
+    _, path, _ = resolve_writable(arg)
     text = read(path)
     fmt, s, e = block(text)
     gate = field(text[s:e], '關卡')
@@ -804,7 +838,7 @@ def cmd_done(arg, status):
     status = ' '.join(status.split())
     if not status:
         fail(f'用法：{CMD} done <slug> <狀態一句>')
-    _, path, root = resolve(arg)
+    _, path, root = resolve_writable(arg)
     text = read(path)
     _, s, e = block(text)
     gate = field(text[s:e], '關卡')
@@ -1138,6 +1172,9 @@ def cmd_archive(slugs, cleanup_after=False):
     # 先把每張都找到：有一張找不到就報錯，哪張都不動。同一張卡（slug 與任務名各寫一次）只做第一次。
     found = [(slug, *resolve(slug)) for slug in slugs]
     targets = [t for i, t in enumerate(found) if all(os.path.realpath(t[2]) != os.path.realpath(u[2]) for u in found[:i])]
+    # 有一張是較新版 desk 的格式：一樣哪張都不動。
+    for _, _, path, _ in targets:
+        refuse_newer_card(path)
     for slug, _, path, root in targets:
         archive_one(slug, path, root, cleanup_after)
 
@@ -1613,7 +1650,7 @@ READ_SOURCES = {
     'agent-out': AGENT_OUT_REL,
     'logs': AGENT_OUT_REL,
     'review': os.path.join('.task', 'REVIEW.md'),
-    'security': os.path.join('.task', 'SECURITY-REVIEW.md'),
+    'security': os.path.join('.task', 'SECURITY.md'),  # 與 hooks/prompts/review.ts 的 SECURITY_FILE 同一個檔
     'report': os.path.join('.task', 'REPORT.md'),
     'spec': os.path.join('.task', 'SPEC-PREFLIGHT.md'),
     'state': BEACON_REL,

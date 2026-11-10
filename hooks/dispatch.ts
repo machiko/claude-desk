@@ -19,6 +19,7 @@ import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext } from './n
 import { shipTurn, stageActions } from './turn'
 import { KIND_LABEL } from './kind-label'
 import { STACK_NEXT, stackWaitWhy } from './stack'
+import { NEWER_CARD_WHY, UPDATE_DESK_NEXT } from './formats'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
 export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
@@ -198,7 +199,8 @@ export function stackMergeStep(c: Pick<Case, 'stackedOn' | 'base'>, settings: Pi
 
 /** 現在可以派哪些：進行中一律不派；等回覆只給回覆；規格未確認或沒有完成檢查不能派實作；同步隨時可。 */
 export function dispatchable(c: Case): DispatchKind[] {
-  if (c.manual || c.state === 'running' || c.state === 'nocard') return []
+  // 卡片是較新版 desk 的格式：這版可能讀錯或寫壞，什麼都不派（連同步也不派，同步會改寫卡片）。
+  if (c.manual || c.newerFormat || c.state === 'running' || c.state === 'nocard') return []
   if (c.state === 'reply') return ['reply', 'sync']
   // 等權限批准：回覆放行不了工具，只能同步。
   if (c.state === 'approve') return ['sync']
@@ -233,6 +235,9 @@ const FOLLOW_TURN = '照「輪到你」做'
 const OPEN_NEXT = '開卡片（o）看下一步'
 const APPROVE_NEXT = '到終端機跑 claude agents 批准它'
 const BUSY_NEXT = '等 Agent 做完再按一次；要中途停掉按 k'
+
+/** 卡片是較新版 desk 的格式：手動、自動、排隊的派工與回覆都擋，下一步是更新 desk。 */
+const NEWER_CARD: Refusal = { why: NEWER_CARD_WHY, next: UPDATE_DESK_NEXT }
 
 /** 不能派（或回覆）的原因與下一步；next 是面板上此刻按得到的鍵、要輸入的指令，或「照「輪到你」做」。示範任務沒有下一步。 */
 export type Refusal = { why: string; next?: string }
@@ -283,6 +288,7 @@ function idleRefusalNext(c: Case, idle: string): string {
 
 /** 手動派工不能派的原因與下一步；null 代表可以派。回覆看 Agent 是否在等你，其他看 dispatchable。 */
 export function refusalOf(c: Case, kind: DispatchKind): Refusal | null {
+  if (c.newerFormat) return NEWER_CARD
   if (kind === 'reply') return replyRefusalOf(c)
   if (dispatchable(c).includes(kind)) return null
   if (c.manual) return { why: MANUAL, next: `在這個對話自己做；${OPEN_NEXT}` }
@@ -338,7 +344,7 @@ export const NO_PUSH_NEEDED = '已不需要推送（PR 已開且分支已是最�
  * 自動排的推送（審查過關後）不看流程：過關後流程不再動，只看還要不要推。
  */
 export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
-  if (!entry.opts.auto) return dispatchRefusal(c, entry.kind)
+  if (!entry.opts.auto || c.newerFormat) return dispatchRefusal(c, entry.kind)
   if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
   // 疊放卡的原卡還沒合併：自動排的一律不派（手動排的由 dispatchRefusal 擋）。
   if (c.stackWait) return stackWaitWhy(c.stackWait)

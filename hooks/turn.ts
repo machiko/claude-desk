@@ -11,6 +11,7 @@ import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, CHECK_CHANGED, CHECK_CHANGED_WHY, C
 import { dispatchable, fixByG, idleNext, mergedUnshipped, reviewNext, untrustedSteps } from './dispatch'
 import type { DispatchKind, UntrustedHold } from './dispatch'
 import { MISSING_CHECK_WHY } from './next-words'
+import { NEWER_CARD_WHY } from './formats'
 import { ACTION_ORDER, HOTKEY } from './actions'
 import type { ActionId } from './actions'
 import { CATCHUP_RUNNING, catchupAutoTurn, catchupHandTurn, catchupHold } from './catchup'
@@ -96,6 +97,7 @@ export const TURN_TEXT = {
   verifying: () => '測試在跑',
   verifyQueued: () => '測試排隊中',
   manual: () => say('手動任務不派工', '工作桌只追蹤'),
+  newerFormat: () => say('更新 desk 後才派工', `${NEWER_CARD_WHY}，輸入 /desk update`),
   shipped: () => '已上線，等下一版開發',
   agentStopped: () => say('g 重開', 'Agent 被停止、沒做完，先看過 worktree'),
   mediumFixNotSent: () => say('g 重派修正', '你選了修掉的審查 MEDIUM 沒派出去'),
@@ -315,6 +317,7 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
   // 看 Agent 本身：卡片停在關卡時 state 是 gate，Agent 照樣在跑，該按的鍵也都鎖著，不叫你按。
   if (isBusy(c)) return { who: 'ai', text: runningText(c) }
   if (c.manual) return { who: 'none', text: TURN_TEXT.manual() }
+  if (c.newerFormat) return { who: 'you', text: TURN_TEXT.newerFormat() }
   if (ctx.hold) return untrustedTurn(c, ctx.hold, ctx)
   if (c.state === 'done') return isReleaseLine(c) ? { who: 'none', text: TURN_TEXT.shipped() } : { who: 'you', ...(!ctx.tutorial && canArchive(c) ? archiveTurn(c) : { text: TURN_TEXT.archiveCmd(archiveCmd(c)) }) }
   const hold = checkHold(c)

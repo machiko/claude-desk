@@ -227,6 +227,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   const text = opts.text ?? ''
   const fromQueue = opts.fromQueue !== undefined
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
+  // 自動派工跳過手動的拒絕檢查，較新格式的卡另外擋：自動的不跳 toast（動態已警告過一次）。
+  if (opts.auto && c.newerFormat) return false
   const refusal = opts.auto ? null : refusalOf(c, kind)
   if (refusal) { $.ui.toast(refusalText(c.name, KIND_LABEL[kind], refusal)); return false }
   if (await starting($, c.statusPath)) { await refuseStarting($, c, kind, opts); return false }

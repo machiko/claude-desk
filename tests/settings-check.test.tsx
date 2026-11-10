@@ -87,6 +87,7 @@ test('settingsProblems accepts every documented key', () => {
   const documented = {
     $schema: 'https://example.com/dispatch.schema.json',
     _comment: '註解鍵不算錯',
+    format: 1,
     model: 'opus',
     effort: 'high',
     sync: { claude: { model: 'haiku', effort: 'low' }, session: 'fresh' },

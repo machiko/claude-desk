@@ -2,6 +2,7 @@
 import type { DispatchKind } from './dispatch'
 import { expandHome } from './card'
 import type { FeedEvent, SettingsChecked } from '../types'
+import { SETTINGS_FORMAT } from './formats'
 
 /** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
 export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
@@ -155,8 +156,8 @@ const CARD_SPEC_PREFLIGHT_MIN_FILES = 3
 /** card.py 的 KAC：card.changelog.format 唯一認得的值。 */
 const CHANGELOG_FORMAT = 'keepachangelog'
 
-/** 檢查一個值；認不得的鍵記進 unknown（完整路徑），寫錯的值記進 bad（含改用的值）。 */
-type Found = { unknown: string[]; bad: string[] }
+/** 檢查一個值；認不得的鍵記進 unknown（完整路徑），寫錯的值記進 bad（含改用的值），格式比這版新記進 newer（排在最前面）。 */
+type Found = { unknown: string[]; bad: string[]; newer?: string }
 type Check = (v: unknown, path: string, found: Found) => void
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -226,14 +227,21 @@ const chainQuotaStop: Check = (v, path, found) => {
   if (unset(v) || off || (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100)) return
   found.bad.push(`${path} 要是 1–100 的整數或 "off"，改用 ${DEFAULT_CHAIN_QUOTA_STOP}`)
 }
+/** 頂層 format：整數 SETTINGS_FORMAT 或沒寫不報；更大的是較新版 desk 寫的設定，認得的鍵照常套用（新版多的鍵另列在認不得的鍵）。 */
+const settingsFormat: Check = (v, path, found) => {
+  if (unset(v) || v === SETTINGS_FORMAT) return
+  if (Number.isInteger(v) && (v as number) > SETTINGS_FORMAT) found.newer = `${path} 是 ${v}，這份是較新版 desk 的設定，請更新 desk（認得的鍵照常套用）`
+  else found.bad.push(`${path} 要是正整數，視為 ${SETTINGS_FORMAT}`)
+}
 const changelogFormat: Check = (v, path, found) => {
   if (unset(v)) return
   if (typeof v !== 'string') found.bad.push(`${path} 不是字串，照原本的格式`)
   else if (v.trim() && v.trim() !== CHANGELOG_FORMAT) found.bad.push(`${path} 只能是 "${CHANGELOG_FORMAT}"，合併 changelog 時會停下報錯`)
 }
 
-/** dispatch.json 認得的鍵：parseSettings 讀的，加上 card.py 讀的 card.*（README 與 card.py 說明列的那些）。 */
+/** dispatch.json 認得的鍵：parseSettings 讀的，加上 card.py 讀的 card.*（README 與 card.py 說明列的那些），以及格式版號 format（docs/FORMATS.md）。 */
 const SETTINGS_SHAPE = shape({
+  format: settingsFormat,
   ...modelEffort,
   sync: shape({ claude: shape(modelEffort), session: syncSession }),
   kinds: shape(Object.fromEntries(MODEL_KINDS.map(k => [k, shape(modelEffort)]))),
@@ -265,7 +273,7 @@ const SETTINGS_SHAPE = shape({
 })
 
 /**
- * 一份 dispatch.json 的問題，每條一句：JSON 語法錯、最外層不是物件（整份沒套用）、認不得的鍵（完整路徑，已略過）、
+ * 一份 dispatch.json 的問題，每條一句：JSON 語法錯、最外層不是物件（整份沒套用）、format 比這版新（排第一條）、認不得的鍵（完整路徑，已略過）、
  * 型別或範圍錯的值（寫出實際改用的值）、risk.high 寫錯的正規式。空檔與只有空白跟沒有這份一樣，不報。
  * 只報告：解析照 parseSettings、疊加照 mergeSettingsText，結果不因這裡改變。
  */
@@ -277,7 +285,7 @@ export function settingsProblems(text: string): string[] {
   if (!isPlainObject(d)) return ['最外層不是物件，這份設定沒有套用']
   const found: Found = { unknown: [], bad: [] }
   SETTINGS_SHAPE(d, '', found)
-  return [...(found.unknown.length ? [`認不得的鍵，已略過：${found.unknown.join('、')}`] : []), ...found.bad]
+  return [...(found.newer ? [found.newer] : []), ...(found.unknown.length ? [`認不得的鍵，已略過：${found.unknown.join('、')}`] : []), ...found.bad]
 }
 
 /** 最多列幾條問題，其餘寫「等 n 條」。 */
