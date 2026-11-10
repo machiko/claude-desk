@@ -38,6 +38,7 @@ import { SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadC
 import { isEmpty } from './layout'
 import type { Timer } from './desk-io'
 import { noticeOf, versionStateOf } from './update'
+import { t } from './i18n'
 import { autoUpdateCheck, isUpdating, loadUpdateCheck, markLoaded, runUpdate } from './update-run'
 import { noteReleased, noteReleasedNow } from './release-update'
 import { checkEngineVersion } from './engine-version'
@@ -531,7 +532,7 @@ export const register: Register = (on, options) => {
     await clearAgentQueue($)
     // 載入計數：更新後 /reload-plugins 被拒時，看新版是不是其實已經載入了。
     await markLoaded($)
-    await $.command.register({ name: 'desk', description: '工作桌：/desk 開啟面板並取得焦點（面板裡 Esc 回輸入框）；close 收起；refresh 重新整理；go|sync|review|reply <任務名> [回覆] 派工；verify|open <任務名> 執行測試／開啟卡片；bar 摘要列；update 把 desk 更新到 GitHub 最新版本；tutorial [end] 教學（含示範任務）；off 關閉', argumentHint: '[close|refresh|go|sync|review|reply|verify|open <任務名>|bar|update|tutorial [end]|off]' })
+    await $.command.register({ name: 'desk', description: t('register.deskDescription'), argumentHint: t('register.deskArgumentHint') })
     if (e.isInteractive === false) { await update($, snapshot, () => null); return next(e) }
     const id = await $.session.id().catch(() => null)
     const list = ((await $.store.get(SESSIONS_KEY).catch(() => null)) as string[] | null) ?? []

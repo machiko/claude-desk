@@ -2,6 +2,7 @@
 // 查到的結果存 $.store，提示掛在快照上；比版號、找安裝位置這些純邏輯在 update.ts。
 import { atom, read, update } from 'claude-code'
 import { feedPush, tellPanel } from './desk-io'
+import { t } from './i18n'
 import { UPDATE_EVERY_MS, UPDATE_KEY, checkLatest, isNewer, noticeOf, noticeText, parseCheck, reloadFilledText, reloadTypeText, updateDesk, versionStateOf } from './update'
 import type { UpdateCheck } from './update'
 
@@ -61,7 +62,7 @@ export function isUpdating(): boolean {
 
 /** 手動更新（/desk update、面板按鈕）：結果記進「最近」並跳 toast，也留給下一則你打的提示告訴對話；查到的版號給自動檢查沿用。跑的時候版本格是「更新中」，結束後依查到的結果畫。 */
 export async function runUpdate($: any): Promise<string> {
-  if (updating) return 'desk 正在更新中，請稍候。'
+  if (updating) return t('update.busy')
   updating = true
   await update($, snapshot, s => (s ? { ...s, versionState: 'updating' } : s)).catch(() => { /* 只影響版本格 */ })
   try {

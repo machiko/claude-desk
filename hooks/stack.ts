@@ -1,5 +1,6 @@
 // 疊放卡：開在另一張卡分支上的後續卡（卡片有「疊放於：<原卡分支>」）。原卡合併前不派工改程式，合併後才接著做。純函式。
 import type { Case } from '../types'
+import { t } from './i18n'
 import { isMerged } from './pipeline'
 
 /**
@@ -21,10 +22,10 @@ export function withStackWait(cases: readonly Case[]): Case[] {
 }
 
 /** 手動派工被擋、隊伍丟掉、確認規格沒派實作的原因：同一句。 */
-export const stackWaitWhy = (name: string): string => `等原卡「${name}」合併`
+export const stackWaitWhy = (name: string): string => t('stack.waitWhy', { name })
 
 /** 手動派工被擋時的下一步：原卡合併前沒有鍵可按；D-01：要先做就刪掉「疊放於」那行。 */
-export const STACK_NEXT = '原卡合併後才能派；要先做就開卡片（o）刪掉「疊放於」那行'
+export const STACK_NEXT = t('stack.next')
 
 /** 確認規格時被原卡擋下、這個對話記下了合併後自動派：toast 與動態的下一步。 */
-export const STACK_AUTO_NEXT = '原卡合併後自動接著做'
+export const STACK_AUTO_NEXT = t('stack.autoNext')
