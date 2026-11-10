@@ -1,9 +1,10 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGISTRY, text, flat } from './fixture'
+import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_A, CARD_B, CARD_C, REGISTRY, text, flat, storedStop } from './fixture'
 import { screen, busyAgent as busy, startsAgents } from './world'
 import { DEFAULT_CHAIN_QUOTA_STOP, parseSettings } from '../hooks/dispatch'
 import { nextStep } from '../hooks/chain'
 import { quotaHold, resetText } from '../hooks/model'
+import { stopText } from '../hooks/stop-reason'
 import { QUOTA_NOTHING_TO_FIX } from '../hooks/prompts/fix'
 
 // 自動流程額度煞車：5 小時額度剩餘低於門檻（dispatch.json 的 chainQuotaStop，預設 30%）時，自動流程不派下一個 Agent、暫停寫原因；手動派工照派。
@@ -72,7 +73,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   await ui.unmount()
 
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].stopped).toBe('quotaHold')
   expect(log.list.filter(e => e.text === `Beta 流程已暫停：${REASON}`)).toHaveLength(1)
   expect(data.toasts.filter((t: string) => t === `Beta：流程已暫停，${REASON}`)).toHaveLength(1)
   expect(notified.filter(t => t === `Beta：流程已暫停，${REASON}`)).toHaveLength(1)
@@ -105,7 +106,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   await h.step()
 
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[BETA].stopped).toBe(`5 小時額度剩 29%，低於門檻 30%，${resetText(RESETS_AT, NOW)}後按 g 重開`)
+  expect(storedStop((data.store.chains as any)[BETA])).toEqual({ code: 'quotaHold', left: 29, threshold: 30, resetsAt: RESETS_AT })
 })
 
 /** AC-1：修正、審查、資安審查都是要派 Agent 的步驟，額度不足一律改成停下；本機檢查與過關不受影響。 */
@@ -179,7 +180,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
   await ui.unmount()
 
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[BETA].stopped).toBe(CATCHUP_REASON)
+  expect((data.store.chains as any)[BETA].stopped).toBe('quotaHoldCatchup')
   expect(log.list.filter(e => e.text === `Beta 流程已暫停：${CATCHUP_REASON}`)).toHaveLength(1)
   // 合併段沒有 g 可按：「輪到你」照既有說法叫你在對話解衝突，括號寫額度原因
   expect(shown).toContain(flat('輪到你 與 main 有衝突：在對話把 main 合併進來、解衝突並 commit（5 小時額度剩 25%，低於門檻 30%）'))
@@ -207,7 +208,7 @@ test('test_quota_stop_after_review_still_archives_and_records_verdict', async ($
   expect(data.launches).toHaveLength(0)
   expect(data.writes.some(w => /\/handoffs\/shop\/reviews\/beta-\d{8}-\d{4}-code\.md$/.test(w))).toBe(true)
   const chain = (data.store.chains as any)[BETA]
-  expect(chain.stopped).toBe(REASON)
+  expect(chain.stopped).toBe('quotaHold')
   expect(chain.judgedHead).toBe('c2')
   expect(chain.judgedBranch).toBe('feature/b')
   expect(chain.mediumFix).toBeUndefined()
@@ -251,7 +252,7 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold', async
 
   expect(data.launches).toHaveLength(1)
   expect(data.launches[0].init.cwd).toBe(GAMMA)
-  expect((data.store.chains as any)[ALPHA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe('quotaHold')
   expect(log.has(`Alpha 排隊的修正第 1 輪沒有派出：${REASON}`)).toBe(true)
   expect(data.toasts).toContain(`Alpha：流程已暫停，${REASON}`)
 })
@@ -280,7 +281,7 @@ test('test_dropped_queued_fix_then_g_counts_one_round', async ($, on) => {
   data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
   await h.refresh()
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[ALPHA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe('quotaHold')
   expect((data.store.chains as any)[ALPHA].fixTotal ?? 0).toBe(0)
 
   // 你按 g：派出修正，整張卡算 1 輪
@@ -337,11 +338,13 @@ test('test_auto_chain_dispatches_when_quota_unknown_or_threshold_invalid', async
   expect(parseSettings(JSON.stringify({ chainQuotaStop: 'OFF' })).chainQuotaStop).toBe(0)
   expect(parseSettings(JSON.stringify({ chainQuotaStop: false })).chainQuotaStop).toBe(0)
   // 純函式：沒有 five_hour、門檻 0 都不擋；只看 five_hour
-  expect(quotaHold(undefined, 30, NOW)).toBe('')
-  expect(quotaHold([], 30, NOW)).toBe('')
-  expect(quotaHold([{ kind: 'seven_day', remaining: 5 }], 30, NOW)).toBe('')
-  expect(quotaHold([{ kind: 'five_hour', remaining: 25 }], 0, NOW)).toBe('')
-  expect(quotaHold([{ kind: 'five_hour', remaining: 25 }], 30, NOW)).toBe('5 小時額度剩 25%，低於門檻 30%，重置後按 g 重開')
+  expect(quotaHold(undefined, 30, NOW)).toBeNull()
+  expect(quotaHold([], 30, NOW)).toBeNull()
+  expect(quotaHold([{ kind: 'seven_day', remaining: 5 }], 30, NOW)).toBeNull()
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25 }], 0, NOW)).toBeNull()
+  // 停下原因存代碼與參數（i18n 現在卡 AC-2），顯示時組成「5 小時額度剩 25%，低於門檻 30%，重置後按 g 重開」
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25 }], 30, NOW)).toEqual({ code: 'quotaHold', args: { left: 25, threshold: 30, at: NOW } })
+  expect(stopText(quotaHold([{ kind: 'five_hour', remaining: 25 }], 30, NOW)!)).toBe('5 小時額度剩 25%，低於門檻 30%，重置後按 g 重開')
 
   // 整條流程：每一種情況都照常派審查
   const cases: { name: string; usage?: 'null' | 'empty'; used?: number; threshold?: unknown }[] = [
@@ -423,7 +426,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
 
   expect(data.launches).toHaveLength(0)
   const chain = (data.store.chains as any)[BETA]
-  expect(chain.stopped).toBe(REASON)
+  expect(chain.stopped).toBe('quotaHold')
   expect(chain.passed).toBeUndefined()
   expect(shown).toContain(flat(`輪到你 ${REASON}`))
   expect(shown).toContain(flat('✕ 驗收'))
@@ -456,7 +459,7 @@ test('test_auto_chain_stops_before_next_agent_when_five_hour_quota_is_below_thre
 
   expect(h.checks()).toBe(1)
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[ALPHA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe('quotaHold')
   expect(log.has(`Alpha 流程已暫停：${REASON}`)).toBe(true)
   expect(shown).toContain(flat(`輪到你 ${REASON}`))
   expect(shown).not.toContain(flat('重新驗收'))
@@ -504,7 +507,7 @@ test('test_manual_dispatch_ignores_quota_threshold — g after a hold before rev
   const h = helpers($, data, clock)
   await h.refresh()
   await h.step()
-  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].stopped).toBe('quotaHold')
   expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0 })
 
   await h.refresh()
@@ -534,7 +537,7 @@ test('test_manual_dispatch_ignores_quota_threshold — g after a hold before the
   const h = helpers($, data, clock)
   await h.refresh()
   await h.step()
-  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].stopped).toBe('quotaHold')
   expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0, security: true })
 
   await h.refresh()
@@ -621,7 +624,7 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — que
   for (let i = 0; i < 3; i++) { await h.refresh(); await h.step() }
 
   expect(data.launches).toHaveLength(0)
-  expect((data.store.chains as any)[BETA].stopped).toBe(CATCHUP_REASON)
+  expect((data.store.chains as any)[BETA].stopped).toBe('quotaHoldCatchup')
   expect(log.list.filter(e => e.text.includes(CATCHUP_REASON))).toHaveLength(1)
   expect(log.has(`Beta 排隊的解衝突沒有派出：${CATCHUP_REASON}`)).toBe(true)
   expect(data.toasts.filter((t: string) => t.includes('流程已暫停'))).toEqual([`Beta：流程已暫停，${CATCHUP_REASON}`])
@@ -631,9 +634,9 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — que
 
 /** AC-5（審查 MEDIUM）：5 小時額度的重置時間已經過了（usage 還是重置前的用量）：當成讀不到現在的額度，照常派審查。 */
 test('test_auto_chain_dispatches_when_quota_unknown_or_threshold_invalid — reset time already passed', async ($, on) => {
-  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW - 3_600_000).toISOString() }], 30, NOW)).toBe('')
-  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW).toISOString() }], 30, NOW)).toBe('')
-  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW + 60_000).toISOString() }], 30, NOW)).not.toBe('')
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW - 3_600_000).toISOString() }], 30, NOW)).toBeNull()
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW).toISOString() }], 30, NOW)).toBeNull()
+  expect(quotaHold([{ kind: 'five_hour', remaining: 25, resetsAt: new Date(NOW + 60_000).toISOString() }], 30, NOW)).not.toBeNull()
 
   const { data, clock } = fixture(on)
   betaImplemented(data, clock)
@@ -727,7 +730,7 @@ test('test_manual_dispatch_ignores_quota_threshold — /desk go resume is refuse
 
   expect(data.launches).toHaveLength(0)
   expect(String((go as any)?.text)).toContain('Beta：無法驗收（')
-  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].stopped).toBe('quotaHold')
   expect((data.store.chains as any)[BETA].resume).toEqual({ dispatch: 'review', round: 0 })
 })
 
@@ -748,7 +751,7 @@ test('test_queued_auto_dispatch_is_dropped_when_quota_is_below_threshold — que
   await h.refresh()
   expect(data.launches).toHaveLength(0)
   const chain = (data.store.chains as any)[BETA]
-  expect(chain.stopped).toBe(REASON)
+  expect(chain.stopped).toBe('quotaHold')
   expect(chain.resume).toEqual({ dispatch: 'review', round: 0 })
 
   data.agents = []
@@ -779,7 +782,7 @@ test('test_manual_dispatch_ignores_quota_threshold — /desk go resume while the
   expect(String((go as any)?.text)).toBe('Beta：已在派工隊伍（第 1 位），k 取消排隊')
   expect(data.launches).toHaveLength(0)
   const chain = (data.store.chains as any)[BETA]
-  expect(chain.stopped).toBe(REASON)
+  expect(chain.stopped).toBe('quotaHold')
   expect(chain.resume).toEqual({ dispatch: 'review', round: 0 })
   expect(chain.owner).toBe(ME)
 
@@ -788,5 +791,5 @@ test('test_manual_dispatch_ignores_quota_threshold — /desk go resume while the
   await h.refresh()
   expect(data.launches).toHaveLength(1)
   expect(String(data.launches[0].argv.at(-1))).not.toContain('程式碼審查')
-  expect((data.store.chains as any)[BETA].stopped).toBe(REASON)
+  expect((data.store.chains as any)[BETA].stopped).toBe('quotaHold')
 })

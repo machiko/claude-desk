@@ -7,6 +7,7 @@ import { containers, loadSettings, verifyResult } from './probes'
 import { missingServices } from './containers'
 import { feedPush, tellPanel, me, loadChains, loadJobs, saveChain, VERIFIES_KEY, JOBS_KEY } from './desk-io'
 import { paused } from './chain'
+import { containersStop, stopText, verifyBrokeStop } from './stop-reason'
 import { isMerged, pipeline, finalState } from './pipeline'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './dispatch'
 import { writeStats } from './run-stats'
@@ -76,13 +77,14 @@ export async function runVerify($: any, c: Case, auto = false, fromQueue = false
 
 /** 檢查途中出錯（不是測試沒過，是記不下結果）：清掉「測試中」、寫進動態；流程停下並寫明原因，不再自動重跑。 */
 export async function verifyBroke($: any, c: Case, auto: boolean, error: unknown) {
-  const reason = `測試中斷：${errorText(error)}`
+  const stop = verifyBrokeStop(errorText(error))
+  const reason = stopText(stop)
   $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
   const now = await $.clock.now()
   await feedPush($, [{ at: now, text: `${c.name} ${reason}`, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, reason, { name: c.name, skip: auto || tutorial })
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
-  if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)) notify($, `${c.name}：流程已暫停，${reason}`)
+  if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, stop, true) : r)) notify($, `${c.name}：流程已暫停，${reason}`)
   await restage($, c.statusPath)
   await spin($, false)
 }
@@ -93,12 +95,13 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   const box = await containers($, optionsRef!)
   const missing = missingServices(c.verify, box, (await loadSettings($, optionsRef!)).checkServices)
   if (missing.length) {
-    const reason = `容器 ${missing.join('、')} 未啟動，請先在主工作區執行 docker compose up -d ${missing.join(' ')}`
+    const stop = containersStop(missing)
+    const reason = stopText(stop)
     $.ui.toast(`${c.name}：${reason}`, { timeoutMs: 10_000 })
     const now = await $.clock.now()
     await feedPush($, [{ at: now, text: `${c.name} 測試未執行：${reason}`, tone: 'warning', card: c.statusPath }])
     await tellPanel($, now, `測試未執行：${reason}`, { name: c.name, skip: auto || tutorial })
-    if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, reason, true) : r)) notify($, `${c.name}：流程已暫停，${reason}`)
+    if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, stop, true) : r)) notify($, `${c.name}：流程已暫停，${reason}`)
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
     return false
@@ -145,7 +148,7 @@ export async function resumeAtCheck($: any, c: Case) {
   // 寫入被別的對話蓋掉、放棄：流程沒解除暫停，不說「流程繼續」。
   const resumed = await saveChain($, key, r => {
     if (!r) return r
-    const { stopped: _s, heldAtCheck: _h, ...rest } = r
+    const { stopped: _s, stopArgs: _a, heldAtCheck: _h, ...rest } = r
     return rest
   })
   if (!resumed) return

@@ -1,7 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, result, leaves, text, flat } from './fixture'
+import { fixture, PANE, CARD_A, result, leaves, text, flat, storedStop } from './fixture'
 import { PREFIX, ROOT, alphaOnly, helpers, sh } from './alpha-chain'
-import { AGENT_STOPPED } from '../hooks/chain'
 
 // 完成檢查的核准：按兩次 g 開始一輪流程時就核准（第一次列出指令）；流程停在檢查段時說得出為什麼，排除後按 v 就接著走。
 const CHANGED = '測試指令改過、還沒經你核准：按兩次 v 核准並執行，流程接著走'
@@ -96,7 +95,7 @@ test('a check command changed by the agent pauses the chain with a reason you ca
   expect(sh(data)).toBe(0)
   expect(data.launches.length).toBe(1)
   expect(data.asks.length).toBe(0)
-  expect((data.store.chains as any)[ROOT].stopped).toBe(CHANGED)
+  expect((data.store.chains as any)[ROOT].stopped).toBe('checkChanged')
 
   // 「▶ 輪到你」說原因，按鍵是 v
   const ui = await $.ui.mount(PANE(160))
@@ -137,7 +136,7 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   // 一、指令未核准：Agent 改了指令 → 暫停；面板按兩次 v 核准並執行 → 通過 → 自動派審查
   h.setCheck(IN_APP)
   await h.finish()
-  expect(chain().stopped).toBe(CHANGED)
+  expect(chain().stopped).toBe('checkChanged')
   const ui = await $.ui.mount(PANE(160))
   await ui.press({ key: `${PREFIX}verify` }); await clock.settle()
   await ui.press({ key: `${PREFIX}verify` }); await clock.settle()
@@ -163,7 +162,7 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   data.compose = svc('app', 'exited')
   await h.finish()
   expect(sh(data)).toBe(1)
-  expect(chain().stopped).toContain('容器 app 未啟動')
+  expect(storedStop(chain())).toEqual({ code: 'containersDown', services: 'app' })
   data.compose = svc('app')
   data.run = async () => result(1, '', 'FAILED 1 test')
   await h.verify()
@@ -178,7 +177,7 @@ test('pressing v on a chain paused at the check resumes it', COMPOSE, async ($, 
   breakNext = true
   await h.finish()
   expect(breakNext).toBe(false)
-  expect(chain().stopped).toContain('測試中斷')
+  expect(chain().stopped).toBe('verifyBroke')
   expect(data.launches.length).toBe(4)
   await h.verify()
   expect(chain().stopped).toBeUndefined()
@@ -213,7 +212,7 @@ test('chain paused at the check because containers are down or the check broke s
   // 一、容器沒啟動：Agent 做完、自動檢查跑不了 → 暫停，下一次重新整理之後也只有一則通知、寫明原因
   data.compose = svc('app', 'exited')
   await h.finish()
-  expect(chain().stopped).toContain('容器 app 未啟動')
+  expect(storedStop(chain())).toEqual({ code: 'containersDown', services: 'app' })
   await h.refresh()
   await h.refresh()
   expect(aboutAlpha()).toHaveLength(1)
@@ -230,7 +229,7 @@ test('chain paused at the check because containers are down or the check broke s
   data.git[ROOT]!.head = 'h2'
   breakNext = true
   await h.finish()
-  expect(chain().stopped).toContain('測試中斷')
+  expect(chain().stopped).toBe('verifyBroke')
   await h.refresh()
   await h.refresh()
   expect(aboutAlpha()).toHaveLength(2)
@@ -301,7 +300,7 @@ test('stopping an agent on a chain paused at the check drops the pause so v only
   await ui.press({ key: `${PREFIX}stop` })
   await clock.settle()
   await ui.unmount()
-  expect(chain().stopped).toBe(AGENT_STOPPED)
+  expect(chain().stopped).toBe('agentStopped')
   expect(chain().heldAtCheck).toBeUndefined()
 
   data.agents = []
@@ -314,7 +313,7 @@ test('stopping an agent on a chain paused at the check drops the pause so v only
   await h.verify()
   expect(sh(data)).toBe(1)
   expect(data.launches.length).toBe(1)
-  expect(chain().stopped).toBe(AGENT_STOPPED)
+  expect(chain().stopped).toBe('agentStopped')
   ui = await $.ui.mount(PANE(160))
   const after = flat(text(await ui.drawn()))
   await ui.unmount()

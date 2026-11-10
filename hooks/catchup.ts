@@ -26,7 +26,7 @@ export function catchupHold(c: Pick<Case, 'manual' | 'chain' | 'conflict'>): str
   if (!chain) return '沒有自動流程'
   if (chain.foreign) return '流程是別的對話開的'
   // 額度煞車擋下的：合併段沒有 g 可按，括號只寫額度原因。
-  if (chain.stopped) return quotaLowOf(chain.stopped) || '流程已暫停'
+  if (chain.stopped) return quotaLowOf(chain) || '流程已暫停'
   // 沒有流程紀錄、只是卡片上有審查結論（自審）的，或流程還沒過關的：不是自動流程走到合併段的。
   if (!chain.passed) return '沒有自動流程'
   if (chain.needsHuman) return '高風險改動'

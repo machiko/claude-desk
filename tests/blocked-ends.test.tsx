@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, REGISTRY, NOW, result, text, flat, feedLog } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, REGISTRY, NOW, result, text, flat, feedLog, storedStop } from './fixture'
 import { screen } from './world'
 import { alphaOnly, helpers, sh } from './alpha-chain'
 import { launchName } from '../hooks/dispatch'
@@ -232,7 +232,7 @@ test('test_check_paused_chain_still_dispatches_review_after_card_question_cleare
   // 實作把測試指令改了：做完後流程停在檢查段
   h.setCheck('node test.mjs --all')
   await h.finish()
-  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toContain('測試指令改過')
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('checkChanged')
 
   // 「等你」有過一題（例如別的對話寫的），又在對話清成無
   setAsk(data, '要先發版嗎？A) 要 B) 不要')
@@ -266,7 +266,7 @@ test('test_check_paused_chain_resumed_with_question_on_card_still_dispatches_rev
   // 實作把測試指令改了：做完後流程停在檢查段
   h.setCheck('node test.mjs --all')
   await h.finish()
-  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toContain('測試指令改過')
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('checkChanged')
 
   // 暫停後「等你」寫了一題，題目還在時核准新指令、用指令重開
   setAsk(data, '要先發版嗎？A) 要 B) 不要')
@@ -309,7 +309,7 @@ for (const clearFirst of [false, true]) {
     // 容器沒起來：實作做完、自動檢查跑不了 → 停在檢查段
     data.compose = svc('app', 'exited')
     await h.finish()
-    expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toContain('容器 app 未啟動')
+    expect(storedStop((data.store.chains as any)['/home/u/wt/alpha'])).toEqual({ code: 'containersDown', services: 'app' })
 
     // 暫停中「等你」寫了一題（不是那次實作寫的）
     setAsk(data, '要先發版嗎？A) 要 B) 不要')
@@ -354,7 +354,7 @@ test('test_question_handled_then_check_paused_resumes_to_review', async ($, on) 
   setAsk(data, '無')
   await h.refresh(); await h.step(); await h.step()
   expect(log.has(HANDED)).toBe(true)
-  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toContain('測試指令改過')
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('checkChanged')
   expect(data.launches).toHaveLength(1)
 
   // 核准後重開：通過後派驗收

@@ -484,7 +484,7 @@ test('test_answer_b_fix_tries_once_when_launch_fails_then_g_restarts_it', async 
   // 只試了一次；流程停下、紀錄拿掉，輪到你寫按 g 重派
   expect(data.launches).toHaveLength(1)
   const run = (data.store.chains as any)[ALPHA]
-  expect(run.stopped).toBe(MEDIUM_FIX_NOT_SENT)
+  expect(run.stopped).toBe('mediumFixNotSent')
   expect(run.mediumFixAt).toBeUndefined()
   expect(run.fixTotal ?? 0).toBe(0)
   const ui = await $.ui.mount(PANE(160))
@@ -546,7 +546,7 @@ test('test_answer_b_after_security_review_names_both_review_files', async ($, on
   // 自動試的那次：兩份都寫，哪一份的（等你決定）都不漏
   expect(data.launches).toHaveLength(1)
   expect(h.prompt(0).startsWith('修正：你在卡片 等你 對審查 MEDIUM 選了 C) 修掉：依 .task/REVIEW.md 與 .task/SECURITY.md 修正')).toBe(true)
-  expect((data.store.chains as any)[ALPHA].stopped).toBe(MEDIUM_FIX_NOT_SENT)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe('mediumFixNotSent')
 
   // 沒派出、按 g 重派：照樣兩份都寫
   await h.refresh(); await h.step()

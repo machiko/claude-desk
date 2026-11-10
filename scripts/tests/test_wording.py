@@ -21,7 +21,7 @@ OLD_WORDS = re.compile(
 ALLOWED = (
     ('hooks/tutorial.ts', re.compile(r'^export const REVIEW_[123] = `# 程式碼審查'),
      '教學寫進審查檔（.task/REVIEW.md）的本文，跟真的審查檔同格式；審查檔不改名（D-01）'),
-    ('hooks/chain.ts', re.compile(r'^const LEGACY_HELD: '),
+    ('hooks/stop-reason.ts', re.compile(r"^\s*'完成檢查的指令(?:改過、|還沒)"),
      '換詞前存進流程紀錄（$.store 的 chain.stopped）的原因句，資料格式：只拿來比對換成新句、不顯示'),
     ('hooks/card.ts', re.compile(r"^export const UNREVIEWED_(?:GATE|MARK) = '"),
      '修正 Agent 寫進卡片關卡的結論（規格 AC-1 定的字）與認它的關鍵字，資料格式；面板的說法用「未重新驗收」'),

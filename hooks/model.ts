@@ -7,10 +7,11 @@ import { STATE } from './theme'
 import { CARD_FORMAT, cardFormat } from './formats'
 import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, releasingStep, standingVerdict, toFix } from './pipeline'
 import { RUN_WARN_MS, spanMs } from './run-time'
-import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT } from './chain'
-import { LIMIT_NAME, QUOTA_RESTART, quotaHeld } from './quota-words'
+import { quotaHeld } from './quota-words'
+import { quotaLowText, quotaStop, stopCodeOf } from './stop-reason'
+import type { StopReason } from './stop-reason'
 import type { Limit } from './quota-words'
-import { fit, plain, resetText, runMinutesText } from './text'
+import { fit, plain, runMinutesText } from './text'
 import { agentWaits, approvalWait, approveText } from './agents'
 
 // 文字工具搬到 text.ts、Agent 清單解析搬到 agents.ts；呼叫端與測試照舊從這裡匯入也行。
@@ -46,32 +47,36 @@ export function runTimeText(c: Case, now: number, hasNote = true): string {
   return `總執行 ${runMinutesText(ms)}${hasNote && isRunLong(c, now) ? `（超過 ${RUN_WARN_MS / 60_000} 分）` : ''}`
 }
 
-export { LIMIT_NAME, QUOTA_RESTART, QUOTA_RESTART_CATCHUP, isQuotaHold, quotaHeld, quotaLowOf } from './quota-words'
+export { LIMIT_NAME, isQuotaHold, quotaHeld, quotaLowOf, restartsWithG } from './quota-words'
 export type { Limit } from './quota-words'
 
-/**
- * 5 小時額度剩餘（四捨五入，跟面板 header 一樣）低於門檻時的說明「5 小時額度剩 25%，低於門檻 30%」；否則空字串。
- * 剛好等於門檻不算；門檻 0（關掉）、沒有 five_hour 那條（讀不到額度）、重置時間已過（舊資料）都回空字串，不當成額度不足。
- */
-export function quotaLow(limits: readonly Limit[] | undefined, threshold: number, now: number): string {
+/** 5 小時額度那條低於門檻時的剩餘（四捨五入，跟面板 header 一樣）與那條本身；不低於門檻、門檻 0、讀不到、已過重置時間都回 null。 */
+function lowFiveHour(limits: readonly Limit[] | undefined, threshold: number, now: number): { left: number; five: Limit } | null {
   const five = threshold > 0 ? (limits ?? []).find(l => l.kind === 'five_hour') : undefined
-  if (!five || !Number.isFinite(five.remaining)) return ''
+  if (!five || !Number.isFinite(five.remaining)) return null
   // 重置時間已經過了：那是重置前的舊用量，等於讀不到現在的額度，不擋。
   const resets = five.resetsAt ? Date.parse(five.resetsAt) : NaN
-  if (Number.isFinite(resets) && resets <= now) return ''
+  if (Number.isFinite(resets) && resets <= now) return null
   const left = Math.max(0, Math.min(100, Math.round(five.remaining)))
-  return left < threshold ? `${LIMIT_NAME.five_hour}額度剩 ${left}%，低於門檻 ${threshold}%` : ''
+  return left < threshold ? { left, five } : null
 }
 
 /**
- * 自動流程的額度煞車：額度低於門檻（quotaLow）時的暫停原因，接著寫重置時間（面板 header 同一種寫法）與接下來要做什麼
- * （預設按 g 重開；解衝突被擋下時傳 QUOTA_RESTART_CATCHUP，叫你在對話處理）；否則空字串。
+ * 5 小時額度剩餘低於門檻時的說明「5 小時額度剩 25%，低於門檻 30%」；否則空字串。
+ * 剛好等於門檻不算；門檻 0（關掉）、沒有 five_hour 那條（讀不到額度）、重置時間已過（舊資料）都回空字串，不當成額度不足。
  */
-export function quotaHold(limits: readonly Limit[] | undefined, threshold: number, now: number, restart: string = QUOTA_RESTART): string {
-  const low = quotaLow(limits, threshold, now)
-  if (!low) return ''
-  const five = limits!.find(l => l.kind === 'five_hour')!
-  return `${low}，${resetText(five.resetsAt, now) || '重置'}${restart}`
+export function quotaLow(limits: readonly Limit[] | undefined, threshold: number, now: number): string {
+  const low = lowFiveHour(limits, threshold, now)
+  return low ? quotaLowText(low.left, threshold) : ''
+}
+
+/**
+ * 自動流程的額度煞車：額度低於門檻（quotaLow）時的停下原因（代碼加剩餘、門檻、重置時間與現在時刻，顯示時組成「…，今天 15:00 重置後按 g 重開」）；
+ * `catchup`：擋下的是解衝突，句尾叫你在對話處理。不低於門檻回 null。
+ */
+export function quotaHold(limits: readonly Limit[] | undefined, threshold: number, now: number, catchup = false): StopReason | null {
+  const low = lowFiveHour(limits, threshold, now)
+  return low ? quotaStop(low.left, threshold, low.five.resetsAt, now, catchup) : null
 }
 
 export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): CaseState {
@@ -90,7 +95,7 @@ export function stateOf(c: Omit<Case, 'state'>, verify: Verify | undefined): Cas
     if (running) return 'running'
     // 額度煞車擋在過關前（例如要派資安審查、重新審查時）：卡片上的結論沒擋，但流程還沒走完，算 failed（按 g 重開）。
     // 你選了修掉的審查 MEDIUM 沒派出修正：結論沒擋，但要你按 g 重派，算 failed。
-    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 || quotaHeld(c.chain) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT ? 'failed' : 'ready'
+    if (c.chain?.stopped || (!c.chain && blocking(verdict) > 0)) return toFix(c, verdict) > 0 || quotaHeld(c.chain) || stopCodeOf(c.chain) === 'mediumFixNotSent' ? 'failed' : 'ready'
     return blocking(verdict) > 0 ? 'running' : 'ready'
   }
   if (parseGate(c.gate)) return 'gate'
@@ -230,7 +235,7 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
 }
 
 /** 這件的 Agent 是被停掉的（面板按 k 停下流程，或 `claude stop`），不是做完：動態寫「已停止」。 */
-const stoppedAgent = (c: Case): boolean => c.chain?.stopped === AGENT_STOPPED || c.lastEnded === 'stopped'
+const stoppedAgent = (c: Case): boolean => stopCodeOf(c.chain) === 'agentStopped' || c.lastEnded === 'stopped'
 
 /** 每件（與不屬於任何一件的）各留最近幾筆動態：忙的那件不會把別件的擠掉。 */
 export const FEED_KEEP = 12

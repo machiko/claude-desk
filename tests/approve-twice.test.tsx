@@ -175,7 +175,7 @@ test('test_chain_held_on_a_never_approved_check_lists_it_as_unapproved', async (
   data.git[ROOT]!.head = 'h2'
   await h.finish()
   expect(sh(data)).toBe(0)
-  expect((data.store.chains as any)[ROOT].stopped).toContain('測試指令還沒經你核准')
+  expect((data.store.chains as any)[ROOT].stopped).toBe('checkUnapproved')
 
   const ui = await $.ui.mount(PANE(160))
   const shown = await screen(ui)

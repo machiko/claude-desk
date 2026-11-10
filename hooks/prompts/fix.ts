@@ -1,11 +1,12 @@
 // 修正派工的提示詞：自動流程的修正輪（檢查沒過、審查要修）與手動按 g 修。
 import type { Case } from '../../types'
-import { AGENT_STOPPED, MAX_FIX_ROUNDS, MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT } from '../chain'
+import { MAX_FIX_ROUNDS } from '../chain'
 import type { FixReason } from '../dispatch'
 import { UNREVIEWED_GATE } from '../card'
 import { parseVerdict, toFix } from '../pipeline'
 import { REVIEW_FILE, SECURITY_FILE } from './review'
 import { isQuotaHold } from '../quota-words'
+import { stopCodeOf } from '../stop-reason'
 
 /** 要改規格才能修的 MEDIUM：不改、只記錄（跟審查一樣標「記錄、不修」），歷程寫原因，不在「等你」問。修正提示共用。 */
 export const MEDIUM_SPEC_RECORD = '要改規格才能修的 MEDIUM 不要改：在審查檔那條結尾標「（記錄、不修）」、在卡片歷程記一筆「Agent：MEDIUM n 條要改規格才能修，記錄不修 → 見審查檔」，不寫進 等你，其他照修。'
@@ -45,7 +46,7 @@ export function fixHead(c: Case, fix: FixReason): string {
 /** 按 g 派的修正是在修審查結論（審查要修的 CRITICAL、HIGH 還在，或你選修掉的 MEDIUM 沒派出）：那一輪算依審查修正過（chain.reviewFix）。 */
 export function fixesReview(c: Case): boolean {
   const verdict = parseVerdict(c.gate)
-  return (!!verdict && toFix(c, verdict) > 0) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT
+  return (!!verdict && toFix(c, verdict) > 0) || stopCodeOf(c.chain) === 'mediumFixNotSent'
 }
 
 /** 按 g 派出去的開頭與這次是不是在修東西（repairs）；不是修東西的（Agent 被停止後重開、額度煞車擋在派驗收前）照實作派工讀常犯錯誤清單。 */
@@ -59,12 +60,13 @@ const repair = (head: string): ManualFix => ({ head, repairs: true })
 export function manualFix(c: Case, ci: boolean): ManualFix {
   if (ci) return repair(`修正：PR #${c.pr!.id} 的 CI 失敗。先看失敗原因（gh pr checks 或平台頁面），修到 CI 會綠，commit 後寫回卡片。`)
   const stopped = c.chain?.stopped
-  if (stopped === MEDIUM_FIX_NOT_SENT) return repair(`修正：${mediumPickedStep(mediumFiles(c.chain?.mediumSecurity))}`)
+  const code = stopCodeOf(c.chain)
+  if (code === 'mediumFixNotSent') return repair(`修正：${mediumPickedStep(mediumFiles(c.chain?.mediumSecurity))}`)
   // 審查 CRITICAL／HIGH 的自動修正沒派出：照按 g 修審查結論派，不把停下原因（按 g 重派）交給 Agent。
-  if (stopped === REVIEW_FIX_NOT_SENT) return repair(`修正：${reviewFixStep(REVIEW_FILE)}`)
-  if (stopped === AGENT_STOPPED) return { head: '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。', repairs: false }
+  if (code === 'reviewFixNotSent') return repair(`修正：${reviewFixStep(REVIEW_FILE)}`)
+  if (code === 'agentStopped') return { head: '上一個 Agent 被停止，沒做完：先看 git status、git log 與卡片歷程，把那件事做完，commit 後寫回卡片。', repairs: false }
   // 額度煞車擋下的：不是失敗，照擋下時的情況派（要修的照修；擋在派審查前的沒有東西要修）。
-  if (isQuotaHold(stopped)) return quotaRestart(c)
+  if (isQuotaHold(c.chain)) return quotaRestart(c)
   if (stopped) return repair(`修正：流程已暫停（${stopped}）。看 ${REVIEW_FILE}（有的話）與完成檢查 \`${c.verify}\`，修好 CRITICAL、HIGH 與沒標「不修」「等你決定」的 MEDIUM 並讓完成檢查綠（${MEDIUM_SPEC_RECORD}），${FIX_WHOLE_CLASS}commit 後卡片 關卡 改回 無，狀態寫一句修了什麼。`)
   // 審查結論還要修（CRITICAL＋HIGH，加上流程這輪要修的 MEDIUM）：檢查是過的，依審查檔修。
   const verdict = parseVerdict(c.gate)

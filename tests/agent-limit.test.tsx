@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat, feedLog } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, result, text, flat, feedLog, storedStop } from './fixture'
 import { screen, busyAgent as busy } from './world'
 import { isDeskLaunch } from '../hooks/dispatch'
 
@@ -253,7 +253,7 @@ test('queued auto dispatches recheck the worktree and keep an existing pause rea
   // Alpha：原因照舊、停在檢查的標記還在（按 v 仍會接續）
   expect(data.store.chains[ALPHA]).toEqual(held)
   // Gamma：不派，流程停下寫同一個原因
-  expect(data.store.chains[GAMMA].stopped).toContain('3 個檔')
+  expect(storedStop(data.store.chains[GAMMA])).toEqual({ code: 'foreignChanges', files: 3 })
   await ui.press({ key: `row-${CARD_C}` })
   const shown = await screen(ui)
   expect(shown).toContain(flat('Gamma 排隊的驗收沒有派出：worktree 有未提交的改動（3 個檔）'))

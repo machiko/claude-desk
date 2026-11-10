@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
-import { KIND_LABEL, markRefusal, pushRequest, queueRefusal } from './dispatch'
+import { KIND_LABEL, markRefusalStop, pushRequest, queueRefusal } from './dispatch'
 import { normalizeRoot } from './settings'
 import { runningDeskAgents } from './agents'
 import type { DispatchKind, QueueEntry, QueueOpts } from './dispatch'
@@ -14,7 +14,9 @@ import { paused } from './chain'
 import type { ChainRun, QuotaResume } from './chain'
 import { feedPush, loadChains, loadJobs, me, saveChain } from './desk-io'
 import { loadSettings, worktreeMark } from './probes'
-import { QUOTA_RESTART_CATCHUP, quotaHold, quotaLow } from './model'
+import { quotaHold, quotaLow } from './model'
+import { causeText } from './stop-reason'
+import type { StopCause } from './stop-reason'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, notify, restage, verifyPending } from './register'
 import { pauseUnsentReviewFix } from './auto-chain'
@@ -69,7 +71,7 @@ export async function requeue($: any, c: Case, kind: DispatchKind, opts: QueueOp
  * 自動排的那筆沒派出：把流程停下寫原因。流程紀錄跨對話共用，只停這個對話的、還沒停的那輪；
  * 別的對話接手的流程不動，已經停下的不改原因（也不清掉停在檢查的標記）。回傳這次有沒有真的停下。
  */
-async function pauseOwnChain($: any, c: Case, mine: string, why: string, resume?: QuotaResume): Promise<boolean> {
+async function pauseOwnChain($: any, c: Case, mine: string, why: StopCause, resume?: QuotaResume): Promise<boolean> {
   // 看 saveChain 的回傳值：閉包在重套時會再跑，寫入被別的對話蓋掉、放棄時也不算停下。
   return saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, why, false, resume))
 }
@@ -88,17 +90,18 @@ const pausesChain = (entry: Pick<QueueEntry, 'kind' | 'opts'>) => !!entry.opts.a
  * 從隊伍取出卻沒派出（已不在隊伍裡）：寫動態說原因；自動排的（推送除外）另把流程停下寫同一個原因。
  * `alert`：要人處理的原因（worktree 被別的對話改了），流程真的停下時跟自動流程一樣跳提示並發系統通知。
  */
-export async function notSent($: any, c: Case | undefined, entry: Pick<QueueEntry, 'statusPath' | 'kind' | 'opts'>, why: string, now: number, mine: string, alert = false, resume?: QuotaResume) {
+export async function notSent($: any, c: Case | undefined, entry: Pick<QueueEntry, 'statusPath' | 'kind' | 'opts'>, cause: StopCause, now: number, mine: string, alert = false, resume?: QuotaResume) {
   const name = c?.name ?? entry.statusPath
+  const why = causeText(cause)
   await feedPush($, [{ at: now, text: `${name} 排隊的${labelOf(entry.kind, entry.opts)}沒有派出：${why}`, tone: 'warning', card: entry.statusPath }])
   if (!pausesChain(entry) || !c) return
-  if (!(await pauseOwnChain($, c, mine, why, resume)) || !alert) return
+  if (!(await pauseOwnChain($, c, mine, cause, resume)) || !alert) return
   $.ui.toast(`${name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
   notify($, `${name}：流程已暫停，${why}`)
 }
 
 /** 移出隊伍、說為什麼沒派（見 notSent），重算那件的六段。 */
-async function drop($: any, entry: QueueEntry, c: Case | undefined, why: string, now: number, mine: string, alert = false, resume?: QuotaResume) {
+async function drop($: any, entry: QueueEntry, c: Case | undefined, why: StopCause, now: number, mine: string, alert = false, resume?: QuotaResume) {
   await setQueue($, agentQueue.filter(e => e !== entry))
   await notSent($, c, entry, why, now, mine, alert, resume)
   await restage($, entry.statusPath)
@@ -108,9 +111,9 @@ async function drop($: any, entry: QueueEntry, c: Case | undefined, why: string,
  * 排隊期間 worktree 有了不是上一個 Agent 留下的未提交改動（別的對話在改）：不派。排進隊伍時看過的那次可能是很久以前，
  * 派出前再看一次；同步不改程式、推送只推已 commit 的，不看。
  */
-async function foreignChanges($: any, c: Case, entry: QueueEntry): Promise<string> {
-  if (entry.kind === 'sync' || entry.kind === 'publish') return ''
-  return markRefusal(await worktreeMark($, c.root), (await loadJobs($))[normalizeRoot(c.root)])
+async function foreignChanges($: any, c: Case, entry: QueueEntry): Promise<StopCause | null> {
+  if (entry.kind === 'sync' || entry.kind === 'publish') return null
+  return markRefusalStop(await worktreeMark($, c.root), (await loadJobs($))[normalizeRoot(c.root)])
 }
 
 /** 手動排的繼續：排隊時核准的完成檢查跟卡片現在的不同，就不替你派。 */
@@ -128,9 +131,10 @@ function queuedOpts(c: Case, entry: QueueEntry): QueueEntry['opts'] {
 /**
  * 排隊的自動項目被額度煞車擋下的原因：推送寫要推請按哪個鈕（不暫停流程）；解衝突照直接派被擋時的結尾（合併段沒有 g，在對話處理）；其他按 g 重開。
  */
-function queuedHold(entry: QueueEntry, c: Case | undefined, s: Snapshot, threshold: number): string {
+function queuedHold(entry: QueueEntry, c: Case | undefined, s: Snapshot, threshold: number): StopCause {
   if (entry.kind === 'publish') return `${quotaLow(s.limits, threshold, s.at)}，要推請按 ${c?.pr?.state === 'OPEN' ? '⇡ push' : '⇡ 開 PR'}`
-  return quotaHold(s.limits, threshold, s.at, entry.kind === 'catchup' ? QUOTA_RESTART_CATCHUP : undefined)
+  // 呼叫端先看過 quotaLow 不是空的：這裡一定有停下原因。
+  return quotaHold(s.limits, threshold, s.at, entry.kind === 'catchup') ?? quotaLow(s.limits, threshold, s.at)
 }
 
 /**

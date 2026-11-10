@@ -28,6 +28,11 @@ MIGRATED = (
     'hooks/actions.ts',
     'hooks/band.tsx',
     'hooks/pane.tsx',
+    'hooks/turn.ts',
+    'hooks/pane-card.tsx',
+    'hooks/chain.ts',
+    'hooks/quota-words.ts',
+    'hooks/stop-reason.ts',
 )
 # (檔名, 只看符合這個正規式的行)
 MIGRATED_LINES = (
@@ -36,6 +41,8 @@ MIGRATED_LINES = (
 # (檔名, 那一行裡要扣掉的字, 原因)
 KEPT = (
     ('hooks/release-update.ts', re.compile(r"\['狀態'\]"), '卡片欄位名，解析契約（規格非目標）'),
+    ('hooks/stop-reason.ts', re.compile(r"^\s*'[^'\n]+': '\w+',$", re.M),
+     '舊流程紀錄存的停下原因句（資料格式契約）：更新前停下的流程讀時還原成代碼，凍結不跟著目錄改（舊紀錄相容）'),
 )
 CHINESE = re.compile(r'[　-〿一-鿿＀-￯]+')
 CATALOG_KEY = re.compile(r"^\s*'([\w.]+)':", re.M)

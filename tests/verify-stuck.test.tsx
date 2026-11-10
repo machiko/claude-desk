@@ -70,7 +70,7 @@ test('test_auto_fix_after_review_high_launch_failure_pauses_chain', async ($, on
   expect(data.launches).toHaveLength(1)
   expect(h.prompt(0).startsWith('修正第 1／2 輪')).toBe(true)
   const run = (data.store.chains as any)[ALPHA]
-  expect(run.stopped).toBe(REVIEW_FIX_NOT_SENT)
+  expect(run.stopped).toBe('reviewFixNotSent')
   // 動態的「流程已暫停」只寫一筆
   expect(log.list.filter(e => flat(e.text) === flat(PAUSED))).toHaveLength(1)
   expect(log.list.find(e => flat(e.text) === flat(PAUSED))?.tone).toBe('error')
@@ -97,7 +97,7 @@ test('test_queued_auto_fix_after_review_high_launch_failure_pauses_chain', async
   for (let i = 0; i < 4; i++) { await h.refresh(); await h.step() }
 
   expect(data.launches).toHaveLength(1)
-  expect((data.store.chains as any)[ALPHA].stopped).toBe(REVIEW_FIX_NOT_SENT)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe('reviewFixNotSent')
   expect(log.list.filter(e => flat(e.text) === flat(PAUSED))).toHaveLength(1)
   expectPausedTurn(await h.shown())
 })
@@ -111,7 +111,7 @@ test('test_press_g_after_unsent_review_fix_dispatches_fix', async ($, on) => {
   reviewHighJustFinished(data)
   await h.refresh()
   for (let i = 0; i < 2; i++) { await h.refresh(); await h.step() }
-  expect((data.store.chains as any)[ALPHA].stopped).toBe(REVIEW_FIX_NOT_SENT)
+  expect((data.store.chains as any)[ALPHA].stopped).toBe('reviewFixNotSent')
   // 停下那次不算一輪
   expect((data.store.chains as any)[ALPHA].fixTotal ?? 0).toBe(0)
 
