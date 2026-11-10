@@ -279,6 +279,7 @@ plugin 選項（安裝時或 `claude plugin configure desk` 設定）：
 | `checkServices` | 完成檢查裡出現這個指令名時需要哪些容器服務 |
 | `composeDir` | 這個專案的 `docker-compose.yml` 所在資料夾（容器列與檢查前的容器確認） |
 | `updateCheck` | `"off"` 不自動檢查 desk 新版本；沒設＝每 24 小時查一次（`/desk update` 不受影響） |
+| `format` | 設定檔的格式版號：`1` 或不寫；比這版 desk 認得的新時，面板報一筆「較新版 desk 的設定，請更新 desk」，認得的鍵照常套用。卡片、登錄表的格式標記與舊格式清單見 [docs/FORMATS.md](docs/FORMATS.md) |
 | `card.*` | `/desk:card` 用：主 repo、worktree 位置、`card.base`（`new` 沒帶 base 且主 repo 是 detached HEAD 時才用；平常從主 repo 當下的分支切出、記在卡片「基準」欄，desk 的 diff 與合併判斷先看這欄）、建議的完成檢查（`{slug}`）、卡片模板、寫規格的專案規則；另有 `registry`、`archive`（預設在專案資料夾） |
 | `card.specPreflight` | 規格前審指令：`/desk:card spec` 讀現況後提示執行，輸出當候選清單（`.task/SPEC-gemini.md`）供對話篩選併入規格；在背景執行，對話同時繼續讀程式與擬草稿，相關檔少於 `card.specPreflightMinFiles` 的小卡跳過；指令失敗跳過照常寫規格。任何會輸出規格候選的工具都行。`{root}` 換成任務根目錄、`{card}` 換成卡片路徑、`{paths}` 換成相關模組檔案路徑（逗號分隔），其他佔位原樣保留。desk 不執行也不檢查這條指令；空白＝不加 |
 | `card.specPreflightMinFiles` | 規格前審的檔數門檻：相關檔少於這個數就不跑 `card.specPreflight`；正整數，預設 3 |

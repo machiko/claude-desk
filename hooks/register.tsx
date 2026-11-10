@@ -16,6 +16,8 @@ import { KIND_LABEL, REVIEW_FILE, SECURITY_FILE, buildPrompt, liveHolds, dispatc
 import { runOf } from './run-time'
 import { launchName, runningDeskAgents, agentsByRoot, applyOscToAgent, endedAlive, endedHow, rawAgents, supersede, asksFor, agentInfo, askClearedOnCard } from './agents'
 import { modelFor, normalizeRoot, pitfallsFor, settingsNotices } from './settings'
+import { REGISTRY_FORMAT, newerFormatNotices, registryFormat } from './formats'
+import type { FormatsSeen, NewerFormat } from './formats'
 import type { DispatchKind, QueueOpts, ReviewOpts, UntrustedHold } from './dispatch'
 import type { RawAgent } from './agents'
 import type { RunShown } from './run-time'
@@ -76,6 +78,8 @@ const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, nul
 const trustedAtom = atom({ plugin: 'desk', key: 'trusted' } as const, {} as Record<string, string>)
 /** 設定檔驗證上次檢查過的 dispatch.json（路徑 → 內容與問題）：跟動態放在同一處，動態裡的舊錯誤在，這份紀錄也在。 */
 const settingsCheckedAtom = atom({ plugin: 'desk', key: 'settingsChecked' } as const, {} as SettingsChecked)
+/** 已報過的較新格式（卡片、登錄表 → 版號）：跟動態一起在教學開始／結束與 /desk off 清掉，同一份檔同一個版號只報一次。 */
+const formatsSeenAtom = atom({ plugin: 'desk', key: 'formatsSeen' } as const, {} as FormatsSeen)
 /** 最近一次畫面 content 最多能捲到第幾列；捲動 hook 用它夾住位置（模組變數，重載後下一次畫就補上）。 */
 let maxOffset = 0
 
@@ -117,6 +121,21 @@ async function settingsNews($: any, options: PluginOptions, at: number): Promise
   if (!reports) return []
   const { checked, events } = settingsNotices(reports, await read($, settingsCheckedAtom), at)
   await update($, settingsCheckedAtom, () => checked)
+  return events
+}
+
+/**
+ * 較新格式的新動態：登錄表標記、卡片標記比這版認得的新時各警告一次（同一份檔同一個版號只報一次）；
+ * 卡片照常顯示、不派工（Case.newerFormat），登錄表照常讀。
+ */
+async function formatNews($: any, registryPath: string | null, registryText: string | null, cases: readonly Case[], at: number): Promise<FeedEvent[]> {
+  const registry = registryPath && registryText !== null ? registryFormat(registryText) : REGISTRY_FORMAT
+  const found: NewerFormat[] = [
+    ...(registryPath && registry > REGISTRY_FORMAT ? [{ kind: 'registry' as const, path: registryPath, format: registry }] : []),
+    ...cases.flatMap(c => c.newerFormat ? [{ kind: 'card' as const, path: c.statusPath, name: c.name, format: c.newerFormat }] : []),
+  ]
+  const { seen, events } = newerFormatNotices(found, await read($, formatsSeenAtom), at)
+  await update($, formatsSeenAtom, () => seen)
   return events
 }
 
@@ -279,7 +298,7 @@ export async function refresh($: any, options: PluginOptions) {
       await update($, feedAtom, list => feedOnDesk(list, cur.cases))
     }
     const prev = await read($, snapshot)
-    const fresh = [...events(prev, cur), ...(tutorial ? [] : await settingsNews($, options, now))]
+    const fresh = [...events(prev, cur), ...(tutorial ? [] : [...await settingsNews($, options, now), ...await formatNews($, path ?? null, text, cases, now)])]
     await update($, snapshot, () => cur)
     if (approvals === trustWrites) await update($, trustedAtom, () => trusted)
     // 失敗之後這件又有 Agent 開過：「還沒信任」不再成立，三步不再出現。
@@ -392,6 +411,7 @@ async function stop($: any) {
   soonTimer?.cancel(); soonTimer = undefined
   cancelPromptSync()
   await clearAgentQueue($)
+  await update($, formatsSeenAtom, () => ({}))
   $.ui.status(undefined)
   await update($, snapshot, () => null)
   await $.ui.close({ id: PANE }).catch(() => {})

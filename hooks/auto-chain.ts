@@ -53,6 +53,8 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     const saveOpts = { warn: { at: s.at, name: c.name, card: c.statusPath } }
     // 疊放卡的原卡還沒合併：不重新檢查、不派審查、修正或解衝突，停在原地（流程不暫停，原卡合併後照常）。
     if (c.stackWait) continue
+    // 卡片是較新版 desk 的格式：這版不接著跑檢查、不派任何工作（動態已警告過，更新 desk 後照常）。
+    if (c.newerFormat) continue
     // 這個對話確認規格時被原卡擋下、現在不用再等：派一次實作（只試一次，派之前拿掉記號）。
     // 最後一次派工剛結束、還沒處理（同步不在流程裡、不會標處理過）：先讓下面照常處理那次，處理完下次重新整理再派，不然 jobs.last 被這次蓋掉。
     if (run?.stackDispatch && run.owner === mine && !tutorial && (!last || !!last.handled || last.kind === 'sync')) {

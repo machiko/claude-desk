@@ -9,8 +9,11 @@ const lf = (text: string) => text.replace(/\r\n?/g, '\n')
 /** `~` 開頭換成家目錄，反斜線換成斜線。 */
 export const expandHome = (path: string, home: string) => path.replace(/^~(?=\/|$)/, home).replace(/\\/g, '/')
 
-/** 空的登錄表（只有表頭）：面板的「建立空的登錄表」寫這份，與 skills/card/scripts/card.py 的 REGISTRY_TEMPLATE 同一份。 */
-export const REGISTRY_TEMPLATE = '# 任務登錄表\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
+/**
+ * 空的登錄表（只有表頭）：面板的「建立空的登錄表」寫這份，與 skills/card/scripts/card.py 的 REGISTRY_TEMPLATE 同一份。
+ * 標題下一行是格式標記（hooks/formats.ts 的 REGISTRY_FORMAT）；parseRegistry 只看表格列，舊版 desk 照樣讀得懂。
+ */
+export const REGISTRY_TEMPLATE = '# 任務登錄表\n<!-- desk 登錄表 格式=1 -->\n\n| Project | 卡片路徑 | Scope | Out of scope | Executor |\n| --- | --- | --- | --- | --- |\n'
 
 const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim().replace(/`/g, ''))
 

@@ -107,6 +107,8 @@ class CardCasesTest(unittest.TestCase):
             placeholder = {k: card.is_placeholder((fields or {}).get(k, '')) for k in c['placeholder']}
             self.assertEqual(placeholder, c['placeholder'], c['name'])
             self.assertEqual(card.deploy_steps(c['card']), c['deploySteps'], c['name'])
+            # 格式版號（格式版本標記 AC-1、AC-7）：沒寫 format 的範例沒有標記，當格式 1
+            self.assertEqual(card.card_format(c['card']), c.get('format', 1), c['name'])
             # 指令讀寫欄位走的路（block 內文 → field／rewrite_fields）：每一欄都讀得到面板讀的值，改寫後讀回新值、其他欄不變。
             body = card.card_body(c['card'])
             for key, value in (c['fields'] or {}).items():
@@ -1805,6 +1807,80 @@ class CardScriptTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(TEMPLATE))
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         self.assertIn('## 驗收情境', read(self.card_path()).replace('### 驗收情境', '## 驗收情境'))
+
+    def newer_card(self):
+        """開一張卡、填好規格與計畫，再把開頭標記改成格式 2（較新版 desk 開的卡）。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        path = self.card_path()
+        self.fill_spec(path)
+        self.fill_plan(path)
+        text = read(path)
+        self.assertIn('<!-- DESK 格式=1：', text)
+        write(path, text.replace('<!-- DESK 格式=1：', '<!-- DESK 格式=2：', 1))
+        return path
+
+    def test_new_card_writes_format_marker(self):
+        """格式版本標記 AC-1：新開的卡與新建的登錄表帶格式 1 的標記，區塊與表格照舊讀得到。"""
+        reg = os.path.join(self.t, 'fresh', 'projects-scope.md')
+        self.write_settings({'card': {'registry': reg}})
+
+        r = self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = read(self.card_path())
+        self.assertIn('<!-- DESK 格式=1：工作桌只讀這個區塊。', text)
+        card = load_card()
+        self.assertEqual(card.card_format(text), 1)
+        self.assertEqual(card.parse_card(text)['關卡'], '無')
+        registry = read(reg)
+        self.assertEqual(registry.split('\n')[1], '<!-- desk 登錄表 格式=1 -->')
+        self.assertIn(f'| 訂單匯出 | `{self.card_path()}` |', registry)
+        info = self.run_card('card', 'order-export')
+        self.assertEqual(info.returncode, 0, info.stderr)
+        self.assertIn('format: DESK', info.stdout)
+
+    def test_write_commands_refuse_newer_card_format(self):
+        """格式版本標記 AC-3：卡片是格式 2 時，會寫卡的子指令不改檔、結束碼非 0，訊息叫你更新 desk。"""
+        path = self.newer_card()
+        card_before, reg_before = read(path), read(self.reg)
+        for args in (('gate', 'order-export', 'spec：待確認規格'), ('spec-init', 'order-export'), ('spec-ok', 'order-export'),
+                     ('done', 'order-export', '做完匯出'), ('archive', 'order-export'), ('archive', 'order-export', '--cleanup')):
+            r = self.run_card(*args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertIn('卡片格式 2 比這版 desk 新，請更新 desk', r.stderr, args)
+            self.assertEqual(read(path), card_before, args)
+            self.assertEqual(read(self.reg), reg_before, args)
+        self.assertFalse(os.path.exists(os.path.join(self.t, 'archive')))
+        self.assertTrue(os.path.isdir(os.path.dirname(os.path.dirname(path))))
+
+    def test_read_commands_accept_newer_card_format(self):
+        """格式版本標記 AC-3：card、read、overlap 這些唯讀的子指令照常。"""
+        path = self.newer_card()
+        before = read(path)
+        info = self.run_card('card', 'order-export')
+        self.assertEqual(info.returncode, 0, info.stderr)
+        self.assertIn(f'path: {path}', info.stdout)
+        shown = self.run_card('read', 'order-export', '--source', 'card', '--lines', '0')
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn('<!-- DESK 格式=2：', shown.stdout)
+        overlap = self.run_card('overlap', 'order-export')
+        self.assertEqual(overlap.returncode, 0, overlap.stderr)
+        self.assertEqual(overlap.stdout.strip(), '同檔預警：無')
+        self.assertEqual(read(path), before)
+
+    def test_read_security_source_uses_security_md(self):
+        """格式版本標記 AC-5：--source security 讀資安審查寫的 .task/SECURITY.md（hooks/prompts/review.ts 的 SECURITY_FILE）。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        root = os.path.dirname(os.path.dirname(self.card_path()))
+        write(os.path.join(root, '.task', 'SECURITY.md'), '# 資安審查\n\nCRITICAL 0、HIGH 1\n')
+
+        r = self.run_card('read', 'order-export', '--source', 'security', '--json')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out['file'], os.path.join(root, '.task', 'SECURITY.md'))
+        self.assertTrue(out['exists'])
+        self.assertIn('CRITICAL 0、HIGH 1', out['text'])
 
 
 OVERLAP_CARD = '''# {name} DESK

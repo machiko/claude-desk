@@ -4,6 +4,7 @@ import type { AgentInfo, Case, CaseState, FeedEvent, Snapshot, Verify } from '..
 import type { RegistryRow } from './card'
 import { filledAc, hasSpec, parseCard, parseDecisions, parseGate, projectRoot, saysNone, verifyCommand } from './card'
 import { STATE } from './theme'
+import { CARD_FORMAT, cardFormat } from './formats'
 import { unreviewedNote, parseVerdict, blocking, isMerged, pipeline, releasingStep, standingVerdict, toFix } from './pipeline'
 import { RUN_WARN_MS, spanMs } from './run-time'
 import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT } from './chain'
@@ -132,12 +133,15 @@ export function buildCase(rawRow: RegistryRow, cardText: string | null, mtime: n
   const stackedOn = stackedOnOf(card)
   const status = plain(card?.['狀態'] ?? '')
   const releasing = now === undefined ? null : releasingStep(status, mtime, now)
+  const format = cardText === null ? CARD_FORMAT : cardFormat(cardText)
+  const newer = format > CARD_FORMAT ? format : 0
   const base: Omit<Case, 'state'> = {
     name: row.name, statusPath: row.statusPath, root, hasCard: card !== null, ...(row.manual ? { manual: true } : {}),
     status, verify: plain(verifyCommand(card?.['驗證'])), ask: plain(card?.['等你'] ?? ''), next: plain(card?.['下一步'] ?? ''), gate: plain(card?.['關卡'] ?? ''),
     ...(branchBase ? { base: branchBase } : {}), ...(stackedOn ? { stackedOn } : {}),
     updatedAt: mtime, ...(releasing ? { releasing } : {}), ...(agent ? { agent } : {}),
     ...(cardText !== null && hasSpec(cardText) && !filledAc(cardText).length ? { specGap: true as const } : {}),
+    ...(newer ? { newerFormat: newer } : {}),
   }
   return { ...base, state: stateOf(base, verify) }
 }

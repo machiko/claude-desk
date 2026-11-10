@@ -40,7 +40,7 @@ function expectPlainTurn(name: string, text: string) {
 const TURN_CASES: [keyof typeof TURN_TEXT, unknown[], string | null][] = [
   ['demo', [], null], ['noCard', [], null], ['launching', [], null], ['agentQueued', [2], null],
   ['sentWaiting', [], null], ['sentUnwritten', [], 'o'], ['pickChoice', [], 'f'], ['reply', [], 'y'],
-  ['verifying', [], null], ['verifyQueued', [], null], ['manual', [], null], ['shipped', [], null],
+  ['verifying', [], null], ['verifyQueued', [], null], ['manual', [], null], ['newerFormat', [], null], ['shipped', [], null],
   ['agentStopped', [], 'g'], ['mediumFixNotSent', [], 'g'],
   ['checkApprove', [CHECK_CHANGED_WHY], 'v'], ['checkApprove', [CHECK_UNAPPROVED_WHY], 'v'],
   ['checkPaused', ['容器沒啟動'], 'v'], ['checkForeign', [CHECK_UNAPPROVED_WHY], 'g'], ['checkStageFailed', ['檢查中斷'], 'v'],
