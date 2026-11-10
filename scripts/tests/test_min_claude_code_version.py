@@ -18,11 +18,11 @@ def read(rel):
 
 
 def readme_version(text):
-    """README「需要什麼」那段裡 Claude Code 那一行寫的版號。"""
+    """README「需要什麼」那段裡「最低需要 Claude Code x.y.z」那一行寫的版號。"""
     section = re.search(r'^## 需要什麼$(.*?)(?=^## )', text, re.M | re.S)
     if not section:
         return None
-    line = re.search(r'^- Claude Code：.*?' + VERSION, section.group(1), re.M)
+    line = re.search(r'^- 最低需要 Claude Code ' + VERSION, section.group(1), re.M)
     return line.group(1) if line else None
 
 
@@ -51,7 +51,7 @@ class MinClaudeCodeVersionTest(unittest.TestCase):
 
     def test_each_reader_sees_a_changed_version(self):
         """三個讀法都讀得到改過的版號：任一處改了就會跟另兩處不同（讀不到時上面那支會報找不到）。"""
-        self.assertEqual(readme_version('## 需要什麼\n\n- Claude Code：以 2.1.400 開發與測試。\n- macOS\n\n## 下一段\n'), '2.1.400')
+        self.assertEqual(readme_version('## 需要什麼\n\n- 最低需要 Claude Code 2.1.400（以這版開發與測試），太舊時面板會提示要更新到哪一版。\n- macOS\n\n## 下一段\n'), '2.1.400')
         self.assertEqual(ci_version('        run: npm install -g @anthropic-ai/claude-code@2.1.400\n'), '2.1.400')
         self.assertEqual(hooks_version("export const MIN_CLAUDE_CODE = '2.1.400'\n"), '2.1.400')
 

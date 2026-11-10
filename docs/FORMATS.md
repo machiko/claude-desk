@@ -22,7 +22,7 @@ desk 讀寫三種檔：卡片、`dispatch.json`、登錄表。每種各有一個
 | `dispatch.json` | 走設定檢查：動態指出檔名、說明是較新版 desk 的設定；認得的鍵照常套用，新版多的鍵列在「認不得的鍵」 | 照常讀認得的鍵 |
 | 登錄表 | 動態警告一次；照常讀表格列 | 照常讀寫 |
 
-同一份檔、同一個版號只報一次；報過的紀錄跟動態一起在教學開始／結束與 `/desk off` 清掉。
+同一份檔、同一個版號只報一次；報過的紀錄跟動態一起在教學開始／結束清掉，之後會再報一次。`/desk off` 不清動態，紀錄也留著，重開 `/desk` 不再報。
 
 ## 升格式版號的時機
 
@@ -46,7 +46,7 @@ desk 還認得、但新檔不再這樣寫的舊寫法。目前都還分散在各
 | spec-ok 的 History 舊寫法「規格確認，關卡清為無，可派實作」 | `hooks/touch.ts` 的 `SPEC_OK_HISTORY` | 舊寫法的卡都歸檔之後 |
 | History 只寫日期、沒有時間 | `hooks/extras.ts` 的 `historyEntries`；`hooks/pane.tsx` 歷程時間欄 | 只寫日期的卡都歸檔之後 |
 | 卡片規則段跟目前模板不同（模板改版前開的卡） | `hooks/card-rules.ts`、`hooks/prompt-sync.ts`：規則段沒動就不拿新模板比 | 不拿：模板會一直改版 |
-| 審查 MEDIUM 在「等你」問 A～D（MEDIUM 一律記錄之前） | `hooks/card.ts` 的 `picksMediumFix`／`picksMediumFollowUp`；`hooks/prompts/review.ts` 的 `MEDIUM_ASK_FORM`、`OLD_ASKED_KEEP`、`RECHECK_ASKED`；`hooks/extras.ts`；`hooks/auto-chain.ts` 的 `reviewSettled` | 有這種題目的卡都歸檔之後 |
+| 審查 MEDIUM 在「等你」問 A～D（MEDIUM 一律記錄之前） | `hooks/card.ts` 的 `picksMediumFix`／`picksMediumFollowUp`（認答案）；`hooks/prompt-sync.ts` 的 `noteMediumFix`（記下選了修掉）；`hooks/auto-chain.ts` 的 `fixPickedMedium`（派修正）；`hooks/prompts/review.ts` 的 `MEDIUM_ASK_FORM`、`OLD_ASKED_KEEP`、`RECHECK_ASKED` | 有這種題目的卡都歸檔之後 |
 | 流程紀錄沒有版本號 `rev` | `hooks/chain.ts`（視為 0） | 不拿：寫回一次就補上 |
 | 流程紀錄的 `mediumFix`（MEDIUM 還會自動修時） | `hooks/auto-chain.ts` 寫回時拿掉；`hooks/chain.ts` 型別 | 所有對話的流程紀錄都寫回過一次之後 |
 | 流程紀錄沒有 `fixTotal` | `hooks/chain.ts` 的 `fixTotalOf`（用這一輪的 round） | 同上 |
