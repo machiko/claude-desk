@@ -232,7 +232,8 @@ FIELD_ALIAS = {'等使用者': '等你', '檢查': '驗證'}
 
 
 # 格式版本：與 hooks/formats.ts 的 CARD_FORMAT、SETTINGS_FORMAT、REGISTRY_FORMAT 同一組（docs/FORMATS.md 列版號與標記，
-# scripts/tests/test_formats_doc.py 核對兩端與文件一致）。沒有標記的檔一律視為格式 1，不自動補標記。
+# scripts/tests/test_formats_doc.py 核對兩端與文件一致）。沒有標記的檔一律視為格式 1，不自動補標記；只有開新卡時，
+# 自訂模板（card.template）的開頭標記沒寫格式就補上（with_format_marker）。
 CARD_FORMAT = 1
 SETTINGS_FORMAT = 1
 REGISTRY_FORMAT = 1
@@ -247,6 +248,15 @@ def card_format(text):
     v = FORMAT_VERSION.search(m.group(1)) if m else None
     n = int(v.group(1)) if v else 1
     return n if n >= 1 else 1
+
+
+def with_format_marker(text):
+    """開卡用：區塊開頭標記沒寫「格式=」（格式版本之前的自訂模板）就在 DESK／CARD 後面補上目前版號，其餘照原文；已寫就不動。"""
+    m = CARD_OPENER.search(text)
+    if not m or FORMAT_VERSION.search(m.group(1)):
+        return text
+    at = m.start(1)
+    return f'{text[:at]} 格式={CARD_FORMAT}{text[at:]}'
 
 
 def resolve_writable(arg):
@@ -570,7 +580,7 @@ def cmd_new(branch, name, base=None, trivial=False):
         fail('沒有設定主 repo：在 dispatch.json 加上 "card": { "main": "~/path/to/repo" }')
     if not os.path.isfile(TPL):
         fail(f'找不到卡片模板：{TPL}')
-    content = read(TPL).replace(NAME_SLOT, name).replace(LEGACY_NAME_SLOT, name)
+    content = with_format_marker(read(TPL).replace(NAME_SLOT, name).replace(LEGACY_NAME_SLOT, name))
     if trivial:
         # 建 worktree 之前就檢查，模板不合用時什麼都不動。
         content = trivial_card(content)

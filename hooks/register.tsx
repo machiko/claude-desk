@@ -78,7 +78,7 @@ const showAllAtom = atom({ plugin: 'desk', key: 'showAllActions' } as const, nul
 const trustedAtom = atom({ plugin: 'desk', key: 'trusted' } as const, {} as Record<string, string>)
 /** 設定檔驗證上次檢查過的 dispatch.json（路徑 → 內容與問題）：跟動態放在同一處，動態裡的舊錯誤在，這份紀錄也在。 */
 const settingsCheckedAtom = atom({ plugin: 'desk', key: 'settingsChecked' } as const, {} as SettingsChecked)
-/** 已報過的較新格式（卡片、登錄表 → 版號）：跟動態一起在教學開始／結束與 /desk off 清掉，同一份檔同一個版號只報一次。 */
+/** 已報過的較新格式（卡片、登錄表 → 版號）：跟動態一起在教學開始／結束清掉，同一份檔同一個版號只報一次；/desk off 不清動態，紀錄也留著。 */
 const formatsSeenAtom = atom({ plugin: 'desk', key: 'formatsSeen' } as const, {} as FormatsSeen)
 /** 最近一次畫面 content 最多能捲到第幾列；捲動 hook 用它夾住位置（模組變數，重載後下一次畫就補上）。 */
 let maxOffset = 0
@@ -411,7 +411,6 @@ async function stop($: any) {
   soonTimer?.cancel(); soonTimer = undefined
   cancelPromptSync()
   await clearAgentQueue($)
-  await update($, formatsSeenAtom, () => ({}))
   $.ui.status(undefined)
   await update($, snapshot, () => null)
   await $.ui.close({ id: PANE }).catch(() => {})
