@@ -1,5 +1,6 @@
 import { mock } from 'claude-code/testing'
 import { EDGE } from '../hooks/theme'
+import { MIN_CLAUDE_CODE } from '../hooks/engine-version'
 
 export const NOW = Date.parse('2030-01-05T12:00:00Z')
 /** 對話所在的 repo（shop）；它的登錄表與設定在 ~/.claude/handoffs/shop/。 */
@@ -102,6 +103,10 @@ export function fixture(on: any) {
     exec: null as null | ((e: any) => Promise<any> | any),
     /** 載入中的 desk 版號（plugin 自己的 plugin.json）。 */
     deskVersion: '9.9.9',
+    /** $.session.version() 的回答（Claude Code 引擎版本）；預設等於 desk 的最低版本，不會報版本太舊。null 模擬讀不到（拒絕）。 */
+    engine: { version: MIN_CLAUDE_CODE, base: MIN_CLAUDE_CODE } as { version: string; base?: string } | null,
+    /** $.session.version() 被問過幾次。 */
+    engineAsked: 0,
     /** 每次執行 /reload-plugins 時已經跳過的 toast，與 feedAtReload 讀到的畫面（看重新載入是不是在回報之後）。 */
     reloads: [] as { toasts: string[]; seen?: string }[],
     /** 執行 /reload-plugins 的當下讀面板畫面（測試掛好面板後設定）。 */
@@ -176,6 +181,7 @@ export function fixture(on: any) {
   })
   on('session.usage', () => ({ value: data.usage }))
   on('session.id', () => ({ value: 'fixture-session' }))
+  on('session.version', () => { data.engineAsked++; return data.engine ? { value: data.engine } : { deny: 'session.version unavailable' } })
   on('session.root', () => ({ value: data.root }))
   on('store.get', (_: any, e: any) => ({ value: data.store[e.key] ?? null }))
   on('store.set', (_: any, e: any) => { if (data.storeDeny[e.key]) return { deny: data.storeDeny[e.key] }; data.store[e.key] = e.value; data.storeAfterSet?.(e.key, e.value); return { value: undefined } })

@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      # 與 README「需要什麼」寫的開發版本一致；升版時兩處一起改。
+      # 與 README、hooks/engine-version.ts 的最低版本一致；升版時三處一起改。
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code@2.1.302
       - name: Validate plugin
