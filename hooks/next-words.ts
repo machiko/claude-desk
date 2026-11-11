@@ -1,5 +1,6 @@
 // 下一步的寫法判斷：只剩等待（檢查、審查、合併、PR、CI、確認）或派審查時，沒有要 Agent 做的事。
 import { saysNone } from './card'
+import { t } from './i18n'
 
 /**
  * 「等…」可以等的事；檢查與審查前面可以有「重新」（審查過關後 `/desk:card done` 寫的「等自動重新檢查與審查」）。新詞「測試」「驗收」同樣認。
@@ -26,12 +27,12 @@ const REVIEW_WORD = '(?:派|送|做|進行)?(?:獨立|重新|資安)?(?:審查|�
 const REVIEW_CMD = '/desk\\s+review(?:\\s+(?!.*(?:修|補|改|寫|實作)).*)?'
 const REVIEW_CLAUSE = new RegExp(`^(?:${REVIEW_WORD}(?:\\s*[（(]\\s*(?:按\\s*)?[wW]\\s*[）)])?(?:\\s*[:：]\\s*${REVIEW_CMD})?|${REVIEW_CMD}|(?:通過後|再)?\\s*按\\s*[wW](?:\\s*${REVIEW_WORD})?)$`)
 /** 下一步是派驗收時，g 不派的原因（下一步怎麼做由 dispatch.ts 依階段另給）。 */
-export const REVIEW_WHY = '下一步是驗收，g 派的是繼續、不會驗收'
+export const REVIEW_WHY = t('nextWords.reviewWhy')
 /** 下一步只剩等待時，g 不派的原因。 */
-export const IDLE_WHY = '下一步只剩等待，沒有要 Agent 做的事'
+export const IDLE_WHY = t('nextWords.idleWhy')
 /** 檢查欄空白或範本佔位：不派實作、不跑測試的原因與下一步（g、v 的拒絕由這兩段組成）；「輪到你」那句用同一個原因接白話範本（turn.ts 的 TURN_TEXT.missingCheck）。 */
-export const MISSING_CHECK_WHY = '卡片還沒有測試指令'
-export const MISSING_CHECK_NEXT = '開卡片（o）在「檢查」欄填一條修之前會紅、修好會綠的指令'
+export const MISSING_CHECK_WHY = t('nextWords.missingCheckWhy')
+export const MISSING_CHECK_NEXT = t('nextWords.missingCheckNext')
 
 /** 下一步拆成一件件：「；」「;」之外，全形逗號「，」也切（「到面板按 v 執行測試，通過後按 w 派驗收」是兩件）。 */
 const nextParts = (next: string) => next.split(/[；;，]/).map(s => s.trim()).filter(Boolean)

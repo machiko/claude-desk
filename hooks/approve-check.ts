@@ -3,6 +3,7 @@
 import { atom, update } from 'claude-code'
 import type { Case } from '../types'
 import { TRUST_KEY } from './desk-io'
+import { t } from './i18n'
 
 /**
  * 面板重繪用的核准紀錄（同 key 在 register.tsx 也宣告一次，引擎規定 read／update 的 atom 要同檔宣告）：
@@ -26,7 +27,7 @@ export const isApproved = (trusted: Record<string, string>, c: Pick<Case, 'statu
 
 /** 對話指令（`/desk go`、`/desk verify`）遇到沒核准的檢查：不派、不跑、不彈框，說去面板按兩次。 */
 export const unapprovedText = (c: Pick<Case, 'name' | 'verify'>): string =>
-  `${c.name}：測試指令還沒經你核准，這次沒派工也沒跑測試；到面板按兩次 v（或 g）核准：${c.verify}`
+  t('approveCheck.unapproved', { name: c.name, verify: c.verify })
 
 /**
  * 核准檢查欄當時那條指令，記進同一份紀錄：確認規格（面板 t、對話 spec-ok、教學）與面板第二次按 v／g 都走這裡。

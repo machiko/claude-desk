@@ -3,6 +3,7 @@ import type { DispatchKind } from './dispatch'
 import { expandHome } from './card'
 import type { FeedEvent, SettingsChecked } from '../types'
 import { SETTINGS_FORMAT } from './formats'
+import { t } from './i18n'
 
 /** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
 export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
@@ -54,7 +55,7 @@ export type DispatchSettings = {
 export const DEFAULT_MAX_AGENTS = 3
 export const DEFAULT_CHAIN_QUOTA_STOP = 30
 
-export const DEFAULT_USER = '使用者'
+export const DEFAULT_USER = t('settings.defaultUser')
 export const DEFAULT_REVIEW: ReviewWords = {
   high: '實際的 bug、漏做授權或資料範圍檢查、測試沒測到需求',
   security: '授權與資料範圍、輸入驗證、SQL 與 XSS、個人資料外洩（log、匯出、版控）、機密與金鑰、檔案路徑、外部呼叫',
@@ -167,25 +168,25 @@ const isNoteKey = (k: string) => k === '$schema' || k.startsWith('_')
 const unset = (v: unknown) => v === undefined || v === null
 
 const aString = (instead: string): Check => (v, path, found) => {
-  if (!unset(v) && typeof v !== 'string') found.bad.push(`${path} 不是字串，${instead}`)
+  if (!unset(v) && typeof v !== 'string') found.bad.push(t('settings.notString', { path, instead }))
 }
 const textList: Check = (v, path, found) => {
   if (unset(v)) return
-  if (!Array.isArray(v)) found.bad.push(`${path} 不是字串陣列，視為沒設`)
-  else if (v.some(x => typeof x !== 'string')) found.bad.push(`${path} 有不是字串的項目，那幾項略過`)
+  if (!Array.isArray(v)) found.bad.push(t('settings.notStringList', { path }))
+  else if (v.some(x => typeof x !== 'string')) found.bad.push(t('settings.nonStringItems', { path }))
 }
 const onlyTrue: Check = (v, path, found) => {
-  if (!unset(v) && typeof v !== 'boolean') found.bad.push(`${path} 只認 JSON 的 true，視為關`)
+  if (!unset(v) && typeof v !== 'boolean') found.bad.push(t('settings.onlyTrue', { path }))
 }
 const onlyFalse: Check = (v, path, found) => {
-  if (!unset(v) && typeof v !== 'boolean') found.bad.push(`${path} 只認 JSON 的 false，視為開`)
+  if (!unset(v) && typeof v !== 'boolean') found.bad.push(t('settings.onlyFalse', { path }))
 }
 const intAtLeast = (min: number, words: string, used: number): Check => (v, path, found) => {
-  if (!unset(v) && !(Number.isInteger(v) && (v as number) >= min)) found.bad.push(`${path} 不是${words}，改用 ${used}`)
+  if (!unset(v) && !(Number.isInteger(v) && (v as number) >= min)) found.bad.push(t('settings.notInt', { path, words, used }))
 }
 const shape = (fields: Record<string, Check>): Check => (v, path, found) => {
   if (unset(v)) return
-  if (!isPlainObject(v)) { found.bad.push(`${path} 不是物件，整段略過`); return }
+  if (!isPlainObject(v)) { found.bad.push(t('settings.notObject', { path })); return }
   for (const [k, x] of Object.entries(v)) {
     if (isNoteKey(k)) continue
     const at = path ? `${path}.${k}` : k
@@ -197,46 +198,46 @@ const shape = (fields: Record<string, Check>): Check => (v, path, found) => {
 /** 鍵由使用者自訂（根目錄、指令名）的物件：每個值照 each 檢查。 */
 const mapOf = (each: Check): Check => (v, path, found) => {
   if (unset(v)) return
-  if (!isPlainObject(v)) { found.bad.push(`${path} 不是物件，整段略過`); return }
+  if (!isPlainObject(v)) { found.bad.push(t('settings.notObject', { path })); return }
   for (const [k, x] of Object.entries(v)) if (!isNoteKey(k)) each(x, `${path}.${k}`, found)
 }
 
-const modelEffort = { model: aString('視為沒設'), effort: aString('視為沒設') }
+const modelEffort = { model: aString(t('settings.unset')), effort: aString(t('settings.unset')) }
 
 const riskHigh: Check = (v, path, found) => {
   if (unset(v)) return
-  if (!Array.isArray(v)) { found.bad.push(`${path} 不是陣列，整段略過`); return }
+  if (!Array.isArray(v)) { found.bad.push(t('settings.notArray', { path })); return }
   v.forEach((r, i) => {
     const at = `${path}[${i}]`
-    if (!isPlainObject(r)) { found.bad.push(`${at} 不是物件，這條略過`); return }
+    if (!isPlainObject(r)) { found.bad.push(t('settings.ruleNotObject', { path: at })); return }
     shape({ pattern: () => {}, label: () => {} })(r, at, found)
-    if (!str(r.pattern) || !str(r.label)) { found.bad.push(`${at} 少了 pattern 或 label，這條略過`); return }
-    try { new RegExp(str(r.pattern)) } catch (e) { found.bad.push(`${at} 的正規式寫錯（${e instanceof Error ? e.message : String(e)}），這條略過`) }
+    if (!str(r.pattern) || !str(r.label)) { found.bad.push(t('settings.ruleMissing', { path: at })); return }
+    try { new RegExp(str(r.pattern)) } catch (e) { found.bad.push(t('settings.badRegex', { path: at, error: e instanceof Error ? e.message : String(e) })) }
   })
 }
 
 const syncSession: Check = (v, path, found) => {
-  if (!unset(v) && v !== 'fresh') found.bad.push(`${path} 只認 "fresh"，視為接著任務原本的對話`)
+  if (!unset(v) && v !== 'fresh') found.bad.push(t('settings.onlyFresh', { path }))
 }
 const updateCheck: Check = (v, path, found) => {
   if (unset(v) || typeof v === 'boolean' || (typeof v === 'string' && v.trim().toLowerCase() === 'off')) return
-  found.bad.push(`${path} 只認 "off"，照常檢查新版本`)
+  found.bad.push(t('settings.onlyOff', { path }))
 }
 const chainQuotaStop: Check = (v, path, found) => {
   const off = v === false || (typeof v === 'string' && v.trim().toLowerCase() === 'off')
   if (unset(v) || off || (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 100)) return
-  found.bad.push(`${path} 要是 1–100 的整數或 "off"，改用 ${DEFAULT_CHAIN_QUOTA_STOP}`)
+  found.bad.push(t('settings.quotaRange', { path, used: DEFAULT_CHAIN_QUOTA_STOP }))
 }
 /** 頂層 format：整數 SETTINGS_FORMAT 或沒寫不報；更大的是較新版 desk 寫的設定，認得的鍵照常套用（新版多的鍵另列在認不得的鍵）。 */
 const settingsFormat: Check = (v, path, found) => {
   if (unset(v) || v === SETTINGS_FORMAT) return
-  if (Number.isInteger(v) && (v as number) > SETTINGS_FORMAT) found.newer = `${path} 是 ${v}，這份是較新版 desk 的設定，請更新 desk（認得的鍵照常套用）`
-  else found.bad.push(`${path} 要是正整數，視為 ${SETTINGS_FORMAT}`)
+  if (Number.isInteger(v) && (v as number) > SETTINGS_FORMAT) found.newer = t('settings.newer', { path, value: String(v) })
+  else found.bad.push(t('settings.formatInt', { path, format: SETTINGS_FORMAT }))
 }
 const changelogFormat: Check = (v, path, found) => {
   if (unset(v)) return
-  if (typeof v !== 'string') found.bad.push(`${path} 不是字串，照原本的格式`)
-  else if (v.trim() && v.trim() !== CHANGELOG_FORMAT) found.bad.push(`${path} 只能是 "${CHANGELOG_FORMAT}"，合併 changelog 時會停下報錯`)
+  if (typeof v !== 'string') found.bad.push(t('settings.changelogNotString', { path }))
+  else if (v.trim() && v.trim() !== CHANGELOG_FORMAT) found.bad.push(t('settings.changelogOnly', { path, format: CHANGELOG_FORMAT }))
 }
 
 /** dispatch.json 認得的鍵：parseSettings 讀的，加上 card.py 讀的 card.*（docs/REFERENCE.md 與 card.py 說明列的那些），以及格式版號 format（docs/FORMATS.md）。 */
@@ -246,26 +247,26 @@ const SETTINGS_SHAPE = shape({
   sync: shape({ claude: shape(modelEffort), session: syncSession }),
   kinds: shape(Object.fromEntries(MODEL_KINDS.map(k => [k, shape(modelEffort)]))),
   projects: mapOf(shape({ ...modelEffort, rules: textList })),
-  user: aString(`改用「${DEFAULT_USER}」`),
+  user: aString(t('settings.useUser', { user: DEFAULT_USER })),
   rules: textList,
   review: shape({
-    high: aString('改用預設'), security: aString('改用預設'), categories: aString('改用預設'),
-    template: aString('改用內附的'), preflight: aString('視為沒設'), pitfalls: aString('視為沒設'),
-    preflightMinFiles: intAtLeast(0, '非負整數', 0), combineSecurity: onlyTrue,
+    high: aString(t('settings.useDefault')), security: aString(t('settings.useDefault')), categories: aString(t('settings.useDefault')),
+    template: aString(t('settings.useBundled')), preflight: aString(t('settings.unset')), pitfalls: aString(t('settings.unset')),
+    preflightMinFiles: intAtLeast(0, t('settings.nonNegInt'), 0), combineSecurity: onlyTrue,
   }),
   risk: shape({ high: riskHigh }),
   checkServices: mapOf(textList),
-  composeDir: aString('視為沒設'),
+  composeDir: aString(t('settings.unset')),
   card: shape({
-    main: aString('視為沒設'), worktrees: aString('改用預設'), base: aString('視為沒設'), check: aString('視為沒設'),
-    registry: aString('改用預設'), template: aString('改用內附的'), archive: aString('改用預設'),
-    specRules: textList, specPreflight: aString('視為沒設'),
-    specPreflightMinFiles: intAtLeast(1, '正整數', CARD_SPEC_PREFLIGHT_MIN_FILES),
-    retro: aString('視為沒設'), changelog: shape({ format: changelogFormat }),
+    main: aString(t('settings.unset')), worktrees: aString(t('settings.useDefault')), base: aString(t('settings.unset')), check: aString(t('settings.unset')),
+    registry: aString(t('settings.useDefault')), template: aString(t('settings.useBundled')), archive: aString(t('settings.useDefault')),
+    specRules: textList, specPreflight: aString(t('settings.unset')),
+    specPreflightMinFiles: intAtLeast(1, t('settings.posInt'), CARD_SPEC_PREFLIGHT_MIN_FILES),
+    retro: aString(t('settings.unset')), changelog: shape({ format: changelogFormat }),
   }),
-  pr: shape({ open: aString('視為沒設') }),
+  pr: shape({ open: aString(t('settings.unset')) }),
   updateCheck,
-  maxAgents: intAtLeast(0, '非負整數', DEFAULT_MAX_AGENTS),
+  maxAgents: intAtLeast(0, t('settings.nonNegInt'), DEFAULT_MAX_AGENTS),
   autoPr: onlyTrue,
   mcp: onlyTrue,
   stopDone: onlyFalse,
@@ -281,11 +282,11 @@ export function settingsProblems(text: string): string[] {
   const body = text.replace(/^\uFEFF/, '')
   if (!body.trim()) return []
   let d: unknown
-  try { d = JSON.parse(body) } catch { return ['JSON 格式錯誤，這份設定沒有套用'] }
-  if (!isPlainObject(d)) return ['最外層不是物件，這份設定沒有套用']
+  try { d = JSON.parse(body) } catch { return [t('settings.badJson')] }
+  if (!isPlainObject(d)) return [t('settings.notTopObject')]
   const found: Found = { unknown: [], bad: [] }
   SETTINGS_SHAPE(d, '', found)
-  return [...(found.newer ? [found.newer] : []), ...(found.unknown.length ? [`認不得的鍵，已略過：${found.unknown.join('、')}`] : []), ...found.bad]
+  return [...(found.newer ? [found.newer] : []), ...(found.unknown.length ? [t('settings.unknownKeys', { keys: found.unknown.join(t('word.listSep')) })] : []), ...found.bad]
 }
 
 /** 最多列幾條問題，其餘寫「等 n 條」。 */
@@ -293,9 +294,9 @@ export const SETTINGS_PROBLEMS_SHOWN = 3
 
 /** 動態的一句：哪份檔、前幾條問題。 */
 export function settingsFeedText(path: string, problems: readonly string[]): string {
-  const shown = problems.slice(0, SETTINGS_PROBLEMS_SHOWN).join('；')
-  const more = problems.length > SETTINGS_PROBLEMS_SHOWN ? ` 等 ${problems.length} 條` : ''
-  return `設定檔 ${path} 有問題：${shown}${more}`
+  const shown = problems.slice(0, SETTINGS_PROBLEMS_SHOWN).join(t('update.reasonSep'))
+  const more = problems.length > SETTINGS_PROBLEMS_SHOWN ? t('settings.more', { n: problems.length }) : ''
+  return t('settings.feed', { path, shown, more })
 }
 
 /** 一份 dispatch.json 這一輪讀到的內容與問題；讀不到（不存在）時 text 是 null。 */
@@ -314,17 +315,17 @@ export function settingsNotices(reports: readonly SettingsReport[], before: Sett
   const gone: string[] = []
   for (const r of reports) {
     const was = before[r.path]
-    if (r.text === null) { if (was?.problems.length) gone.push(`設定檔 ${r.path} 已移除，不再報錯`); continue }
+    if (r.text === null) { if (was?.problems.length) gone.push(t('settings.removed', { path: r.path })); continue }
     checked[r.path] = { text: r.text, problems: r.problems }
     if (was?.text === r.text) continue
     if (r.problems.length) broken.push({ at, text: settingsFeedText(r.path, r.problems), tone: 'error' })
-    else if (was?.problems.length) gone.push(`設定檔 ${r.path} 已改正`)
+    else if (was?.problems.length) gone.push(t('settings.fixed', { path: r.path }))
   }
   for (const [path, was] of Object.entries(before)) {
-    if (!reports.some(r => r.path === path) && was.problems.length) gone.push(`設定檔 ${path} 不屬於目前專案，不再報錯`)
+    if (!reports.some(r => r.path === path) && was.problems.length) gone.push(t('settings.notProject', { path }))
   }
   const reportedNow = new Set(reports.filter(r => r.text !== null && r.text !== before[r.path]?.text).map(r => r.path))
   const still = Object.entries(checked).filter(([path, v]) => v.problems.length && !reportedNow.has(path)).map(([path, v]) => settingsFeedText(path, v.problems))
-  const cleared = gone.map((text): FeedEvent => still.length ? { at, text: [text, ...still].join('；'), tone: 'error' } : { at, text, tone: 'success' })
+  const cleared = gone.map((text): FeedEvent => still.length ? { at, text: [text, ...still].join(t('update.reasonSep')), tone: 'error' } : { at, text, tone: 'success' })
   return { checked, events: [...broken, ...cleared] }
 }

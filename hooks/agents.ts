@@ -4,6 +4,7 @@ import type { AgentInfo, Case } from '../types'
 import type { JobRecord } from './dispatch'
 import { saysNone } from './card'
 import { plain } from './text'
+import { t } from './i18n'
 import type { Osc7501Signal, Osc7501State } from './text'
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -97,8 +98,8 @@ export const approvalWait = (a: AgentInfo | undefined) => a?.waitsFor === 'permi
 /** 等權限批准時給人看的那句：現在卡最上方、摘要列與列表都用它。 */
 export const approveText = (c: Pick<Case, 'agent'>) =>
   c.agent?.source === 'beacon'
-    ? `Agent 在等權限批准：到 ${c.agent.name || 'Agent'} 終端機視窗確認${c.agent.waitingFor ? `（${c.agent.waitingFor}）` : ''}；確認後面板會自動更新`
-    : `Agent 在等權限批准：到終端機跑 claude agents 選 ${c.agent?.name || 'Agent'} 批准；批准後面板會自動更新`
+    ? t('agents.approveBeacon', { name: c.agent.name || 'Agent', what: c.agent.waitingFor ? t('word.paren', { text: c.agent.waitingFor }) : '' })
+    : t('agents.approve', { name: c.agent?.name || 'Agent' })
 
 const isBlocked = (a: any): boolean => String(a?.state ?? '').toLowerCase() === 'blocked'
 

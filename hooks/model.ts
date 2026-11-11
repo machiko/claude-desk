@@ -13,6 +13,7 @@ import type { StopReason } from './stop-reason'
 import type { Limit } from './quota-words'
 import { fit, plain, runMinutesText } from './text'
 import { agentWaits, approvalWait, approveText } from './agents'
+import { t } from './i18n'
 
 // 文字工具搬到 text.ts、Agent 清單解析搬到 agents.ts；呼叫端與測試照舊從這裡匯入也行。
 export { STALE_MS, ago, displayWidth, elapsedText, errorLine, errorText, fit, hhmm, isNoise, isStatusLine, lastMeaningful, pad, parseOsc7501, plain, reasonLine, resetText, runMinutesText, screenLines, slugOf } from './text'
@@ -44,7 +45,7 @@ export const isRunLong = (c: Case, now: number): boolean => Math.floor(totalRunM
 export function runTimeText(c: Case, now: number, hasNote = true): string {
   const ms = totalRunMs(c, now)
   if (ms <= 0) return ''
-  return `總執行 ${runMinutesText(ms)}${hasNote && isRunLong(c, now) ? `（超過 ${RUN_WARN_MS / 60_000} 分）` : ''}`
+  return t('model.runTotal', { time: runMinutesText(ms), note: hasNote && isRunLong(c, now) ? t('model.runOver', { n: RUN_WARN_MS / 60_000 }) : '' })
 }
 
 export { LIMIT_NAME, isQuotaHold, quotaHeld, quotaLowOf, restartsWithG } from './quota-words'
@@ -196,15 +197,15 @@ export function focusCase(cases: readonly Case[]): Case | null {
 export function summary(c: Case): string {
   if (c.state === 'ask') { const d = parseDecisions(c.ask)[0]; return d ? d.title || c.ask : c.ask }
   if (c.state === 'approve') return approveText(c)
-  if (c.state === 'reply') return c.agent?.waitingFor ? `Agent 等待：${c.agent.waitingFor}` : c.agent?.last ? `Agent 提問：${c.agent.last}` : 'Agent 等待你回覆'
+  if (c.state === 'reply') return c.agent?.waitingFor ? t('model.agentWaiting', { what: c.agent.waitingFor }) : c.agent?.last ? t('model.agentAsks', { text: c.agent.last }) : t('pipeline.reply')
   if (c.state === 'gate') { const g = parseGate(c.gate)!; return g.detail || c.gate }
-  if (c.state === 'nocard') return '找不到卡片'
+  if (c.state === 'nocard') return t('model.noCard')
   if (c.state === 'failed' && c.chain?.stopped) return c.chain.stopped
   const verdict = standingVerdict(c)
   // 未複審過關：修完寫的關卡不算審查結論（card.ts 的 parseGate），沒有結論可看，照流程紀錄說已過關。
   const unreviewed = !!c.chain?.passed && !!c.chain.unreviewed && !c.chain.stale
-  if (((verdict && toFix(c, verdict) === 0) || unreviewed) && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? 'PR 的 CI 失敗' : c.pr.ci === 'pending' ? 'PR 的 CI 執行中' : 'PR 可合併') : unreviewed ? `${unreviewedNote(c.chain)}，可開 PR` : '驗收通過，可開 PR'
-  if (c.state === 'idle') return c.statusShort || c.status || '閒置'
+  if (((verdict && toFix(c, verdict) === 0) || unreviewed) && c.state === 'ready') return c.pr?.state === 'OPEN' ? (c.pr.ci === 'fail' ? t('model.prCiFailed') : c.pr.ci === 'pending' ? t('model.prCiPending') : t('model.prMergeable')) : unreviewed ? t('pipeline.noteCanPr', { note: unreviewedNote(c.chain) }) : t('model.reviewPassed')
+  if (c.state === 'idle') return c.statusShort || c.status || t('state.idle')
   return c.next
 }
 
@@ -218,18 +219,18 @@ export function events(prev: Snapshot | null, cur: Snapshot): FeedEvent[] {
     if (c.demo) continue
     const p = before.get(c.statusPath)
     const push = (text: string, tone: FeedEvent['tone'], whileState?: FeedEvent['whileState']) => out.push({ at: cur.at, text, tone, card: c.statusPath, ...(whileState ? { whileState } : {}) })
-    if (!p) { push(`${c.name} 加入工作桌`, 'subtle'); continue }
-    if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) push(`${c.name} 等你：${fit(summary(c), 40)}`, 'warning', 'ask')
-    else if (c.state === 'reply' && p.state !== 'reply') push(`${c.name} Agent 等待你回覆`, 'warning', 'reply')
-    else if (c.state === 'approve' && p.state !== 'approve') push(`${c.name} Agent 等你批准權限`, 'warning', 'approve')
-    else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(`${c.name} 進入關卡：${fit(summary(c), 40)}`, 'warning', 'gate')
+    if (!p) { push(t('model.joined', { name: c.name }), 'subtle'); continue }
+    if (c.state === 'ask' && (p.state !== 'ask' || p.ask !== c.ask)) push(t('model.ask', { name: c.name, text: fit(summary(c), 40) }), 'warning', 'ask')
+    else if (c.state === 'reply' && p.state !== 'reply') push(t('feed.named', { name: c.name, text: t('pipeline.reply') }), 'warning', 'reply')
+    else if (c.state === 'approve' && p.state !== 'approve') push(t('feed.named', { name: c.name, text: t('pipeline.approve') }), 'warning', 'approve')
+    else if (c.state === 'gate' && (p.state !== 'gate' || p.gate !== c.gate)) push(t('model.gate', { name: c.name, text: fit(summary(c), 40) }), 'warning', 'gate')
     // 發版在對話裡跑，不是 Agent：說開始發版、發版步驟結束，不說開始執行、Agent 已完成或已停止。
-    else if (c.releasing && !p.releasing) push(`${c.name} 開始發版`, 'suggestion')
-    else if (p.releasing && !c.releasing) push(`${c.name} 發版步驟結束`, 'subtle')
-    else if (c.state === 'running' && p.state !== 'running') push(`${c.name} 開始執行`, 'suggestion')
-    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(`${c.name} Agent ${stoppedAgent(c) ? '已停止' : '已完成'}`, 'subtle')
+    else if (c.releasing && !p.releasing) push(t('model.releaseStart', { name: c.name }), 'suggestion')
+    else if (p.releasing && !c.releasing) push(t('model.releaseEnd', { name: c.name }), 'subtle')
+    else if (c.state === 'running' && p.state !== 'running') push(t('model.running', { name: c.name }), 'suggestion')
+    else if (p.state === 'running' && c.state !== 'running' && c.state !== 'reply' && c.state !== 'approve') push(stoppedAgent(c) ? t('model.agentStopped', { name: c.name }) : t('model.agentDone', { name: c.name }), 'subtle')
     // 流程暫停、檢查沒過、檢查中斷、容器沒起都已寫了原因、跳了 toast；只剩審查結論擋下、流程沒停（手動審查）要在這裡說。
-    else if (c.state === 'failed' && p.state !== 'failed' && reviewBlocks(c)) push(`${c.name} 驗收有要修的問題`, 'error')
+    else if (c.state === 'failed' && p.state !== 'failed' && reviewBlocks(c)) push(t('model.reviewBlocks', { name: c.name }), 'error')
   }
   return out
 }
