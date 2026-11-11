@@ -4,13 +4,10 @@
 import { t } from './i18n'
 import { CARD_CMD } from './card'
 import { resetText } from './text'
+import type { StopArgs, StopCode } from '../types'
 
-export type StopArgs = Readonly<Record<string, string | number>>
-
-export type StopCode =
-  | 'checkChanged' | 'checkUnapproved' | 'agentStopped' | 'mediumFixNotSent' | 'reviewFixNotSent' | 'askHandedOver'
-  | 'fixLimitCheck' | 'fixLimitReview' | 'verdictMissing' | 'highRisk' | 'quotaHold' | 'quotaHoldCatchup'
-  | 'specGap' | 'foreignChanges' | 'verifyBroke' | 'containersDown' | 'catchupNotSent'
+// 代碼與參數的型別放在面板資料的型別檔（types/index.d.ts 要自成一份、不能 import 別的檔），這裡轉出去給 hooks 用。
+export type { StopArgs, StopCode }
 
 /** 所有停下代碼（判斷存的值是不是代碼；tests/stop-codes.test.ts 逐種列舉對它）。 */
 export const STOP_CODES: ReadonlySet<string> = new Set<StopCode>([
