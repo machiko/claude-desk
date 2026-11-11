@@ -21,7 +21,7 @@ CARD_TS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.d
 HISTORY_RULE = ("每筆寫成 `- YYYY-MM-DD HH:MM：<誰>：<做了什麼> → <結果>`，時間跑 `date '+%Y-%m-%d %H:%M'` 取得，不要自己估；"
                 '白話一句 40 字內，例如「Agent：補上匯出測試 → 待測試（commit abc1234）」；'
                 'commit、PR 編號這類代號最多一個、放句尾括號；不寫指令、檔名、Agent 啟動名，技術細節寫 .task/REPORT.md。')
-# done 寫歷程那筆的說法：card.py 的 done 說明、skills/card/SKILL.md、skills/flow/SKILL.md、README 都用這一句。
+# done 寫歷程那筆的說法：card.py 的 done 說明、skills/card/SKILL.md、skills/flow/SKILL.md、docs/REFERENCE.md（原 README 的指令表）都用這一句。
 DONE_HISTORY_DOC = '「<人>：<狀態> → <結果>（commit <HEAD>）」'
 
 
@@ -860,13 +860,13 @@ class CardScriptTest(unittest.TestCase):
             self.assertRegex(line, f'^{pattern}$')
 
     def test_done_docs_match_card_script_history_format(self):
-        # card-rules-guard-legacy AC-5：card.py 說明、card 與 flow 的 SKILL.md、README 講 done 寫的歷程都是同一句，
+        # card-rules-guard-legacy AC-5：card.py 說明、card 與 flow 的 SKILL.md、docs/REFERENCE.md 講 done 寫的歷程都是同一句，
         # 不再說記分支與 HEAD；card.py 實際寫的那筆照這句的格式。
         docs = {
             'card.py': SCRIPT,
             'skills/card/SKILL.md': os.path.join(REPO, 'skills', 'card', 'SKILL.md'),
             'skills/flow/SKILL.md': os.path.join(REPO, 'skills', 'flow', 'SKILL.md'),
-            'README.md': os.path.join(REPO, 'README.md'),
+            'docs/REFERENCE.md': os.path.join(REPO, 'docs', 'REFERENCE.md'),
         }
         for name, path in docs.items():
             body = read(path)
@@ -2262,7 +2262,7 @@ RELEASE_STEPS = [
 
 
 class ReleaseDocsTest(unittest.TestCase):
-    """docs/WORKFLOW.md 的發版段與 README 的動作表。"""
+    """docs/WORKFLOW.md 的發版段與 docs/REFERENCE.md 的動作表（readme-beginner 卡從 README 搬過去）。"""
 
     def release_section(self):
         lines = read(os.path.join(REPO, 'docs', 'WORKFLOW.md')).splitlines()
@@ -2278,7 +2278,7 @@ class ReleaseDocsTest(unittest.TestCase):
             self.assertGreaterEqual(found, 0, f'發版段在第 {at} 字之後找不到「{step}」：\n{section}')
             at = found + len(step)
         self.assertEqual(len(re.findall(r'^\s+\d+\. ', section, re.M)), len(RELEASE_STEPS))
-        readme = read(os.path.join(REPO, 'README.md'))
+        readme = read(os.path.join(REPO, 'docs', 'REFERENCE.md'))
         self.assertRegex(readme, r'(?m)^\| ⚑ 發版 \|')
 
     def test_release_steps_push_atomically_and_wait_ci_by_exit_status(self):
@@ -2288,13 +2288,13 @@ class ReleaseDocsTest(unittest.TestCase):
         self.assertIn('gh run list --branch main --commit', section)
         self.assertIn('--exit-status', section)
         skill = read(os.path.join(REPO, 'skills', 'card', 'SKILL.md'))
-        readme = read(os.path.join(REPO, 'README.md'))
+        readme = read(os.path.join(REPO, 'docs', 'REFERENCE.md'))
         for text in (skill, readme):
             self.assertIn('從 origin/main 開的暫存 worktree', text)
         self.assertNotIn('在主 repo、要發的 PR 都合併之後執行', skill)
 
     def test_release_docs_state_two_press_confirm_and_version_rule_when_releasing_desk(self):
-        """AC-1：發版段寫按兩次 z、帶「已在面板確認」段（題目範本與規則只在 skills/release/SKILL.md）、desk 的版號規則與照做的 10 步，歸檔在步驟之後；README 的「⚑ 發版」列跟著改。"""
+        """AC-1：發版段寫按兩次 z、帶「已在面板確認」段（題目範本與規則只在 skills/release/SKILL.md）、desk 的版號規則與照做的 10 步，歸檔在步驟之後；docs/REFERENCE.md 的「⚑ 發版」列跟著改。"""
         section = self.release_section()
         for part in ('/desk:release', 'skills/release/SKILL.md', '按兩次 z', '已在面板確認', '失敗就停'):
             self.assertIn(part, section)
@@ -2313,14 +2313,14 @@ class ReleaseDocsTest(unittest.TestCase):
         last_step = section.find(steps[9][1])
         self.assertGreater(section.find('歸檔', last_step + len(steps[9][1])), 0)
         self.assertNotIn('歸檔', section[:last_step + len(steps[9][1])])
-        readme = read(os.path.join(REPO, 'README.md'))
+        readme = read(os.path.join(REPO, 'docs', 'REFERENCE.md'))
         row = next(l for l in readme.splitlines() if l.startswith('| ⚑ 發版 |'))
         self.assertIn('按兩次', row)
         self.assertNotIn('按一下', row)
         self.assertNotIn('打 tag 並 push', row)
 
     def test_release_docs_add_update_desk_closing_for_desk_itself(self):
-        """AC-1：清理段落之後有 desk 自己的收尾：題目最後多一項「更新 desk 並重載」、工作桌回合結束自動做、本機資料夾的前提、失敗只回報不重試；10 步編號不變，README 的 /desk update 列跟著寫。"""
+        """AC-1：清理段落之後有 desk 自己的收尾：題目最後多一項「更新 desk 並重載」、工作桌回合結束自動做、本機資料夾的前提、失敗只回報不重試；10 步編號不變，docs/REFERENCE.md 的 /desk update 列跟著寫。"""
         section = self.release_section()
         cleanup = section.find('--cleanup')
         self.assertGreater(cleanup, 0)
@@ -2331,9 +2331,16 @@ class ReleaseDocsTest(unittest.TestCase):
             self.assertIn(part, paragraph)
         steps = re.findall(r'(?m)^\s+(\d+)\. ', section)
         self.assertEqual(steps, [str(i) for i in range(1, 11)])
-        readme = read(os.path.join(REPO, 'README.md'))
+        readme = read(os.path.join(REPO, 'docs', 'REFERENCE.md'))
         row = next(l for l in readme.splitlines() if l.startswith('| `/desk update` |'))
         self.assertIn('desk 自己發版後，工作桌會在回合結束自動跑一次', row)
+
+    def test_release_steps_include_reference_and_development_docs(self):
+        """readme-beginner AC-5：README 細節搬到 docs/REFERENCE.md、docs/DEVELOPMENT.md 後，補文件那步要補 REFERENCE，commit 的 add 清單兩個新檔都列。"""
+        steps = dict(re.findall(r'(?m)^\s+(\d+)\. (.*)$', self.release_section()))
+        self.assertIn('docs/REFERENCE.md', steps['3'])
+        for doc in ('README.md', 'docs/REFERENCE.md', 'docs/DEVELOPMENT.md', 'docs/WORKFLOW.md'):
+            self.assertIn(doc, steps['6'].split('&&')[0])
 
 
 class ReleaseStatsDocsTest(unittest.TestCase):
@@ -2350,7 +2357,7 @@ class ReleaseStatsDocsTest(unittest.TestCase):
 
 
 class CardOrderingDocsTest(unittest.TestCase):
-    """開卡順序與共用檔規則：WORKFLOW 的「- 開卡順序」、README 的「### 文件與共用檔」、SKILL.md 的 new 提醒。"""
+    """開卡順序與共用檔規則：WORKFLOW 的「- 開卡順序」、docs/DEVELOPMENT.md 的「### 文件與共用檔」（readme-beginner 卡從 README 搬過去）、SKILL.md 的 new 提醒。"""
 
     def ordering_item(self):
         lines = read(os.path.join(REPO, 'docs', 'WORKFLOW.md')).splitlines()
@@ -2362,7 +2369,7 @@ class CardOrderingDocsTest(unittest.TestCase):
         return '\n'.join(lines[start:end])
 
     def readme_shared_docs_section(self):
-        readme = read(os.path.join(REPO, 'README.md'))
+        readme = read(os.path.join(REPO, 'docs', 'DEVELOPMENT.md'))
         changelog = readme.index('### CHANGELOG 片段檔')
         start = readme.index('### 文件與共用檔')
         self.assertGreater(start, changelog, '「### 文件與共用檔」要在「### CHANGELOG 片段檔」之後')
@@ -2395,10 +2402,10 @@ class CardOrderingDocsTest(unittest.TestCase):
 
 
 class TrivialCardDocsTest(unittest.TestCase):
-    """瑣事卡：規則只寫在 SKILL.md 的規格步驟，README 與 WORKFLOW 只寫用途並指到 /desk:card。"""
+    """瑣事卡：規則只寫在 SKILL.md 的規格步驟，docs/REFERENCE.md 與 WORKFLOW 只寫用途並指到 /desk:card。"""
 
     def test_docs_describe_trivial_card_and_batch_release(self):
-        """AC-6：SKILL 寫明 trivial: yes 時跳過規格前審與釐清問題、由 spec 這一步預填那條驗收情境（四欄內容）、規格怎麼寫；README 的 new 列有 --trivial；WORKFLOW 開卡段有瑣事卡與小卡併成一版發；三處規則不重複。"""
+        """AC-6：SKILL 寫明 trivial: yes 時跳過規格前審與釐清問題、由 spec 這一步預填那條驗收情境（四欄內容）、規格怎麼寫；docs/REFERENCE.md 的 new 列有 --trivial；WORKFLOW 開卡段有瑣事卡與小卡併成一版發；三處規則不重複。"""
         skill = read(os.path.join(REPO, 'skills', 'card', 'SKILL.md'))
         spec_steps = skill[skill.index('## 產生規格（spec）'):]
         rule = next(l for l in spec_steps.splitlines() if 'trivial: yes' in l)
@@ -2412,7 +2419,7 @@ class TrivialCardDocsTest(unittest.TestCase):
         self.assertNotIn('預填', new_flag)
         self.assertIn('--trivial', skill.split('---')[1], 'frontmatter description 要提 --trivial')
 
-        readme = read(os.path.join(REPO, 'README.md'))
+        readme = read(os.path.join(REPO, 'docs', 'REFERENCE.md'))
         row = next(l for l in readme.splitlines() if l.startswith('| `/desk:card new '))
         self.assertIn('[--trivial]', row)
         self.assertIn('/desk:card', row.split('|')[2])
@@ -2422,7 +2429,7 @@ class TrivialCardDocsTest(unittest.TestCase):
         item = next(l for l in lines[section:] if l.startswith('- 瑣事卡'))
         for part in ('--trivial', '/desk:card', '累積', '一版'):
             self.assertIn(part, item)
-        # 規則細節只在 SKILL：README 與 WORKFLOW 不寫跳過哪幾步、關卡怎麼設
+        # 規則細節只在 SKILL：docs/REFERENCE.md 與 WORKFLOW 不寫跳過哪幾步、關卡怎麼設
         for text in (row, item):
             for detail in ('2b', '非目標可省', 'spec：待確認規格（瑣事）'):
                 self.assertNotIn(detail, text)

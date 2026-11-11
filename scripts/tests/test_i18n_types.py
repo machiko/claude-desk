@@ -1,6 +1,6 @@
 """守門：字串目錄的鍵與參數真的有檢查守著（i18n 目錄與示範 AC-2 的型別那半）。
 
-`claude plugin test` 不做型別檢查，專案的 tsc 又要讀不進版控的 `.claude-plugin/types/`（README「型別檢查」），所以分兩層：
+`claude plugin test` 不做型別檢查，專案的 tsc 又要讀不進版控的 `.claude-plugin/types/`（docs/DEVELOPMENT.md「型別檢查」），所以分兩層：
 1. 用 tsc 編 t() 的型別探針（scripts/tests/i18n_types_probe.ts）與不需要 claude-code 型別、能單獨編的已搬檔（TYPECHECKED）：
    簽名被改鬆（未知鍵、少給參數、參數名打錯、多給參數照樣過）或這些檔的呼叫處寫錯，都會有型別錯誤。
 2. 其餘要 claude-code 型別才編得動的檔（update-run、release-update、register、kind-label 等），逐一比對 hooks 裡每個 t() 呼叫：
