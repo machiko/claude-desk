@@ -1,0 +1,1 @@
+- 調整 README 改寫成初學者版；完整指令、按鍵與設定搬到 docs/REFERENCE.md，開發說明搬到 docs/DEVELOPMENT.md

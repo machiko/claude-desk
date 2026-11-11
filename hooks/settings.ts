@@ -239,7 +239,7 @@ const changelogFormat: Check = (v, path, found) => {
   else if (v.trim() && v.trim() !== CHANGELOG_FORMAT) found.bad.push(`${path} 只能是 "${CHANGELOG_FORMAT}"，合併 changelog 時會停下報錯`)
 }
 
-/** dispatch.json 認得的鍵：parseSettings 讀的，加上 card.py 讀的 card.*（README 與 card.py 說明列的那些），以及格式版號 format（docs/FORMATS.md）。 */
+/** dispatch.json 認得的鍵：parseSettings 讀的，加上 card.py 讀的 card.*（docs/REFERENCE.md 與 card.py 說明列的那些），以及格式版號 format（docs/FORMATS.md）。 */
 const SETTINGS_SHAPE = shape({
   format: settingsFormat,
   ...modelEffort,

@@ -82,7 +82,7 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 ## 開卡與歸檔
 
 - 開卡：`/desk:card new <分支> <卡名> [base]`（建 worktree＋DESK 卡＋登錄表列；不帶 base 從主 repo 當下的分支切出，記在卡片的「基準」欄）。
-- 開卡順序：三條規則，讓 PR 之間不因共用檔互相衝突。① 改名、搬檔、改六段結構這類橫切重構單獨開卡，合併前不開其他卡的實作（已在做的卡先合，或等它合併後再 sync main）。② 同時在審查與合併段的卡不超過 4 張，過關一張就合併，不要攢著一起合。③ 功能卡不改 README 與 WORKFLOW 的功能說明段：要補的說明寫在卡片「## 規格」的目標或 Decisions，開頭標「待補文件：」，發版第 3 步一次補進去（CHANGELOG 照舊寫片段檔）。理由：2026-10 的 9 張卡並行時，README 衝突 6 次、WORKFLOW 4 次、dispatch.ts 3 次，主因是六段改名跟其他 8 張同時在做。
+- 開卡順序：三條規則，讓 PR 之間不因共用檔互相衝突。① 改名、搬檔、改六段結構這類橫切重構單獨開卡，合併前不開其他卡的實作（已在做的卡先合，或等它合併後再 sync main）。② 同時在審查與合併段的卡不超過 4 張，過關一張就合併，不要攢著一起合。③ 功能卡不改 README 與 WORKFLOW 的功能說明段（docs/REFERENCE.md 算 README 的功能說明段）：要補的說明寫在卡片「## 規格」的目標或 Decisions，開頭標「待補文件：」，發版第 3 步一次補進去（CHANGELOG 照舊寫片段檔）。理由：2026-10 的 9 張卡並行時，README 衝突 6 次、WORKFLOW 4 次、dispatch.ts 3 次，主因是六段改名跟其他 8 張同時在做。
 - 瑣事卡：只改註解、CHANGELOG、沒被測試引用的說明文字時用 `/desk:card new <分支> <卡名> --trivial` 開卡，規格一句、免前審，測試、CI 與審查風險照舊（怎麼寫規格見 /desk:card）。小卡不要一張發一版，累積到一起發（每版都要走暫存 worktree、CI、歸檔與自動更新）。
 - 規格：`/desk:card spec <slug> [需求]`（讀卡與程式，有推薦的題照推薦寫成預設決定（記在 Decisions，確認規格時一起看）、沒推薦的才問，把目標／非目標／驗收情境寫進「## 規格」，關卡設 `spec：待確認規格`，此時不能派實作，只能同步：同步平常收在「更多動作」m 裡）→ 看過後在面板按兩次 `t`（或輸入 `/desk:card spec <slug> ok`）清關卡：面板按 `t` 確認後自動派實作；在對話用指令確認的，回合結束後自動派；疊放卡（卡片有「疊放於」）例外，等原卡合併（或原卡歸檔）後才自動派。審查會逐條對照驗收情境。確認時會列出實作計畫跟其他進行中卡片同檔的預警（`同檔預警：<檔> 也在「<卡名>」的實作計畫`，也記進 History；只預警、不擋確認），可以先排合併順序或改成疊放。
 - 歸檔：上線後 `/desk:card archive <slug>`，或在面板點兩次「⌫ 歸檔」（卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表移到已歸檔段），再自己刪 worktree。另有兩種自動歸檔：發版時 CI 通過、各卡狀態寫好之後用 `/desk:card archive <slug>… --cleanup` 把發版請求列過的卡一次歸檔，已合併又乾淨的 worktree 與分支一起移除（是 `/desk:release` 確認題的最後一項動作，見下面發版段第 10 步之後）；有 `release：` 關卡的卡按兩次 `u` 確認上線後接著歸檔，worktree 與分支保留（發版線與教學那件照舊只清關卡）。卡片「## 部署步驟」有已填的步驟時，腳本與面板的完成提示會列出筆數並提醒：步驟跟著卡片歸檔，隨發版線發版的卡要先把步驟搬到發版線卡片或登錄表「## 提醒」（只提醒，不自動搬）。
@@ -91,10 +91,10 @@ desk 只讀卡片與 git，看不到其他對話。git 與 PR 狀態會自動更
 - 發版：要發的 PR 都合併之後，在面板按兩次 z（「⚑ 發版」，上線段、還沒打 tag 的卡帶頭顯示）把一行 `/desk:release …` 短請求（所有待發版的卡與 PR、發版後要清理的卡）填進輸入框，按 Enter 送給對話；對話載入 `/desk:release`（[skills/release/SKILL.md](../skills/release/SKILL.md)）照規則做：確認方式（按兩次 z 的請求帶「已在面板確認」段）、確認題範本、照做的動作順序、失敗就停與不做的事都只寫在那裡。按兩次就算同意照慣例版號、對話不再問；手打的請求或判斷不了版號時對話才出題，你在面板按 a、b 或 c 再按 `f` 回答。面板與背景 Agent 都不打 tag。desk 的版號規則：以最新 `v*` tag 為基準，這次的卡有 `feat/`／`feature/` 分支或片段有「新增」條目就升次版號（例如 0.37.0 → 0.38.0），否則升修訂號（0.37.0 → 0.37.1）；0.27.0 起 12 次發版都符合（只看「新增」會跟 0.29.0、0.31.0、0.32.0、0.34.0、0.36.0 不合）。下面是 desk 確認後依序做的步驟，其他專案把版號檔換成自己的：
   1. 從 origin/main 開暫存 worktree，以下都在那裡做：`git fetch origin && git worktree add --detach <暫存路徑> origin/main`；接著照 `/desk:release` 的「整版審查」派一個審查 Agent 看「上一個 `v*` tag..origin/main」的整段改動（重點是卡片之間的交互），結果寫進 reviews 資料夾的 `release-v<版本>.md`，有 CRITICAL／HIGH 就停下問你、不打 tag
   2. `/desk:card changelog <版本>`：把片段合併成 `## <版本>` 段並刪掉片段檔；沒有片段、版本段已存在、片段格式錯都會報錯不改檔
-  3. 補文件：讀這次發版每張卡「## 規格」的目標與 Decisions，把開頭標「待補文件：」的說明補進 README／WORKFLOW 的功能說明段（功能卡不直接改文件、集中在這一步補）；都沒有就跳過
+  3. 補文件：讀這次發版每張卡「## 規格」的目標與 Decisions，把開頭標「待補文件：」的說明補進 README／docs/REFERENCE.md／WORKFLOW 的功能說明段（功能卡不直接改文件、集中在這一步補）；都沒有就跳過
   4. 改 `.claude-plugin/plugin.json` 的 `version` 成 `<版本>`
   5. 跑 `claude plugin validate .` 與整套測試（`claude plugin test .`、`python3 -m unittest discover -s skills/card/tests`、`python3 -m unittest discover -s scripts/tests`）
-  6. commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json README.md docs/WORKFLOW.md && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
+  6. commit：`git add CHANGELOG.md changelog.d .claude-plugin/plugin.json README.md docs/REFERENCE.md docs/DEVELOPMENT.md docs/WORKFLOW.md && git commit -m "chore: 更新 版號為 <版本> 並整理 CHANGELOG"`
   7. 打 annotated tag：`git tag -a v<版本> -m "v<版本>"`
   8. push 主分支與 tag：`git push --atomic origin HEAD:main v<版本>`（`--atomic`：origin/main 已前進、main 被拒時 tag 也不推，不會留下不在 main 上的 tag）
   9. 等 main 的 CI 通過：先取這次 commit 的 run id（`gh run list --branch main --commit <commit> --limit 1 --json databaseId -q '.[0].databaseId'`，還沒出現就等幾秒再查），再 `gh run watch <id> --exit-status`（非互動環境一定要給 id；`--exit-status` 讓 CI 失敗時回非零）；沒有 gh 就到 GitHub Actions 看

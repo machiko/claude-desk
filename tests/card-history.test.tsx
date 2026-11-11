@@ -418,7 +418,7 @@ test('test_chain_pause_reason_is_not_replaced_by_generic_failure', async ($, on)
   await ui.unmount()
 })
 
-/** 按 v 檢查沒過送一次通知（README「通知」那條；審查 MEDIUM，D-04）；通過不送，之後重新整理也不再送。 */
+/** 按 v 檢查沒過送一次通知（docs/REFERENCE.md「通知」那條；審查 MEDIUM，D-04）；通過不送，之後重新整理也不再送。 */
 test('test_manual_check_failure_sends_one_notification', async ($, on) => {
   const { data, clock } = fixture(on)
   const sent: string[] = []
