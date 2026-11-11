@@ -4,20 +4,21 @@ import type { Case, ChainInfo, PrInfo, ReviewVerdict, Stage, StageId, StageStatu
 import { ARCHIVE_WORD, SHIPPED_WORD, parseGate, saysNone } from './card'
 import { CATCHUP_ACTIVE, conflictNote } from './catchup'
 import { quotaHeld } from './quota-words'
+import { t } from './i18n'
 
 export const STAGES: readonly { id: StageId; label: string }[] = [
-  { id: 'spec', label: '規格' },
-  { id: 'build', label: '實作' },
-  { id: 'check', label: '測試' },
-  { id: 'review', label: '驗收' },
-  { id: 'merge', label: '合併' },
-  { id: 'ship', label: '上線' },
+  { id: 'spec', label: t('pipeline.spec') },
+  { id: 'build', label: t('pipeline.build') },
+  { id: 'check', label: t('word.verify') },
+  { id: 'review', label: t('kindLabel.review') },
+  { id: 'merge', label: t('pipeline.merge') },
+  { id: 'ship', label: t('pipeline.ship') },
 ]
 export const STAGE_GLYPH: Record<StageStatus, string> = { done: '●', active: '◉', wait: '◆', fail: '✕', todo: '○', na: '·' }
 /** 這條分支審查過一次、依審查修完只跑測試就過關（沒有重新驗收）：驗收段過了之後，合併段的註記與摘要帶著這句。 */
-export const UNREVIEWED_NOTE = '已修正・未重新驗收'
+export const UNREVIEWED_NOTE = t('pipeline.unreviewed')
 /** 同上，但這一輪不是依審查修正（過關後你又 commit、按 g 做新的下一步）：沒有「已修正」。 */
-export const UNREVIEWED_PLAIN_NOTE = '測試通過・未重新驗收'
+export const UNREVIEWED_PLAIN_NOTE = t('pipeline.unreviewedPlain')
 /** 未複審過關的註記：這一輪依審查修正過才寫「已修正」。 */
 export const unreviewedNote = (chain: Pick<NonNullable<Case['chain']>, 'reviewFix'> | undefined): string => chain?.reviewFix ? UNREVIEWED_NOTE : UNREVIEWED_PLAIN_NOTE
 
@@ -167,58 +168,58 @@ export function pipeline(c: Case, v: Verify | undefined, verifying = false, queu
     const set = (s: StageStatus, note = '') => { status[current] = s; if (note) notes[current] = note }
     switch (current) {
       case 'spec':
-        if (!saysNone(c.ask)) set('wait', '待你決定')
-        else if (c.specGap) set('wait', '尚缺驗收情境')
-        else if (gate?.kind === 'spec') set('wait', '規格待確認')
-        else set('wait', '尚缺測試指令')
+        if (!saysNone(c.ask)) set('wait', t('pipeline.askPending'))
+        else if (c.specGap) set('wait', t('pipeline.specGap'))
+        else if (gate?.kind === 'spec') set('wait', t('pipeline.specPending'))
+        else set('wait', t('pipeline.missingCheck'))
         break
       case 'build':
-        if (coding) set('active', c.chain?.round ? `修正第 ${c.chain.fixTotal ?? c.chain.round} 輪` : 'Agent 處理中')
-        else if (c.state === 'reply') set('wait', 'Agent 等待你回覆')
-        else if (c.state === 'approve') set('wait', 'Agent 等你批准權限')
+        if (coding) set('active', c.chain?.round ? t('word.fixRound', { round: c.chain.fixTotal ?? c.chain.round }) : t('pipeline.agentBusy'))
+        else if (c.state === 'reply') set('wait', t('pipeline.reply'))
+        else if (c.state === 'approve') set('wait', t('pipeline.approve'))
         else if (c.chain?.stopped) set('fail', c.chain.stopped)
-        else if (c.manual) set('todo', '手動追蹤')
-        else if (c.state === 'idle') set('todo', '閒置')
-        else set('wait', '可繼續實作')
+        else if (c.manual) set('todo', t('pipeline.manual'))
+        else if (c.state === 'idle') set('todo', t('state.idle'))
+        else set('wait', t('pipeline.canBuild'))
         break
       case 'check':
-        if (verifying || running === 'verify') set('active', '測試中')
-        else if (queued) set('active', '排隊中')
-        else if (check === false) set('fail', c.chain?.stopped ?? '測試未通過')
+        if (verifying || running === 'verify') set('active', t('paneCard.testing'))
+        else if (queued) set('active', t('pipeline.queued'))
+        else if (check === false) set('fail', c.chain?.stopped ?? t('verifyRunner.failed'))
         else if (held) set('fail', c.chain!.stopped!)
-        else set('wait', stale ? '驗收後有新 commit，需重新測試' : '尚未執行測試')
+        else set('wait', stale ? t('pipeline.staleCheck') : t('pipeline.notChecked'))
         break
       case 'review':
-        if (running === 'review') set('active', '驗收中')
-        else if (verdict) set(c.chain?.stopped ? 'fail' : 'active', c.chain?.stopped ?? `CRITICAL ${verdict.critical}、HIGH ${verdict.high}${c.chain?.mediumFix ? `、MEDIUM ${c.chain.mediumFix}` : ''}，修正中`)
-        else if (stale) set(c.chain?.stopped ? 'fail' : 'wait', c.chain?.stopped ?? '驗收後有新 commit，待重新驗收')
-        else if (gate?.kind === 'review') set('wait', '驗收結論缺少分級')
-        else set('wait', '待驗收')
+        if (running === 'review') set('active', t('pipeline.reviewing'))
+        else if (verdict) set(c.chain?.stopped ? 'fail' : 'active', c.chain?.stopped ?? t('pipeline.fixing', { critical: verdict.critical, high: verdict.high, medium: c.chain?.mediumFix ? t('pipeline.fixingMedium', { n: c.chain.mediumFix }) : '' }))
+        else if (stale) set(c.chain?.stopped ? 'fail' : 'wait', c.chain?.stopped ?? t('pipeline.staleReview'))
+        else if (gate?.kind === 'review') set('wait', t('pipeline.verdictUngraded'))
+        else set('wait', t('pipeline.reviewPending'))
         break
       case 'merge':
         // 跟基準分支有衝突：排在 PR／CI 之前，衝突沒解開合併不了。
         if (running === 'catchup') set('active', CATCHUP_ACTIVE)
         else if (c.conflict) set('fail', conflictNote(c.conflict.into))
-        else if (!c.pr && c.chain?.needsHuman) set('wait', '高風險，請你看過再開 PR')
-        else if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') set('wait', c.pr ? 'PR 已拒絕，需重新開啟' : c.chain?.skippedReview ? '只動文件、免驗收，可開 PR' : c.chain?.unreviewed ? `${unreviewedNote(c.chain)}，可開 PR` : '可開 PR')
-        else if (c.pr.ci === 'fail') set('fail', 'CI 失敗')
-        else if (c.pr.ci === 'pending') set('active', 'CI 執行中')
-        else set('wait', '可合併')
+        else if (!c.pr && c.chain?.needsHuman) set('wait', t('pipeline.highRisk'))
+        else if (!c.pr || c.pr.state === 'DECLINED' || c.pr.state === 'SUPERSEDED') set('wait', c.pr ? t('pipeline.prDeclined') : c.chain?.skippedReview ? t('pipeline.docsOnly') : c.chain?.unreviewed ? t('pipeline.noteCanPr', { note: unreviewedNote(c.chain) }) : t('pipeline.canPr'))
+        else if (c.pr.ci === 'fail') set('fail', t('paneCard.ciFailed'))
+        else if (c.pr.ci === 'pending') set('active', t('paneCard.ciPending'))
+        else set('wait', t('pipeline.canMerge'))
         // 審查結論是 Agent 自己寫的：照算，但註記標出來。
-        if (c.chain?.selfReview && notes.merge) notes.merge += '（自審）'
+        if (c.chain?.selfReview && notes.merge) notes.merge += t('paneCard.selfReview')
         break
       case 'ship':
-        if (c.tag) set('wait', `${c.tag} 已打，待確認上線`)
-        else { const line = shipsWith(c); set('wait', line ? `隨 ${line} 發版，待打 tag` : '待打 tag') }
+        if (c.tag) set('wait', t('pipeline.tagged', { tag: c.tag }))
+        else { const line = shipsWith(c); set('wait', line ? t('pipeline.shipsWith', { line }) : t('pipeline.needTag')) }
         break
     }
   }
   if (release) for (const id of ['spec', 'build', 'review', 'merge'] as StageId[]) status[id] = 'na'
   const stages: Stage[] = STAGES.map(s => ({ ...s, status: status[s.id] }))
   const effective = current && status[current] !== 'na' ? current : release ? (status.check === 'done' ? 'ship' : 'check') : null
-  if (release && effective === 'check' && !notes.check) notes.check = check === false ? '測試未通過' : verifying ? '測試中' : queued ? '排隊中' : '尚未執行測試'
+  if (release && effective === 'check' && !notes.check) notes.check = check === false ? t('verifyRunner.failed') : verifying ? t('paneCard.testing') : queued ? t('pipeline.queued') : t('pipeline.notChecked')
   if (release && effective === 'check') status.check = check === false ? 'fail' : verifying || queued ? 'active' : 'wait'
-  if (release && effective === 'ship') { status.ship = c.tag && gate?.kind !== 'release' ? 'done' : 'wait'; notes.ship = c.tag ? (gate?.kind === 'release' ? `${c.tag} 已打，待確認上線` : '') : '待打 tag' }
+  if (release && effective === 'ship') { status.ship = c.tag && gate?.kind !== 'release' ? 'done' : 'wait'; notes.ship = c.tag ? (gate?.kind === 'release' ? t('pipeline.tagged', { tag: c.tag }) : '') : t('pipeline.needTag') }
   const done = stages.every(s => status[s.id] === 'done' || status[s.id] === 'na')
   return { stages: STAGES.map(s => ({ ...s, status: status[s.id] })), current: done ? null : effective, note: effective ? notes[effective] ?? '' : '' }
 }
@@ -230,7 +231,7 @@ export function stageParts(p: Pipeline, compact: boolean): { text: string; statu
 
 export function stageLabel(p: Pipeline): string {
   const s = p.stages.find(x => x.id === p.current)
-  return s ? `${s.label}${p.note ? `・${p.note}` : ''}` : '已上線'
+  return s ? `${s.label}${p.note ? `・${p.note}` : ''}` : t('state.done')
 }
 
 export type { PrInfo }

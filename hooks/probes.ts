@@ -24,6 +24,7 @@ import type { GitState } from './extras'
 import { HANDOFFS, PROJECT_FILES, mergeSettingsText, projectOf } from './project'
 import { parseMergeTree } from './catchup'
 import type { Project } from './project'
+import { t } from './i18n'
 
 const PR_TTL_MS = 5 * 60_000
 /** 讀 PR 失敗（gh 沒登入、斷網、MCP 斷線）後多久再試；舊結果最多沿用多久。 */
@@ -555,7 +556,7 @@ export async function containers($: any, options: PluginOptions, preloadedSettin
   if (!own && !String(options.composeDir ?? '').trim()) return { total: 0, running: 0, down: [], unhealthy: [] }
   const dir = own ? expandHome(own, await home($)) : await optionPath($, options, 'composeDir', '')
   const r = await $.process.run(['docker', 'compose', 'ps', '-a', '--format', 'json'], { cwd: dir, timeoutMs: 10_000 }).catch(() => null)
-  if (!r || r.exitCode !== 0) return { total: 0, running: 0, down: [], unhealthy: [], error: '無法讀取（Docker 未啟動？）' }
+  if (!r || r.exitCode !== 0) return { total: 0, running: 0, down: [], unhealthy: [], error: t('probes.dockerDown') }
   return summarize(parseCompose(String(r.stdout)))
 }
 

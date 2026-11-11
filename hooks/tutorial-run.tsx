@@ -15,6 +15,7 @@ import type { Timer } from './desk-io'
 import { refreshing, refresh, openPane, optionsRef } from './register'
 import { dispatchAfterSpec } from './card-actions'
 import { engineWarningLine } from './engine-version'
+import { t } from './i18n'
 
 // 引擎規定：read／update 的 atom 必須在同一個檔案用 const 宣告（同 plugin、同 key 就是同一份狀態）。
 const selected = atom({ plugin: 'desk', key: 'selected' } as const, null)
@@ -36,7 +37,7 @@ export function setTutorial(next: TutorialState | null) { tutorial = next }
 export function cancelSim() { sim?.timer?.cancel(); sim = null }
 
 const SIM_SESSION = '00000000-0000-4000-8000-00000000d35c'
-const SIM_SAYS: Record<SimWork, string> = { build: '寫 discount() 與測試…', fix: '依驗收補上負數檢查…', 'review-1': '驗收 diff、對照規格…', 'review-2': '重新驗收新的 diff…', 'review-3': '驗收新的 commit…', sync: '讀卡片與 git…' }
+const SIM_SAYS: Record<SimWork, string> = { build: t('tutorialRun.simBuild'), fix: t('tutorialRun.simFix'), 'review-1': t('tutorialRun.simReview1'), 'review-2': t('tutorialRun.simReview2'), 'review-3': t('tutorialRun.simReview3'), sync: t('tutorialRun.simSync') }
 const GIT_TUTOR = ['-c', 'user.name=desk tutorial', '-c', 'user.email=tutorial@example.invalid']
 
 /** 教學裡「正在工作」的那一個，給 refresh 當作 agents 清單。 */
@@ -78,7 +79,7 @@ export async function finishSim($: any, options: PluginOptions) {
       await $.process.run(['git', '-C', job.root, 'add', 'discount.py', 'test_discount.py'], { timeoutMs: 30_000 })
       const r = await $.process.run(gitCommit(job.root, job.work === 'build' ? 'feat: 新增會員折扣' : 'fix: 金額為負數時丟出 ValueError'), { timeoutMs: 30_000 })
       // 重新載入後補做同一輪時，內容已經 commit 過：沒有東西可以 commit 不算失敗。
-      if (r.exitCode !== 0 && !/nothing to commit|nothing added/i.test(`${r.stdout}${r.stderr}`)) throw new Error(String(r.stderr || r.stdout).trim() || 'git commit 失敗')
+      if (r.exitCode !== 0 && !/nothing to commit|nothing added/i.test(`${r.stdout}${r.stderr}`)) throw new Error(String(r.stderr || r.stdout).trim() || t('tutorialRun.commitFailed'))
     }
     if (job.work === 'review-1' || job.work === 'review-2' || job.work === 'review-3') {
       if (!live()) return
@@ -91,7 +92,7 @@ export async function finishSim($: any, options: PluginOptions) {
     if (typeof card === 'string') await $.fs.write(job.statusPath, cardAfter(card, job.work, day))
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (live()) await feedPush($, [{ at: await $.clock.now(), text: `教學 Agent 失敗：${message}`, tone: 'error', card: job.statusPath }])
+    if (live()) await feedPush($, [{ at: await $.clock.now(), text: t('tutorialRun.agentFailed', { message }), tone: 'error', card: job.statusPath }])
   } finally {
     if (sim?.token === job.token) sim = null
   }
@@ -121,10 +122,10 @@ export async function resumeTutorial($: any, options: PluginOptions) {
  */
 export async function tutorialDecision($: any, c: Case, answer: string) {
   const text = await $.fs.read(c.statusPath).catch(() => null)
-  if (typeof text !== 'string') { $.ui.toast('教學卡片讀不到；輸入 /desk tutorial end 後重新開始'); return }
+  if (typeof text !== 'string') { $.ui.toast(t('tutorialRun.cardUnreadable')); return }
   const day = new Date(await $.clock.now()).toISOString().slice(0, 10)
   await $.fs.write(c.statusPath, cardAfterDecision(text, answer, day, (await loadSettings($, optionsRef!)).user))
-  $.ui.toast(`已寫回卡片：${answer}。實際使用時這一步會填入輸入框，按 Enter 送給主對話。`, { timeoutMs: 8000 })
+  $.ui.toast(t('tutorialRun.decisionWritten', { answer }), { timeoutMs: 8000 })
   await refresh($, optionsRef!)
 }
 
@@ -135,25 +136,25 @@ export async function tutorialAct($: any, options: PluginOptions, c: Case) {
   const p = tutorialPaths(await home($))
   const now = await $.clock.now()
   const day = new Date(now).toISOString().slice(0, 10)
-  const failed = (what: string, r: any) => $.ui.toast(`${what}失敗：${errorLine(r)}`, { timeoutMs: 10_000 })
+  const failed = (what: string, r: any) => $.ui.toast(t('tutorialRun.stepFailed', { what, error: errorLine(r) }), { timeoutMs: 10_000 })
   const run = (argv: string[], env?: Record<string, string>) => $.process.run(argv, { timeoutMs: 30_000, ...(env ? { env } : {}) }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
   if (step === 'spec-ok') {
     // DESK_PROJECT_DIR 留空：card.py 不依 cwd 認專案，否則會疊上真實專案的 card 設定、讀到它的登錄表
     const r = await run(['python3', `${$.plugin.root}/skills/card/scripts/card.py`, 'spec-ok', TUTORIAL_SLUG], { DESK_SETTINGS: p.settings, DESK_PROJECT_DIR: '' })
-    if (r.exitCode !== 0) return failed('確認規格', r)
-    await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success', card: c.statusPath }])
+    if (r.exitCode !== 0) return failed(t('action.specOk'), r)
+    await feedPush($, [{ at: now, text: t('cardActions.specOk', { name: c.name }), tone: 'success', card: c.statusPath }])
   } else if (step === 'merge') {
     const r = await run(['git', '-C', p.main, ...GIT_TUTOR, 'merge', '--no-ff', '--quiet', '-m', `Merge ${TUTORIAL_BRANCH}`, TUTORIAL_BRANCH])
-    if (r.exitCode !== 0) return failed('合併', r)
+    if (r.exitCode !== 0) return failed(t('pipeline.merge'), r)
     tutorial = { ...tutorial, merged: true }
     await saveTutorial($)
-    await feedPush($, [{ at: now, text: `${c.name} 已合併到 ${TUTORIAL_RELEASE}`, tone: 'success', card: c.statusPath }])
+    await feedPush($, [{ at: now, text: t('tutorialRun.merged', { name: c.name, into: TUTORIAL_RELEASE }), tone: 'success', card: c.statusPath }])
   } else if (step === 'tag') {
     const r = await run(['git', '-C', p.main, 'tag', TUTORIAL_TAG])
-    if (r.exitCode !== 0) return failed('打 tag', r)
+    if (r.exitCode !== 0) return failed(t('tutorialRun.tag'), r)
     const text = await $.fs.read(c.statusPath).catch(() => null)
     if (typeof text === 'string') await $.fs.write(c.statusPath, cardAfterTag(text, day))
-    await feedPush($, [{ at: now, text: `${c.name} 已打 ${TUTORIAL_TAG}`, tone: 'success', card: c.statusPath }])
+    await feedPush($, [{ at: now, text: t('tutorialRun.tagged', { name: c.name, tag: TUTORIAL_TAG }), tone: 'success', card: c.statusPath }])
   } else return
   await refresh($, options)
   // 跟真實模式一樣，確認規格後自動派實作（教學的檢查開始時已核准；派出的是模擬 Agent）。
@@ -165,9 +166,9 @@ export async function tutorialStart($: any, options: PluginOptions): Promise<str
   const p = tutorialPaths(await home($))
   // 教學已經在跑：選回教學那件、打開面板。
   if (tutorial) { await update($, selected, () => p.card); await refresh($, options); await openPane($); return TUTORIAL_INTRO }
-  if (await $.fs.exists(p.dir).catch(() => false)) return `${p.dir} 已經存在（上一次的教學沒有清掉）。先輸入 /desk tutorial end 清除，再輸入 /desk tutorial 重新開始。`
+  if (await $.fs.exists(p.dir).catch(() => false)) return t('tutorialRun.dirExists', { dir: p.dir })
   const r = await $.process.run(['sh', '-c', setupScript(p.main, p.wt)], { timeoutMs: 60_000 }).catch((e: unknown) => ({ exitCode: 1, stderr: String(e), stdout: '' }))
-  if (r.exitCode !== 0) return `建立教學沙盒失敗：${errorLine(r)}（需要 git）`
+  if (r.exitCode !== 0) return t('tutorialRun.setupFailed', { error: errorLine(r) })
   const day = new Date(await $.clock.now()).toISOString().slice(0, 10)
   await $.fs.write(p.card, cardText(day))
   await $.fs.write(p.registry, registryText(p.card))
@@ -206,7 +207,7 @@ export async function tutorialEnd($: any, options: PluginOptions): Promise<strin
   if (p.card in trusted) await $.store.set(TRUST_KEY, Object.fromEntries(Object.entries(trusted).filter(([k]) => k !== p.card)))
   if (existed && !(await $.fs.exists(p.marker).catch(() => false))) {
     await refresh($, options)
-    return `${p.dir} 裡沒有 desk 的標記檔，不是 /desk tutorial 建的，沒有刪除；確認不需要後請自己刪除。`
+    return t('tutorialRun.noMarker', { dir: p.dir })
   }
   let removed = true
   if (existed && isTutorialDir(p.dir)) {
@@ -216,8 +217,8 @@ export async function tutorialEnd($: any, options: PluginOptions): Promise<strin
   await clearView($, null)
   await restoreEngineWarning($)
   await refresh($, options)
-  if (!existed) return '目前沒有教學沙盒。'
-  return removed ? '教學已結束，沙盒已刪除；面板回到你的任務。' : `教學已結束，但沙盒刪不掉，請自己刪除 ${p.dir}`
+  if (!existed) return t('tutorialRun.noSandbox')
+  return removed ? t('tutorialRun.ended') : t('tutorialRun.endedKept', { dir: p.dir })
 }
 
 /** 教學結束清掉動態後，Claude Code 太舊（或讀不到版本）的那行警告補回動態：不帶卡片、不跳 toast（開對話時已經跳過）；版本夠新不補。 */

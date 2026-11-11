@@ -1,8 +1,8 @@
-"""守門：已搬進字串目錄（hooks/i18n/zh-TW.ts）的檔不再直接寫中文顯示字串，目錄裡也沒有用不到的鍵（i18n 目錄與示範 AC-3、AC-4；i18n 動態與 toast AC-2 沿用，已搬清單加 10 個檔）。
+"""守門：已搬進字串目錄（hooks/i18n/zh-TW.ts）的檔不再直接寫中文顯示字串，目錄裡也沒有用不到的鍵（i18n 目錄與示範 AC-3、AC-4；i18n 動態與 toast AC-2、i18n 狀態說明 AC-3 沿用，已搬清單各加 10 個檔）。
 
 沿用 test_wording 的 strip_code：去掉註解與正規式字面值之後，程式文字裡還有中文字或全形標點就列出「檔:行」。
 MIGRATED 是已搬完的檔，之後的卡搬完一個檔就往上加；只搬了一段的檔（register.tsx 只搬 /desk 指令說明）另列在 MIGRATED_LINES，只看那幾行。
-KEPT 是搬完的檔裡刻意留在原處的字（解析契約、卡片欄位名、給 Agent 的提示與給對話的面板操作紀錄），每條寫原因。
+KEPT 是搬完的檔裡刻意留在原處的字（解析契約、卡片欄位名、給 Agent 的提示與給對話的面板操作紀錄、示範資料與教學沙盒內容），每條寫原因。
 
 執行：python3 -m unittest discover -s scripts/tests
 """
@@ -43,6 +43,16 @@ MIGRATED = (
     'hooks/verify-runner.ts',
     'hooks/stale-agents.ts',
     'hooks/extras.ts',
+    'hooks/pipeline.ts',
+    'hooks/dispatch.ts',
+    'hooks/model.ts',
+    'hooks/settings.ts',
+    'hooks/next-words.ts',
+    'hooks/risk.ts',
+    'hooks/tutorial-run.tsx',
+    'hooks/agents.ts',
+    'hooks/approve-check.ts',
+    'hooks/probes.ts',
 )
 # (檔名, 只看符合這個正規式的行)
 MIGRATED_LINES = (
@@ -72,6 +82,22 @@ KEPT = (
      '推送 Agent 提示裡的分支名預設值：給 Agent 的提示，不搬（規格非目標）'),
     ('hooks/agent-queue.ts', re.compile(r"pushRequest\(c\.git\?\.branch \?\? '分支'"),
      '推送 Agent 提示裡的分支名預設值：給 Agent 的提示，不搬（規格非目標）'),
+    ('hooks/pipeline.ts', re.compile(r"new RegExp\(`\$\{name\}[^`]*`"),
+     '讀審查結論四個分級的解析式（關卡格式契約），不搬（規格非目標）'),
+    ('hooks/dispatch.ts', re.compile(
+        r"^(?:\s*: kind === 'continue' \? |\s*: kind === 'sync' \? |\s*: `\$\{named\(settings\.user\)|\s*const who = self \? "
+        r"|\s*return \[head, |\s*return `第一步：這張卡疊在 ).*$", re.M),
+     '派工給 Agent 的提示（繼續、同步、回覆、疊放卡第一步、任務與卡片路徑）：給 Agent 的文字維持中文留原處（D-03）'),
+    ('hooks/model.ts', re.compile(r"card\?\.\['[^']+'\]"), '卡片欄位名，解析契約（規格非目標）'),
+    ('hooks/model.ts', re.compile(r"^(?:\s*const card = \(status: string|\s*`<!-- DESK -->|\s*\[\{ name: '[^']+', statusPath: '/demo/).*$", re.M),
+     '示範資料（示範卡的任務名與卡片內容，欄位名照卡片格式契約）：留到英文版（D-02）'),
+    ('hooks/settings.ts', re.compile(r"^\s*(?:high|security|categories): '[^']*',$", re.M),
+     '審查分級的預設說明：組進審查提示給 Agent 讀，維持中文留原處（D-03）'),
+    ('hooks/next-words.ts', re.compile(
+        r"^const (?:IDLE_WAIT|IDLE_PRESS_V|IDLE_OPEN_PR|IDLE_FOLLOW_TURN|IDLE_CLAUSE|REVIEW_WORD|REVIEW_CMD|REVIEW_CLAUSE) = .*$", re.M),
+     '辨識卡片「下一步」寫法的解析式（Agent 與人寫的下一步，卡片內容契約），不搬（規格非目標）'),
+    ('hooks/tutorial-run.tsx', re.compile(r"'feat: 新增會員折扣' : 'fix: 金額為負數時丟出 ValueError'|p\.marker, '[^']*'"),
+     '教學沙盒內容（教學 commit 訊息、標記檔內容）：寫進沙盒的檔案與 git 歷史，跟教學卡本文一樣留到英文版（D-02）'),
 )
 CHINESE = re.compile(r'[　-〿一-鿿＀-￯]+')
 CATALOG_KEY = re.compile(r"^\s*'([\w.]+)':", re.M)
@@ -128,7 +154,7 @@ class MigratedFilesTest(unittest.TestCase):
             self.assertTrue(any(only.search(line) for line in read(rel).split('\n')), rel)
         for rel, pat, why in KEPT:
             self.assertTrue(pat.search(read(rel)), rel)
-            self.assertRegex(why, '契約|欄位名|提示')
+            self.assertRegex(why, '契約|欄位名|提示|示範|教學')
 
     def test_catalog_has_no_unused_keys(self):
         """AC-4：目錄裡每個鍵都有 hooks 底下別的檔在用（寫成 'update.notice' 這樣的字面值）。"""
