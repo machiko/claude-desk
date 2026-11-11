@@ -11,7 +11,7 @@ import type { RawAgent } from './agents'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { loadSettings, deskPaths, diffBase, diffFiles, gitProbe, home, originRemote, riskOf, worktreeMark } from './probes'
 import { me, loadJobs, loadChains, saveChain, confirmed, feedPush, tellPanel, launch, runGraceMs, JOBS_KEY } from './desk-io'
-import { hasAgentQueue, isAgentQueued, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
+import { hasAgentQueue, isAgentQueued, labelOf, notSent, queuePosition, enqueueDispatch, requeue } from './agent-queue'
 import { startSim } from './tutorial-run'
 import { rawAgents, supersede, agentInfo, agentsByRoot, launchName, runningDeskAgents } from './agents'
 import { isBusy, untrustedKey } from './turn'
@@ -21,6 +21,7 @@ import { restage, spin, tutorial, lastAgents, lastAgentsAt } from './register'
 import { carriedFix, carriedReview, countedFix } from './chain'
 import { checkStands } from './pipeline'
 import { fixesReview } from './prompts/fix'
+import { t } from './i18n'
 
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
@@ -45,9 +46,10 @@ async function holdUntrusted($: any, c: Case, kind: DispatchKind, now: number, a
   await update($, untrustedAtom, v => ({ ...v, [c.statusPath]: hold }))
   const shown = (await read($, snapshot))?.cases.find(x => x.statusPath === c.statusPath) ?? c
   const steps = untrustedSteps(c.root, untrustedKey(shown, hold))
-  await feedPush($, [{ at: now, text: `${c.name}：${steps}`, tone: 'error', card: c.statusPath }])
+  const named = t('toast.named', { name: c.name, text: steps })
+  await feedPush($, [{ at: now, text: named, tone: 'error', card: c.statusPath }])
   await tellPanel($, now, steps, { name: c.name, skip: skipPanel })
-  $.ui.toast(`${c.name}：${steps}`, { timeoutMs: UNTRUSTED_TOAST_MS })
+  $.ui.toast(named, { timeoutMs: UNTRUSTED_TOAST_MS })
 }
 
 /** 按下時再問一次背景 agent 清單的上限：查不到就照快照，不讓按鈕卡太久。 */
@@ -58,7 +60,7 @@ export const PRESS_AGENTS_MS = 10_000
  * 「啟動中」佔位要等幾個 await 之後才寫，只看它的話，同時派好幾件會都看到有空位。
  */
 export const slots = new Set<string>()
-export const LAUNCHING = '上一次派工還在啟動；等幾秒、面板出現 Agent 後再按'
+export const LAUNCHING = t('dispatchRunner.launching')
 
 /** 派工啟動中的那幾件派的是什麼：「啟動中」佔位帶著它，流程派審查的那一刻六段不退回實作。 */
 export let launchKinds: Record<string, NonNullable<AgentInfo['kind']>> = {}
@@ -84,7 +86,7 @@ export function resetDispatchState() {
  */
 export async function busyRefused($: any, c: Case, doing: string, live = true): Promise<boolean> {
   if (!(await busyNow($, c, live))) return false
-  $.ui.toast(`${c.name}：${WORD.busyRefused}${doing}`)
+  $.ui.toast(t('toast.named', { name: c.name, text: `${WORD.busyRefused}${doing}` }))
   return true
 }
 
@@ -169,7 +171,7 @@ export async function starting($: any, statusPath: string): Promise<boolean> {
 /** 這件有派工還在啟動，這次不派：從隊伍取出的寫動態說原因（隊伍裡已經拿掉，不默默不見），其他的跳提示。 */
 async function refuseStarting($: any, c: Case, kind: DispatchKind, opts: QueueOpts & { fromQueue?: number }) {
   if (opts.fromQueue !== undefined) await notSent($, c, { statusPath: c.statusPath, kind, opts }, LAUNCHING, await $.clock.now(), await me($))
-  else $.ui.toast(`${c.name}：${LAUNCHING}`)
+  else $.ui.toast(t('toast.named', { name: c.name, text: LAUNCHING }))
 }
 
 /** 啟動失敗的錯誤只留最後一行、截到這麼多字（多的換成「…」）。 */
@@ -189,13 +191,13 @@ export function carriedJobs(cur: RootJobs | undefined, now: number, grace: numbe
 /** 派工沒做成：「無法派<種類>（<錯誤最後一行>）；<怎麼重試>」；toast、動態與下一則對話提示共用。 */
 export function launchFailed(label: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
-  const last = message.split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? '沒有錯誤訊息'
+  const last = message.split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? t('dispatchRunner.noError')
   const shown = [...last].length > LAUNCH_ERROR_MAX ? `${[...last].slice(0, LAUNCH_ERROR_MAX).join('')}…` : last
-  return `無法派${label}（${shown}）；再按一次重試，一直失敗就到終端機跑 claude agents 看原因`
+  return t('dispatchRunner.launchFailed', { label, error: shown })
 }
 
 /** 同一件已經排著時，手動派工回的那句（額度煞車後的接續也用）。 */
-export const alreadyQueued = (c: Case) => `${c.name}：已在派工隊伍（第 ${queuePosition(c.statusPath)} 位），k 取消排隊`
+export const alreadyQueued = (c: Case): string => t('dispatchRunner.alreadyQueued', { name: c.name, n: queuePosition(c.statusPath) })
 
 /**
  * 審查看的範圍與省略：diff 的基準分支；工作桌的完成檢查在派審查時的 HEAD 通過（指令沒變）就帶 verifiedHead，審查不重跑整套；
@@ -244,7 +246,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   // 同步不改程式、推送只推已 commit 的，不擋；自動流程在派之前已經看過。
   if (kind !== 'sync' && kind !== 'publish' && !opts.auto && !tutorial) {
     const foreign = markRefusal(await worktreeMark($, c.root), own)
-    if (foreign) { $.ui.toast(`${c.name}：無法${KIND_LABEL[kind]}（${foreign}）`, { timeoutMs: 10_000 }); return false }
+    if (foreign) { $.ui.toast(t('toast.cantDispatch', { name: c.name, what: KIND_LABEL[kind], why: foreign }), { timeoutMs: 10_000 }); return false }
   }
   const now = await $.clock.now()
   // 同時在跑的工作桌 Agent 已達上限（教學與 maxAgents 0 不限）：排進隊伍；隊伍裡已經有人在等時也排，先來先派。
@@ -311,21 +313,21 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     await $.store.set(JOBS_KEY, { ...latest, [rootKey]: next })
     const agent: AgentInfo = { ...agentInfo(confirmed), status: 'busy', kind: doing }
     await restage($, c.statusPath, x => ({ ...x, agent, state: 'running' }))
-    const label = opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安驗收' : KIND_LABEL[kind]
-    const sent = `派${label}（${model || '預設模型'}${fresh ? '・新對話' : ''}）`
-    await feedPush($, [{ at: now, text: `${c.name} ${opts.auto ? '自動' : ''}${sent}`, tone: 'suggestion', card: c.statusPath }])
+    const label = labelOf(kind, opts)
+    const sent = t('dispatchRunner.sent', { label, model: model || t('paneCard.defaultModel'), fresh: fresh ? t('pane.freshSession') : '' })
+    await feedPush($, [{ at: now, text: opts.auto ? t('dispatchRunner.sentAuto', { name: c.name, sent }) : t('feed.named', { name: c.name, text: sent }), tone: 'suggestion', card: c.statusPath }])
     await tellPanel($, now, sent, { name: c.name, skip: opts.auto || tutorial })
     await clearUntrusted($, c.statusPath)
-    $.ui.toast(`${c.name}：${label}已派出`, { timeoutMs: 6000 })
+    $.ui.toast(t('dispatchRunner.sentToast', { name: c.name, label }), { timeoutMs: 6000 })
     return true
   } catch (error) {
     if (error instanceof LaunchError && error.unconfirmed) unconfirmed.add(c.statusPath)
     else unconfirmed.delete(c.statusPath)
     if (error instanceof LaunchError && error.untrusted) { await holdUntrusted($, c, kind, now, !!opts.auto, !!opts.auto || tutorial); return false }
     const failed = launchFailed(KIND_LABEL[kind], error)
-    await feedPush($, [{ at: now, text: `${c.name} ${failed}`, tone: 'error', card: c.statusPath }])
+    await feedPush($, [{ at: now, text: t('feed.named', { name: c.name, text: failed }), tone: 'error', card: c.statusPath }])
     await tellPanel($, now, failed, { name: c.name, skip: opts.auto || tutorial })
-    $.ui.toast(`${c.name}：${failed}`, { timeoutMs: 8000 })
+    $.ui.toast(t('toast.named', { name: c.name, text: failed }), { timeoutMs: 8000 })
     return false
   } finally {
     slots.delete(c.statusPath)

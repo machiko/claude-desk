@@ -2,6 +2,10 @@
 
 ## 未發布
 
+## 0.66.0
+
+- 調整 動態、toast 與通知文字集中到字串目錄（畫面不變）
+
 ## 0.65.1
 
 - 調整 README 改寫成初學者版；完整指令、按鍵與設定搬到 docs/REFERENCE.md，開發說明搬到 docs/DEVELOPMENT.md

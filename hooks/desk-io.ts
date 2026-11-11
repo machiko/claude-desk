@@ -19,6 +19,7 @@ import { CHAIN_OVERWRITTEN, MAX_SAVE_RETRIES, revOf } from './chain'
 import type { ChainRun } from './chain'
 import { HANDOFFS, PROJECT_FILES } from './project'
 import { WORD } from './theme'
+import { t } from './i18n'
 
 // 引擎規定：read／update 的 atom 必須在同一個檔案用 const 宣告，所以這裡用到的幾個與 register.tsx 各宣告一次（同 plugin、同 key 就是同一份狀態）。
 const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
@@ -125,7 +126,7 @@ export async function saveChain($: any, key: string, change: (run: ChainRun | un
   }
   if (opts.warn && !overwriteWarned.has(key)) {
     overwriteWarned.add(key)
-    await feedPush($, [{ at: opts.warn.at, text: `${opts.warn.name}：${CHAIN_OVERWRITTEN}`, tone: 'warning', card: opts.warn.card }])
+    await feedPush($, [{ at: opts.warn.at, text: t('toast.named', { name: opts.warn.name, text: CHAIN_OVERWRITTEN }), tone: 'warning', card: opts.warn.card }])
   }
   return false
 }
@@ -143,12 +144,12 @@ export async function missingRegistry($: any, paths: DeskPaths): Promise<string 
 
 /** 讀不到登錄表時面板的說明；missing 是 missingRegistry 的結果。 */
 export function registryError(paths: DeskPaths, missing: string | null): string {
-  if (!paths.registry) return '目前資料夾不在 git repo 裡；desk 依 repo 找登錄表，請在專案裡開 /desk'
+  if (!paths.registry) return t('deskIo.noRepo')
   if (missing && paths.project) {
     const shown = `${HANDOFFS}/${paths.project.key}${missing.slice(paths.project.dir.length)}`
-    return `專案「${paths.project.key}」還沒有登錄表。按下方「＋ ${WORD.createRegistry}」建在 ${shown}，或用 /desk:card new <分支> <任務名> 開第一張卡（會一併建立）。`
+    return t('deskIo.noRegistry', { project: paths.project.key, create: WORD.createRegistry, path: shown })
   }
-  return `無法讀取登錄表 ${paths.registry}`
+  return t('deskIo.registryUnreadable', { path: paths.registry })
 }
 
 export async function loadSummaries($: any): Promise<Record<string, string>> {
@@ -186,7 +187,7 @@ export function statusLine($: any, s: Snapshot) {
   const wait = liveCases(s.cases).find(c => c.state === 'ask' || c.state === 'reply' || c.state === 'approve' || c.state === 'gate' || c.state === 'failed')
   const parts: string[] = []
   if (run[0]) parts.push(`▶ ${run[0].name} ${run[0].pipeline ? stageLabel(run[0].pipeline) : ''}${run.length > 1 ? ` +${run.length - 1}` : ''}`)
-  if (wait) parts.push(`● ${wait.name} 等你`)
+  if (wait) parts.push(t('deskIo.statusWait', { name: wait.name }))
   $.ui.status(parts.length ? `desk  ${parts.join('   ')}` : undefined)
 }
 
@@ -212,7 +213,7 @@ export async function toggleLogs($: any, c: Case) {
 }
 
 export async function openPath($: any, target: string, what: string) {
-  if (!(await openWith($, target))) $.ui.toast(`無法開啟${what}`)
+  if (!(await openWith($, target))) $.ui.toast(t('deskIo.cantOpen', { what }))
 }
 
 /** 用系統預設程式開檔案或網址：macOS 用 open，其他（Linux）用 xdg-open。 */
@@ -278,13 +279,13 @@ export function decisionContext(c: Case, withCard: boolean, medium?: MediumPick)
 export async function launch($: any, c: Case, prompt: string, o: { model: string; effort: string; sessionId?: string; name: string; mcp?: boolean }, recent?: readonly RawAgent[]) {
   const before = recent ? [...recent] : await agentsNow($)
   const r = await $.process.run(launchArgs(prompt, { model: o.model, effort: o.effort, sessionId: o.sessionId, launchName: o.name, mcp: o.mcp }), { cwd: c.root, timeoutMs: LAUNCH_TIMEOUT_MS })
-  if (r.exitCode !== 0) throw new LaunchError(String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || `claude --bg 失敗（exit ${r.exitCode}）`, isUntrustedLaunch(`${r.stderr ?? ''}\n${r.stdout ?? ''}`))
+  if (r.exitCode !== 0) throw new LaunchError(String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || t('deskIo.launchExit', { code: r.exitCode }), isUntrustedLaunch(`${r.stderr ?? ''}\n${r.stdout ?? ''}`))
   const token = parseLaunchToken(r.stdout)
-  if (!token) throw new Error('claude --bg 沒有回傳可辨識的 id')
+  if (!token) throw new Error(t('deskIo.launchNoId'))
   const afterOut = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 })
   const after = afterOut.exitCode === 0 ? rawAgents(afterOut.stdout) : []
   const confirmed = confirmLaunch(before, after, o.name, token)
-  if (!confirmed) throw new LaunchError(`已啟動（${token}），但在 agents 清單找不到唯一的 ${o.name}；下次重新整理時會再確認`, false, true)
+  if (!confirmed) throw new LaunchError(t('deskIo.launchUnconfirmed', { token, name: o.name }), false, true)
   return { ...confirmed, id: confirmed.id ?? token }
 }
 

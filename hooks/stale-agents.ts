@@ -10,6 +10,7 @@ import type { RootJobs } from './dispatch'
 import { normalizeRoot } from './settings'
 import { saysNone } from './card'
 import { JOBS_KEY, feedPush, loadJobs } from './desk-io'
+import { t } from './i18n'
 
 /** 已經試著停過的 Agent（成功或失敗都算），不再重試：有 id 記 id；沒 id 的停不掉、只在「最近」說一次，記「名字@派出時間」。 */
 export const STALE_STOPS_KEY = 'supersededStops'
@@ -46,7 +47,7 @@ export async function stopSuperseded($: any, cases: readonly Case[], found: read
   if (!todo.length) return
   await $.store.set(STALE_STOPS_KEY, [...todo.map(x => stopKey(x.agent)), ...tried].slice(0, STALE_STOPS_KEEP))
   for (const { agent, card } of todo) {
-    void stopOne($, agent, card, now).catch((e: unknown) => $.ui.toast(`${card.name}：停掉被取代的 Agent 後記不下結果（${plain(e instanceof Error ? e.message : String(e))}）`, { timeoutMs: 8000 }))
+    void stopOne($, agent, card, now).catch((e: unknown) => $.ui.toast(t('staleAgents.recordFailed', { name: card.name, err: plain(e instanceof Error ? e.message : String(e)) }), { timeoutMs: 8000 }))
   }
 }
 
@@ -54,10 +55,10 @@ export async function stopSuperseded($: any, cases: readonly Case[], found: read
 async function stopOne($: any, agent: Superseded, card: Case, now: number) {
   const r = agent.id
     ? await $.process.run(['claude', 'stop', agent.id], { timeoutMs: STOP_TIMEOUT_MS }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
-    : { exitCode: 1, stdout: '', stderr: '沒有 Agent id' }
-  const what = `${hhmm(agent.startedAt)} 派出、被後來派工取代的 Agent`
+    : { exitCode: 1, stdout: '', stderr: t('staleAgents.noId') }
+  const what = t('staleAgents.superseded', { at: hhmm(agent.startedAt) })
   const ok = r?.exitCode === 0
-  const text = ok ? `${card.name} 已停掉 ${what}` : `${card.name} 停不掉 ${what}：${errorLine(r, 'claude stop 失敗')}`
+  const text = ok ? t('staleAgents.stopped', { name: card.name, what }) : t('staleAgents.stopFailed', { name: card.name, what, err: errorLine(r, t('word.claudeStopFailed')) })
   await feedPush($, [{ at: now, text, tone: ok ? 'subtle' : 'warning', card: card.statusPath }])
 }
 
@@ -74,7 +75,7 @@ export async function stopEnded($: any, cases: readonly Case[], found: readonly 
   await $.store.set(ENDED_STOPS_KEY, [...todo.map(agent => agent.id), ...tried].slice(0, STALE_STOPS_KEEP))
   for (const agent of todo) {
     const card = cases.find(c => !c.demo && normalizeRoot(c.root) === agent.root)
-    void stopEndedOne($, agent, card, now).catch((e: unknown) => $.ui.toast(`停掉做完的 Agent ${agent.name} 後記不下結果（${plain(e instanceof Error ? e.message : String(e))}）`, { timeoutMs: 8000 }))
+    void stopEndedOne($, agent, card, now).catch((e: unknown) => $.ui.toast(t('staleAgents.endedRecordFailed', { agent: agent.name, err: plain(e instanceof Error ? e.message : String(e)) }), { timeoutMs: 8000 }))
   }
 }
 
@@ -82,7 +83,7 @@ export async function stopEnded($: any, cases: readonly Case[], found: readonly 
 async function stopEndedOne($: any, agent: EndedAlive, card: Case | undefined, now: number) {
   const r = await $.process.run(['claude', 'stop', agent.id], { timeoutMs: STOP_TIMEOUT_MS }).catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
   if (r?.exitCode === 0) return
-  await feedPush($, [{ at: now, text: `停不掉做完的 Agent ${agent.name}：${errorLine(r, 'claude stop 失敗')}`, tone: 'warning', ...(card ? { card: card.statusPath } : {}) }])
+  await feedPush($, [{ at: now, text: t('staleAgents.endedStopFailed', { agent: agent.name, err: errorLine(r, t('word.claudeStopFailed')) }), tone: 'warning', ...(card ? { card: card.statusPath } : {}) }])
 }
 
 /**
@@ -101,6 +102,6 @@ export async function noteCardAsks($: any, list: readonly any[], cases: readonly
     const cleared = askClearedOnCard(last, c.ask)
     if (!cleared && (last.cardAsked || saysNone(c.ask))) continue
     await $.store.set(JOBS_KEY, { ...all, [key]: { ...all[key], last: { ...last, ...(cleared ? { answered: true } : { cardAsked: true }) } } })
-    if (cleared) await feedPush($, [{ at: now, text: asking ? `${c.name} Agent 的提問已在對話處理（卡片「等你」已清），不再等它回覆` : `${c.name} 「等你」已在對話處理，流程不替那次派工接著跑；照「輪到你」繼續`, tone: 'subtle', card: c.statusPath }])
+    if (cleared) await feedPush($, [{ at: now, text: asking ? t('staleAgents.askHandled', { name: c.name }) : t('staleAgents.askCleared', { name: c.name }), tone: 'subtle', card: c.statusPath }])
   }
 }

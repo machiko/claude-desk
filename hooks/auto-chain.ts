@@ -12,6 +12,7 @@ import { askClearedOnCard, askedOnCardAtEnd } from './agents'
 import { normalizeRoot } from './settings'
 import type { DispatchSettings } from './settings'
 import { checkStands, isMerged, parseVerdict } from './pipeline'
+import { t } from './i18n'
 import { catchupFeed, catchupHold } from './catchup'
 import { REVIEW_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, skipsReview } from './chain'
 import type { ChainRun, ChainStep } from './chain'
@@ -67,7 +68,7 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
         const reason = specGapStop(c)
         // 寫入被別的對話蓋掉、放棄（saveChain 已寫過警告）：不說停下；紀錄沒停，下次重新整理會再試。
         if (await saveChain($, key, r => r ? paused(r, reason) : r, saveOpts)) {
-          await feedPush($, [{ at: s.at, text: `${c.name} 流程停下：${stopText(reason)}`, tone: 'warning', card: c.statusPath }])
+          await feedPush($, [{ at: s.at, text: t('autoChain.stopped', { name: c.name, why: stopText(reason) }), tone: 'warning', card: c.statusPath }])
           acted = true
         }
       }
@@ -140,9 +141,10 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     if (step.kind === 'stop') {
       if (!(await saveChain($, key, r => r ? paused(withoutMedium(r), step.reason, step.atCheck, step.resume) : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
       const why = causeText(step.reason)
-      await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${why}`, tone: 'error', card: c.statusPath }])
-      $.ui.toast(`${c.name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
-      notify($, `${c.name}：流程已暫停，${why}`)
+      await feedPush($, [{ at: s.at, text: t('autoChain.paused', { name: c.name, why }), tone: 'error', card: c.statusPath }])
+      const say = t('toast.chainPaused', { name: c.name, why })
+      $.ui.toast(say, { timeoutMs: 10_000 })
+      notify($, say)
     } else if (step.kind === 'pass') {
       const judged = step.skipped || step.unreviewed ? fresh?.head ?? c.git?.head : undefined
       // 免審查、未複審過關：判定的 HEAD 是檢查時的（不記的話過關後馬上算成有新 commit、又重新檢查）；跟現在的 HEAD 一樣才記得住它的分支。
@@ -153,12 +155,12 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
       const prPlan: AutoPrPlan | undefined = auto ? autoPrPlan({ ...c, pr }) : undefined
       // 額度煞車：要派推送前額度低於門檻就不派（流程照樣是過關），動態與提示寫原因。
       const low = prPlan && prPlan.kind !== 'skip' ? quotaLow(s.limits, (settings ?? await loadSettings($, options, preloaded)).chainQuotaStop, s.at) : ''
-      const plan: AutoPrPlan | undefined = low && prPlan ? { kind: 'skip', why: `${low}，沒有自動派推送；要推請按 ${prPlan.kind === 'open' ? '⇡ 開 PR' : '⇡ push'}` } : prPlan
+      const plan: AutoPrPlan | undefined = low && prPlan ? { kind: 'skip', why: t('autoChain.quotaNoPush', { low, button: prPlan.kind === 'open' ? t('word.openPrButton') : t('word.pushButton') }) } : prPlan
       const words = passWords(c.name, plan, step.skipped ? 'skipped' : step.unreviewed ? 'unreviewed' : 'reviewed')
       const risky = step.needsHuman ? stopText(step.needsHuman) : ''
-      const text = risky ? `${c.name} ${risky}` : words.feed
+      const text = risky ? t('feed.named', { name: c.name, text: risky }) : words.feed
       await feedPush($, [{ at: s.at, text, tone: risky ? 'warning' : 'success', card: c.statusPath }])
-      const say = risky ? `${c.name}：${risky}` : words.say
+      const say = risky ? t('toast.named', { name: c.name, text: risky }) : words.say
       $.ui.toast(say, { timeoutMs: 10_000 })
       notify($, say)
       if (plan) await autoPublish($, options, { ...c, pr }, plan)
@@ -189,9 +191,9 @@ async function releaseStacked($: any, options: PluginOptions, c: Case, key: stri
   if (!(await saveChain($, key, clear))) return false
   const low = quotaLow(s.limits, (await loadSettings($, options, preloaded)).chainQuotaStop, s.at)
   if (low) {
-    const why = `不用再等原卡，但${low}，沒有自動派實作；要派請按 g`
-    await feedPush($, [{ at: s.at, text: `${c.name} ${why}`, tone: 'warning', card: c.statusPath }])
-    $.ui.toast(`${c.name}：${why}`, { timeoutMs: 10_000 })
+    const why = t('autoChain.stackQuota', { low })
+    await feedPush($, [{ at: s.at, text: t('feed.named', { name: c.name, text: why }), tone: 'warning', card: c.statusPath }])
+    $.ui.toast(t('toast.named', { name: c.name, text: why }), { timeoutMs: 10_000 })
     return true
   }
   await dispatchAfterStack($, options, c)
@@ -207,8 +209,8 @@ async function releaseStacked($: any, options: PluginOptions, c: Case, key: stri
 export async function pauseUnsentReviewFix($: any, c: Case, mine: string, at: number): Promise<boolean> {
   if (isAgentQueued(c.statusPath) || unconfirmed.has(c.statusPath) || await starting($, c.statusPath)) return false
   if (!(await saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, STOP.reviewFixNotSent)))) return false
-  await feedPush($, [{ at, text: `${c.name} 流程已暫停：${REVIEW_FIX_NOT_SENT}`, tone: 'error', card: c.statusPath }])
-  notify($, `${c.name}：流程已暫停，${REVIEW_FIX_NOT_SENT}`)
+  await feedPush($, [{ at, text: t('autoChain.paused', { name: c.name, why: REVIEW_FIX_NOT_SENT }), tone: 'error', card: c.statusPath }])
+  notify($, t('toast.chainPaused', { name: c.name, why: REVIEW_FIX_NOT_SENT }))
   return true
 }
 
@@ -233,14 +235,14 @@ async function fixPickedMedium($: any, options: PluginOptions, c: Case, run: Cha
   if (head !== c.git?.head) { await saveChain($, key, clear); return false }
   if (markRefusalStop(await worktreeMark($, c.root), own)) return false
   if (!(await saveChain($, key, clear))) return false
-  await feedPush($, [{ at, text: `${c.name} 你選了修掉審查 MEDIUM，自動派修正`, tone: 'suggestion', card: c.statusPath }])
+  await feedPush($, [{ at, text: t('autoChain.mediumFix', { name: c.name }), tone: 'suggestion', card: c.statusPath }])
   const fix: FixReason = { from: 'medium', round: fixTotalOf(run) + 1, ...(run.mediumFixSecurity ? { security: true } : {}) }
   if (await dispatch($, options, { ...c, state: 'ready' }, 'continue', { fix, auto: true, resumed: true })) {
     await saveChain($, key, r => r ? { ...r, mediumFixed: true } : r)
     return true
   }
   if (unconfirmed.has(c.statusPath)) return false
-  if (await saveChain($, key, r => r && !r.stopped ? paused(r, STOP.mediumFixNotSent) : r)) await feedPush($, [{ at, text: `${c.name} 流程已暫停：${stopText(STOP.mediumFixNotSent)}`, tone: 'error', card: c.statusPath }])
+  if (await saveChain($, key, r => r && !r.stopped ? paused(r, STOP.mediumFixNotSent) : r)) await feedPush($, [{ at, text: t('autoChain.paused', { name: c.name, why: stopText(STOP.mediumFixNotSent) }), tone: 'error', card: c.statusPath }])
   return false
 }
 
@@ -265,9 +267,10 @@ async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRu
     const stopped = await saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, hold))
     if (!stopped) return true
     const why = stopText(hold)
-    await feedPush($, [{ at, text: `${c.name} 流程已暫停：${why}`, tone: 'error', card: c.statusPath }])
-    $.ui.toast(`${c.name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
-    notify($, `${c.name}：流程已暫停，${why}`)
+    await feedPush($, [{ at, text: t('autoChain.paused', { name: c.name, why }), tone: 'error', card: c.statusPath }])
+    const say = t('toast.chainPaused', { name: c.name, why })
+    $.ui.toast(say, { timeoutMs: 10_000 })
+    notify($, say)
     return true
   }
   await feedPush($, [{ at, text: catchupFeed(c.name, conflict.into, conflict.files.length), tone: 'suggestion', card: c.statusPath }])
@@ -275,8 +278,8 @@ async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRu
   if (!sent && !isAgentQueued(c.statusPath)) {
     if (await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, STOP.catchupNotSent) : r)) {
       const why = stopText(STOP.catchupNotSent)
-      await feedPush($, [{ at, text: `${c.name} 流程已暫停：${why}`, tone: 'error', card: c.statusPath }])
-      notify($, `${c.name}：流程已暫停，${why}`)
+      await feedPush($, [{ at, text: t('autoChain.paused', { name: c.name, why }), tone: 'error', card: c.statusPath }])
+      notify($, t('toast.chainPaused', { name: c.name, why }))
     }
   }
   return true

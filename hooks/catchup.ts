@@ -2,6 +2,7 @@
 // 純函式：試合併輸出的解析、不自動派的原因、面板文字。偵測（fetch＋merge-tree）在 probes.ts，派工在 register.tsx。
 import type { Case } from '../types'
 import { quotaLowOf } from './quota-words'
+import { t } from './i18n'
 
 /**
  * `git merge-tree --write-tree --name-only --no-messages <基準> HEAD` 的結果：exit 0 沒衝突（空清單），
@@ -21,29 +22,29 @@ export function parseMergeTree(exitCode: number | null | undefined, stdout: stri
  * 流程已暫停、高風險改動、worktree 有未提交的改動、這個 HEAD 已經自動試過一次。
  */
 export function catchupHold(c: Pick<Case, 'manual' | 'chain' | 'conflict'>): string {
-  if (c.manual) return '手動任務'
+  if (c.manual) return t('catchup.manual')
   const chain = c.chain
-  if (!chain) return '沒有自動流程'
-  if (chain.foreign) return '流程是別的對話開的'
+  if (!chain) return t('catchup.noChain')
+  if (chain.foreign) return t('catchup.foreign')
   // 額度煞車擋下的：合併段沒有 g 可按，括號只寫額度原因。
-  if (chain.stopped) return quotaLowOf(chain) || '流程已暫停'
+  if (chain.stopped) return quotaLowOf(chain) || t('catchup.paused')
   // 沒有流程紀錄、只是卡片上有審查結論（自審）的，或流程還沒過關的：不是自動流程走到合併段的。
-  if (!chain.passed) return '沒有自動流程'
-  if (chain.needsHuman) return '高風險改動'
-  if (c.conflict?.dirty) return `worktree 有未提交的改動（${c.conflict.dirty} 個檔）`
-  if (chain.catchupTried) return '自動合併試過一次沒解開'
+  if (!chain.passed) return t('catchup.noChain')
+  if (chain.needsHuman) return t('catchup.highRisk')
+  if (c.conflict?.dirty) return t('catchup.dirty', { n: c.conflict.dirty })
+  if (chain.catchupTried) return t('catchup.tried')
   return ''
 }
 
 /** 合併段的註記：有衝突。 */
-export const conflictNote = (into: string) => `與 ${into} 有衝突`
+export const conflictNote = (into: string): string => t('catchup.conflict', { into })
 /** 合併段的註記：解衝突 Agent 在跑。 */
-export const CATCHUP_ACTIVE = '合併基準分支、解衝突中'
+export const CATCHUP_ACTIVE = t('catchup.active')
 /** 解衝突 Agent 在跑時「輪到你」那句。 */
-export const CATCHUP_RUNNING = 'Agent 在合併基準分支、解衝突（l 看輸出）'
+export const CATCHUP_RUNNING = t('catchup.running')
 /** 有衝突、會自動派。 */
-export const catchupAutoTurn = (into: string) => `與 ${into} 有衝突，接著自動派 Agent 合併 ${into}、解衝突`
+export const catchupAutoTurn = (into: string): string => t('catchup.autoTurn', { into })
 /** 有衝突、不自動派：在對話處理，括號寫原因。 */
-export const catchupHandTurn = (into: string, why: string) => `與 ${into} 有衝突：在對話把 ${into} 合併進來、解衝突並 commit（${why}）`
+export const catchupHandTurn = (into: string, why: string): string => t('catchup.handTurn', { into, why })
 /** 自動派解衝突時的動態。 */
-export const catchupFeed = (name: string, into: string, files: number) => `${name} 與 ${into} 有衝突（${files} 個檔），自動派 Agent 合併 ${into}、解衝突`
+export const catchupFeed = (name: string, into: string, files: number): string => t('catchup.feed', { name, into, files })

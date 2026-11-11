@@ -2389,6 +2389,8 @@ class CardOrderingDocsTest(unittest.TestCase):
         for text in (self.ordering_item(), self.readme_shared_docs_section()):
             for part in ('功能卡不改 README', '功能說明段', '「## 規格」的目標或 Decisions', '待補文件'):
                 self.assertIn(part, text)
+            # i18n 動態與 toast AC-3：docs/REFERENCE.md 跟 README 一樣算功能說明段，兩處同一個寫法
+            self.assertIn('（docs/REFERENCE.md 算 README 的功能說明段）', text)
             # 審查 HIGH：鎖住「由發版一次補」，拿掉那句測試要紅
             self.assertRegex(text, r'發版[^。；]*一次補進去')
         self.assertIn('橫切重構', self.readme_shared_docs_section())

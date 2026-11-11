@@ -1,6 +1,7 @@
 // 0.9 起的純函式：派工二次確認、Agent 輸出、部署步驟、提醒、審查摘要、git 狀態。不碰磁碟。
 import type { Case, HistoryEntry } from '../types'
 import { plain, screenLines } from './text'
+import { t } from './i18n'
 
 /** 二次確認：同一個動作 3 秒內按第二次才執行。 */
 export const CONFIRM_MS = 3000
@@ -20,12 +21,12 @@ export type HeldReason = 'changed' | 'unapproved'
  * t 待確認一律列（確認規格就核准）；v、g 只在還沒核准時列（核准過按 v 直接跑、按 g 不多核准什麼）。
  */
 export function checkApprovalLine(armedKey: ApprovalKey | null, held: HeldReason | null, approved: boolean, verify: string): string | null {
-  if (armedKey === 't') return `核准這條（再按 t 之後自動執行）：${verify}`
+  if (armedKey === 't') return t('extras.approveT', { verify })
   if (approved) return null
-  if (armedKey === 'v') return `核准這條（再按 v 之後執行）：${verify}`
-  if (armedKey === 'g') return `核准這條（再按 g 之後派工，做完自動執行）：${verify}`
-  if (held === 'changed') return `改過的指令（按兩次 v 核准並執行）：${verify}`
-  return held === 'unapproved' ? `還沒核准的指令（按兩次 v 核准並執行）：${verify}` : null
+  if (armedKey === 'v') return t('extras.approveV', { verify })
+  if (armedKey === 'g') return t('extras.approveG', { verify })
+  if (held === 'changed') return t('extras.heldChanged', { verify })
+  return held === 'unapproved' ? t('extras.heldUnapproved', { verify }) : null
 }
 
 /** Agent 最近幾行有意義的輸出：清掉控制序列、略過雜訊與連續重複。 */
@@ -140,7 +141,7 @@ function undatedItem(line: string): string | null {
 export const dueReminders = (list: Reminder[] | undefined) => (list ?? []).filter(r => r.days !== null && r.days <= REMIND_DAYS)
 /** 面板列的提醒：到期的有日期提醒，再接全部沒日期的。 */
 export const paneReminders = (list: Reminder[] | undefined) => [...dueReminders(list), ...(list ?? []).filter(r => r.days === null)]
-export const reminderWhen = (r: Reminder) => r.days === null ? '' : r.days < 0 ? `已過 ${-r.days} 天` : r.days === 0 ? '今天' : `還有 ${r.days} 天`
+export const reminderWhen = (r: Reminder) => r.days === null ? '' : r.days < 0 ? t('extras.overdue', { n: -r.days }) : r.days === 0 ? t('time.today') : t('extras.daysLeft', { n: r.days })
 
 /** 審查檔裡的 CRITICAL、HIGH 前幾條：「- [HIGH][稽核] 檔案:行 — 說明」→「HIGH 稽核 檔案:行 — 說明」。 */
 export function reviewTop(text: string | null, n = 3): string[] {
@@ -161,9 +162,9 @@ export function preflightLine(text: string | null): string | null {
   if (!text) return null
   const first = plain(text.replace(/\r\n?/g, '\n').split('\n')[0]!).trim()
   const ok = first.match(/^前置：成功，候選 (\d+) 條，採用 (\d+) 條$/)
-  if (ok) return `成功，候選 ${ok[1]} 條，採用 ${ok[2]} 條`
+  if (ok) return t('extras.preflightOk', { found: ok[1]!, used: ok[2]! })
   const fail = first.match(/^前置：失敗（(.+)）$/)
-  return fail ? `失敗（${fail[1]}）` : null
+  return fail ? t('extras.preflightFailed', { why: fail[1]! }) : null
 }
 
 /**
@@ -215,7 +216,7 @@ export function mergedAtHead(c: Pick<Case, 'git' | 'pr'>): boolean {
 }
 /** merged：見 mergedAtHead；成立時沒有 upstream 不算未 push。 */
 export function gitLine(g: GitState, merged = false): string {
-  const noUpstream = merged ? '已合併，遠端分支已刪除' : '未 push（沒有遠端分支）'
-  const parts = [g.upstream === false ? noUpstream : '', g.ahead ? `領先 ${g.ahead}` : '', g.behind ? `落後 ${g.behind}` : '', g.changed ? `未提交 ${g.changed} 檔` : '', g.untracked ? `未追蹤 ${g.untracked} 檔` : ''].filter(Boolean)
-  return parts.length ? parts.join(' · ') : '與遠端一致、無未提交變更'
+  const noUpstream = merged ? t('extras.mergedNoRemote') : t('extras.notPushed')
+  const parts = [g.upstream === false ? noUpstream : '', g.ahead ? t('extras.ahead', { n: g.ahead }) : '', g.behind ? t('extras.behind', { n: g.behind }) : '', g.changed ? t('extras.uncommitted', { n: g.changed }) : '', g.untracked ? t('extras.untracked', { n: g.untracked }) : ''].filter(Boolean)
+  return parts.length ? parts.join(' · ') : t('extras.inSync')
 }
