@@ -4,8 +4,8 @@
 
 ## 追加
 - 規格：實作跟「### 實作計畫」寫的做法有出入（連正規式多錨一個 `$`、改成每次注入這類小差異都算）就在 History 寫明改了什麼、為什麼，不要寫「無偏離」；需求中途改了先改「## 規格」並在 Decisions 記一筆
-- 測試：改 README、docs/WORKFLOW.md 或 skills/*/SKILL.md 的字句前，先 grep skills/card/tests 與 scripts/tests 有沒有斷言那段文字的 Python 測試一起改，並跑 `python3 -m unittest discover -s skills/card/tests`（CI 會跑，`claude plugin test` 不含）；AC 的測試放在 Python 那邊時，卡片「檢查」欄也要串上它
-- 重複：規則搬到一處（例如某份 skill）後，README 指令表、WORKFLOW 等其他地方只寫用途並連過去，不要再寫摘要版的規則
+- 測試：改 README（docs/REFERENCE.md 算 README 的功能說明段）、docs/WORKFLOW.md 或 skills/*/SKILL.md 的字句前，先 grep skills/card/tests 與 scripts/tests 有沒有斷言那段文字的 Python 測試一起改，並跑 `python3 -m unittest discover -s skills/card/tests`（CI 會跑，`claude plugin test` 不含）；AC 的測試放在 Python 那邊時，卡片「檢查」欄也要串上它
+- 重複：規則搬到一處（例如某份 skill）後，README（docs/REFERENCE.md 算 README 的功能說明段，指令表在那裡）、WORKFLOW 等其他地方只寫用途並連過去，不要再寫摘要版的規則
 - 註解：改了測試斷言或程式行為，同一支的 docstring／註解（AC 編號、步驟數、函式說明的位置）一起對照改；沿用別張卡的測試時，AC 編號要標是哪張卡的
 - 邏輯：從登錄表挑「第一張」符合條件的卡當依據時，想一下新、舊兩張同時符合（例如上一版沒歸檔的「已發版」卡）會不會擋住或蓋掉新的；要最新的就照版號或時間挑，記下的狀態不要倒退
 - 並行：重新整理很慢（claude agents、git／PR 探測、派工），要讀的檔案（卡片 worktree 裡的檔）可能在這輪跑到一半就被同回合的指令（archive --cleanup）刪掉；判斷用的資料在組快照時一起讀，不要排在重新整理尾端
@@ -37,7 +37,7 @@
 - 狀態：新增一個記在這個對話的暫時狀態（atom、鎖、hold）而且會改「輪到你」時，列出它該失效的每條路徑（別的對話派工或接手流程、Agent 已在跑、卡片改成等你、/clear 開新對話），清不到的就讓它排在即時狀態（Agent 執行中、等你、等回覆、等批准）之後，不要只在自己這條派工路徑清掉；補一支「別的對話派出後」的測試
 - 規格：提示叫使用者在送出前手改一段文字（例如「要改版號就改這行」）時，讀那段文字的 skill 或解析端要寫明改過的內容怎麼處理（照用、或改成出題），並有測試鎖住；不然對話會照預設做出使用者沒要的事
 - 測試：測 toast／提示要走到程式真正跳出它的那一行，不要只比對常數字面；狀態難在 fixture 造出來時，把判斷抽成回傳句子的純函式，餵那個狀態斷言整句，跳 toast 的那行只負責呼叫它
-- 範圍：規格目標或 Decisions 標「待補文件：」的說明是留給發版「補文件」那步一次補的，功能卡實作時不要先改 README／WORKFLOW 的功能說明段（實作計畫沒列的檔也不改）；真的先補了，在 Decisions 記一筆並註明發版時這張略過，免得發版重補
+- 範圍：規格目標或 Decisions 標「待補文件：」的說明是留給發版「補文件」那步一次補的，功能卡實作時不要先改 README／WORKFLOW 的功能說明段（docs/REFERENCE.md 算 README 的功能說明段，實作計畫沒列的檔也不改）；真的先補了，在 Decisions 記一筆並註明發版時這張略過，免得發版重補
 - 文字：有條件地省略一句話時，同一行裡依附那句的字（例如「（含預設）」）也要一起省略；逐個情境把省略後的整行唸一遍，確認字面都成立
 - 風格：改寫說明句時不在括號裡再套一層括號，也不要順手換掉原本的分隔符號（「，」「、」「；」照原句）
 - 契約：改了卡片或檔案的寫入格式（例如 History 行加上時間、改某句固定文字）時，grep 專案裡讀這個格式的正規式與模仿腳本效果的測試替身（例如 hooks/touch.ts 的 SPEC_OK_HISTORY、tests 裡的 confirmCard），讀寫兩端一起改；測試替身要寫跟真腳本一樣的新格式，再補一支新格式的斷言，不然整套照舊格式跑永遠綠

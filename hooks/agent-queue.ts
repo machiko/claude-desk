@@ -20,12 +20,13 @@ import type { StopCause, StopReason } from './stop-reason'
 import { trustedChecks } from './approve-check'
 import { dispatch, launchingCount, notify, restage, verifyPending } from './register'
 import { pauseUnsentReviewFix } from './auto-chain'
+import { t } from './i18n'
 
 /** 畫面用：排隊中的卡片路徑，依序。 */
 const agentQueueAtom = atom({ plugin: 'desk', key: 'agentQueue' } as const, [])
 let agentQueue: readonly QueueEntry[] = []
 
-const CANCELLED = '派工排隊已取消'
+const CANCELLED = t('agentQueue.cancelled')
 
 /** 這件在派工隊伍的第幾位（1 起）；不在隊伍是 0。 */
 export const queuePosition = (statusPath: string): number => agentQueue.findIndex(e => e.statusPath === statusPath) + 1
@@ -33,7 +34,7 @@ export const isAgentQueued = (statusPath: string): boolean => queuePosition(stat
 export const hasAgentQueue = (): boolean => agentQueue.length > 0
 
 /** 隊伍裡這筆派的是什麼：修正第幾輪、資安審查，其他照派工種類。 */
-const labelOf = (kind: DispatchKind, opts: QueueOpts) => opts.fix ? `修正第 ${opts.fix.round} 輪` : opts.security ? '資安驗收' : KIND_LABEL[kind]
+export const labelOf = (kind: DispatchKind, opts: QueueOpts): string => opts.fix ? t('word.fixRound', { round: opts.fix.round }) : opts.security ? t('word.securityReview') : KIND_LABEL[kind]
 
 async function setQueue($: any, next: readonly QueueEntry[]) {
   agentQueue = next
@@ -54,9 +55,9 @@ export async function enqueueDispatch($: any, c: Case, kind: DispatchKind, opts:
   await restage($, c.statusPath)
   const at = queuePosition(c.statusPath)
   const label = labelOf(kind, opts)
-  const text = opts.auto && !opts.resumed ? `${c.name} 自動派${label}排隊中（第 ${at} 位）` : `${c.name} 派${label}排隊中（第 ${at} 位）：同時執行的 Agent 已達上限 ${max} 個`
+  const text = opts.auto && !opts.resumed ? t('agentQueue.queuedAuto', { name: c.name, label, n: at }) : t('agentQueue.queued', { name: c.name, label, n: at, max })
   await feedPush($, [{ at: now, text, tone: 'suggestion', card: c.statusPath }])
-  if (!opts.auto || opts.resumed) $.ui.toast(`${c.name}：同時執行的 Agent 已達上限 ${max} 個，已排隊（第 ${at} 位）`, { timeoutMs: 6000 })
+  if (!opts.auto || opts.resumed) $.ui.toast(t('agentQueue.queuedToast', { name: c.name, max, n: at }), { timeoutMs: 6000 })
   return true
 }
 
@@ -93,11 +94,12 @@ const pausesChain = (entry: Pick<QueueEntry, 'kind' | 'opts'>) => !!entry.opts.a
 export async function notSent($: any, c: Case | undefined, entry: Pick<QueueEntry, 'statusPath' | 'kind' | 'opts'>, cause: StopCause, now: number, mine: string, alert = false, resume?: QuotaResume) {
   const name = c?.name ?? entry.statusPath
   const why = causeText(cause)
-  await feedPush($, [{ at: now, text: `${name} 排隊的${labelOf(entry.kind, entry.opts)}沒有派出：${why}`, tone: 'warning', card: entry.statusPath }])
+  await feedPush($, [{ at: now, text: t('agentQueue.notSent', { name, label: labelOf(entry.kind, entry.opts), why }), tone: 'warning', card: entry.statusPath }])
   if (!pausesChain(entry) || !c) return
   if (!(await pauseOwnChain($, c, mine, cause, resume)) || !alert) return
-  $.ui.toast(`${name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
-  notify($, `${name}：流程已暫停，${why}`)
+  const say = t('toast.chainPaused', { name, why })
+  $.ui.toast(say, { timeoutMs: 10_000 })
+  notify($, say)
 }
 
 /** 移出隊伍、說為什麼沒派（見 notSent），重算那件的六段。 */
@@ -119,7 +121,7 @@ async function foreignChanges($: any, c: Case, entry: QueueEntry): Promise<StopC
 /** 手動排的繼續：排隊時核准的完成檢查跟卡片現在的不同，就不替你派。 */
 function approvalChanged(c: Case, entry: QueueEntry, trusted: Record<string, string>): string {
   if (entry.kind !== 'continue' || entry.opts.auto || !c.verify) return ''
-  return trusted[c.statusPath] === c.verify ? '' : '測試指令在排隊期間改了，要重新核准：按兩次 g 再派一次'
+  return trusted[c.statusPath] === c.verify ? '' : t('agentQueue.approvalChanged')
 }
 
 /** 自動排的開 PR 排隊期間 PR 已經開了（例如你按了「⇡ 開 PR」）：改成只 push，不再要求開第二個。 */
@@ -133,7 +135,7 @@ function queuedOpts(c: Case, entry: QueueEntry): QueueEntry['opts'] {
  */
 function queuedHold(entry: QueueEntry, c: Case | undefined, hold: StopReason, s: Snapshot, threshold: number): StopCause {
   // 推送不暫停流程（不寫進流程紀錄），原因只進動態，照舊是句子。
-  if (entry.kind === 'publish') return `${quotaLow(s.limits, threshold, s.at)}，要推請按 ${c?.pr?.state === 'OPEN' ? '⇡ push' : '⇡ 開 PR'}`
+  if (entry.kind === 'publish') return t('agentQueue.quotaPush', { low: quotaLow(s.limits, threshold, s.at), button: c?.pr?.state === 'OPEN' ? t('word.pushButton') : t('word.openPrButton') })
   // 會停下流程的一律存代碼：hold 是呼叫端算好的審查段煞車，解衝突換成合併段那種（同一份額度，一定也低於門檻）。
   return entry.kind === 'catchup' ? quotaHold(s.limits, threshold, s.at, true) ?? hold : hold
 }
@@ -157,7 +159,7 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
   for (const entry of [...agentQueue]) {
     if (max > 0 && running >= max) break
     const c = s.cases.find(x => x.statusPath === entry.statusPath)
-    const why = !c ? '任務已不在登錄表' : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
+    const why = !c ? t('agentQueue.gone') : queueRefusal(c, entry, chains[normalizeRoot(c.root)], mine) || approvalChanged(c, entry, trusted)
     if (why) { await drop($, entry, c, why, s.at, mine); continue }
     // 推送不在流程裡、沒派出流程仍是過關：原因不寫按 g 重開，改寫要推請按哪個鈕（跟過關時直接派被擋的說法一樣）。
     // 你按 g 接續的那筆（resumed）是手動派的：不看額度。
@@ -181,9 +183,9 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
 }
 
 /** 取消自動流程排的派工：流程跟著停下，說清楚要按 g 重開。 */
-const CANCELLED_PAUSED = '已取消排隊，流程已暫停：按 g 重開'
+const CANCELLED_PAUSED = t('agentQueue.unqueuedPaused')
 /** 取消自動排的解衝突：合併段沒有 g 可按，照解衝突被擋下時的說法，在對話處理。 */
-const CANCELLED_PAUSED_CATCHUP = '已取消排隊，流程已暫停：在對話合併基準分支、解衝突'
+const CANCELLED_PAUSED_CATCHUP = t('agentQueue.unqueuedPausedCatchup')
 
 /** 面板的「■ 取消排隊」：移出隊伍、寫動態；自動排的（推送除外）把這個對話的流程停下，提示與動態說流程已暫停。 */
 export async function cancelQueued($: any, c: Case) {
@@ -192,9 +194,9 @@ export async function cancelQueued($: any, c: Case) {
   await setQueue($, agentQueue.filter(e => e !== entry))
   // 流程是別的對話的（pauseOwnChain 不動它）就不說暫停。
   const paused = pausesChain(entry) && await pauseOwnChain($, c, await me($), CANCELLED)
-  const said = !paused ? '已取消排隊' : entry.kind === 'catchup' ? CANCELLED_PAUSED_CATCHUP : CANCELLED_PAUSED
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} ${said}`, tone: 'suggestion', card: c.statusPath }])
-  $.ui.toast(`${c.name}：${said}`)
+  const said = !paused ? t('agentQueue.unqueued') : entry.kind === 'catchup' ? CANCELLED_PAUSED_CATCHUP : CANCELLED_PAUSED
+  await feedPush($, [{ at: await $.clock.now(), text: t('feed.named', { name: c.name, text: said }), tone: 'suggestion', card: c.statusPath }])
+  $.ui.toast(t('toast.named', { name: c.name, text: said }))
   await restage($, c.statusPath)
 }
 

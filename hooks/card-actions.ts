@@ -27,6 +27,7 @@ import { readSent } from './prompt-sync'
 import { trustCheck } from './approve-check'
 import { STACK_AUTO_NEXT } from './stack'
 import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
+import { t } from './i18n'
 
 // 示範任務那句搬到 theme.ts；呼叫端與測試照舊從這裡匯入也行。
 export { DEMO_ONLY } from './theme'
@@ -50,11 +51,11 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   if (revOf(run) !== (c.chain?.rev ?? 0)) return chainChanged($, c)
   const resume = run?.resume
   if (!run?.stopped || !resume || resume.dispatch !== 'review') return null
-  const what = resume.security ? '資安驗收' : '驗收'
+  const what = resume.security ? t('word.securityReview') : t('kindLabel.review')
   const refused = refusalOf(c, 'review')
   const foreign = (refused || tutorial) ? '' : markRefusal(await worktreeMark($, c.root), (await loadJobs($))[key])
   if (refused || foreign) {
-    const text = refused ? refusalText(c.name, what, refused) : `${c.name}：無法${what}（${foreign}）`
+    const text = refused ? refusalText(c.name, what, refused) : t('toast.cantDispatch', { name: c.name, what, why: foreign })
     $.ui.toast(text, { timeoutMs: 10_000 })
     return text
   }
@@ -73,42 +74,49 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
   // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗；排進隊伍 dispatch 回 true）：流程照原本的原因停著，下次 g 再來。
   if (!sent) {
     await saveChain($, key, r => r ? paused(r, reason, false, resume) : r)
-    const text = `${c.name}：${what}沒派出（啟動中或啟動失敗）；流程照原因停著，稍後再按 g`
+    const text = t('cardActions.resumeNotSent', { name: c.name, what })
     // 面板按 g 時沒有地方回這句：跟拒絕一樣也跳提示（啟動失敗本身另有一則「無法派…」）。
     $.ui.toast(text, { timeoutMs: 10_000 })
     return text
   }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 額度煞車後按 g 重開：直接派${what}，不多派實作`, tone: 'suggestion', card: c.statusPath }])
-  return isAgentQueued(c.statusPath) ? `${c.name}：額度煞車後接續，${what}排隊中。` : `${c.name}：額度煞車後接續，已派${what}。`
+  await feedPush($, [{ at: await $.clock.now(), text: t('cardActions.resumeFeed', { name: c.name, what }), tone: 'suggestion', card: c.statusPath }])
+  return isAgentQueued(c.statusPath) ? t('cardActions.resumeQueued', { name: c.name, what }) : t('cardActions.resumeSent', { name: c.name, what })
 }
 
 /** 接續時流程紀錄已被別的對話改過：toast 並回給 /desk go 同一句。 */
 function chainChanged($: any, c: Case): string {
-  const text = `${c.name}：${CHAIN_CHANGED}`
+  const text = t('toast.named', { name: c.name, text: CHAIN_CHANGED })
   $.ui.toast(text, { timeoutMs: 10_000 })
   return text
 }
+
+/** 回覆對話框的兩個選項。 */
+const REPLY_NEXT = t('cardActions.replyNext')
+const REPLY_CANCEL = t('cardActions.replyCancel')
+/** 選「照卡片的下一步繼續」時送給 Agent 的回覆：給 Agent 的提示，不跟選項字一起搬進字串目錄。 */
+const nextStepAnswer = (next: string) => `照卡片的下一步繼續：${next || '依卡片'}`
 
 /** 回覆停下來問的 Agent：先問要回什麼（可打自己的字），再 resume 那個 session。 */
 export async function reply($: any, options: PluginOptions, c: Case, text?: string) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
   const refused = refusalOf(c, 'reply')
-  if (refused) { $.ui.toast(refusalText(c.name, '回覆', refused)); return }
+  if (refused) { $.ui.toast(refusalText(c.name, t('kindLabel.reply'), refused)); return }
   let answer = text?.trim() ?? ''
   if (!answer) {
     // 停在提問（status waiting）的 Agent 重新整理時不讀輸出：回覆這時才讀它最後一句。
     const asked = c.agent?.last || (tutorial ? '' : await lastLine($, c.agent?.id))
-    const picked = await $.ui.ask(`${asked ? `Agent 提問：${asked}` : '讀不到 Agent 的提問，按 l 看輸出'}\n要回覆什麼？請選「照卡片的下一步繼續」，或在「其他」輸入回覆。`, { header: `${c.name} 回覆`, options: ['照卡片的下一步繼續', '取消'] }).catch(() => '')
-    if (!picked || picked === '取消') return
+    const question = t('cardActions.replyQuestion', { asked: asked ? t('cardActions.replyAsked', { asked }) : t('cardActions.replyNoAsk'), next: REPLY_NEXT })
+    const picked = await $.ui.ask(question, { header: t('cardActions.replyHeader', { name: c.name }), options: [REPLY_NEXT, REPLY_CANCEL] }).catch(() => '')
+    if (!picked || picked === REPLY_CANCEL) return
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：與派工同一條規則，不把佔位文字原樣送給 Agent。
-    answer = picked !== '照卡片的下一步繼續' ? picked : isPlaceholder(c.next) ? PLAN_STEP : `照卡片的下一步繼續：${c.next || '依卡片'}`
+    answer = picked !== REPLY_NEXT ? picked : isPlaceholder(c.next) ? PLAN_STEP : nextStepAnswer(c.next)
   }
   // 不先把上一次派工標成已回覆：派出成功時 dispatch 會換上新的那筆；派工失敗時要留著，Agent 才仍算在等你、可以再回覆。
   await dispatch($, options, c, 'reply', { text: answer })
 }
 
 /** 教學不派真的 Agent：合併照教學說的按 t。 */
-const TUTORIAL_PUBLISH = '教學不會真的 push：照教學的指示按 t 合併'
+const TUTORIAL_PUBLISH = t('cardActions.tutorialPublish')
 
 /** 開 PR 要推送 Agent 做的那句：對基準分支（baseRefs 第一個：PR 目標、卡片基準欄、最新 release 線…）開 PR，做法依 origin（或專案 `pr.open`）。 */
 async function openPrText($: any, options: PluginOptions, c: Case): Promise<string> {
@@ -120,7 +128,7 @@ async function openPrText($: any, options: PluginOptions, c: Case): Promise<stri
 /** 合併段的「⇡ 開 PR」（按兩次確認後）：派推送 Agent push 分支並對基準分支開 PR；desk 自己不跑 git push、gh。 */
 export async function publishPr($: any, options: PluginOptions, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (tutorial) { $.ui.toast(`${c.name}：${TUTORIAL_PUBLISH}`); return }
+  if (tutorial) { $.ui.toast(t('toast.named', { name: c.name, text: TUTORIAL_PUBLISH })); return }
   await dispatch($, options, c, 'publish', { text: await openPrText($, options, c) })
 }
 
@@ -137,9 +145,9 @@ export async function autoPublish($: any, options: PluginOptions, c: Case, plan:
 /** 合併段 PR 已開後的「⇡ push」（按兩次確認後）：派推送 Agent 只 push、不開新 PR。派出去了、又有未提交的檔案時提醒只會推已 commit 的。 */
 export async function publishPush($: any, options: PluginOptions, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (tutorial) { $.ui.toast(`${c.name}：${TUTORIAL_PUBLISH}`); return }
+  if (tutorial) { $.ui.toast(t('toast.named', { name: c.name, text: TUTORIAL_PUBLISH })); return }
   const sent = await dispatch($, options, c, 'publish', { text: pushRequest(c.git?.branch ?? '分支', c.pr?.id) })
-  if (sent && c.gitState?.changed) $.ui.toast(`${c.name}：有 ${c.gitState.changed} 檔未提交，只會 push 已 commit 的`)
+  if (sent && c.gitState?.changed) $.ui.toast(t('cardActions.uncommitted', { name: c.name, n: c.gitState.changed }))
 }
 
 /** 輸入框裡還沒送出的字；讀不到（沒有輸入框、讀取失敗）當成空的。 */
@@ -154,9 +162,9 @@ async function promptDraft($: any): Promise<string> {
  */
 async function decisionFill($: any, name: string, text: string): Promise<{ input: { text: string; mode: string }; how: string }> {
   const draft = await promptDraft($)
-  if (!draft.trim()) return { input: { text, mode: 'replace' }, how: '已填入' }
-  if (decisionNames(draft).includes(name)) return { input: { text: withDecision(draft, name, text), mode: 'replace' }, how: '已換成新的選擇' }
-  return { input: { text: draft.endsWith('\n') ? text : `\n${text}`, mode: 'append' }, how: '已接在輸入框原本的字後面' }
+  if (!draft.trim()) return { input: { text, mode: 'replace' }, how: t('cardActions.fillNew') }
+  if (decisionNames(draft).includes(name)) return { input: { text: withDecision(draft, name, text), mode: 'replace' }, how: t('cardActions.fillReplaced') }
+  return { input: { text: draft.endsWith('\n') ? text : `\n${text}`, mode: 'append' }, how: t('cardActions.fillAppended') }
 }
 
 /**
@@ -169,8 +177,8 @@ export function decisionRefusal(
   sent: Readonly<Record<string, SentRecord>>,
 ): string | null {
   if (c.demo) return DEMO_ONLY
-  if (!allPicked(parseDecisions(c.ask), picks)) return `${c.name}：請先完成每個決策的選擇（點選項或按選項字母；多題時用點的）`
-  if (sentState(sent, c) === 'waiting') return `${c.name}：決策已送出，等對話寫回卡片；這一回合結束沒寫回會再提示（可按 o 自己改「等你」）`
+  if (!allPicked(parseDecisions(c.ask), picks)) return t('cardActions.pickAll', { name: c.name })
+  if (sentState(sent, c) === 'waiting') return t('cardActions.sentWaiting', { name: c.name })
   return null
 }
 
@@ -184,8 +192,8 @@ export async function fillDecision($: any, c: Case) {
   const text = decisionPrompt(c.name, answer)
   const { input, how } = await decisionFill($, c.name, text)
   const filled = await $.prompt.fill(input).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) { $.ui.toast(`${c.name}：輸入框無法預填，請直接輸入${text}`); return }
-  $.ui.toast(`${c.name}：決策${how}，按 Esc 回到輸入框再按 Enter 送出；此任務的卡片會一併附上`, { timeoutMs: 6000 })
+  if (!filled.isFilled) { $.ui.toast(t('cardActions.cantFillDecision', { name: c.name, text })); return }
+  $.ui.toast(t('cardActions.decisionFilled', { name: c.name, how }), { timeoutMs: 6000 })
 }
 
 /**
@@ -202,12 +210,12 @@ export async function fillRelease($: any, c: Case) {
   const cases = ((await read($, snapshotAtom)) as Snapshot | null)?.cases.filter(canRelease) ?? []
   const text = releasePrompt(cases.length ? cases : [c], { confirmed: true })
   const filled = await $.prompt.fill({ text, mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) { $.ui.toast(`輸入框無法預填，請直接輸入：${text}`, { timeoutMs: 10_000 }); return }
+  if (!filled.isFilled) { $.ui.toast(t('cardActions.cantFillRelease', { text }), { timeoutMs: 10_000 }); return }
   $.ui.toast(RELEASE_FILLED, { timeoutMs: 6000 })
 }
 
-const RELEASE_DRAFT = '輸入框有未送出的字，先送出或清掉再按發版'
-export const RELEASE_RUNNING = '發版中，等它跑完'
+const RELEASE_DRAFT = t('cardActions.releaseDraft')
+export const RELEASE_RUNNING = t('cardActions.releaseRunning')
 /** 按發版時這件正在發版（releasingNow 讀到的步驟）：回傳要跳的提示，否則 null。 */
 export const releaseRefusal = (step: string | null): string | null => step ? RELEASE_RUNNING : null
 
@@ -220,11 +228,11 @@ async function releasingNow($: any, c: Case): Promise<string | null> {
   if (typeof text !== 'string') return c.releasing ?? null
   return releasingStep(plain(parseCard(text)?.['狀態'] ?? ''), typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, await $.clock.now())
 }
-const RELEASE_FILLED = '發版請求已填入（已確認照慣例版號），按 Esc 回輸入框再按 Enter；要改版號就在送出前改這行'
+const RELEASE_FILLED = t('cardActions.releaseFilled')
 
 export async function openCard($: any, c: Case) {
   if (c.demo) { $.ui.toast(DEMO_ONLY); return }
-  if (!(await openWith($, c.statusPath))) $.ui.toast(`${c.name}：無法開啟卡片（${c.statusPath}）；用編輯器自己開，或核對登錄表的路徑`)
+  if (!(await openWith($, c.statusPath))) $.ui.toast(t('cardActions.cantOpenCard', { name: c.name, path: c.statusPath }))
 }
 
 /** 上線確認：重讀卡片，關卡還是 release 才清成「無」並記 History；desk 只在這裡寫卡。 */
@@ -236,23 +244,23 @@ export async function confirmShipped($: any, c: Case) {
   const two = (n: number) => String(n).padStart(2, '0')
   const next = typeof text === 'string' ? confirmShip(text, `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`, `${two(d.getHours())}:${two(d.getMinutes())}`, c.tag ?? '', isReleaseLine(c) ? '等下一版開發' : `${ARCHIVE_WORD}：${CARD_CMD} archive ${slugOf(c)}`, (await loadSettings($, optionsRef!)).user) : null
   if (!next) {
-    $.ui.toast(`${c.name}：卡片關卡已不是 release，沒有改動`)
+    $.ui.toast(t('cardActions.shipUnchanged', { name: c.name }))
     await tellPanel($, now, '確認上線沒有改動：卡片關卡已不是 release', { name: c.name, skip: tutorial })
     void refresh($, optionsRef!); return
   }
   const failed = await $.fs.write(c.statusPath, next).then(() => null, (e: unknown) => errorText(e))
   if (failed !== null) {
-    const text = `無法確認上線（寫入卡片失敗：${failed}）；關卡沒清，修好檔案後再按 u`
-    $.ui.toast(`${c.name}：${text}`)
+    const text = t('cardActions.shipWriteFailed', { err: failed })
+    $.ui.toast(t('toast.named', { name: c.name, text }))
     await tellPanel($, now, text, { name: c.name, skip: tutorial })
     return
   }
-  const shipped = `已確認上線${c.tag ? `（${c.tag}）` : ''}`
-  await feedPush($, [{ at: now, text: `${c.name} ${shipped}`, tone: 'success', card: c.statusPath }])
+  const shipped = t('cardActions.shipped', { tag: c.tag ? t('word.paren', { text: c.tag }) : '' })
+  await feedPush($, [{ at: now, text: t('feed.named', { name: c.name, text: shipped }), tone: 'success', card: c.statusPath }])
   await tellPanel($, now, shipped, { name: c.name, skip: tutorial })
   // 一般的卡確認上線後接著歸檔（同 ⌫ 歸檔，不刪 worktree 與分支）；發版線與教學那件照舊只清關卡。
   if (archivesOnShip(c, !!tutorial)) { await archiveCase($, optionsRef!, c); return }
-  $.ui.toast(`${c.name}：已確認上線，release 關卡已清除`)
+  $.ui.toast(t('cardActions.shipCleared', { name: c.name }))
   void refresh($, optionsRef!)
 }
 
@@ -263,7 +271,7 @@ async function runCardScript($: any, options: PluginOptions, c: Case, cmd: 'spec
     .catch((e: unknown) => ({ exitCode: 1, stdout: '', stderr: String(e) }))
 }
 
-export const deployReminder = (n: number) => `部署步驟 ${n} 項：確認已搬到發版線卡片或 ## 提醒`
+export const deployReminder = (n: number): string => t('cardActions.deployReminder', { n })
 
 /**
  * 真實模式的歸檔：執行 /desk:card archive <slug> 用的同一支腳本；卡片與審查檔由腳本複製、登錄表由腳本改。
@@ -274,18 +282,19 @@ export async function archiveCase($: any, options: PluginOptions, c: Case) {
   const now = await $.clock.now()
   if (r.exitCode !== 0) {
     const why = reasonLine(r)
-    $.ui.toast(`${c.name}：歸檔失敗：${why}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: now, text: `${c.name} 歸檔失敗：${why}`, tone: 'error', card: c.statusPath }])
+    const failed = t('cardActions.archiveFailed', { why })
+    $.ui.toast(t('toast.named', { name: c.name, text: failed }), { timeoutMs: 10_000 })
+    await feedPush($, [{ at: now, text: t('feed.named', { name: c.name, text: failed }), tone: 'error', card: c.statusPath }])
     await tellPanel($, now, `歸檔失敗：${why}`, { name: c.name, skip: tutorial })
     void refreshAfterWrite($, options)
     return
   }
   const removeCmd = String(r.stdout ?? '').split(/\r?\n/).map((l: string) => l.trim()).find((l: string) => /\bworktree remove\b/.test(l))
   // 部署步驟跟著卡片歸檔：隨發版線發版的卡，步驟要搬到發版線卡片或登錄表才不會漏做（只提醒，不自動搬）。
-  const steps = c.deploySteps?.length ? `；${deployReminder(c.deploySteps.length)}` : ''
-  $.ui.toast(`${c.name}：已歸檔${steps}${removeCmd ? `；worktree 與分支確認後再自己刪：${removeCmd}` : ''}`, { timeoutMs: 15_000 })
+  const steps = c.deploySteps?.length ? t('word.semiNote', { text: deployReminder(c.deploySteps.length) }) : ''
+  $.ui.toast(t('cardActions.archived', { name: c.name, steps, remove: removeCmd ? t('cardActions.archivedRemove', { cmd: removeCmd }) : '' }), { timeoutMs: 15_000 })
   // 歸檔後這件離開工作桌：這筆不掛在它的卡上，換到哪件都看得到。
-  await feedPush($, [{ at: now, text: `${c.name} 已歸檔（worktree 與分支保留）`, tone: 'success' }])
+  await feedPush($, [{ at: now, text: t('cardActions.archivedKept', { name: c.name }), tone: 'success' }])
   await tellPanel($, now, '已歸檔（worktree 與分支保留）', { name: c.name, skip: tutorial })
   void refreshAfterWrite($, options)
 }
@@ -299,13 +308,14 @@ export async function confirmSpec($: any, options: PluginOptions, c: Case) {
   const now = await $.clock.now()
   if (r.exitCode !== 0) {
     const why = reasonLine(r)
-    $.ui.toast(`${c.name}：確認規格失敗：${why}`, { timeoutMs: 10_000 })
-    await feedPush($, [{ at: now, text: `${c.name} 確認規格失敗：${why}`, tone: 'error', card: c.statusPath }])
+    const failed = t('cardActions.specFailed', { why })
+    $.ui.toast(t('toast.named', { name: c.name, text: failed }), { timeoutMs: 10_000 })
+    await feedPush($, [{ at: now, text: t('feed.named', { name: c.name, text: failed }), tone: 'error', card: c.statusPath }])
     await tellPanel($, now, `確認規格失敗：${why}`, { name: c.name, skip: tutorial })
     void refreshAfterWrite($, options)
     return
   }
-  await feedPush($, [{ at: now, text: `${c.name} 規格已確認，可以派實作`, tone: 'success', card: c.statusPath }])
+  await feedPush($, [{ at: now, text: t('cardActions.specOk', { name: c.name }), tone: 'success', card: c.statusPath }])
   await tellPanel($, now, '規格已確認，可以派實作', { name: c.name, skip: tutorial })
   await refreshAfterWrite($, options)
   await dispatchAfterSpec($, options, c.statusPath)
@@ -326,10 +336,10 @@ export async function dispatchAfterSpec($: any, options: PluginOptions, statusPa
   if (refused && c.stackWait && !tutorial && !afterSpecRefusal({ ...c, stackWait: undefined })) {
     // 記號沒寫進去（流程紀錄一直被別的對話蓋掉）就不說會自動接著做，照手動派工的下一步。
     const next = await holdForStack($, c) ? STACK_AUTO_NEXT : refused.next
-    await notDispatched($, c, `規格已確認；無法自動派實作（${refused.why}）${next ? `；${next}` : ''}`)
+    await notDispatched($, c, t('cardActions.specNotDispatched', { why: refused.why, next: next ? t('word.semiNote', { text: next }) : '' }))
     return false
   }
-  if (refused) { await notDispatched($, c, `規格已確認；無法自動派實作（${refused.why}）${refused.next ? `；${refused.next}` : ''}`); return false }
+  if (refused) { await notDispatched($, c, t('cardActions.specNotDispatched', { why: refused.why, next: refused.next ? t('word.semiNote', { text: refused.next }) : '' })); return false }
   return dispatch($, options, c, 'continue')
 }
 
@@ -353,37 +363,37 @@ async function holdForStack($: any, c: Case): Promise<boolean> {
  */
 export async function dispatchAfterStack($: any, options: PluginOptions, c: Case): Promise<boolean> {
   const refused = afterSpecRefusal(c)
-  if (refused) { await notDispatched($, c, `不用再等原卡；無法自動派實作（${refused.why}）${refused.next ? `；${refused.next}` : ''}`); return false }
-  await feedPush($, [{ at: await $.clock.now(), text: `${c.name} 不用再等原卡，自動派實作`, tone: 'suggestion', card: c.statusPath }])
+  if (refused) { await notDispatched($, c, t('cardActions.stackNotDispatched', { why: refused.why, next: refused.next ? t('word.semiNote', { text: refused.next }) : '' })); return false }
+  await feedPush($, [{ at: await $.clock.now(), text: t('cardActions.stackDispatch', { name: c.name }), tone: 'suggestion', card: c.statusPath }])
   return dispatch($, options, c, 'continue')
 }
 
 /** 確認規格後（或疊放卡不用再等原卡時）沒有派實作：提示、動態、下一則提示告訴對話都說同一句。 */
 async function notDispatched($: any, c: Case, text: string) {
   const now = await $.clock.now()
-  $.ui.toast(`${c.name}：${text}`, { timeoutMs: 10_000 })
-  await feedPush($, [{ at: now, text: `${c.name} ${text}`, tone: 'suggestion', card: c.statusPath }])
+  $.ui.toast(t('toast.named', { name: c.name, text }), { timeoutMs: 10_000 })
+  await feedPush($, [{ at: now, text: t('feed.named', { name: c.name, text }), tone: 'suggestion', card: c.statusPath }])
   await tellPanel($, now, text, { name: c.name, skip: tutorial })
 }
 
 /** 停止 desk 自己派出去、正在跑的那個背景 agent（名字要對得上這件任務最後一次派工），流程一併暫停。 */
 export async function stopAgent($: any, c: Case) {
   const last = (await loadJobs($))[normalizeRoot(c.root)]?.last
-  if (!c.agent?.id) { $.ui.toast(`${c.name}：無法停止（找不到在跑的 Agent）；按 r 重新整理後再看`); return }
-  if (!last || c.agent.name !== last.launchName) { $.ui.toast(`${c.name}：無法停止（${c.agent.name || c.agent.id} 不是 desk 派的）；到終端機跑 claude stop ${c.agent.id}`); return }
+  if (!c.agent?.id) { $.ui.toast(t('cardActions.stopNoAgent', { name: c.name })); return }
+  if (!last || c.agent.name !== last.launchName) { $.ui.toast(t('cardActions.stopForeign', { name: c.name, agent: c.agent.name || c.agent.id, id: c.agent.id })); return }
   if (tutorial) cancelSim()
   const r = tutorial ? { exitCode: 0, stderr: '' } : await $.process.run(['claude', 'stop', c.agent.id], { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) {
-    const why = errorLine(r, 'claude stop 失敗')
-    $.ui.toast(`${c.name}：無法停止（${why}）`)
+    const why = errorLine(r, t('word.claudeStopFailed'))
+    $.ui.toast(t('cardActions.stopFailed', { name: c.name, why }))
     await tellPanel($, await $.clock.now(), `停止 Agent 失敗：${why}`, { name: c.name, skip: tutorial })
     return
   }
   await saveChain($, normalizeRoot(c.root), run => run ? paused(run, STOP.agentStopped) : run)
   const now = await $.clock.now()
-  await feedPush($, [{ at: now, text: `${c.name} ${AGENT_STOPPED}（對話保留）`, tone: 'warning', card: c.statusPath }])
+  await feedPush($, [{ at: now, text: t('cardActions.stoppedFeed', { name: c.name, stopped: AGENT_STOPPED }), tone: 'warning', card: c.statusPath }])
   await tellPanel($, now, `${AGENT_STOPPED}（對話保留）`, { name: c.name, skip: tutorial })
-  $.ui.toast(`${c.name}：已停止 Agent`)
+  $.ui.toast(t('cardActions.stopped', { name: c.name }))
   void refresh($, optionsRef!)
 }
 
@@ -394,15 +404,15 @@ export async function stopAgent($: any, c: Case) {
 export async function createRegistry($: any, options: PluginOptions, path: string) {
   if ((await missingRegistry($, await deskPaths($, options))) !== path) {
     const exists = await $.fs.exists(path).catch(() => null)
-    $.ui.toast(exists ? '已經有登錄表，沒有覆寫，重新讀取' : '專案或登錄表已經變了，沒有建立，重新讀取')
+    $.ui.toast(exists ? t('cardActions.registryExists') : t('cardActions.registryChanged'))
     void refreshAfterWrite($, options)
     return
   }
   const ok = await $.fs.write(path, REGISTRY_TEMPLATE).then(() => true).catch(() => false)
-  if (!ok) { $.ui.toast(`無法建立登錄表 ${path}`); await tellPanel($, await $.clock.now(), `無法建立登錄表 ${path}`, { skip: tutorial }); return }
+  if (!ok) { $.ui.toast(t('cardActions.registryFailed', { path })); await tellPanel($, await $.clock.now(), `無法建立登錄表 ${path}`, { skip: tutorial }); return }
   const now = await $.clock.now()
-  await feedPush($, [{ at: now, text: `已${WORD.createRegistry}`, tone: 'success' }])
+  await feedPush($, [{ at: now, text: t('cardActions.registryCreated', { what: WORD.createRegistry }), tone: 'success' }])
   await tellPanel($, now, `已${WORD.createRegistry}`, { skip: tutorial })
-  $.ui.toast(`已${WORD.createRegistry}；用 ${CARD_CMD} new <分支> <任務名> 開第一張卡`, { timeoutMs: 8000 })
+  $.ui.toast(t('cardActions.registryNext', { what: WORD.createRegistry, cmd: CARD_CMD }), { timeoutMs: 8000 })
   void refreshAfterWrite($, options)
 }

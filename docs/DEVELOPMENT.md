@@ -33,4 +33,4 @@ python3 skills/card/scripts/card.py changelog 0.27.0   # 或 /desk:card changelo
 
 ### 文件與共用檔
 
-README、WORKFLOW 與 `dispatch.ts` 是每張卡都會碰的熱點檔，多張卡並行時最常互相衝突。所以功能卡不改 README 與 WORKFLOW 的功能說明段：要補的說明寫在卡片「## 規格」的目標或 Decisions，開頭標「待補文件：」，發版時「補文件」那一步一次補進去；CHANGELOG 照舊寫片段檔。改名、搬檔、改六段結構這類橫切重構單獨開卡、先合併，其他卡等它合併後再 sync main；同時在審查與合併段的卡不超過 4 張。細節見 `docs/WORKFLOW.md` 的「開卡順序」。
+README、WORKFLOW 與 `dispatch.ts` 是每張卡都會碰的熱點檔，多張卡並行時最常互相衝突。所以功能卡不改 README 與 WORKFLOW 的功能說明段（docs/REFERENCE.md 算 README 的功能說明段）：要補的說明寫在卡片「## 規格」的目標或 Decisions，開頭標「待補文件：」，發版時「補文件」那一步一次補進去；CHANGELOG 照舊寫片段檔。改名、搬檔、改六段結構這類橫切重構單獨開卡、先合併，其他卡等它合併後再 sync main；同時在審查與合併段的卡不超過 4 張。細節見 `docs/WORKFLOW.md` 的「開卡順序」。

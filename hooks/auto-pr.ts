@@ -2,6 +2,7 @@
 // 純函式；派推送 Agent 在 card-actions.ts 的 autoPublish，什麼時候問在 auto-chain.ts 自動流程的過關那段。
 import type { Case } from '../types'
 import { isReleaseLine } from './pipeline'
+import { t } from './i18n'
 
 /** open：還沒有 PR，push 並開 PR；push：PR 已開、分支領先遠端，只 push；skip：不派，why 是原因（空白＝沿用原本那句）。 */
 export type AutoPrPlan = { kind: 'open' } | { kind: 'push'; pr: number } | { kind: 'skip'; why: string }
@@ -20,26 +21,26 @@ export function autoPrPlan(c: Pick<Case, 'pr' | 'gitState'>, needsHuman?: string
   if (needsHuman) return { kind: 'skip', why: '' }
   const pr = c.pr
   if (!pr) return { kind: 'open' }
-  if (pr.state === 'DECLINED' || pr.state === 'SUPERSEDED') return { kind: 'skip', why: `PR #${pr.id} 已被拒絕，要重開請按 ⇡ 開 PR` }
-  if (pr.state === 'MERGED') return { kind: 'skip', why: `PR #${pr.id} 已合併` }
-  return (c.gitState?.ahead ?? 0) > 0 ? { kind: 'push', pr: pr.id } : { kind: 'skip', why: `PR #${pr.id} 已是最新，等 CI 與合併` }
+  if (pr.state === 'DECLINED' || pr.state === 'SUPERSEDED') return { kind: 'skip', why: t('autoPr.declined', { id: pr.id }) }
+  if (pr.state === 'MERGED') return { kind: 'skip', why: t('autoPr.merged', { id: pr.id }) }
+  return (c.gitState?.ahead ?? 0) > 0 ? { kind: 'push', pr: pr.id } : { kind: 'skip', why: t('autoPr.upToDate', { id: pr.id }) }
 }
 
 /** 怎麼過關的：審查通過、只動文件免審查、這條分支審查過而修正或新 commit 只跑測試（未複審）。 */
 export type PassHow = 'reviewed' | 'skipped' | 'unreviewed'
 const PASS_LEAD: Record<PassHow, { feed: string; say: string }> = {
-  reviewed: { feed: '驗收通過', say: '驗收通過' },
-  skipped: { feed: '只動文件、測試通過，免驗收', say: '只動文件，免驗收' },
-  unreviewed: { feed: '測試通過，未重新驗收（發版時整版審查）', say: '測試通過，未重新驗收' },
+  reviewed: { feed: t('autoPr.reviewed'), say: t('autoPr.reviewed') },
+  skipped: { feed: t('autoPr.skippedFeed'), say: t('autoPr.skippedSay') },
+  unreviewed: { feed: t('autoPr.unreviewedFeed'), say: t('autoPr.unreviewedSay') },
 }
 
 /** 過關的動態（feed）與提示、系統通知（say）。沒有 plan（沒開 autoPr）時跟以前一字不差。 */
 export function passWords(name: string, plan: AutoPrPlan | undefined, how: PassHow = 'reviewed'): { feed: string; say: string } {
   const lead = PASS_LEAD[how]
-  const tail = !plan || (plan.kind === 'skip' && !plan.why) ? { feed: '，可開 PR', say: '，可以開 PR' }
-    : plan.kind === 'open' ? '，自動派 Agent 開 PR'
-    : plan.kind === 'push' ? `，自動派 Agent push 到 PR #${plan.pr}`
-    : `，${plan.why}`
+  const tail = !plan || (plan.kind === 'skip' && !plan.why) ? { feed: t('autoPr.canOpenFeed'), say: t('autoPr.canOpenSay') }
+    : plan.kind === 'open' ? t('autoPr.autoOpen')
+    : plan.kind === 'push' ? t('autoPr.autoPush', { id: plan.pr })
+    : t('autoPr.skipWhy', { why: plan.why })
   const [feed, say] = typeof tail === 'string' ? [tail, tail] : [tail.feed, tail.say]
-  return { feed: `${name} ${lead.feed}${feed}`, say: `${name}：${lead.say}${say}` }
+  return { feed: t('feed.named', { name, text: `${lead.feed}${feed}` }), say: t('toast.named', { name, text: `${lead.say}${say}` }) }
 }
