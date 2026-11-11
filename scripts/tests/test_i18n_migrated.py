@@ -1,8 +1,8 @@
-"""守門：已搬進字串目錄（hooks/i18n/zh-TW.ts）的檔不再直接寫中文顯示字串，目錄裡也沒有用不到的鍵（i18n 目錄與示範 AC-3、AC-4）。
+"""守門：已搬進字串目錄（hooks/i18n/zh-TW.ts）的檔不再直接寫中文顯示字串，目錄裡也沒有用不到的鍵（i18n 目錄與示範 AC-3、AC-4；i18n 動態與 toast AC-2 沿用，已搬清單加 10 個檔）。
 
 沿用 test_wording 的 strip_code：去掉註解與正規式字面值之後，程式文字裡還有中文字或全形標點就列出「檔:行」。
 MIGRATED 是已搬完的檔，之後的卡搬完一個檔就往上加；只搬了一段的檔（register.tsx 只搬 /desk 指令說明）另列在 MIGRATED_LINES，只看那幾行。
-KEPT 是搬完的檔裡刻意留在原處的字（解析契約、卡片欄位名），每條寫原因。
+KEPT 是搬完的檔裡刻意留在原處的字（解析契約、卡片欄位名、給 Agent 的提示與給對話的面板操作紀錄），每條寫原因。
 
 執行：python3 -m unittest discover -s scripts/tests
 """
@@ -33,6 +33,16 @@ MIGRATED = (
     'hooks/chain.ts',
     'hooks/quota-words.ts',
     'hooks/stop-reason.ts',
+    'hooks/agent-queue.ts',
+    'hooks/auto-chain.ts',
+    'hooks/auto-pr.ts',
+    'hooks/card-actions.ts',
+    'hooks/catchup.ts',
+    'hooks/desk-io.ts',
+    'hooks/dispatch-runner.ts',
+    'hooks/verify-runner.ts',
+    'hooks/stale-agents.ts',
+    'hooks/extras.ts',
 )
 # (檔名, 只看符合這個正規式的行)
 MIGRATED_LINES = (
@@ -43,6 +53,25 @@ KEPT = (
     ('hooks/release-update.ts', re.compile(r"\['狀態'\]"), '卡片欄位名，解析契約（規格非目標）'),
     ('hooks/stop-reason.ts', re.compile(r"^\s*'[^'\n]+': '\w+',$", re.M),
      '舊流程紀錄存的停下原因句（資料格式契約）：更新前停下的流程讀時還原成代碼，凍結不跟著目錄改（舊紀錄相容）'),
+    ('hooks/card-actions.ts', re.compile(r"\['狀態'\]"), '卡片欄位名，解析契約（規格非目標）'),
+    ('hooks/card-actions.ts', re.compile(r"isReleaseLine\(c\) \? '等下一版開發' : `\$\{ARCHIVE_WORD\}："),
+     '確認上線時寫進卡片「下一步」欄的字：卡片內容，跟卡片欄位名一樣給對話與 Agent 讀，不搬（規格非目標）'),
+    ('hooks/card-actions.ts', re.compile(r"tellPanel\(\$, [^,]+, (?:'[^']*'|`[^`]*`)"),
+     '給對話的面板操作紀錄（附在下一則提示）：當成給 Agent 的提示，維持中文（D-03）'),
+    ('hooks/verify-runner.ts', re.compile(r"tellPanel\(\$, [^,]+, `[^`]*`"),
+     '給對話的面板操作紀錄（附在下一則提示）：當成給 Agent 的提示，維持中文（D-03）'),
+    ('hooks/desk-io.ts', re.compile(r"^(?:\s*const lines = list\.map\(a => |\s*return `面板在對話外做了).*$", re.M),
+     '給對話的面板操作紀錄（附在下一則提示）：當成給 Agent 的提示，維持中文（D-03）'),
+    ('hooks/desk-io.ts', re.compile(
+        r"^(?:const cardLines = |const lead = |export const cardData = |\s*return `\$\{lead\(c\)\}卡片 |export const MEDIUM_FIX_BY_DESK = "
+        r"|export const mediumFollowUpName = |\s*const base = branch \? |\s*return `審查 MEDIUM 那題選了 B\) |\s*const ask = `這是使用者在工作桌).*$", re.M),
+     '附給對話的選取任務與決策：給 Agent 的提示（卡片欄位名照卡片格式），不搬（規格非目標）'),
+    ('hooks/card-actions.ts', re.compile(r"^const nextStepAnswer = .*$", re.M),
+     '回覆選「照卡片的下一步繼續」時送給 Agent 的那句：給 Agent 的提示，不搬（規格非目標）'),
+    ('hooks/card-actions.ts', re.compile(r"(?:pushRequest|openPrRequest)\(c\.git\?\.branch \?\? '分支'"),
+     '推送 Agent 提示裡的分支名預設值：給 Agent 的提示，不搬（規格非目標）'),
+    ('hooks/agent-queue.ts', re.compile(r"pushRequest\(c\.git\?\.branch \?\? '分支'"),
+     '推送 Agent 提示裡的分支名預設值：給 Agent 的提示，不搬（規格非目標）'),
 )
 CHINESE = re.compile(r'[　-〿一-鿿＀-￯]+')
 CATALOG_KEY = re.compile(r"^\s*'([\w.]+)':", re.M)
@@ -99,7 +128,7 @@ class MigratedFilesTest(unittest.TestCase):
             self.assertTrue(any(only.search(line) for line in read(rel).split('\n')), rel)
         for rel, pat, why in KEPT:
             self.assertTrue(pat.search(read(rel)), rel)
-            self.assertRegex(why, '契約|欄位名')
+            self.assertRegex(why, '契約|欄位名|提示')
 
     def test_catalog_has_no_unused_keys(self):
         """AC-4：目錄裡每個鍵都有 hooks 底下別的檔在用（寫成 'update.notice' 這樣的字面值）。"""
