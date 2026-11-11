@@ -5,39 +5,38 @@ import type { ReviewVerdict } from '../types'
 import type { DispatchKind } from './dispatch'
 import { blocking } from './pipeline'
 import type { Risk } from './risk'
+import { t } from './i18n'
+import { STOP, fixLimitStop, highRiskStop, readStop, stopFields, stopText } from './stop-reason'
+import type { StopArgs, StopCause, StopReason } from './stop-reason'
 
 /** 整張卡（同一條分支）自動派修正的上限：重新驗收、按 g／w 重開都不歸零。 */
 export const MAX_FIX_ROUNDS = 2
-/** 上限用完後停下的那句的結尾：你可以怎麼接手。 */
-const AFTER_LIMIT = '：開 PR、按 g 再修一輪，或改規格'
 
+// 停下原因：流程紀錄存代碼與參數（hooks/stop-reason.ts），下面的句子常數是給動態、提示顯示用的同一句。
 /** 實作做完、要自動執行的完成檢查不是你核准過的那條：不跑，停下來在檢查列列出全文，等你按兩次 v 核准。`_WHY` 是不帶按鍵說明的原因。 */
-export const CHECK_CHANGED_WHY = '測試指令改過、還沒經你核准'
-export const CHECK_UNAPPROVED_WHY = '測試指令還沒經你核准'
-const APPROVE_HINT = '：按兩次 v 核准並執行，流程接著走'
-export const CHECK_CHANGED = CHECK_CHANGED_WHY + APPROVE_HINT
-export const CHECK_UNAPPROVED = CHECK_UNAPPROVED_WHY + APPROVE_HINT
-/** 換詞前存進流程紀錄（$.store 的 chain.stopped）的同兩句：資料格式，只拿來比對、不顯示。 */
-const LEGACY_HELD: Record<string, string> = { [`完成檢查的指令改過、還沒經你核准${APPROVE_HINT}`]: CHECK_CHANGED, [`完成檢查的指令還沒經你核准${APPROVE_HINT}`]: CHECK_UNAPPROVED }
-/** 流程紀錄的停下原因給畫面用：換詞前存的兩句換成新句，更新前就停在測試段的流程照樣認得（檢查列列出指令、輪到你說新詞）。 */
-export const shownStopped = (stopped: string): string => LEGACY_HELD[stopped] ?? stopped
+export const CHECK_CHANGED_WHY = t('stop.checkChangedWhy')
+export const CHECK_UNAPPROVED_WHY = t('stop.checkUnapprovedWhy')
+export const CHECK_CHANGED = stopText(STOP.checkChanged)
+export const CHECK_UNAPPROVED = stopText(STOP.checkUnapproved)
+/** 流程紀錄的停下原因給畫面用：代碼組成句子，更新前存的舊句照 stop-reason 的舊句表認（換詞前的兩句換成新說法）。 */
+export const shownStopped = (stopped: string, stopArgs?: StopArgs): string => readStop(stopped, stopArgs)?.text ?? stopped
 /** 流程裡的 Agent 被停掉（面板 k 或外面 `claude stop`）：不算做完，不跑檢查、不派審查或修正；它可能留下改到一半的東西，看過再重開。 */
-export const AGENT_STOPPED = 'Agent 被停止，未完成；看過 worktree 後按 g 重開'
+export const AGENT_STOPPED = stopText(STOP.agentStopped)
 /** 你在「等你」選了修掉審查 MEDIUM，工作桌自動派修正只試一次、確定沒派出去：流程停下，按 g 重派（g 派的就是那幾條 MEDIUM 的修正）。 */
-export const MEDIUM_FIX_NOT_SENT = '你選了修掉的審查 MEDIUM 沒派出修正：按 g 重派'
+export const MEDIUM_FIX_NOT_SENT = stopText(STOP.mediumFixNotSent)
 /**
  * 審查有 CRITICAL／HIGH，自動流程派修正確定沒派出去（啟動失敗、還沒信任，直接派或從隊伍派出都算）：流程停下，按 g 重派（g 派的就是依審查檔的修正）。
  * 不用括號：「輪到你」的 fixPaused 會把它包進括號裡。
  */
-export const REVIEW_FIX_NOT_SENT = '依審查修正沒派出，失敗原因見動態：按 g 重派'
+export const REVIEW_FIX_NOT_SENT = stopText(STOP.reviewFixNotSent)
 /** 停在提問的那次派工，題目已在對話處理（卡片「等你」清掉）：審查要修的不自動派修正。 */
-export const ASK_HANDED_OVER = '提問已在對話處理，不自動派修正'
+export const ASK_HANDED_OVER = stopText(STOP.askHandedOver)
 /** 拿早先看到的流程紀錄（版本）做決定，寫入時版本已被別的對話改過：不寫，回這句。 */
-export const CHAIN_CHANGED = '流程紀錄已被別的對話改過，重新整理後再試'
+export const CHAIN_CHANGED = t('chain.changed')
 /** 寫完重讀，這件的版本被別的對話用舊表寫回蓋掉：最多重套這麼多次。 */
 export const MAX_SAVE_RETRIES = 3
 /** 連續 MAX_SAVE_RETRIES 次都被蓋掉：放棄，動態寫這句。 */
-export const CHAIN_OVERWRITTEN = `流程紀錄寫入 ${MAX_SAVE_RETRIES} 次都被別的對話蓋掉，重新整理後再試`
+export const CHAIN_OVERWRITTEN = t('chain.overwritten', { n: MAX_SAVE_RETRIES })
 
 /** 流程紀錄的版本號：舊紀錄沒有，視為 0。 */
 export const revOf = (run: Pick<ChainRun, 'rev'> | undefined): number => run?.rev ?? 0
@@ -47,7 +46,12 @@ export type ChainRun = {
   rev?: number
   /** 寫入標記：每次寫回換一個（session id 加流水號）；寫後重讀時版本相同但標記不是自己的，就是被同時寫入的另一邊蓋掉。 */
   stamp?: string
-  owner: string; startedAt: number; round: number; stopped?: string; passed?: boolean
+  owner: string; startedAt: number; round: number
+  /** 停下原因：代碼（hooks/stop-reason.ts 的 StopCode），參數另存 stopArgs；更新前停下的舊紀錄是中文句，讀時照舊句表認。還沒改代碼的派工訊息（排隊時被拒等）照舊存句子。 */
+  stopped?: string
+  /** 停下原因的參數（數字、名稱）：跟 stopped 的代碼一起寫、一起清。 */
+  stopArgs?: StopArgs
+  passed?: boolean
   /** 上一次派審查時的 HEAD；修正後的複審只看這之後的 diff。 */
   reviewHead?: string
   /** reviewHead 當時所在的分支；合併辨識只認「這條分支」看過的 HEAD，同一個資料夾換分支後不算。 */
@@ -56,7 +60,7 @@ export type ChainRun = {
   securityHead?: string
   /** securityHead 當時所在的分支。 */
   securityBranch?: string
-  /** 過關了但要你看過（高風險）；開了 PR 就算看過。 */
+  /** 過關了但要你看過（高風險）；開了 PR 就算看過。新紀錄存代碼 highRisk（面板只看有沒有），舊紀錄是那時的中文句。 */
   needsHuman?: string
   /** 只動文件，跳過了審查。 */
   skippedReview?: boolean
@@ -107,8 +111,8 @@ export type QuotaResume = { dispatch: 'continue' | 'review'; round: number; secu
 export type ChainStep =
   | { kind: 'verify' }
   | { kind: 'dispatch'; dispatch: DispatchKind; round: number; reason?: string; security?: boolean }
-  | { kind: 'stop'; reason: string; atCheck?: boolean; /** 額度煞車擋下的那步，按 g 直接派它。 */ resume?: QuotaResume }
-  | { kind: 'pass'; skipped?: boolean; needsHuman?: string; /** 這條分支審查過、修正或新 commit 只跑測試就過關。 */ unreviewed?: boolean }
+  | { kind: 'stop'; reason: StopCause; atCheck?: boolean; /** 額度煞車擋下的那步，按 g 直接派它。 */ resume?: QuotaResume }
+  | { kind: 'pass'; skipped?: boolean; /** 高風險改動過關、要你看過。 */ needsHuman?: StopReason; /** 這條分支審查過、修正或新 commit 只跑測試就過關。 */ unreviewed?: boolean }
   | null
 
 /** 這條分支累計派過的修正輪數：沒記總數的舊紀錄用這一輪的 round。 */
@@ -133,7 +137,7 @@ export function carriedFix(run: ChainRun | undefined, branch: string | undefined
 export const reviewedOn = (run: Pick<ChainRun, 'reviewedBranch'> | undefined, branch: string | undefined): boolean => !!branch && run?.reviewedBranch === branch
 
 /** 過關後又有新 commit、自動開新一輪時的動態：`skip` 是 skipsReview（審查過、不是高風險），只重新測試；其他照舊重新測試與驗收。 */
-export const recheckFeed = (name: string, skip: boolean): string => `${name} 驗收通過後有新 commit，${skip ? '自動重新測試，通過就過關、不重新驗收' : '自動重新測試與驗收'}`
+export const recheckFeed = (name: string, skip: boolean): string => t('chain.recheckFeed', { name, what: skip ? t('chain.recheckTestOnly') : t('chain.recheckFull') })
 
 /**
  * 這次檢查通過後就過關、不再驗收：這條分支審查過，而且不是高風險（高風險照舊複審並跑資安審查）。
@@ -151,9 +155,9 @@ export function carriedReview(run: ChainRun | undefined, branch: string | undefi
  * 流程暫停：寫下原因；只有停在檢查段的原因帶 heldAtCheck（按 v 跑完會接著走），
  * 其他原因（例如你手動停止了 Agent）把之前留下的 heldAtCheck 拿掉。
  */
-export function paused(run: ChainRun, reason: string, atCheck = false, resume?: QuotaResume): ChainRun {
-  const { heldAtCheck: _, resume: __, ...rest } = run
-  return { ...rest, stopped: reason, ...(atCheck ? { heldAtCheck: true } : {}), ...(resume ? { resume } : {}) }
+export function paused(run: ChainRun, reason: StopCause, atCheck = false, resume?: QuotaResume): ChainRun {
+  const { heldAtCheck: _, resume: __, stopArgs: ___, ...rest } = run
+  return { ...rest, ...stopFields(reason), ...(atCheck ? { heldAtCheck: true } : {}), ...(resume ? { resume } : {}) }
 }
 
 /**
@@ -179,10 +183,10 @@ export function seenHeads(run: ChainRun | undefined, branch: string | undefined)
 /**
  * `changed`：這張卡核准過別的指令（卡片上的檢查被改過）。`stopped`：剛結束的那次是被 `claude stop` 停掉的，不是做完。
  * `branch`：現在的分支；這條分支審查過（reviewedBranch）又不是高風險時，實作做完、檢查通過就過關、不複審（帶 unreviewed）。
- * `quotaHold`：5 小時額度低於門檻的暫停原因（model.ts 的 quotaHold）；非空時要派 Agent 的那步改成停下，跑檢查與過關照舊。
+ * `quotaHold`：5 小時額度低於門檻的暫停原因（model.ts 的 quotaHold）；有給時要派 Agent 的那步改成停下，跑檢查與過關照舊。
  * `combineSecurity`：設了 review.combineSecurity，高風險分支的資安重點已併進程式碼審查：過關後不另派資安審查，照舊停下來給你看。
  */
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; quotaHold?: string; /** 現在的分支：看這條分支審查過了沒（reviewedBranch）。 */ branch?: string; combineSecurity?: boolean }
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; quotaHold?: StopCause; /** 現在的分支：看這條分支審查過了沒（reviewedBranch）。 */ branch?: string; combineSecurity?: boolean }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -204,24 +208,24 @@ const mayFix = (run: ChainRun): boolean => fixTotalOf(run) < MAX_FIX_ROUNDS
 function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext): ChainStep {
   if (!run || run.stopped || run.passed || !finished || finished === 'publish' || finished === 'catchup') return null
   // 被停掉的 Agent 做的事不完整：不能當成做完往下走（同步不在流程裡，照舊不動）。
-  if (ctx.stopped && finished !== 'sync') return { kind: 'stop', reason: AGENT_STOPPED }
-  const high = ctx.risk?.level === 'high' ? `高風險改動（${ctx.risk.reasons.join('、')}），驗收已過，請你看過再開 PR` : undefined
+  if (ctx.stopped && finished !== 'sync') return { kind: 'stop', reason: STOP.agentStopped }
+  const high = ctx.risk?.level === 'high' ? highRiskStop(ctx.risk.reasons) : undefined
   if (finished === 'continue' || finished === 'reply') {
-    if (check === null) return trusted ? { kind: 'verify' } : { kind: 'stop', reason: ctx.changed ? CHECK_CHANGED : CHECK_UNAPPROVED, atCheck: true }
+    if (check === null) return trusted ? { kind: 'verify' } : { kind: 'stop', reason: ctx.changed ? STOP.checkChanged : STOP.checkUnapproved, atCheck: true }
     if (check && ctx.risk?.level === 'low') return { kind: 'pass', skipped: true }
     // 每張卡只審查一次：審查過的分支再做完（依審查修正、測試沒過的修正、過關後的新 commit）測試綠就過關；高風險照舊複審與資安審查。
     if (check && skipsReview(run, ctx.branch, ctx.risk)) return { kind: 'pass', unreviewed: true }
     if (check) return { kind: 'dispatch', dispatch: 'review', round: run.round }
-    return mayFix(run) ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'check' } : { kind: 'stop', reason: `整張卡已自動修 ${MAX_FIX_ROUNDS} 輪仍未通過測試${AFTER_LIMIT}` }
+    return mayFix(run) ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'check' } : { kind: 'stop', reason: fixLimitStop(MAX_FIX_ROUNDS) }
   }
   if (finished === 'review') {
-    if (!verdict) return { kind: 'stop', reason: '驗收結論缺少 CRITICAL／HIGH／MEDIUM／LOW 分級' }
+    if (!verdict) return { kind: 'stop', reason: STOP.verdictMissing }
     // 只有 CRITICAL／HIGH 會自動修；MEDIUM 審查只記錄、不在「等你」問，流程照樣過關。
     if (blocking(verdict) === 0) {
       if (high && !ctx.lastWasSecurity && !ctx.combineSecurity) return { kind: 'dispatch', dispatch: 'review', round: run.round, security: true }
       return high ? { kind: 'pass', needsHuman: high } : { kind: 'pass' }
     }
-    return mayFix(run) ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'review' } : { kind: 'stop', reason: `整張卡已自動修 ${MAX_FIX_ROUNDS} 輪仍有 CRITICAL ${verdict.critical}、HIGH ${verdict.high}${AFTER_LIMIT}` }
+    return mayFix(run) ? { kind: 'dispatch', dispatch: 'continue', round: run.round + 1, reason: 'review' } : { kind: 'stop', reason: fixLimitStop(MAX_FIX_ROUNDS, verdict) }
   }
   return null
 }
@@ -232,5 +236,5 @@ function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, c
  */
 export function handedOver(step: ChainStep): ChainStep {
   if (!step || step.kind === 'pass' || step.kind === 'stop') return step
-  return step.kind === 'dispatch' && step.reason ? { kind: 'stop', reason: ASK_HANDED_OVER } : null
+  return step.kind === 'dispatch' && step.reason ? { kind: 'stop', reason: STOP.askHandedOver } : null
 }

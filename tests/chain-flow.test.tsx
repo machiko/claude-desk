@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, flat, text, PANE, CARD_A, result } from './fixture'
+import { fixture, feedLog, flat, text, PANE, CARD_A, result, storedStop } from './fixture'
 import { AGENT_STOPPED, recheckFeed, skipsReview } from '../hooks/chain'
 import { buildCase, summary } from '../hooks/model'
 import { UNREVIEWED_GATE } from '../hooks/card'
@@ -119,7 +119,7 @@ test('two rounds of HIGH stop the chain and say why', async ($, on) => {
   await clock.settle()
   expect(data.launches.length).toBe(0)
   expect(data.toasts.some(t => t.includes('整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 2：開 PR、按 g 再修一輪，或改規格'))).toBe(true)
-  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 2：開 PR、按 g 再修一輪，或改規格')
+  expect(storedStop((data.store.chains as any)['/home/u/wt/alpha'])).toEqual({ code: 'fixLimitReview', rounds: 2, critical: 0, high: 2 })
 })
 
 test('high risk: code review passes → security review → pass but waits for you; reviews archived; re-review is diff-only', async ($, on) => {
@@ -182,7 +182,7 @@ test('high risk: code review passes → security review → pass but waits for y
   await finish()
   expect(data.launches.length).toBe(5)
   expect(data.toasts.some(t => t.includes('高風險改動（認證／中介層），驗收已過，請你看過再開 PR'))).toBe(true)
-  expect((data.store.chains as any)['/home/u/wt/alpha'].needsHuman).toContain('認證／中介層')
+  expect((data.store.chains as any)['/home/u/wt/alpha'].needsHuman).toBe('highRisk')
   expect(data.writes.some(w => w.endsWith('-security.md'))).toBe(true)
 })
 
@@ -291,7 +291,7 @@ test('a stale card whose spec is still a template is not rechecked by the chain,
   expect(data.launches.length).toBe(0)
   const run = (data.store.chains as any)[root]
   expect(run.recheck).toBeUndefined()
-  expect(run.stopped).toContain('/desk:card spec')
+  expect(storedStop(run)).toEqual({ code: 'specGap', slug: 'alpha' })
   expect(feed.filter(e => e.card === CARD_A && String(e.text).includes('/desk:card spec')).length).toBe(1)
 })
 
@@ -352,6 +352,8 @@ test('idle next: the chain never dispatches a waiting-only next step', async ($,
 
 /** 整張卡用完自動修正上限後停下的那句（AC-3、AC-4 共用）。 */
 const limitStop = (high: number) => `整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH ${high}：開 PR、按 g 再修一輪，或改規格`
+/** 同一件存進流程紀錄的樣子：代碼加參數。 */
+const limitCode = (high: number) => ({ code: 'fixLimitReview', rounds: 2, critical: 0, high })
 
 /** 這張卡（Alpha）只留最新派出去的 Agent 在跑；回傳做完、重新整理、看提示的小工具。 */
 function alphaFlow($: any, data: any, clock: any) {
@@ -399,7 +401,7 @@ test('test_fix_round_total_counts_across_restarts', async ($, on) => {
   f.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；漏稽核')
   await f.finish()
   expect(data.launches.length).toBe(1)
-  expect(f.chain().stopped).toBe(limitStop(1))
+  expect(storedStop(f.chain())).toEqual(limitCode(1))
   expect(data.toasts).toContain(`Alpha：流程已暫停，${limitStop(1)}`)
 
   // 你按 w 重開（手動派審查）：一樣帶著累計數，審查還有 HIGH 就再停，不自動修
@@ -413,7 +415,7 @@ test('test_fix_round_total_counts_across_restarts', async ($, on) => {
   await f.finish()
   expect(data.launches.length).toBe(2)
   expect(data.launches.every((l: any) => !String(l.argv.at(-1)).startsWith('修正第'))).toBe(true)
-  expect(f.chain().stopped).toBe(limitStop(2))
+  expect(storedStop(f.chain())).toEqual(limitCode(2))
 })
 
 /** AC-4：上限用完後你按 g：照樣派修正（算一輪）、修完照常檢查與審查；之後再有 HIGH 又停，不自動多修 */
@@ -449,7 +451,7 @@ test('test_manual_fix_after_limit_is_dispatched_once', async ($, on) => {
   f.setGate('review：CRITICAL 0、HIGH 1、MEDIUM 0、LOW 0；還有一條')
   await f.finish()
   expect(data.launches.length).toBe(2)
-  expect(f.chain().stopped).toBe(limitStop(1))
+  expect(storedStop(f.chain())).toEqual(limitCode(1))
   expect(f.chain().fixTotal).toBe(3)
 })
 
@@ -596,7 +598,7 @@ test('test_fix_after_review_still_retries_failing_check stops when rounds run ou
   await f.finish()
   expect(data.launches.length).toBe(4)
   const limit = '整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格'
-  expect(f.chain().stopped).toBe(limit)
+  expect(storedStop(f.chain())).toEqual({ code: 'fixLimitCheck', rounds: 2 })
   expect(f.chain().passed).toBeUndefined()
   // 停下原因叫你按 g：卡片算未通過、六段不跳到合併段，按 g 派得出修正（不被「下一步只剩等待」擋下）
   const ui = await $.ui.mount(PANE(160))

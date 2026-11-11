@@ -2,7 +2,9 @@
 import type { Case } from '../types'
 import { agentBusy, isMerged, isReleaseLine, needsPr, needsPush } from './pipeline'
 import { CARD_CMD, PLAN_STEP, isPlaceholder, named, parseGate, saysNone } from './card'
-import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT, shownStopped } from './chain'
+import { shownStopped } from './chain'
+import { specGapStop as specGapStopOf, stopCodeOf } from './stop-reason'
+import type { StopCause, StopReason } from './stop-reason'
 import type { ChainRun } from './chain'
 import { UUID, agentWaits, approvalWait } from './agents'
 import { slugOf } from './text'
@@ -28,7 +30,7 @@ export type { PrHow } from './prompts/publish'
 export { REVIEW_FILE, SECURITY_FILE, reviewTask } from './prompts/review'
 export type { ReviewOpts } from './prompts/review'
 export { IDLE_WHY, MISSING_CHECK_NEXT, MISSING_CHECK_WHY, REVIEW_WHY, idleNext, reviewNext } from './next-words'
-export { markOf, markRefusal } from './worktree-mark'
+export { markOf, markRefusal, markRefusalStop } from './worktree-mark'
 export type { WorktreeMark } from './worktree-mark'
 // 設定解析搬到 settings.ts、執行時間計算搬到 run-time.ts、啟動名與 Agent 清單比對搬到 agents.ts；呼叫端與測試照舊從這裡匯入也行。
 export { DEFAULT_CHAIN_QUOTA_STOP, DEFAULT_MAX_AGENTS, DEFAULT_REVIEW, DEFAULT_USER, MODEL_KINDS, modelFor, normalizeRoot, parseSettings, pitfallsFor } from './settings'
@@ -132,7 +134,8 @@ export const writesCode = (kind: DispatchKind, fix?: FixReason): boolean => !!fi
 /** 按 g 派、開頭走 manualFix 的那份（fixByG 且下一步只剩等待或派審查，或選了修掉 MEDIUM、審查要修的自動修正沒派出）；其他派工是 undefined。 */
 function manualFixOf(c: Case, kind: DispatchKind, fix?: FixReason): ManualFix | undefined {
   if (fix || kind !== 'continue' || isPlaceholder(c.next) || !fixByG(c)) return undefined
-  return idleNext(c.next) || c.chain?.stopped === MEDIUM_FIX_NOT_SENT || c.chain?.stopped === REVIEW_FIX_NOT_SENT ? manualFix(c, ciFailed(c)) : undefined
+  const code = stopCodeOf(c.chain)
+  return idleNext(c.next) || code === 'mediumFixNotSent' || code === 'reviewFixNotSent' ? manualFix(c, ciFailed(c)) : undefined
 }
 
 /**
@@ -183,7 +186,7 @@ export const fixByG = (c: Case): boolean => c.state === 'failed' || ciFailed(c)
  * 按 g 派出去的真的是修正（算進整張卡的修正輪數，不受上限擋）：fixByG 裡扣掉不是修東西的兩種——
  * Agent 被停掉後重開（接著把那件事做完）、停在檢查段（測試沒跑成，不是沒過）。
  */
-export const fixesByG = (c: Case): boolean => fixByG(c) && c.chain?.stopped !== AGENT_STOPPED && !c.chain?.heldAtCheck
+export const fixesByG = (c: Case): boolean => fixByG(c) && stopCodeOf(c.chain) !== 'agentStopped' && !c.chain?.heldAtCheck
 
 /** 已合併、停在上線段（還沒上線）：分支已進基準分支，不派實作、審查，也不跑檢查。發版線沒有合併段，不算。 */
 export const mergedUnshipped = (c: Case): boolean => c.pipeline?.current === 'ship' && isMerged(c)
@@ -225,7 +228,8 @@ export function dispatchable(c: Case): DispatchKind[] {
 /** 規格段認不到填好的 AC，而且六段停在規格段（沒算過六段的當作停在規格段；六段走完時 current 是 null，不算）。 */
 export const specBlocks = (c: Case) => !!c.specGap && (c.pipeline ? c.pipeline.current === 'spec' : true)
 /** specBlocks 時不能派工的原因：手動派工的拒絕與自動流程停下都用這句。 */
-export const specGapReason = (c: Case) => `規格沒有驗收情境：先輸入 ${CARD_CMD} spec ${slugOf(c)}`
+/** 規格沒有驗收情境的停下原因（流程紀錄存代碼）與同一句的顯示。 */
+export const specGapStop = (c: Case): StopReason => specGapStopOf(slugOf(c))
 
 const MANUAL = '登錄表設為 manual，只追蹤不派工'
 export const PUBLISH_ONLY_AT_MERGE = '只有合併段還要 push 或開 PR 時才能推送'
@@ -342,16 +346,17 @@ export const NO_PUSH_NEEDED = '已不需要推送（PR 已開且分支已是最�
  * 不看 state——審查有 CRITICAL／HIGH、流程還在時 stateOf 回 running，看 state 會把排隊的修正當成執行中丟掉。
  * 停在權限提示的 Agent 也算（同一個 worktree 不多開一個），原因寫在等權限批准，你才知道要去批准。
  * 自動排的推送（審查過關後）不看流程：過關後流程不再動，只看還要不要推。
+ * 規格缺口回代碼（StopReason）：沒派出時會寫進流程紀錄，跟 autoChain 直接停下存的一樣；其他原因照舊是句子。
  */
-export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): string {
+export function queueRefusal(c: Case, entry: Pick<QueueEntry, 'kind' | 'opts'>, run: ChainRun | undefined, mine: string): StopCause {
   if (!entry.opts.auto || c.newerFormat) return dispatchRefusal(c, entry.kind)
   if (c.agent && !c.agent.asks) return approvalWait(c.agent) ? APPROVAL_WAIT : BUSY
   // 疊放卡的原卡還沒合併：自動排的一律不派（手動排的由 dispatchRefusal 擋）。
   if (c.stackWait) return stackWaitWhy(c.stackWait)
   if (entry.kind === 'publish') return isMerged(c) ? '已經合併' : !needsPr(c) && !needsPush(c) ? NO_PUSH_NEEDED : ''
   if (!run || run.owner !== mine) return '流程已不是這個對話的'
-  if (run.stopped) return `流程已暫停（${shownStopped(run.stopped)}）`
-  if (specBlocks(c)) return specGapReason(c)
+  if (run.stopped) return `流程已暫停（${shownStopped(run.stopped, run.stopArgs)}）`
+  if (specBlocks(c)) return specGapStop(c)
   if (isMerged(c)) return '已經合併'
   return ''
 }

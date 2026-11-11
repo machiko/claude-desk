@@ -328,7 +328,7 @@ test('stale ask: once the question is handled in the conversation the flow recor
     expect(data.processCalls.filter((c: any) => (c.argv[0] === 'claude' && c.argv[1] === 'stop') || c.argv[0] === 'sh'), s.how).toEqual([])
     const run = (data.store.chains as any)[BETA]
     if (s.gate === PASSED) expect(run.passed, s.how).toBe(true)
-    else if (s.kind === 'review') expect(run.stopped, s.how).toBe('提問已在對話處理，不自動派修正')
+    else if (s.kind === 'review') expect(run.stopped, s.how).toBe('askHandedOver')
     else expect(run.stopped, s.how).toBeUndefined()
     // 那次派工算處理過：之後不會再被流程撿起來
     expect((data.store.jobs as any)[BETA].last.handled, s.how).toBe(true)

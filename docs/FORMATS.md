@@ -52,6 +52,6 @@ desk 還認得、但新檔不再這樣寫的舊寫法。目前都還分散在各
 | 流程紀錄沒有 `fixTotal` | `hooks/chain.ts` 的 `fixTotalOf`（用這一輪的 round） | 同上 |
 | 流程紀錄存分支名稱當 HEAD（0.21.1 以前） | `hooks/pipeline.ts` 的 `movedSince`；`hooks/dispatch-runner.ts` 審查基準 | 0.21.1 以前的流程紀錄都換過之後 |
 | 流程紀錄沒記分支 | `hooks/chain.ts` 的 `seenHeads` 等（不認，退回整條分支） | 同上 |
-| 流程停下原因的舊句（完成檢查還沒核准） | `hooks/chain.ts` 的 `LEGACY_HELD` | 存著舊句的流程紀錄都重開過之後 |
+| 流程停下原因存成中文句（改存代碼之前，含換詞前的完成檢查核准句） | `hooks/stop-reason.ts` 的 `LEGACY_RENAMED`、`LEGACY_FIXED`、`LEGACY_PATTERNS`（讀時還原成代碼，不回寫） | 存著舊句的流程紀錄都重開過之後 |
 
 `$.store` 裡的流程紀錄不帶格式版號，這次不處理；上表只列出還認得的舊欄位。

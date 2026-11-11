@@ -4,17 +4,18 @@ import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, Snapshot } from '../types'
 import { saysNone } from './card'
-import { quotaHold, QUOTA_RESTART_CATCHUP, quotaLow } from './model'
+import { quotaHold, quotaLow } from './model'
 import { archiveReview, loadSettings, prProbe, riskOf, worktreeMark } from './probes'
-import { markRefusal, specBlocks, specGapReason } from './dispatch'
+import { markRefusalStop, specBlocks, specGapStop } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs } from './dispatch'
 import { askClearedOnCard, askedOnCardAtEnd } from './agents'
 import { normalizeRoot } from './settings'
 import type { DispatchSettings } from './settings'
 import { checkStands, isMerged, parseVerdict } from './pipeline'
 import { catchupFeed, catchupHold } from './catchup'
-import { MEDIUM_FIX_NOT_SENT, REVIEW_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, skipsReview } from './chain'
+import { REVIEW_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, skipsReview } from './chain'
 import type { ChainRun, ChainStep } from './chain'
+import { STOP, causeText, stopText } from './stop-reason'
 import { trustedChecks } from './approve-check'
 import { tutorial } from './tutorial-run'
 import { checking, isQueued, verifyPending, runVerify } from './verify-runner'
@@ -29,8 +30,6 @@ import { notify, refreshSoon } from './register'
 const verifiesAtom = atom({ plugin: 'desk', key: 'verifies' } as const, {})
 const verifyingAtom = atom({ plugin: 'desk', key: 'verifying' } as const, {})
 const launchingAtom = atom({ plugin: 'desk', key: 'launching' } as const, {})
-
-const CATCHUP_NOT_SENT = '解衝突沒派出（失敗原因見動態），排除後在對話合併基準分支、解衝突'
 
 /**
  * 自動流程（第二到第四段）：只處理這個對話自己派出去、剛結束、還沒處理過的那一次（別的對話開的流程不碰）。
@@ -65,10 +64,10 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     // 停下後也要跳過：下面審查通過後有新 commit 的重新檢查不看 stopped。
     if (run && run.owner === mine && specBlocks(c)) {
       if (!run.stopped) {
-        const reason = specGapReason(c)
+        const reason = specGapStop(c)
         // 寫入被別的對話蓋掉、放棄（saveChain 已寫過警告）：不說停下；紀錄沒停，下次重新整理會再試。
         if (await saveChain($, key, r => r ? paused(r, reason) : r, saveOpts)) {
-          await feedPush($, [{ at: s.at, text: `${c.name} 流程停下：${reason}`, tone: 'warning', card: c.statusPath }])
+          await feedPush($, [{ at: s.at, text: `${c.name} 流程停下：${stopText(reason)}`, tone: 'warning', card: c.statusPath }])
           acted = true
         }
       }
@@ -114,7 +113,7 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     const stoppedAgent = last.ended?.how === 'stopped'
     // 額度煞車：要派下一個 Agent 前看 5 小時額度。停在提問、題目已在對話處理的那次本來就不派，不看。
     const handed = askClearedOnCard(last, c.ask)
-    const hold = settings && !tutorial && !handed ? quotaHold(s.limits, settings.chainQuotaStop, s.at) : ''
+    const hold = settings && !tutorial && !handed ? quotaHold(s.limits, settings.chainQuotaStop, s.at) : null
     const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent, ...(hold ? { quotaHold: hold } : {}), ...(c.git?.branch ? { branch: c.git.branch } : {}), ...(settings?.review.combineSecurity ? { combineSecurity: true } : {}) })
     if (!planned) continue
     // 寫入放棄（被別的對話蓋掉）不算有動作：不提早重新整理，等下一次重新整理再試，免得每兩秒重套一次。
@@ -134,19 +133,20 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     if (next.kind === 'verify') { await markChained(); void runVerify($, c, true); continue }
     await markHandled()
     // 要派下一步之前先看 worktree：有不是上一個 Agent 留下的未提交改動（別的對話在改），停下來說原因，不派。
-    const foreign = next.kind === 'dispatch' && !tutorial ? markRefusal(await worktreeMark($, c.root), jobs[key]) : ''
+    const foreign = next.kind === 'dispatch' && !tutorial ? markRefusalStop(await worktreeMark($, c.root), jobs[key]) : null
     const step: ChainStep = foreign ? { kind: 'stop', reason: foreign } : next
     // 舊紀錄的「這輪要修的 MEDIUM」：MEDIUM 不再自動修，往下寫回時拿掉。
     const withoutMedium = (r: ChainRun): ChainRun => { const { mediumFix: _, ...rest } = r; return rest }
     if (step.kind === 'stop') {
       if (!(await saveChain($, key, r => r ? paused(withoutMedium(r), step.reason, step.atCheck, step.resume) : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
-      await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${step.reason}`, tone: 'error', card: c.statusPath }])
-      $.ui.toast(`${c.name}：流程已暫停，${step.reason}`, { timeoutMs: 10_000 })
-      notify($, `${c.name}：流程已暫停，${step.reason}`)
+      const why = causeText(step.reason)
+      await feedPush($, [{ at: s.at, text: `${c.name} 流程已暫停：${why}`, tone: 'error', card: c.statusPath }])
+      $.ui.toast(`${c.name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
+      notify($, `${c.name}：流程已暫停，${why}`)
     } else if (step.kind === 'pass') {
       const judged = step.skipped || step.unreviewed ? fresh?.head ?? c.git?.head : undefined
       // 免審查、未複審過關：判定的 HEAD 是檢查時的（不記的話過關後馬上算成有新 commit、又重新檢查）；跟現在的 HEAD 一樣才記得住它的分支。
-      if (!(await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(step.unreviewed ? { unreviewed: true } : {}), ...(judged ? { judgedHead: judged, judgedBranch: judged === c.git?.head ? c.git?.branch : undefined } : {}) } : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
+      if (!(await saveChain($, key, r => r ? { ...r, passed: true, ...(step.needsHuman ? { needsHuman: step.needsHuman.code } : {}), ...(step.skipped ? { skippedReview: true } : {}), ...(step.unreviewed ? { unreviewed: true } : {}), ...(judged ? { judgedHead: judged, judgedBranch: judged === c.git?.head ? c.git?.branch : undefined } : {}) } : r, saveOpts))) { await unmarkHandled(); acted = actedBefore; continue }
       // 專案設了 autoPr（高風險照舊停下等你看；發版線、detached HEAD 跟沒開一樣）：重讀一次 PR（不用快取，免得剛開的 PR 沒看到又開一個），決定開 PR、只 push 或不派。
       const auto = !step.needsHuman && !tutorial && autoPrApplies(c) && (settings ?? await loadSettings($, options, preloaded)).autoPr
       const pr = auto ? await prProbe($, options, c.root, c.git!.branch, s.at, true) : undefined
@@ -155,9 +155,10 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
       const low = prPlan && prPlan.kind !== 'skip' ? quotaLow(s.limits, (settings ?? await loadSettings($, options, preloaded)).chainQuotaStop, s.at) : ''
       const plan: AutoPrPlan | undefined = low && prPlan ? { kind: 'skip', why: `${low}，沒有自動派推送；要推請按 ${prPlan.kind === 'open' ? '⇡ 開 PR' : '⇡ push'}` } : prPlan
       const words = passWords(c.name, plan, step.skipped ? 'skipped' : step.unreviewed ? 'unreviewed' : 'reviewed')
-      const text = step.needsHuman ? `${c.name} ${step.needsHuman}` : words.feed
-      await feedPush($, [{ at: s.at, text, tone: step.needsHuman ? 'warning' : 'success', card: c.statusPath }])
-      const say = step.needsHuman ? `${c.name}：${step.needsHuman}` : words.say
+      const risky = step.needsHuman ? stopText(step.needsHuman) : ''
+      const text = risky ? `${c.name} ${risky}` : words.feed
+      await feedPush($, [{ at: s.at, text, tone: risky ? 'warning' : 'success', card: c.statusPath }])
+      const say = risky ? `${c.name}：${risky}` : words.say
       $.ui.toast(say, { timeoutMs: 10_000 })
       notify($, say)
       if (plan) await autoPublish($, options, { ...c, pr }, plan)
@@ -205,7 +206,7 @@ async function releaseStacked($: any, options: PluginOptions, c: Case, key: stri
  */
 export async function pauseUnsentReviewFix($: any, c: Case, mine: string, at: number): Promise<boolean> {
   if (isAgentQueued(c.statusPath) || unconfirmed.has(c.statusPath) || await starting($, c.statusPath)) return false
-  if (!(await saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, REVIEW_FIX_NOT_SENT)))) return false
+  if (!(await saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, STOP.reviewFixNotSent)))) return false
   await feedPush($, [{ at, text: `${c.name} 流程已暫停：${REVIEW_FIX_NOT_SENT}`, tone: 'error', card: c.statusPath }])
   notify($, `${c.name}：流程已暫停，${REVIEW_FIX_NOT_SENT}`)
   return true
@@ -230,7 +231,7 @@ async function fixPickedMedium($: any, options: PluginOptions, c: Case, run: Cha
   const key = normalizeRoot(c.root)
   const clear = (r: ChainRun | undefined) => { if (!r || r.mediumFixAt !== head) return r; const { mediumFixAt: _, ...rest } = r; return rest }
   if (head !== c.git?.head) { await saveChain($, key, clear); return false }
-  if (markRefusal(await worktreeMark($, c.root), own)) return false
+  if (markRefusalStop(await worktreeMark($, c.root), own)) return false
   if (!(await saveChain($, key, clear))) return false
   await feedPush($, [{ at, text: `${c.name} 你選了修掉審查 MEDIUM，自動派修正`, tone: 'suggestion', card: c.statusPath }])
   const fix: FixReason = { from: 'medium', round: fixTotalOf(run) + 1, ...(run.mediumFixSecurity ? { security: true } : {}) }
@@ -239,7 +240,7 @@ async function fixPickedMedium($: any, options: PluginOptions, c: Case, run: Cha
     return true
   }
   if (unconfirmed.has(c.statusPath)) return false
-  if (await saveChain($, key, r => r && !r.stopped ? paused(r, MEDIUM_FIX_NOT_SENT) : r)) await feedPush($, [{ at, text: `${c.name} 流程已暫停：${MEDIUM_FIX_NOT_SENT}`, tone: 'error', card: c.statusPath }])
+  if (await saveChain($, key, r => r && !r.stopped ? paused(r, STOP.mediumFixNotSent) : r)) await feedPush($, [{ at, text: `${c.name} 流程已暫停：${stopText(STOP.mediumFixNotSent)}`, tone: 'error', card: c.statusPath }])
   return false
 }
 
@@ -257,23 +258,25 @@ async function autoCatchup($: any, options: PluginOptions, c: Case, run: ChainRu
   if (tutorial || (await worktreeMark($, c.root)).files) return false
   // 額度煞車：額度低於門檻不派解衝突，流程停下寫原因（停過之後 catchupHold 回額度原因，不會再來）。合併段沒有 g 可按，
   // 原因句的結尾改成叫你在對話合併基準分支、解衝突，「輪到你」也照這句。
-  const hold = quotaHold(limits, (await loadSettings($, options, preloaded)).chainQuotaStop, at, QUOTA_RESTART_CATCHUP)
+  const hold = quotaHold(limits, (await loadSettings($, options, preloaded)).chainQuotaStop, at, true)
   if (hold) {
     // 快照是這輪重新整理開始時的：同一輪隊伍可能已經把這件停下了（排隊的解衝突被擋），那邊已經通知過，這裡只在真的停下時才說。
     // 看 saveChain 的回傳值：閉包在重套時會再跑，放棄寫入時也不算停下。
     const stopped = await saveChain($, normalizeRoot(c.root), r => !r || r.owner !== mine || r.stopped ? r : paused(r, hold))
     if (!stopped) return true
-    await feedPush($, [{ at, text: `${c.name} 流程已暫停：${hold}`, tone: 'error', card: c.statusPath }])
-    $.ui.toast(`${c.name}：流程已暫停，${hold}`, { timeoutMs: 10_000 })
-    notify($, `${c.name}：流程已暫停，${hold}`)
+    const why = stopText(hold)
+    await feedPush($, [{ at, text: `${c.name} 流程已暫停：${why}`, tone: 'error', card: c.statusPath }])
+    $.ui.toast(`${c.name}：流程已暫停，${why}`, { timeoutMs: 10_000 })
+    notify($, `${c.name}：流程已暫停，${why}`)
     return true
   }
   await feedPush($, [{ at, text: catchupFeed(c.name, conflict.into, conflict.files.length), tone: 'suggestion', card: c.statusPath }])
   const sent = await dispatch($, options, { ...c, state: 'ready' }, 'catchup', { auto: true, text: conflict.ref })
   if (!sent && !isAgentQueued(c.statusPath)) {
-    if (await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, CATCHUP_NOT_SENT) : r)) {
-      await feedPush($, [{ at, text: `${c.name} 流程已暫停：${CATCHUP_NOT_SENT}`, tone: 'error', card: c.statusPath }])
-      notify($, `${c.name}：流程已暫停，${CATCHUP_NOT_SENT}`)
+    if (await saveChain($, normalizeRoot(c.root), r => r && r.owner === mine && !r.stopped ? paused(r, STOP.catchupNotSent) : r)) {
+      const why = stopText(STOP.catchupNotSent)
+      await feedPush($, [{ at, text: `${c.name} 流程已暫停：${why}`, tone: 'error', card: c.statusPath }])
+      notify($, `${c.name}：流程已暫停，${why}`)
     }
   }
   return true

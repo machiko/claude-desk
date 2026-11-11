@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, CARD_A, PROJECT_DIR, result } from './fixture'
-import { carriedFix, carriedReview, fixTotalOf, nextStep, recheckFeed, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED, ASK_HANDED_OVER, CHECK_CHANGED, CHECK_UNAPPROVED } from '../hooks/chain'
+import { carriedFix, carriedReview, fixTotalOf, nextStep, recheckFeed, paused, handedOver, MAX_FIX_ROUNDS, AGENT_STOPPED } from '../hooks/chain'
+import { STOP, fixLimitStop, highRiskStop } from '../hooks/stop-reason'
 
 const run = (round = 0, extra = {}) => ({ owner: 'me', startedAt: 1, round, ...extra })
 const v = (critical: number, high: number, medium = 0) => ({ critical, high, medium, low: 0 })
@@ -8,18 +9,18 @@ const v = (critical: number, high: number, medium = 0) => ({ critical, high, med
 test('after implementation: check, then review when green, fix when red, stop after two rounds', () => {
   expect(MAX_FIX_ROUNDS).toBe(2)
   expect(nextStep(run(), 'continue', null, null, true)).toEqual({ kind: 'verify' })
-  expect(nextStep(run(), 'continue', null, null, false)).toEqual({ kind: 'stop', reason: CHECK_UNAPPROVED, atCheck: true })
-  expect(nextStep(run(), 'continue', null, null, false, { changed: true })).toEqual({ kind: 'stop', reason: CHECK_CHANGED, atCheck: true })
+  expect(nextStep(run(), 'continue', null, null, false)).toEqual({ kind: 'stop', reason: STOP.checkUnapproved, atCheck: true })
+  expect(nextStep(run(), 'continue', null, null, false, { changed: true })).toEqual({ kind: 'stop', reason: STOP.checkChanged, atCheck: true })
   expect(nextStep(run(), 'continue', true, null, true)).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
   expect(nextStep(run(0), 'continue', false, null, true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'check' })
-  expect(nextStep(run(2), 'continue', false, null, true)).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍未通過測試：開 PR、按 g 再修一輪，或改規格' })
+  expect(nextStep(run(2), 'continue', false, null, true)).toEqual({ kind: 'stop', reason: fixLimitStop(2) })
 })
 
 test('after review: CRITICAL and HIGH are fixed, MEDIUM passes, no counts stops', () => {
   expect(nextStep(run(), 'review', null, v(0, 0, 3), true)).toEqual({ kind: 'pass' })
   expect(nextStep(run(), 'review', null, v(0, 1), true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
   expect(nextStep(run(1), 'review', null, v(1, 0), true)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 2, reason: 'review' })
-  expect(nextStep(run(2), 'review', null, v(0, 2), true)).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 2：開 PR、按 g 再修一輪，或改規格' })
+  expect(nextStep(run(2), 'review', null, v(0, 2), true)).toEqual({ kind: 'stop', reason: fixLimitStop(2, { critical: 0, high: 2 }) })
   expect(nextStep(run(), 'review', null, null, true)?.kind).toBe('stop')
 })
 
@@ -37,20 +38,20 @@ test('risk: docs-only skips review; high risk adds one security review, then han
   expect(nextStep(run(), 'continue', true, null, true, { risk: low })).toEqual({ kind: 'pass', skipped: true })
   expect(nextStep(run(), 'continue', true, null, true, { risk: high })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0 })
   expect(nextStep(run(), 'review', null, v(0, 0), true, { risk: high })).toEqual({ kind: 'dispatch', dispatch: 'review', round: 0, security: true })
-  expect(nextStep(run(), 'review', null, v(0, 0), true, { risk: high, lastWasSecurity: true })).toEqual({ kind: 'pass', needsHuman: '高風險改動（資料範圍、migration），驗收已過，請你看過再開 PR' })
+  expect(nextStep(run(), 'review', null, v(0, 0), true, { risk: high, lastWasSecurity: true })).toEqual({ kind: 'pass', needsHuman: highRiskStop(['資料範圍', 'migration']) })
   expect(nextStep(run(), 'review', null, v(1, 0), true, { risk: high, lastWasSecurity: true })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1, reason: 'review' })
 })
 
 test('a stopped agent pauses the chain without holding at the check', () => {
   // 被 `claude stop` 停掉的 Agent 不算做完：不跑檢查、不派審查或修正，流程暫停並說怎麼辦；不是檢查段的原因，不留 heldAtCheck。
   expect(AGENT_STOPPED).toBe('Agent 被停止，未完成；看過 worktree 後按 g 重開')
-  expect(nextStep(run(), 'continue', null, null, true, { stopped: true })).toEqual({ kind: 'stop', reason: AGENT_STOPPED })
-  expect(nextStep(run(), 'continue', true, null, true, { stopped: true })).toEqual({ kind: 'stop', reason: AGENT_STOPPED })
-  expect(nextStep(run(1), 'review', null, v(0, 1), true, { stopped: true })).toEqual({ kind: 'stop', reason: AGENT_STOPPED })
-  expect(nextStep(run(), 'reply', null, null, true, { stopped: true })).toEqual({ kind: 'stop', reason: AGENT_STOPPED })
+  expect(nextStep(run(), 'continue', null, null, true, { stopped: true })).toEqual({ kind: 'stop', reason: STOP.agentStopped })
+  expect(nextStep(run(), 'continue', true, null, true, { stopped: true })).toEqual({ kind: 'stop', reason: STOP.agentStopped })
+  expect(nextStep(run(1), 'review', null, v(0, 1), true, { stopped: true })).toEqual({ kind: 'stop', reason: STOP.agentStopped })
+  expect(nextStep(run(), 'reply', null, null, true, { stopped: true })).toEqual({ kind: 'stop', reason: STOP.agentStopped })
   expect(nextStep(run(), 'sync', null, null, true, { stopped: true })).toBeNull()
   expect(nextStep(run(0, { stopped: 'x' }), 'continue', null, null, true, { stopped: true })).toBeNull()
-  expect(paused(run(0, { heldAtCheck: true }), AGENT_STOPPED)).toEqual({ owner: 'me', startedAt: 1, round: 0, stopped: AGENT_STOPPED })
+  expect(paused(run(0, { heldAtCheck: true, stopArgs: { files: 2 } }), STOP.agentStopped)).toEqual({ owner: 'me', startedAt: 1, round: 0, stopped: 'agentStopped' })
 })
 
 /** AC-3 */
@@ -77,10 +78,10 @@ test('chain: a finished catchup does not run the check or count as a fix round',
 test('chain: a job whose question was handled in the conversation records the verdict but dispatches nothing', () => {
   // 過關、停下照舊：審查結論照記。
   expect(handedOver(nextStep(run(), 'review', null, v(0, 0, 2), true))).toEqual({ kind: 'pass' })
-  expect(handedOver(nextStep(run(2), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 1：開 PR、按 g 再修一輪，或改規格' })
+  expect(handedOver(nextStep(run(2), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: fixLimitStop(2, { critical: 0, high: 1 }) })
   // 本來要派修正（審查或檢查擋下）：停下寫原因。
-  expect(handedOver(nextStep(run(), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: ASK_HANDED_OVER })
-  expect(handedOver(nextStep(run(), 'continue', false, null, true))).toEqual({ kind: 'stop', reason: ASK_HANDED_OVER })
+  expect(handedOver(nextStep(run(), 'review', null, v(0, 1), true))).toEqual({ kind: 'stop', reason: STOP.askHandedOver })
+  expect(handedOver(nextStep(run(), 'continue', false, null, true))).toEqual({ kind: 'stop', reason: STOP.askHandedOver })
   // 本來要跑檢查、派審查（含資安審查）：什麼都不做。
   expect(handedOver(nextStep(run(), 'continue', null, null, true))).toBeNull()
   expect(handedOver(nextStep(run(), 'continue', true, null, true))).toBeNull()
@@ -104,7 +105,7 @@ test('test_fix_round_total_is_per_branch', () => {
   const used = run(0, { fixTotal: 2, fixBranch: 'feature/a' })
   // 同一條分支：重開流程照帶，自動修正已用完
   expect(carriedFix(used, 'feature/a')).toEqual({ fixTotal: 2, fixBranch: 'feature/a' })
-  expect(nextStep(run(0, carriedFix(used, 'feature/a')), 'review', null, v(0, 1), true)).toEqual({ kind: 'stop', reason: '整張卡已自動修 2 輪仍有 CRITICAL 0、HIGH 1：開 PR、按 g 再修一輪，或改規格' })
+  expect(nextStep(run(0, carriedFix(used, 'feature/a')), 'review', null, v(0, 1), true)).toEqual({ kind: 'stop', reason: fixLimitStop(2, { critical: 0, high: 1 }) })
   // 換了分支、沒記分支、分支不明、沒有紀錄：從 0 起算，照常自動修
   for (const carried of [carriedFix(used, 'feature/b'), carriedFix(run(2), 'feature/a'), carriedFix(used, undefined), carriedFix(undefined, 'feature/a')]) {
     expect(carried).toEqual({})
@@ -192,5 +193,5 @@ test('combined security review does not dispatch second review', async ($, on) =
   expect(data.toasts.some(t => t.includes('資安驗收已派出'))).toBe(false)
   const chain = (data.store.chains as any)[ALPHA]
   expect(chain.passed).toBe(true)
-  expect(chain.needsHuman).toContain('認證／中介層')
+  expect(chain.needsHuman).toBe('highRisk')
 })

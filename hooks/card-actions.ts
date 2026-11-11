@@ -14,6 +14,7 @@ import { afterSpecRefusal, openPrRequest, prHowOf, pushRequest, refusalOf, refus
 import { normalizeRoot } from './settings'
 import { archivesOnShip, canRelease, isReleaseLine, releasingStep } from './pipeline'
 import { AGENT_STOPPED, CHAIN_CHANGED, paused, revOf } from './chain'
+import { STOP, storedCause } from './stop-reason'
 import { picksKey } from './pane'
 import { tutorial, cancelSim, tutorialDecision } from './tutorial-run'
 import type { AutoPrPlan } from './auto-pr'
@@ -63,10 +64,10 @@ export async function resumeQuotaHeld($: any, options: PluginOptions, c: Case): 
     $.ui.toast(text)
     return text
   }
-  const reason = run.stopped
+  const reason = storedCause(run.stopped, run.stopArgs)
   const mine = await me($)
   // 帶著面板上次重新整理看到的版本寫：之後別的對話改過這件的流程紀錄（例如接手開了新一輪），就不派、照它寫的留著。
-  const taken = await saveChain($, key, r => { if (!r) return r; const { stopped: _s, resume: _r, ...rest } = r; return { ...rest, owner: mine, round: resume.round } }, { basedOn: c.chain?.rev ?? 0 })
+  const taken = await saveChain($, key, r => { if (!r) return r; const { stopped: _s, stopArgs: _a, resume: _r, ...rest } = r; return { ...rest, owner: mine, round: resume.round } }, { basedOn: c.chain?.rev ?? 0 })
   if (!taken) return chainChanged($, c)
   const sent = await dispatch($, options, { ...c, state: 'ready' }, 'review', { auto: true, resumed: true, ...(resume.security ? { security: true } : {}) })
   // 沒派出也沒排進隊伍（啟動中、同時派了兩次、啟動失敗；排進隊伍 dispatch 回 true）：流程照原本的原因停著，下次 g 再來。
@@ -378,7 +379,7 @@ export async function stopAgent($: any, c: Case) {
     await tellPanel($, await $.clock.now(), `停止 Agent 失敗：${why}`, { name: c.name, skip: tutorial })
     return
   }
-  await saveChain($, normalizeRoot(c.root), run => run ? paused(run, AGENT_STOPPED) : run)
+  await saveChain($, normalizeRoot(c.root), run => run ? paused(run, STOP.agentStopped) : run)
   const now = await $.clock.now()
   await feedPush($, [{ at: now, text: `${c.name} ${AGENT_STOPPED}（對話保留）`, tone: 'warning', card: c.statusPath }])
   await tellPanel($, now, `${AGENT_STOPPED}（對話保留）`, { name: c.name, skip: tutorial })

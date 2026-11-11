@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, REGISTRY, result, text, flat, feedLog } from './fixture'
+import { fixture, PANE, CARD_A, REGISTRY, result, text, flat, feedLog, storedStop } from './fixture'
 import { screen } from './world'
 import { AGENT_STOPPED } from '../hooks/chain'
 import { TURN_TEXT } from '../hooks/turn'
@@ -64,7 +64,7 @@ test('an agent stopped outside the desk pauses the chain instead of being treate
   await h.stopOutside()
   expect(sh(data)).toBe(0)
   expect(data.launches.length).toBe(1)
-  expect(h.chain().stopped).toBe(AGENT_STOPPED)
+  expect(h.chain().stopped).toBe('agentStopped')
   expect(h.chain().heldAtCheck).toBeUndefined()
   expect(h.jobs().last.ended).toEqual({ how: 'stopped' })
   expect(data.toasts.some((t: string) => t.includes(AGENT_STOPPED))).toBe(true)
@@ -96,13 +96,13 @@ test('pressing k and an outside stop leave the same pause', async ($, on) => {
   await ui.press({ key: `${PREFIX}stop` }); await clock.settle()
   await ui.unmount()
   expect(data.stops).toEqual(['a0000001'])
-  expect(h.chain().stopped).toBe(AGENT_STOPPED)
+  expect(h.chain().stopped).toBe('agentStopped')
 
   // 停掉之後清單裡 state 變 stopped：流程不會再把它當成做完
   await h.stopOutside()
   expect(sh(data)).toBe(0)
   expect(data.launches.length).toBe(1)
-  expect(h.chain().stopped).toBe(AGENT_STOPPED)
+  expect(h.chain().stopped).toBe('agentStopped')
   expect(h.jobs().last.ended).toEqual({ how: 'stopped' })
   ui = await $.ui.mount(PANE(160))
   const shown = await screen(ui)
@@ -212,8 +212,7 @@ test('the chain stops before dispatching into a worktree someone else changed', 
   data.git[ROOT]!.changed = 3
   await h.step(); await h.step()
   expect(data.launches.length).toBe(1)
-  expect(h.chain().stopped).toContain(FOREIGN)
-  expect(h.chain().stopped).toContain('3 個檔')
+  expect(storedStop(h.chain())).toEqual({ code: 'foreignChanges', files: 3 })
   expect(h.chain().heldAtCheck).toBeUndefined()
   expect(data.toasts.some((t: string) => t.includes('流程已暫停') && t.includes(FOREIGN))).toBe(true)
   const ui = await $.ui.mount(PANE(120))
@@ -260,8 +259,7 @@ async function passedThenOutsideCommit($: any, on: any, lastAgent: boolean) {
   expect(h.jobs().last.ended).toEqual({ how: 'finished' })
   // 指紋維持上一個程式 Agent 結束時記的那份，沒被重算成人的改動
   expect(h.jobs().mark).toBe(lastAgent ? '' : undefined)
-  expect(h.chain().stopped).toContain(FOREIGN)
-  expect(h.chain().stopped).toContain('2 個檔')
+  expect(storedStop(h.chain())).toEqual({ code: 'foreignChanges', files: 2 })
   expect(data.toasts.some((t: string) => t.includes('流程已暫停') && t.includes(FOREIGN))).toBe(true)
   const ui = await $.ui.mount(PANE(120))
   expect(await screen(ui)).toContain(flat('Alpha 流程已暫停：worktree 有未提交的改動（2 個檔）'))

@@ -1,5 +1,7 @@
 // 工作桌與主對話撞同一個 worktree：派工前分辨未提交的改動是不是上一個 Agent 留下的。
 import type { DispatchKind, RootJobs } from './dispatch'
+import { foreignStop, stopText } from './stop-reason'
+import type { StopReason } from './stop-reason'
 
 /** worktree 未提交狀態的指紋：`files` 有幾個檔在 git status 裡，`hash` 是狀態與 diff 的雜湊（乾淨是空字串）。 */
 export type WorktreeMark = { files: number; hash: string }
@@ -24,9 +26,15 @@ const CODE_KINDS: ReadonlySet<DispatchKind> = new Set(['continue', 'reply', 'cat
  * 它結束時留下的指紋（`own.mark`）跟現在一樣也可以。從沒派過工、或指紋不同：有別的對話在改，拒絕。同步不經過這裡。
  */
 export function markRefusal(now: WorktreeMark, own: RootJobs | undefined): string {
-  if (!now.files) return ''
+  const stop = markRefusalStop(now, own)
+  return stop ? stopText(stop) : ''
+}
+
+/** 同 markRefusal，給要停下流程的地方：回停下原因（代碼加檔案數），可以派回 null。 */
+export function markRefusalStop(now: WorktreeMark, own: RootJobs | undefined): StopReason | null {
+  if (!now.files) return null
   const last = own?.last
-  if (last && CODE_KINDS.has(last.kind) && !last.ended) return ''
-  if (own?.mark !== undefined && own.mark === now.hash) return ''
-  return `worktree 有未提交的改動（${now.files} 個檔），不是上一個 Agent 留下的；可能有別的對話在改，commit 或還原後再派`
+  if (last && CODE_KINDS.has(last.kind) && !last.ended) return null
+  if (own?.mark !== undefined && own.mark === now.hash) return null
+  return foreignStop(now.files)
 }

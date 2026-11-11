@@ -339,7 +339,7 @@ test('test_auto_pr_is_skipped_when_high_risk_paused_foreign_or_pr_declined — h
   expect(data.launches).toHaveLength(0)
   expect(data.toasts.some((t: string) => t.includes('高風險改動（認證／中介層），驗收已過，請你看過再開 PR'))).toBe(true)
   expect(data.toasts.some((t: string) => t.includes('自動派'))).toBe(false)
-  expect((data.store.chains as any)[BETA].needsHuman).toContain('認證／中介層')
+  expect((data.store.chains as any)[BETA].needsHuman).toBe('highRisk')
 })
 
 /** AC-4：流程修了 2 輪仍有 HIGH、已暫停 → 不派，照舊「流程已暫停」。 */

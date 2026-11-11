@@ -306,6 +306,8 @@ export const RELEASE_CONFIRMED = '已在面板確認：版號照慣例直接做'
 /** 上線確認寫進卡片的字：狀態「<tag> 已上線（工作桌確認）」、下一步「可歸檔：…」；六段也靠它們認得已確認上線。 */
 export const SHIPPED_WORD = '已上線'
 export const ARCHIVE_WORD = '可歸檔'
+/** 一欄裡多件事的分隔（splitClauses 依它拆行）：面板組「狀態」「部署」這類多件內容時用同一個字。 */
+export const CLAUSE_SEP = '；'
 
 /** 人名放進中文句子：英文名前後加空格（「要 Alex 決定」），中文不加（「要使用者決定」）。 */
 export const named = (user: string) => /^[\x00-\x7F]+$/.test(user) ? ` ${user} ` : user

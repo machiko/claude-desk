@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, TRUSTED, result, text, flat } from './fixture'
+import { fixture, feedLog, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, NOW, TRUSTED, result, text, flat, storedStop } from './fixture'
 import { screen } from './world'
 import { historyEntries } from '../hooks/extras'
 import { issueOf, hhmm } from '../hooks/model'
@@ -377,7 +377,7 @@ test('test_chain_pause_reason_is_not_replaced_by_generic_failure', async ($, on)
   data.git[ALPHA]!.changed = 3
   await clock.advance(2500); await clock.settle()
   await clock.advance(2500); await clock.settle()
-  expect((data.store.chains as any)[ALPHA].stopped).toContain('3 個檔')
+  expect(storedStop((data.store.chains as any)[ALPHA])).toEqual({ code: 'foreignChanges', files: 3 })
   // 下一次重新整理之後
   await h.refresh()
   await h.refresh()

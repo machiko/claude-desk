@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_B, REGISTRY, result } from './fixture'
+import { fixture, feedLog, NOW, PANE, PROJECT_DIR, CARD_B, REGISTRY, result, storedStop } from './fixture'
 import { busyAgent as busy, startsAgents } from './world'
 import { resetText } from '../hooks/model'
-import { AGENT_STOPPED, CHAIN_CHANGED, CHAIN_OVERWRITTEN, CHECK_UNAPPROVED } from '../hooks/chain'
+import { CHAIN_CHANGED, CHAIN_OVERWRITTEN, CHECK_UNAPPROVED } from '../hooks/chain'
 
 // 流程紀錄帶版本號：每次寫回加 1；拿早先看到的版本做決定的寫入在版本變了時被拒絕；整張表被別的對話用舊表寫回時偵測並重套。
 const ALPHA = '/home/u/wt/alpha'
@@ -10,6 +10,8 @@ const BETA = '/home/u/wt/beta'
 const ME = 'fixture-session'
 const RESETS_AT = new Date(NOW + 2.5 * 3_600_000).toISOString()
 const REASON = `5 小時額度剩 25%，低於門檻 30%，${resetText(RESETS_AT, NOW)}後按 g 重開`
+/** 同一件存進流程紀錄的樣子：代碼加參數（i18n 現在卡 AC-2）。 */
+const HOLD = { code: 'quotaHold', left: 25, threshold: 30, resetsAt: RESETS_AT }
 
 const registry = (rows: [string, string][]) => `## 任務\n| Project | path |\n| --- | --- |\n${rows.map(([n, p]) => `| ${n} | \`${p}\` |`).join('\n')}`
 const lastJob = (kind: string, extra: object = {}) => ({ sessionId: 'r0000001-0000-4000-8000-000000000000', mark: '', last: { launchName: 'desk-old-0', nativeId: 'r0000001', sessionId: 'r0000001-0000-4000-8000-000000000000', kind, startedAt: 0, fresh: kind === 'review', owner: ME, ended: { how: 'finished' }, ...extra } })
@@ -75,7 +77,7 @@ test('test_chain_rev_increments_on_every_write_and_backfills_legacy_records', as
   await h.refresh()
   await h.step()
 
-  expect(chains(data)[BETA].stopped).toBe(REASON)
+  expect(storedStop(chains(data)[BETA])).toEqual(HOLD)
   expect(chains(data)[BETA].rev).toBe(1)
   expect(chains(data)[ALPHA]).toEqual({ owner: 'other-session', startedAt: 0, round: 1, rev: 3 })
 })
@@ -141,7 +143,7 @@ test('test_chain_rev_increments_on_every_write_and_backfills_legacy_records — 
   data.agents = [{ ...data.agents[0] }]
   await h.refresh()
   await stop()
-  expect(chains(data)[BETA].stopped).toBe(AGENT_STOPPED)
+  expect(chains(data)[BETA].stopped).toBe('agentStopped')
   expect(chains(data)[BETA].rev).toBe(3)
   expect(chains(data)[ALPHA].rev).toBe(3)
 })
@@ -252,7 +254,7 @@ test('test_a_whole_map_overwrite_by_another_session_is_detected_and_reapplied', 
 
   expect(overwrites.count()).toBe(1)
   expect(chains(data)[ALPHA]).toEqual({ owner: 'other-session', startedAt: 0, round: 1, rev: 5 })
-  expect(chains(data)[BETA].stopped).toBe(REASON)
+  expect(storedStop(chains(data)[BETA])).toEqual(HOLD)
   expect(chains(data)[BETA].rev).toBe(3)
 })
 
@@ -302,7 +304,7 @@ test('test_three_overwrites_in_a_row_give_up_and_post_a_warning', async ($, on) 
   // 別的對話不再蓋：下次重新整理寫進去，照常暫停並通知一次
   overwrites.stop()
   await h.refresh(); await h.step()
-  expect(chains(data)[BETA].stopped).toBe(REASON)
+  expect(storedStop(chains(data)[BETA])).toEqual(HOLD)
   expect(chains(data)[BETA].rev).toBe(3)
   expect(paused()).toHaveLength(1)
 
@@ -550,7 +552,7 @@ test('test_two_concurrent_writes_to_the_same_record_keep_both_changes', async ($
   // 這個對話第一次寫成版本 5（被同版的別人蓋掉），重套成 6
   expect(sets.map(v => v.rev)).toEqual([5, 6])
   const final = chains(data)[BETA]
-  expect(final.stopped).toBe(REASON)
+  expect(storedStop(final)).toEqual(HOLD)
   expect(final.owner).toBe('other-session')
   expect(final.rev).toBe(6)
   expect(final.stamp).not.toBe(theirStamp)

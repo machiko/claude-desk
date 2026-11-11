@@ -22,7 +22,8 @@ import type { DispatchKind, QueueOpts, ReviewOpts, UntrustedHold } from './dispa
 import type { RawAgent } from './agents'
 import type { RunShown } from './run-time'
 import { awaitsSpecOk, blocking, canArchive, finalState, isReleaseLine, movedSince, parseVerdict, pipeline, runningKind } from './pipeline'
-import { MEDIUM_FIX_NOT_SENT, reviewedOn, seenHeads, shownStopped, skipsReview } from './chain'
+import { reviewedOn, seenHeads, skipsReview } from './chain'
+import { readStop } from './stop-reason'
 import { isApproved, trustCheck, trustedChecks, trustWrites, unapprovedText } from './approve-check'
 import { missingServices } from './containers'
 import { compactStatus, textKey } from './digest-status'
@@ -217,8 +218,10 @@ export async function refresh($: any, options: PluginOptions) {
       // 流程接手時檢查通過就過關（輪到你的說法）：跟 nextStep 同一個判斷，含風險；只有流程還會接著走（沒過關或過關後有新 commit）時才算。
       const skip = !!run && !tutorial && !!settings && reviewedOn(run, probe.git?.branch) && (!run.passed || stale)
         && skipsReview(run, probe.git?.branch, await riskOf($, { root: base.root, git: probe.git, pr, ...(base.base ? { base: base.base } : {}) }, settings.riskHigh, settings.cardBase))
+      // 停下原因：代碼組成句子；更新前存的舊句照舊句表認回代碼（不回寫紀錄）。
+      const stop = readStop(run?.stopped, run?.stopArgs)
       const chain = run
-        ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(run.stopped ? { stopped: shownStopped(run.stopped), ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.fixTotal ? { fixTotal: run.fixTotal } : {}), ...(run.stopped === MEDIUM_FIX_NOT_SENT && run.mediumFixSecurity ? { mediumSecurity: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(run.passed && run.unreviewed ? { unreviewed: true, ...(run.reviewFix ? { reviewFix: true } : {}) } : {}), ...(skip ? { reviewed: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : {}) }
+        ? { round: run.round, ...(run.rev !== undefined ? { rev: run.rev } : {}), ...(stale ? { stale: true } : {}), ...(stop ? { stopped: stop.text, ...(stop.code ? { stopCode: stop.code } : {}), ...(stop.args ? { stopArgs: stop.args } : {}), ...(run.heldAtCheck ? { heldAtCheck: true } : {}) } : {}), ...(run.owner !== self ? { foreign: true } : {}), ...(run.passed ? { passed: true } : {}), ...(run.mediumFix && !run.passed ? { mediumFix: run.mediumFix } : {}), ...(run.fixTotal ? { fixTotal: run.fixTotal } : {}), ...(stop?.code === 'mediumFixNotSent' && run.mediumFixSecurity ? { mediumSecurity: true } : {}), ...(run.needsHuman ? { needsHuman: run.needsHuman } : {}), ...(run.skippedReview ? { skippedReview: true } : {}), ...(run.passed && run.unreviewed ? { unreviewed: true, ...(run.reviewFix ? { reviewFix: true } : {}) } : {}), ...(skip ? { reviewed: true } : {}), ...(selfReview ? { selfReview: true } : {}), ...(autoReview ? { autoReview: true } : {}), ...(last ? { lastKind: (last.round ? 'fix' : last.kind) as any } : {}), ...(run.catchupHead && run.catchupHead === probe.git?.head ? { catchupTried: true } : undefined) }
         : selfReview ? { round: 0, selfReview: true } : undefined
       // 這個對話確認疊放卡規格時記下、原卡合併後要自動派實作：「輪到你」才說得出會自動接著做。
       const stackChain = chain && run?.stackDispatch && run.owner === self ? { ...chain, stackDispatch: true } : chain

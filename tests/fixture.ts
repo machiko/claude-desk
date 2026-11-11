@@ -259,3 +259,13 @@ export function deskTemplate(data: { files: Record<string, string> }, text: stri
   const files = data.files
   data.files = new Proxy(files, { get: (t, k) => (typeof k === 'string' && k.endsWith('/templates/DESK-template.md') ? text : Reflect.get(t, k)) })
 }
+
+/**
+ * 流程紀錄存的停下原因（i18n 現在卡 AC-2：存代碼與參數、不存句子）攤成 { code, ...參數 }；額度煞車參數裡停下當時的時刻 at 不比（各測試的時鐘不同）。
+ * 沒停下回 undefined。
+ */
+export function storedStop(run: { stopped?: string; stopArgs?: Record<string, string | number> } | undefined): Record<string, string | number> | undefined {
+  if (!run?.stopped) return undefined
+  const { at: _at, ...args } = run.stopArgs ?? {}
+  return { code: run.stopped, ...args }
+}

@@ -234,7 +234,7 @@ test('test_conflict_attempt_is_not_recorded_when_launch_fails', { timeoutMs: SLO
   expect(data.launches.length).toBe(1)
   const chain = (data.store.chains as any)[BETA]
   expect(chain.catchupHead).toBeUndefined()
-  expect(chain.stopped).toContain('解衝突沒派出')
+  expect(chain.stopped).toBe('catchupNotSent')
   expect(seen.feed.some(e => String(e.text).includes('無法派解衝突（claude: 無法啟動背景 Agent）'))).toBe(true)
   const ui = await $.ui.mount(PANE(100))
   const shown = await screen(ui)
