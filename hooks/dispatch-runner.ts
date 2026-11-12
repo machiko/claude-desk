@@ -19,7 +19,7 @@ import { WORD, DEMO_ONLY } from './theme'
 import { lastLaunches } from './stale-agents'
 import { restage, spin, tutorial, lastAgents, lastAgentsAt } from './register'
 import { carriedFix, carriedReview, countedFix } from './chain'
-import { checkStands } from './pipeline'
+import { passedAtHead } from './pipeline'
 import { fixesReview } from './prompts/fix'
 import { t } from './i18n'
 
@@ -208,7 +208,7 @@ async function reviewScope($: any, c: Case, probed: Case['git'], settings: Dispa
   const found = (settings.review.preflightMinFiles ?? 0) > 0 ? await diffFiles($, at, settings.cardBase) : await diffBase($, at, settings.cardBase)
   const verify = ((await read($, verifiesAtom)) as Record<string, Verify>)[c.statusPath]
   // HEAD 要對得上（不只是沒移動）：讀不到 HEAD、舊紀錄沒記 HEAD 都照舊重跑。
-  const verifiedHead = checkStands(at, verify) === true && verify?.head && verify.head === at.git?.head ? verify.head : undefined
+  const verifiedHead = passedAtHead(at, verify) ? verify?.head : undefined
   const securityFocus = !security && !!settings.review.combineSecurity && (await riskOf($, at, settings.riskHigh, settings.cardBase)).level === 'high'
   return {
     ...(found ? { target: found.target } : {}),
@@ -238,7 +238,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   // 派實作要先核准完成檢查（面板第二次按 g 就核准）；從隊伍派出的排隊前已核准過，排隊期間檢查改了的在隊伍那邊就擋下。
   if (kind === 'continue' && !opts.auto && !fromQueue && !isApproved(await trustedChecks($), c)) { $.ui.toast(unapprovedText(c)); return false }
   const settings = await loadSettings($, options)
-  const { model, effort, fresh } = modelFor(settings, c.root, kind)
+  // 自動流程派的修正（帶 fix）讀 kinds.fix；你按 g 的修正不帶 fix，照 continue 的。
+  const { model, effort, fresh } = modelFor(settings, c.root, kind, { fix: !!opts.fix })
   const jobs = await loadJobs($)
   const rootKey = normalizeRoot(c.root)
   const own: RootJobs = jobs[rootKey] ?? {}
@@ -283,7 +284,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
       const recheck = !!opts.auto && !!run?.recheck && !opts.security
       review = { round, template, ...(tutorial ? {} : await reviewScope($, c, probed, settings, !!opts.security)), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls }
     }
-    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls)
+    // 修正或解衝突因換模型開新對話：提示開頭說明沒有先前記憶（審查、推送、同步的提示本來就是給新對話的）。
+    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls, fresh && (!!opts.fix || kind === 'catchup'))
     const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
     launchKinds = { ...launchKinds, [c.statusPath]: doing }
     await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))

@@ -10,7 +10,7 @@ import { UUID, agentWaits, approvalWait } from './agents'
 import { slugOf } from './text'
 import { normalizeRoot, parseSettings } from './settings'
 import type { DispatchSettings } from './settings'
-import { DONE_RULE, NO_PUSH_RULE, PUSH_RULE, PUSH_SCOPE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
+import { DONE_RULE, FRESH_SESSION_LEAD, NO_PUSH_RULE, PUSH_RULE, PUSH_SCOPE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
 import { CATCHUP_CARD_RULE, catchupHead } from './prompts/catchup'
 import { PUBLISH_CARD_RULE, publishHead } from './prompts/publish'
 import { reviewPrompt, reviewTask } from './prompts/review'
@@ -25,7 +25,7 @@ import { STACK_NEXT, stackWaitWhy } from './stack'
 import { NEWER_CARD_WHY, UPDATE_DESK_NEXT } from './formats'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
-export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
+export { FRESH_SESSION_LEAD, NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
 export { openPrRequest, openPrSteps, prHowOf, pushRequest } from './prompts/publish'
 export type { PrHow } from './prompts/publish'
 export { REVIEW_FILE, SECURITY_FILE, reviewTask } from './prompts/review'
@@ -157,9 +157,10 @@ export function readsPitfalls(c: Case, kind: DispatchKind, fix?: FixReason): boo
 /**
  * `self`：這次派出去的啟動名；Agent 查同一個 worktree 有沒有別的 Agent 時，才不會把自己當成別人。
  * `pitfalls`：常犯錯誤清單路徑（呼叫端確認檔案存在才給）；只有實作與回覆用得到（修正給了也不帶，見 readsPitfalls），審查的清單照舊放在 `review`。
+ * `freshSession`：修正或解衝突因 kinds.fix／kinds.catchup 換了模型而開新對話：開頭先說這是新的對話、要先讀哪些東西。
  */
-export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = '', pitfalls = ''): string {
-  const head = fix ? fixHead(c, fix)
+export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = '', pitfalls = '', freshSession = false): string {
+  const task = fix ? fixHead(c, fix)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
     : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : manualFixOf(c, kind)?.head || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
@@ -167,6 +168,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : kind === 'publish' ? publishHead(text)
     : kind === 'catchup' ? catchupHead(text, c.verify)
     : `${named(settings.user).trimStart()}的回覆：${text}`
+  const head = freshSession ? `${FRESH_SESSION_LEAD}\n${task}` : task
   const writes = writesCode(kind, fix)
   const publishing = !fix && kind === 'publish'
   const catchup = !fix && kind === 'catchup'

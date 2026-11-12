@@ -107,6 +107,14 @@ export function checkStands(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefin
 }
 
 /**
+ * 完成檢查在現在這個 HEAD、跑卡片現在的指令時通過：HEAD 要對得上（不只是沒移動），讀不到 HEAD、舊紀錄沒記 HEAD 都不算。
+ * 派審查時（審查不重跑整套）與 Agent 沒有新 commit 時（流程沿用、不重跑）共用。
+ */
+export function passedAtHead(c: Pick<Case, 'verify' | 'git'>, v: Verify | undefined): boolean {
+  return checkStands(c, v) === true && !!v?.head && v.head === c.git?.head
+}
+
+/**
  * 正在跑的 Agent 在做什麼：工作桌派的那一次（含啟動中）帶著種類。對不上派工的（例如在面板外開的）當作在寫程式：
  * 流程記的最後一種是上一次派工的，不是它的。
  */

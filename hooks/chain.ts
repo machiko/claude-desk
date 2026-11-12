@@ -185,8 +185,10 @@ export function seenHeads(run: ChainRun | undefined, branch: string | undefined)
  * `branch`：現在的分支；這條分支審查過（reviewedBranch）又不是高風險時，實作做完、檢查通過就過關、不複審（帶 unreviewed）。
  * `quotaHold`：5 小時額度低於門檻的暫停原因（model.ts 的 quotaHold）；有給時要派 Agent 的那步改成停下，跑檢查與過關照舊。
  * `combineSecurity`：設了 review.combineSecurity，高風險分支的資安重點已併進程式碼審查：過關後不另派資安審查，照舊停下來給你看。
+ * `answered`：實作或回覆的 Agent 做完一輪、把題目寫進「等你」後結束，題目已在對話處理（清成「無」）：本來要跑檢查、派審查或修正、過關的，
+ * 改成派一次「繼續」（接任務原本的對話、照卡片下一步；不算修正輪、不受上限擋），之後照舊套額度煞車；本來就該停的（檢查指令改過、Agent 被停掉）照舊停。
  */
-export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; quotaHold?: StopCause; /** 現在的分支：看這條分支審查過了沒（reviewedBranch）。 */ branch?: string; combineSecurity?: boolean }
+export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: boolean; stopped?: boolean; quotaHold?: StopCause; /** 現在的分支：看這條分支審查過了沒（reviewedBranch）。 */ branch?: string; combineSecurity?: boolean; answered?: boolean }
 
 /**
  * `finished`：上一次派工剛結束、還沒處理過的那種（continue／reply／review）；`check` 是之後跑的檢查結果。
@@ -194,7 +196,9 @@ export type ChainContext = { risk?: Risk; lastWasSecurity?: boolean; changed?: b
  * 解衝突有 commit 時由「審查通過後有新 commit」的重新檢查接手，沒 commit 時面板寫原因。
  */
 export function nextStep(run: ChainRun | undefined, finished: DispatchKind | null, check: boolean | null, verdict: ReviewVerdict | null, trusted: boolean, ctx: ChainContext = {}): ChainStep {
-  const step = plannedStep(run, finished, check, verdict, trusted, ctx)
+  const planned = plannedStep(run, finished, check, verdict, trusted, ctx)
+  // 題目已在對話處理：流程已停、已過關（planned 是 null）或本來就該停的照舊；其他改派一次「繼續」（不帶 reason：不算修正輪）。
+  const step: ChainStep = ctx.answered && run && planned && planned.kind !== 'stop' ? { kind: 'dispatch', dispatch: 'continue', round: run.round } : planned
   // 額度煞車：只擋派 Agent（花額度）；本機檢查、過關、其他停下照舊。
   if (step?.kind !== 'dispatch' || !ctx.quotaHold) return step
   // 記下被擋的那步：按 g 重開時直接派它（擋在派審查前的不用再派一個實作 Agent）。
@@ -231,7 +235,8 @@ function plannedStep(run: ChainRun | undefined, finished: DispatchKind | null, c
 }
 
 /**
- * 那次派工停在提問、題目已在對話處理：之後由對話接手。過關與停下照舊（審查結論照記）；
+ * 那次派工還停在提問（Agent 沒結束）、題目已在對話處理：之後由對話接手。做完一輪才把題目寫進「等你」的不經這裡（nextStep 的 answered 派一次繼續）。
+ * 過關與停下照舊（審查結論照記）；
  * 本來要派修正的改成停下寫原因（擋住的結論還在，不能當沒事）；跑檢查、派審查回 null，只標成處理過。
  */
 export function handedOver(step: ChainStep): ChainStep {

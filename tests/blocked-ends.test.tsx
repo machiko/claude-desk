@@ -134,12 +134,14 @@ test('test_stop_done_includes_blocked_desk_agents', async ($, on) => {
   expect((data.store.jobs as any)[BETA].last.ended).toEqual({ how: 'finished' })
 })
 
-const HANDED = 'Alpha 「等你」已在對話處理，流程不替那次派工接著跑；照「輪到你」繼續'
+const HANDED = 'Alpha 「等你」已在對話處理'
+/** 流程替那次派工接著跑的舊說法：清掉後不再出現。 */
+const NOT_CONTINUED = '流程不替那次派工接著跑'
 const setAsk = (data: any, ask: string) => { data.files[CARD_A] = data.files[CARD_A]!.replace(/- 等你：.*$/m, `- 等你：${ask}`) }
 
 /**
- * AC-6 共用：自動流程派的實作（viaReply 時再回覆一次）做完一輪（blocked／idle）時把題目寫進「等你」：
- * 流程停著等你，不跑測試、不派驗收；在對話處理完（清成無）後也不自動接著派，動態說一聲。
+ * AC-1（少等、少按、少續跑；原為另一張卡的 AC-6）共用：自動流程派的實作（viaReply 時再回覆一次）做完一輪（blocked／idle）時把題目寫進「等你」：
+ * 流程停著等你，不跑測試、不派驗收；在對話處理完（清成無）後不用按 g，自動派出一次「繼續」（接任務原本的對話），重新整理幾次也只派這一次、不算修正輪。
  */
 async function waitsForCardQuestion($: any, on: any, viaReply: boolean) {
   const { data, clock } = fixture(on)
@@ -178,21 +180,37 @@ async function waitsForCardQuestion($: any, on: any, viaReply: boolean) {
   expect(await screen(ui)).toContain(flat('▶ 輪到你 f 填入決策（先按選項字母'))
   await ui.unmount()
 
-  // 在對話處理完：「等你」清成無。流程不替那次派工接著跑測試或派工，動態說一聲
+  // 在對話處理完：「等你」清成無。不用按 g，自動派一次「繼續」接任務原本的對話，照卡片下一步；動態寫自動派出
+  const session = (data.store.jobs as any)['/home/u/wt/alpha'].sessionId
   setAsk(data, '無')
   await h.refresh()
   await h.step(); await h.step(); await h.step()
   expect(sh(data)).toBe(0)
-  expect(data.launches).toHaveLength(launched)
+  expect(data.launches).toHaveLength(launched + 1)
+  const sent = data.launches[launched]
+  expect(h.prompt(launched).startsWith('依卡片的下一步繼續：')).toBe(true)
+  expect(sent.argv[sent.argv.indexOf('--resume') + 1]).toBe(session)
   expect(log.has(HANDED)).toBe(true)
+  expect(log.has(NOT_CONTINUED)).toBe(false)
+  expect(log.has('Alpha 自動派繼續')).toBe(true)
+  // 不算修正輪：修正數沒加、流程輪數沒變
+  const chain = (data.store.chains as any)['/home/u/wt/alpha']
+  expect(chain.fixTotal ?? 0).toBe(0)
+  expect(chain.round).toBe(0)
+  expect((data.store.jobs as any)['/home/u/wt/alpha'].last.round).toBeUndefined()
+
+  // 再重新整理幾次也只派這一次
+  await h.refresh(); await h.step(); await h.step()
+  await h.refresh(); await h.step(); await h.step()
+  expect(data.launches).toHaveLength(launched + 1)
 }
 
-/** AC-6：實作（修正同是 continue）做完時把題目寫進「等你」。 */
+/** AC-1：實作（修正同是 continue）做完時把題目寫進「等你」，清掉後自動派一次繼續。 */
 test('test_auto_chain_waits_when_agent_ends_with_question_on_card', async ($, on) => {
   await waitsForCardQuestion($, on, false)
 })
 
-/** AC-6：回覆（y）做完時把題目寫進「等你」，一樣停著等你。 */
+/** AC-1：回覆（y）做完時把題目寫進「等你」，一樣停著等你；清掉後自動派一次繼續。 */
 test('test_auto_chain_waits_when_reply_ends_with_question_on_card', async ($, on) => {
   await waitsForCardQuestion($, on, true)
 })
@@ -332,7 +350,7 @@ for (const clearFirst of [false, true]) {
 }
 
 /**
- * AC-6 之後：實作改了測試指令、又把題目寫進「等你」後做完；在對話清掉後流程停在檢查段（指令改過）。
+ * 維持-6（少等、少按、少續跑）／原 AC-6 之後：實作改了測試指令、又把題目寫進「等你」後做完；在對話清掉後流程停在檢查段（指令改過），不派「繼續」。
  * 核准新指令後重開：照暫停時說的「流程接著走」，通過後派驗收。
  */
 test('test_question_handled_then_check_paused_resumes_to_review', async ($, on) => {
@@ -350,10 +368,11 @@ test('test_question_handled_then_check_paused_resumes_to_review', async ($, on) 
   await h.finish()
   expect(data.launches).toHaveLength(1)
 
-  // 在對話處理完：說一聲不替那次派工接著跑，流程停在檢查段等你核准指令
+  // 在對話處理完：說一聲已在對話處理；流程停在檢查段等你核准指令，不派「繼續」
   setAsk(data, '無')
   await h.refresh(); await h.step(); await h.step()
   expect(log.has(HANDED)).toBe(true)
+  expect(log.has('Alpha 自動派繼續')).toBe(false)
   expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('checkChanged')
   expect(data.launches).toHaveLength(1)
 
@@ -364,4 +383,35 @@ test('test_question_handled_then_check_paused_resumes_to_review', async ($, on) 
   expect(sh(data)).toBe(1)
   expect(data.launches).toHaveLength(2)
   expect(h.prompt(1)).toContain('程式碼審查')
+})
+
+/**
+ * 維持-1（少等、少按、少續跑）：Agent 把題目寫進「等你」後被按 k 停掉（流程暫停）；「等你」清成無：
+ * 跟改之前一樣不派任何 Agent，流程維持暫停。
+ */
+test('test_stopped_agent_question_cleared_does_not_dispatch', async ($, on) => {
+  const { data, clock } = fixture(on)
+  alphaOnly(data, clock)
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  await h.refresh()
+  expect(data.launches).toHaveLength(1)
+
+  // 題目寫進「等你」後被停掉
+  setAsk(data, '快取要用哪種：A) 記憶體 B) Redis')
+  data.agents = data.agents.map((a: any) => ({ ...a, state: 'stopped', status: undefined }))
+  await h.refresh()
+  await h.step(); await h.step()
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('agentStopped')
+
+  // 在對話清掉：不派、流程照舊暫停
+  setAsk(data, '無')
+  await h.refresh()
+  await h.step(); await h.step(); await h.step()
+  expect(sh(data)).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  expect((data.store.chains as any)['/home/u/wt/alpha'].stopped).toBe('agentStopped')
 })

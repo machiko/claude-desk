@@ -42,6 +42,9 @@ export const HISTORY_FORMAT = "每筆寫成 `- YYYY-MM-DD HH:MM：<誰>：<做�
 /** 每次派工都附：歷程照行格式與白話範本寫。 */
 export const HISTORY_FORMAT_RULE = `歷程${HISTORY_FORMAT}`
 
+/** 修正或解衝突因 kinds.fix／kinds.catchup 換了模型、開新對話時的第一句：沒有先前記憶，先讀規格、報告與最近的 commit。 */
+export const FRESH_SESSION_LEAD = '這是新的對話，沒有先前記憶：先讀卡片「## 規格」、.task/REPORT.md 與 git log -5。'
+
 export const DONE_RULE = '做完實作：關卡留 無；完成檢查與審查由工作桌自動接手，你不用自己送審查。'
 
 /** 會改程式的派工（繼續、回覆、修正）與推送可以 push 自己的分支、開 PR；寫遠端的範圍只到這裡。推送用這句，歷程範例已寫在推送步驟（prompts/publish.ts）。 */
@@ -55,11 +58,12 @@ export const NO_PUSH_RULE = '不 push、不開 PR。'
 export const changelogRule = (c: Case) => `專案有 changelog.d/ 資料夾時，使用者看得到的改動寫成 CHANGELOG 條目放在 changelog.d/${slugOf(c)}.md（一行或多行「- 」開頭、動詞開頭：新增／修復／調整／移除，沒有標題與版本；沒有使用者看得到的改動就不建這個檔），不要改 CHANGELOG.md，發版時才合併。沒有這個資料夾就照專案原本的慣例。`
 
 /**
- * 會改程式的派工再多一條：只跑相關測試，收尾也不跑整套，完成檢查交給工作桌做完後自動跑的那次（沒過會派修正）。
- * 整套測試很慢，好幾個 Agent 同時反覆跑會把機器拖垮、測試逾時重跑；一輪也少跑一次整套。
- * 審查在工作桌的完成檢查已於同一個 HEAD 通過時也不重跑整套（見 prompts/review.ts 的 checkRule），不加這條。
+ * 會改程式的派工（實作、回覆、修正）再多一條：改的過程只跑相關測試；交出（收尾 commit）前自己跑一次卡片「檢查」欄的完整指令，紅了修好再交。
+ * 整套測試很慢，好幾個 Agent 同時反覆跑會把機器拖垮，過程中照舊只跑相關的；但交出前先跑一次，沒過就不用等工作桌跑完再派一輪修正。
+ * 工作桌之後照舊再跑一次（不因 Agent 跑過就省略）。解衝突不附這條（catchupHead 第 3 步自己寫了）；審查在工作桌的完成檢查已於同一個 HEAD 通過時
+ * 不重跑整套（見 prompts/review.ts 的 checkRule），也不加這條。
  */
 export const testRule = (c: Case) => {
-  const check = c.verify ? `完成檢查 \`${c.verify}\`` : '卡片「檢查」欄的完成檢查'
-  return `改程式的過程中只跑跟這次改動有關的測試（目標測試或相關的測試檔），不要每改一次就跑整套；收尾 commit 前也只跑跟改動有關的測試，不用自己跑${check}（整套）：做完後工作桌會自動跑一次，沒過會再派修正。`
+  const check = c.verify ? `卡片「檢查」欄的完整指令 \`${c.verify}\`` : '卡片「檢查」欄的完整指令'
+  return `改程式的過程中只跑跟這次改動有關的測試（目標測試或相關的測試檔），不要每改一次就跑整套；交出前（收尾 commit 前）跑一次${check}，紅了自己修好再跑到綠才交，結果寫進歷程；工作桌之後會再自動跑一次。`
 }
