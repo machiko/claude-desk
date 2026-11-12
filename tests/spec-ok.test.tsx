@@ -2,8 +2,10 @@ import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_B, REGISTRY, result, text, flat, feedLog } from './fixture'
 import { screen } from './world'
 import { appendTo, setFields } from '../hooks/tutorial'
-import { awaitsSpecOk } from '../hooks/pipeline'
-import { stageActions } from '../hooks/turn'
+import { awaitsSpecOk, finalState, pipeline } from '../hooks/pipeline'
+import { expandedActions, isHandling, stageActions, turnOf } from '../hooks/turn'
+import { buildCase, stateOf } from '../hooks/model'
+import type { AgentInfo, Case, Verify } from '../types'
 
 const BETA = '/home/u/wt/beta'
 const KEY = `case-${CARD_B}-spec-ok`
@@ -215,4 +217,59 @@ test('help lists t for confirming the spec in real mode and for the tutorial ste
   await ui.press({ key: 'help' })
   expect(await screen(ui)).toContain(flat('確認規格（規格看過、要派實作時按兩次，教學模式裡是確認規格／合併／打 tag 的下一步）'))
   await ui.unmount()
+})
+
+// 規格關卡卡住已實作的卡：規格還沒確認、程式就先寫好（完成檢查已過），六段算到驗收段，關卡 spec 卻擋著派工。
+const PAST_PATH = '/w/dead-end/.desk/CARD.md'
+const PAST_ROOT = '/w/dead-end'
+const PASSED: Verify = { command: 'npm test', at: 1, ok: true, exitCode: 0, tail: [], truncated: false, head: 'h1' }
+const pastCard = `<!-- DESK -->\n- 狀態：合併完成\n- 檢查：\`npm test\`\n- 等你：無\n- 下一步：依規格與實作計畫實作\n- 關卡：spec：待確認規格（AC-1～AC-2）\n<!-- /DESK -->`
+
+/** 跟工作桌一樣組出這件：讀卡（帶 Agent）→ 重算狀態 → 算六段 → 決定是否完成。 */
+function pastBuild(agent?: AgentInfo): Case {
+  const built = buildCase({ name: 'Dead', statusPath: PAST_PATH }, pastCard, 1, agent ? { [PAST_ROOT]: agent } : {}, PASSED)
+  const { state: _built, ...rest } = { ...built, git: { branch: 'fix/dead-end', head: 'h1' } }
+  const base = { ...rest, state: stateOf(rest, PASSED) } as Case
+  const piped = { ...base, pipeline: pipeline(base, PASSED) }
+  return { ...piped, state: finalState(piped) } as Case
+}
+
+/** 規格關卡卡住已實作的卡 AC-1：「輪到你」叫你按 t（不是 w），t 在動作列上，展開也列出確認規格 */
+test('test_spec_ok_offered_when_card_already_passed_check_under_spec_gate', async ($, on) => {
+  const c = pastBuild()
+  expect(c.pipeline?.current).toBe('review')
+  const turn = turnOf(c)
+  expect(turn.who).toBe('you')
+  expect(turn.action).toBe('spec-ok')
+  expect(turn.key).toBe('t')
+  expect(turn.text).toBe('t 確認規格並派實作（先按 o 看過規格，或輸入 /desk:card spec dead-end ok）')
+  expect(isHandling(c)).toBe(false)
+  expect(stageActions(c).has('spec-ok')).toBe(true)
+  expect(stageActions(c).has('review')).toBe(false)
+  expect(expandedActions(c).find(a => a.id === 'spec-ok')).toEqual({ id: 'spec-ok' })
+
+  // 面板上：Beta 測試已過、關卡 spec，t 畫在動作列上、按 m 展開也有
+  const { data } = fixture(on)
+  onlySpec(data)
+  data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'g1' } }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  const ui = await $.ui.mount(PANE(80))
+  expect((await ui.find({ key: KEY }))?.props?.hotkey).toBe('t')
+  expect(await screen(ui)).toContain(flat('t 確認規格並派實作（先按 o 看過規格，或輸入 /desk:card spec beta ok）'))
+  expect(await screen(ui)).not.toContain(flat('w 派驗收'))
+  await ui.press({ key: 'more' })
+  expect((await ui.findAll({ type: 'Button' })).some((b: any) => b.props?.hotkey === 't')).toBe(true)
+  await ui.unmount()
+})
+
+/** 規格關卡卡住已實作的卡 維持-3：有 Agent 在跑時照舊說 Agent 在做什麼，t 不在動作列上、展開時鎖住 */
+test('test_spec_ok_hidden_while_agent_runs_past_build', () => {
+  const c = pastBuild({ id: 'a1b2c3d4', name: 'desk-mw2ar92l-3', state: 'working', status: 'busy' })
+  const turn = turnOf(c)
+  expect(turn.who).toBe('ai')
+  expect(turn.action).toBeUndefined()
+  expect(turn.text).toBe('Agent 在寫程式（l 看輸出）')
+  expect(isHandling(c)).toBe(true)
+  expect(stageActions(c).has('spec-ok')).toBe(false)
+  expect(expandedActions(c).find(a => a.id === 'spec-ok')).toEqual({ id: 'spec-ok', isLocked: true })
 })

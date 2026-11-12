@@ -5,12 +5,12 @@
 import { atom, read } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { Case, SentRecord, Snapshot } from '../types'
-import { parseCard, parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
+import { parseCard, parseDecisions, decisionAnswer, decisionNames, decisionPrompt, withDecision, releasePrompt, allPicked, confirmShip, isPlaceholder, parseGate, saysNone, ARCHIVE_WORD, CARD_CMD, PLAN_STEP, REGISTRY_TEMPLATE } from './card'
 import { DEMO_ONLY, WORD } from './theme'
 import { quotaHeld } from './model'
 import { errorLine, errorText, plain, reasonLine, slugOf } from './text'
 import { baseRefs, deskPaths, lastLine, loadSettings, originRemote, worktreeMark } from './probes'
-import { afterSpecRefusal, openPrRequest, prHowOf, pushRequest, refusalOf, refusalText } from './dispatch'
+import { afterSpecRefusal, dispatchable, openPrRequest, prHowOf, pushRequest, refusalOf, refusalText } from './dispatch'
 import { normalizeRoot } from './settings'
 import { archivesOnShip, canRelease, isReleaseLine, releasingStep } from './pipeline'
 import { AGENT_STOPPED, CHAIN_CHANGED, paused, revOf } from './chain'
@@ -322,7 +322,7 @@ export async function confirmSpec($: any, options: PluginOptions, c: Case) {
 }
 
 /**
- * 規格剛確認（面板 t、教學的 t、對話跑的 spec-ok）：用重讀後的卡照按 g 派實作。
+ * 規格剛確認（面板 t、教學的 t、對話跑的 spec-ok）：用重讀後的卡照按 g 派實作；六段已過實作段的不派實作，交給 dispatchPastBuild。
  * 確認規格等於核准檢查欄當時的指令：先記下核准（不能派也記，之後按 g 不用再核准），不跳對話框；
  * 「等你」還有事或手動派也不能派的，只說原因；其餘當手動派工交給 dispatch：worktree 有別人的改動、啟動中、已在隊伍、Agent 已滿排隊都照按 g 處理。
  */
@@ -331,6 +331,9 @@ export async function dispatchAfterSpec($: any, options: PluginOptions, statusPa
   // 重讀到的關卡還是 spec（腳本失敗、重讀失敗）：沒有確認，不派也不出聲。
   if (!c || c.demo || parseGate(c.gate)?.kind === 'spec') return false
   await trustCheck($, c)
+  // 規格確認前就先寫好程式（六段已過實作段）：照六段當下的位置接著走，不重派實作。
+  const stage = c.pipeline?.current
+  if (stage && stage !== 'spec' && stage !== 'build') return dispatchPastBuild($, options, c)
   const refused = afterSpecRefusal(c)
   // 疊放卡只差原卡還沒合併（其他條件都過）：記在流程紀錄，原卡合併後自動流程派一次實作（擁有者是這個對話）。教學沒有疊放卡。
   if (refused && c.stackWait && !tutorial && !afterSpecRefusal({ ...c, stackWait: undefined })) {
@@ -341,6 +344,21 @@ export async function dispatchAfterSpec($: any, options: PluginOptions, statusPa
   }
   if (refused) { await notDispatched($, c, t('cardActions.specNotDispatched', { why: refused.why, next: refused.next ? t('word.semiNote', { text: refused.next }) : '' })); return false }
   return dispatch($, options, c, 'continue')
+}
+
+/**
+ * 規格剛確認、六段已過實作段：驗收段而且能派審查就派審查（同按 w）；測試、合併、上線段，或驗收段派不了審查，都不派，提示照「輪到你」接著做。
+ * 「等你」還有事時照確認規格後的規則只說原因。疊放卡等原卡合併時派不了審查，也不記「合併後派實作」：程式已經寫好了。
+ */
+async function dispatchPastBuild($: any, options: PluginOptions, c: Case): Promise<boolean> {
+  if (!saysNone(c.ask)) {
+    const refused = afterSpecRefusal(c)!
+    await notDispatched($, c, t('cardActions.specNotDispatched', { why: refused.why, next: refused.next ? t('word.semiNote', { text: refused.next }) : '' }))
+    return false
+  }
+  if (c.pipeline?.current === 'review' && dispatchable(c).includes('review')) return dispatch($, options, c, 'review')
+  await notDispatched($, c, t('cardActions.specPastBuild'))
+  return false
 }
 
 /**
