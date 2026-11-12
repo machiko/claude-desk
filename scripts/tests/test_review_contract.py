@@ -46,6 +46,20 @@ class ReviewContractTest(unittest.TestCase):
         # 複審不重提記錄、不修的
         self.assertIn('「記錄、不修」的不要再提', text)
 
+    def test_review_contract_lists_test_anti_patterns(self):
+        """review-pr-risk AC-4：審查規則列出三種測試反模式（預期值同一套算法、mock 專案自己的模組、橫向切片），歸 MEDIUM 記錄、不修；是某條 AC 唯一的對應測試、驗不到「則」時算沒測到、列 HIGH。"""
+        text = read(CONTRACT)
+        part = text.split('測試寫法（', 1)[1].split('\n\n', 1)[0]
+
+        self.assertIn('預期值跟程式用同一套方法算', part)
+        self.assertIn('mock 了專案自己的模組', part)
+        self.assertIn('橫向切片：先寫完全部測試才寫程式', part)
+        self.assertIn('這三種列成 `- [MEDIUM][測試] … （記錄、不修）`', part)
+        self.assertRegex(part, r'唯一的對應測試、因此驗不到「則」那欄的結果時，那條 AC 算「沒測到」，改列 `- \[HIGH\]\[測試\]')
+        # 放在分級之後、規格對照之前
+        self.assertLess(text.index('- LOW：風格'), text.index('測試寫法（'))
+        self.assertLess(text.index('測試寫法（'), text.index('規格對照（'))
+
     def test_review_contract_records_behavior_affecting_medium(self):
         """review-medium-record AC-4（驗收 MEDIUM 記錄後繼續 AC-1 改）：可能影響行為（或拿不準、AC 無法驗證）的 MEDIUM 也只記錄、不在「等你」問；舊卡已有的題目保留、不新增。"""
         text = read(CONTRACT)
