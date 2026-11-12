@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C } from './fixture'
 import { gate, screen } from './world'
 import { CONTAINERS_TTL_MS } from '../hooks/probes'
 import { parseCompose, summarize, servicesFor, missingServices } from '../hooks/containers'
@@ -197,5 +197,43 @@ test('test_pressing_r_requeries_container_status', COMPOSE, async ($, on) => {
   await clock.settle()
   expect(data.composeCalls).toHaveLength(3)
   expect(await screen(ui)).toContain('容器2/2執行中')
+  await ui.unmount()
+})
+
+/**
+ * 按鍵即時反應審查 HIGH 同類：檢查在一輪重新整理開始前就在跑、在那輪卡著時跑完；
+ * 那輪（讀到的是「測試中」）跑完後畫面仍是這次的結果，不退回測試中
+ */
+test('test_check_result_survives_a_refresh_that_started_before_it', COMPOSE, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.compose = [svc('app'), svc('mysql')].join('\n')
+  // Gamma：沒有要你決定的事、沒有 Agent；檢查會沒過（沒過會改這張卡的狀態）
+  data.files[CARD_C] = data.files[CARD_C]!.replace('- 驗證：無', '- 驗證：`node test.mjs`')
+  data.store.trustedVerify = { [CARD_C]: 'node test.mjs' }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  const ui = await $.ui.mount(PANE(80))
+  await ui.press({ key: `row-${CARD_C}` })
+
+  // 檢查開跑、還沒跑完
+  const check = gate()
+  data.run = async () => { await check.wait; return { exitCode: 1, stdout: '1 failing\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  await $.command.run({ command: 'desk', args: 'verify Gamma' } as any)
+  await clock.settle()
+  expect(await screen(ui)).toContain('測試中')
+  // 接著一輪重新整理讀到「測試中」後卡在 docker compose ps；這時檢查跑完（沒過）
+  const docker = holdDocker(data)
+  const stuck = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+  check.open()
+  await clock.settle()
+  expect((data.store.verifies as any)?.[CARD_C]?.ok).toBe(false)
+  const failed = await screen(ui)
+  expect(failed).not.toContain('測試中')
+
+  docker.open()
+  await stuck
+  await clock.settle()
+  expect(await screen(ui)).toEqual(failed)
   await ui.unmount()
 })

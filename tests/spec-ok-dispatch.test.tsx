@@ -758,9 +758,22 @@ test('test_spec_ok_dispatches_build_before_background_refresh_finishes', { timeo
   await clock.settle()
   expect(await screen(ui)).toContain(flat('Agent 在寫程式'))
 
-  // 卡住的那輪跑完（它的 Agent 清單看不到剛派的實作），接著背景重讀：畫面一致，不多派、也不把實作當成做完去跑檢查
+  // 卡住的那輪跑完（它在確認前讀的卡片、看不到剛派的實作的 Agent 清單），背景重讀還卡在問 Agent 清單：
+  // 畫面不退回待確認規格、不跳「進入關卡」的提示，也不把實作當成做完
+  const background = gate()
+  data.exec = async (e: any) => { if (e.argv[0] === 'claude' && e.argv[1] === 'agents' && e.timeoutMs !== PRESS_AGENTS_MS) await background.wait; return null }
+  const toasts = data.toasts.length
   docker.open()
   await stuck
+  await clock.settle()
+  const between = await screen(ui)
+  expect(between).toContain(flat(CONFIRMED_SHOWN))
+  expect(between).toContain(flat('Agent 在寫程式'))
+  expect(between).not.toContain(flat('t 確認規格並派實作'))
+  expect(data.toasts.slice(toasts)).toEqual([])
+
+  // 背景重讀跑完：畫面一致，不多派、也不把實作當成做完去跑檢查
+  background.open()
   await clock.settle()
   await clock.advance(5000); await clock.settle()
   const after = await screen(ui)
@@ -818,5 +831,35 @@ test('test_refresh_after_write_returns_before_queued_dispatch_finishes', { timeo
   await clock.advance(3000); await clock.settle()
   expect(data.launches).toHaveLength(1)
   expect(data.toasts.filter(t => t === 'Gamma：繼續已派出')).toHaveLength(1)
+  await ui.unmount()
+})
+
+/** 按鍵即時反應審查 HIGH 同類：重新整理卡著時按兩次 g 派實作，卡住那輪跑完後畫面仍是 Agent 在寫程式，不退回待辦、不跳提示 */
+test('test_dispatch_during_a_stuck_refresh_stays_running_after_it_finishes', { timeoutMs: 15000, options: { composeDir: '/home/u/app' } }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B])
+  confirmCard(data, CARD_B)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(120))
+  // 下一輪重新整理卡在 docker compose ps（它的 Agent 清單在派工前就讀了）
+  const docker = gate()
+  data.exec = async (e: any) => { if (e.argv[0] === 'docker') await docker.wait; return null }
+  const stuck = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  await h.pressG(ui, CARD_B)
+  expect(data.launches).toHaveLength(1)
+  expect(await screen(ui)).toContain(flat('Agent 在寫程式'))
+  const toasts = data.toasts.length
+  docker.open()
+  await stuck
+  await clock.settle()
+  const after = await screen(ui)
+  expect(after).toContain(flat('Agent 在寫程式'))
+  expect(after).not.toContain(flat('g 派 Agent 做下一步'))
+  expect(data.toasts.slice(toasts)).toEqual([])
+  expect(data.processCalls.map((e: any) => e.argv.join(' ')).filter((a: string) => a.includes('npm test'))).toEqual([])
   await ui.unmount()
 })

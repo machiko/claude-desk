@@ -8,7 +8,7 @@ import { missingServices } from './containers'
 import { feedPush, tellPanel, me, loadChains, loadJobs, saveChain, VERIFIES_KEY, JOBS_KEY } from './desk-io'
 import { paused } from './chain'
 import { containersStop, stopText, verifyBrokeStop } from './stop-reason'
-import { isMerged, pipeline, finalState } from './pipeline'
+import { isMerged } from './pipeline'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './dispatch'
 import { writeStats } from './run-stats'
 import { addRunTime } from './run-time'
@@ -129,7 +129,8 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   $.ui.toast(t('toast.named', { name: c.name, text: result.ok ? t('verifyRunner.passed') : t('verifyRunner.failed') }), { timeoutMs: 6000 })
   // 你按 v 的檢查沒過送一次通知（每按一次 v 送一則，同一句不去重）；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
   if (!result.ok && !auto) notify($, t('toast.named', { name: c.name, text: outcome }), true)
-  await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
+  // 走 restage（記成本地補丁）：進行中那輪重新整理在跑之前讀的檢查結果，不會把這次的結果蓋回去。
+  await restage($, c.statusPath, x => ({ ...x, state: stateOf(x, result) }), { settle: true })
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
   return true

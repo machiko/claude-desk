@@ -155,6 +155,7 @@ export async function refresh($: any, options: PluginOptions) {
   snapshotReady = new Promise<void>(resolve => { markReady = resolve })
   refreshing = (async () => {
     const mine = generation
+    const editsAt = editSeq
     const now = await $.clock.now()
     const paths = tutorial ? null : await deskPaths($, options)
     const path = tutorial ? tutorialPaths(await home($)).registry : paths!.registry
@@ -314,44 +315,48 @@ export async function refresh($: any, options: PluginOptions) {
       await update($, feedAtom, list => feedOnDesk(list, cur.cases))
     }
     const prev = await read($, snapshot)
-    const fresh = [...events(prev, cur), ...(tutorial ? [] : [...await settingsNews($, options, now), ...await formatNews($, path ?? null, text, cases, now)])]
-    await update($, snapshot, () => cur)
+    // 這輪開始之後才被本地補丁改過的卡（按 t 確認後重讀、派工標成執行中、檢查開始或跑完）：保留快照裡較新的那張，
+    // 不拿這輪開始時讀到的舊卡片、舊 Agent 清單、舊檢查結果蓋回去（下一輪再整張重讀）。寫入時再對最新的快照比一次。
+    const kept = keepLocalEdits(cases, prev, editsAt)
+    const shown: Snapshot = { ...cur, cases: tutorial ? [...kept, ...cur.cases.slice(cases.length)] : kept }
+    const fresh = [...events(prev, shown), ...(tutorial ? [] : [...await settingsNews($, options, now), ...await formatNews($, path ?? null, text, kept, now)])]
+    await update($, snapshot, latest => ({ ...shown, cases: keepLocalEdits(shown.cases, latest, editsAt) }))
     if (approvals === trustWrites) await update($, trustedAtom, () => trusted)
     // 失敗之後這件又有 Agent 開過：「還沒信任」不再成立，三步不再出現。
-    await update($, untrustedAtom, v => liveHolds(v, cases) as Record<string, UntrustedHold>)
+    await update($, untrustedAtom, v => liveHolds(v, kept) as Record<string, UntrustedHold>)
     await collapseMoreIfMoved($)
     await feedPush($, fresh)
     for (const e of fresh) if (e.tone === 'warning' || e.tone === 'error') { $.ui.toast(e.text, { timeoutMs: 8000 }); notify($, e.text) }
     const openLogs = await read($, logsOpenAtom)
-    const logCase = openLogs ? cases.find(c => c.statusPath === openLogs) : undefined
+    const logCase = openLogs ? kept.find(c => c.statusPath === openLogs) : undefined
     if (logCase?.agent?.id) {
       const id = logCase.agent.id
       const lines = logs.has(id) ? logTailOf(logs.get(id) ?? null) : await logTail($, id)
       await update($, logViewAtom, v => ({ ...v, [logCase.statusPath]: lines }))
     }
     forcePr = false
-    statusLine($, cur)
-    await spin($, cases.some(c => c.state === 'running'))
+    statusLine($, shown)
+    await spin($, kept.some(c => c.state === 'running'))
     markReady()
     const listOutdated = !tutorial && launchEventCount() !== launchesAtAsk
-    await stopSuperseded($, cases, superseded, now)
+    await stopSuperseded($, kept, superseded, now)
     // 清單是真的（不是教學、claude agents 沒失敗）才看得出誰結束了。
     if (!tutorial && agentsOut && agentsOut.exitCode === 0) {
       // 做完、程序還活著的工作桌 Agent 要停掉：它們的根目錄（含別的專案、已歸檔的）也先記結束，
       // 最後一次派工才先記成做完，停掉後那邊的流程不會當成被人停掉。
       const ended = settings?.stopDone !== false ? endedAlive(list) : []
-      await noteRuns($, list, [...cases.filter(c => !c.demo).map(c => c.root), ...ended.map(a => a.root)], now, runGraceMs(options), branchesOf(cases))
-      await stopEnded($, cases, ended, now)
-      await noteCardAsks($, list, cases, now)
+      await noteRuns($, list, [...kept.filter(c => !c.demo).map(c => c.root), ...ended.map(a => a.root)], now, runGraceMs(options), branchesOf(kept))
+      await stopEnded($, kept, ended, now)
+      await noteCardAsks($, list, kept, now)
     }
     // 先補派排隊的（同一輪的清單），流程這一輪新派的排在它們後面：先來先派。派出了就用重算過的快照，流程才看得到它在跑。
     // 這輪的清單送出後這個對話有派工開始或啟動完（例如重新整理途中按了 t、g）：清單與快照看不到剛派的 Agent，會把它當成已結束；
     // 不派排隊的、不跑流程，等下一輪（派工後的重讀或計時器）用看得到它的清單再做。要在補派之前看：補派自己的派工不算。
     if (!listOutdated) {
-      const drained = !tutorial && await drainAgentQueue($, options, cur, agentsOut && agentsOut.exitCode === 0 ? list : null, settings ?? undefined)
-      await autoChain($, options, drained ? (await read($, snapshot)) ?? cur : cur, settings ?? undefined)
+      const drained = !tutorial && await drainAgentQueue($, options, shown, agentsOut && agentsOut.exitCode === 0 ? list : null, settings ?? undefined)
+      await autoChain($, options, drained ? (await read($, snapshot)) ?? shown : shown, settings ?? undefined)
     }
-    void summarizeStatuses($, options, cur, summaries)
+    void summarizeStatuses($, options, shown, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
@@ -477,11 +482,25 @@ async function togglePane($: any) {
 
 
 
+/** 本地補丁（restage）的序號：每改一次快照裡的某張卡就加一，記在 localEdits（卡片路徑 → 最後一次的序號）。 */
+let editSeq = 0
+const localEdits = new Map<string, number>()
+
+/**
+ * 重新整理寫快照前：序號比這輪開始時（since）新的卡，表示這輪讀完之後才被本地補丁改過，換回 current 裡那張；
+ * current 沒有這張（例如剛從登錄表加進來）就用這輪的。
+ */
+function keepLocalEdits(fresh: readonly Case[], current: Snapshot | null, since: number): Case[] {
+  if (!current) return [...fresh]
+  return fresh.map(c => (localEdits.get(c.statusPath) ?? 0) > since ? current.cases.find(x => x.statusPath === c.statusPath) ?? c : c)
+}
+
 /**
  * 檢查開始、排隊、沒跑成，或剛派出 Agent 時重算那件的六段（`patch` 先套上新的 agent、state）：
  * 不等下一輪重新整理，現在卡與全部任務表格立刻一致。
  */
 export async function restage($: any, statusPath: string, patch: (c: Case) => Case = c => c, { settle = false }: { settle?: boolean } = {}) {
+  localEdits.set(statusPath, ++editSeq)
   const verifies = await read($, verifiesAtom)
   const verifying = await read($, verifyingAtom)
   const staged = (c: Case) => ({ ...c, pipeline: pipeline(c, verifies[statusPath], statusPath in verifying, isQueued(statusPath)) })
@@ -576,6 +595,7 @@ export const register: Register = (on, options) => {
     publishRequeried.clear()
     cardParseCache.clear()
     reviewTextCache.clear()
+    localEdits.clear()
     setTutorial(null)
     cancelSim()
     refreshTimer?.cancel(); refreshTimer = undefined
