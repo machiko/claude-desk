@@ -4,10 +4,12 @@ import { parseSettings, settingsFeedText, settingsNotices, settingsProblems } fr
 import { mergeSettingsText } from '../hooks/project'
 import { issueOf } from '../hooks/model'
 import type { FeedEvent } from '../types'
+import { startsAgents } from './world'
 
 // 設定檔驗證（卡片「設定檔驗證」AC-1～AC-5）：dispatch.json 寫錯時面板說出哪個檔、哪個鍵、改用了什麼；解析結果不變。
 const SETTINGS = '/home/u/.claude/handoffs/dispatch.json'
 const PROJECT_SETTINGS = `${PROJECT_DIR}/dispatch.json`
+const GAMMA = '/home/u/wt/gamma'
 const JSON_BROKEN = 'JSON 格式錯誤，這份設定沒有套用'
 
 test('settingsProblems reports a JSON syntax error', () => {
@@ -220,4 +222,59 @@ test('settingsNotices clears a reported file that no longer belongs to this proj
   expect(checked).toEqual({ [SETTINGS]: { text: '{}', problems: [] } })
   // 沒有之前報過的：什麼都不報
   expect(settingsNotices([{ path: SETTINGS, text: '{}', problems: [] }], {}, 1).events).toEqual([])
+})
+
+/** 卡片「背景 Agent 停用指定外掛」AC-2：disablePlugins 寫錯時設定檢查指出哪一項；寫錯的不套用，派工照常、不帶停用設定。 */
+test('test_settings_check_flags_bad_disable_plugins', async ($, on) => {
+  expect(settingsProblems(JSON.stringify({ disablePlugins: 'ecc@everything-claude-code' }))).toEqual(['disablePlugins 不是字串陣列，視為沒設'])
+  const mixed = JSON.stringify({ disablePlugins: ['ecc', 3, 'a@b@c', 'two words@src', 'ok@src'] })
+  expect(settingsProblems(mixed)).toEqual([
+    'disablePlugins[0] 不是「名稱@來源」的格式，這項略過',
+    'disablePlugins[1] 不是「名稱@來源」的格式，這項略過',
+    'disablePlugins[2] 不是「名稱@來源」的格式，這項略過',
+    'disablePlugins[3] 不是「名稱@來源」的格式，這項略過',
+  ])
+  // 只有寫對的那項套用
+  expect(parseSettings(mixed).disablePlugins).toEqual(['ok@src'])
+  expect(parseSettings(JSON.stringify({ disablePlugins: 'ecc@everything-claude-code' })).disablePlugins).toEqual([])
+  expect(settingsProblems(JSON.stringify({ disablePlugins: ['ecc@everything-claude-code'] }))).toEqual([])
+
+  // 開面板：動態指出寫錯的那項；派工照常派出、不帶 --settings
+  const { data, clock } = fixture(on)
+  const feed = feedLog(on)
+  data.agents = []
+  data.files[SETTINGS] = JSON.stringify({ disablePlugins: ['ecc'] })
+  data.git[GAMMA] = { branch: 'feature/gamma', head: 'g1' }
+  startsAgents(data, clock, { keep: 'others' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle()
+  expect(feed.list.filter(e => e.text.includes(SETTINGS))).toEqual([expect.objectContaining({ text: `設定檔 ${SETTINGS} 有問題：disablePlugins[0] 不是「名稱@來源」的格式，這項略過`, tone: 'error' })])
+  await $.command.run({ command: 'desk', args: 'sync Gamma' } as any); await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].argv).not.toContain('--settings')
+})
+
+/** 卡片「背景 Agent 停用指定外掛」AC-3：disablePlugins 寫在專案的 dispatch.json 不套用，設定檢查提示要放全域。 */
+test('test_disable_plugins_only_read_from_global_settings', async ($, on) => {
+  const project = JSON.stringify({ model: 'opus', disablePlugins: ['ecc@everything-claude-code'] })
+  const hint = 'disablePlugins 只讀全域的 dispatch.json，寫在專案這份不套用'
+  expect(settingsProblems(project, 'project')).toEqual([hint])
+  // 同一份放全域就沒問題
+  expect(settingsProblems(project)).toEqual([])
+  // 疊加時專案的 disablePlugins 不蓋掉全域的，也不會自己生效
+  expect(parseSettings(mergeSettingsText(null, project))).toMatchObject({ model: 'opus', disablePlugins: [] })
+  expect(parseSettings(mergeSettingsText(JSON.stringify({ disablePlugins: ['g@src'] }), project)).disablePlugins).toEqual(['g@src'])
+
+  // 開面板：動態指出專案那份；派工不帶停用設定
+  const { data, clock } = fixture(on)
+  const feed = feedLog(on)
+  data.agents = []
+  data.files[SETTINGS] = JSON.stringify({ model: 'sonnet' })
+  data.files[PROJECT_SETTINGS] = project
+  data.git[GAMMA] = { branch: 'feature/gamma', head: 'g1' }
+  startsAgents(data, clock, { keep: 'others' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle()
+  expect(feed.list.filter(e => e.text.includes('dispatch.json'))).toEqual([expect.objectContaining({ text: `設定檔 ${PROJECT_SETTINGS} 有問題：${hint}`, tone: 'error' })])
+  await $.command.run({ command: 'desk', args: 'sync Gamma' } as any); await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].argv).not.toContain('--settings')
 })

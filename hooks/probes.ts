@@ -544,7 +544,7 @@ export async function settingsReport($: any, options: PluginOptions): Promise<Se
   const files = [...new Set([paths.settings, ...(paths.projectSettings ? [paths.projectSettings] : [])])]
   return Promise.all(files.map(async path => {
     const text = await ($.fs.read(path) as Promise<string>).catch(() => null)
-    return { path, text, problems: text === null ? [] : settingsProblems(text) }
+    return { path, text, problems: text === null ? [] : settingsProblems(text, path === paths.settings ? 'global' : 'project') }
   }))
 }
 

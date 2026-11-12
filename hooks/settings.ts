@@ -3,6 +3,7 @@ import type { DispatchKind } from './dispatch'
 import { expandHome } from './card'
 import type { FeedEvent, SettingsChecked } from '../types'
 import { SETTINGS_FORMAT } from './formats'
+import { GLOBAL_ONLY_KEYS } from './project'
 import { t } from './i18n'
 
 /** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
@@ -50,6 +51,8 @@ export type DispatchSettings = {
   stopDone: boolean
   /** 自動流程的額度煞車：5 小時額度剩餘百分比低於這個值時，自動流程不派下一個 Agent、暫停寫原因。0＝關（`"off"`／`false`）；不合法用預設。 */
   chainQuotaStop: number
+  /** 背景 Agent 不載入的外掛（`名稱@來源`，跟 Claude Code 設定的 enabledPlugins 鍵一樣）；只讀全域的 dispatch.json，格式不對的那項略過。預設空＝照使用者設定全部載入。 */
+  disablePlugins: string[]
 }
 
 export const DEFAULT_MAX_AGENTS = 3
@@ -68,11 +71,14 @@ export const DEFAULT_REVIEW: ReviewWords = {
 }
 
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : ''
+/** disablePlugins 一項的格式：`名稱@來源`，兩邊都不能空白、不能再有 @。 */
+const PLUGIN_ID = /^[^@\s]+@[^@\s]+$/
+const isPluginId = (v: unknown) => PLUGIN_ID.test(str(v))
 const strList = (v: unknown) => Array.isArray(v) ? v.map(str).filter(Boolean) : []
 
 /** dispatch.json：全域 model／effort、每任務覆寫（鍵是根目錄）、同步模型、人名、專案規則、審查用語、風險路徑。讀不到就用預設。 */
 export function parseSettings(text: string | null): DispatchSettings {
-  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', cardTemplate: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true, chainQuotaStop: DEFAULT_CHAIN_QUOTA_STOP }
+  const out: DispatchSettings = { model: '', effort: '', sync: { model: '', effort: '', fresh: false }, projects: {}, kinds: {}, user: DEFAULT_USER, rules: [], review: { ...DEFAULT_REVIEW }, riskHigh: [], checkServices: {}, composeDir: '', cardBase: '', cardTemplate: '', updateCheck: '', maxAgents: DEFAULT_MAX_AGENTS, autoPr: false, prOpen: '', mcp: false, stopDone: true, chainQuotaStop: DEFAULT_CHAIN_QUOTA_STOP, disablePlugins: [] }
   if (!text) return out
   try {
     const d = JSON.parse(text.replace(/^﻿/, ''))
@@ -108,6 +114,7 @@ export function parseSettings(text: string | null): DispatchSettings {
     // 反過來：預設開，只認明確的 false 關掉。
     out.stopDone = d?.stopDone !== false
     out.chainQuotaStop = parseQuotaStop(d?.chainQuotaStop)
+    out.disablePlugins = Array.isArray(d?.disablePlugins) ? d.disablePlugins.filter(isPluginId).map(str) : []
   } catch { /* 壞掉的設定檔當作沒有。 */ }
   return out
 }
@@ -204,6 +211,12 @@ const mapOf = (each: Check): Check => (v, path, found) => {
 
 const modelEffort = { model: aString(t('settings.unset')), effort: aString(t('settings.unset')) }
 
+const pluginIds: Check = (v, path, found) => {
+  if (unset(v)) return
+  if (!Array.isArray(v)) { found.bad.push(t('settings.notStringList', { path })); return }
+  v.forEach((x, i) => { if (!isPluginId(x)) found.bad.push(t('settings.badPluginId', { path: `${path}[${i}]` })) })
+}
+
 const riskHigh: Check = (v, path, found) => {
   if (unset(v)) return
   if (!Array.isArray(v)) { found.bad.push(t('settings.notArray', { path })); return }
@@ -271,21 +284,27 @@ const SETTINGS_SHAPE = shape({
   mcp: onlyTrue,
   stopDone: onlyFalse,
   chainQuotaStop,
+  disablePlugins: pluginIds,
 })
+
+/** 這份 dispatch.json 是全域的還是目前專案的；專案那份的 GLOBAL_ONLY_KEYS 不套用，改報「要放全域」。 */
+export type SettingsScope = 'global' | 'project'
 
 /**
  * 一份 dispatch.json 的問題，每條一句：JSON 語法錯、最外層不是物件（整份沒套用）、format 比這版新（排第一條）、認不得的鍵（完整路徑，已略過）、
- * 型別或範圍錯的值（寫出實際改用的值）、risk.high 寫錯的正規式。空檔與只有空白跟沒有這份一樣，不報。
+ * 型別或範圍錯的值（寫出實際改用的值）、risk.high 寫錯的正規式、專案那份寫了只讀全域的鍵。空檔與只有空白跟沒有這份一樣，不報。
  * 只報告：解析照 parseSettings、疊加照 mergeSettingsText，結果不因這裡改變。
  */
-export function settingsProblems(text: string): string[] {
+export function settingsProblems(text: string, scope: SettingsScope = 'global'): string[] {
   const body = text.replace(/^\uFEFF/, '')
   if (!body.trim()) return []
   let d: unknown
   try { d = JSON.parse(body) } catch { return [t('settings.badJson')] }
   if (!isPlainObject(d)) return [t('settings.notTopObject')]
   const found: Found = { unknown: [], bad: [] }
-  SETTINGS_SHAPE(d, '', found)
+  const globalOnly = scope === 'project' ? GLOBAL_ONLY_KEYS.filter(k => !unset(d[k])) : []
+  for (const k of globalOnly) found.bad.push(t('settings.globalOnly', { path: k }))
+  SETTINGS_SHAPE(Object.fromEntries(Object.entries(d).filter(([k]) => !globalOnly.includes(k))), '', found)
   return [...(found.newer ? [found.newer] : []), ...(found.unknown.length ? [t('settings.unknownKeys', { keys: found.unknown.join(t('word.listSep')) })] : []), ...found.bad]
 }
 

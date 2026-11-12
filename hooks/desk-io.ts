@@ -276,9 +276,9 @@ export function decisionContext(c: Case, withCard: boolean, medium?: MediumPick)
  * 真的派工：`claude --bg` 啟動，再從 agents 清單用唯一名稱對回完整 session id。
  * `recent`：派工端剛讀到的 agents 清單（見 dispatch-runner 的 recentAgents）；有給就當啟動前的清單，不再跑一次 claude agents。
  */
-export async function launch($: any, c: Case, prompt: string, o: { model: string; effort: string; sessionId?: string; name: string; mcp?: boolean }, recent?: readonly RawAgent[]) {
+export async function launch($: any, c: Case, prompt: string, o: { model: string; effort: string; sessionId?: string; name: string; mcp?: boolean; disablePlugins?: readonly string[] }, recent?: readonly RawAgent[]) {
   const before = recent ? [...recent] : await agentsNow($)
-  const r = await $.process.run(launchArgs(prompt, { model: o.model, effort: o.effort, sessionId: o.sessionId, launchName: o.name, mcp: o.mcp }), { cwd: c.root, timeoutMs: LAUNCH_TIMEOUT_MS })
+  const r = await $.process.run(launchArgs(prompt, { model: o.model, effort: o.effort, sessionId: o.sessionId, launchName: o.name, mcp: o.mcp, disablePlugins: o.disablePlugins }), { cwd: c.root, timeoutMs: LAUNCH_TIMEOUT_MS })
   if (r.exitCode !== 0) throw new LaunchError(String(r.stderr || r.stdout).trim().split(/\r?\n/).pop() || t('deskIo.launchExit', { code: r.exitCode }), isUntrustedLaunch(`${r.stderr ?? ''}\n${r.stdout ?? ''}`))
   const token = parseLaunchToken(r.stdout)
   if (!token) throw new Error(t('deskIo.launchNoId'))

@@ -27,11 +27,15 @@ export function projectOf(stdout: string | null, home: string): Project | null {
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 
-/** 全域 dispatch.json 疊上專案的：專案檔有的頂層鍵整個取代全域的同名鍵。兩份都沒有就 null；壞掉的一份當作沒有。 */
+/** 只讀全域 dispatch.json 的頂層鍵：管的是整台機器的背景 Agent，寫在專案那份不套用（設定檢查會提示）。 */
+export const GLOBAL_ONLY_KEYS: readonly string[] = ['disablePlugins']
+
+/** 全域 dispatch.json 疊上專案的：專案檔有的頂層鍵整個取代全域的同名鍵，GLOBAL_ONLY_KEYS 除外（專案的略過）。兩份都沒有就 null；壞掉的一份當作沒有。 */
 export function mergeSettingsText(globalText: string | null, projectText: string | null): string | null {
   const parse = (t: string | null) => { if (!t) return null; try { const d = JSON.parse(t.replace(/^﻿/, '')); return isObject(d) ? d : null } catch { return null } }
   const g = parse(globalText)
   const p = parse(projectText)
   if (!g && !p) return null
-  return JSON.stringify({ ...(g ?? {}), ...(p ?? {}) })
+  const own = Object.fromEntries(Object.entries(p ?? {}).filter(([k]) => !GLOBAL_ONLY_KEYS.includes(k)))
+  return JSON.stringify({ ...(g ?? {}), ...own })
 }

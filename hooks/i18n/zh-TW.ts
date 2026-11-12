@@ -666,6 +666,8 @@ export const zhTW = {
   'settings.newer': '{path} 是 {value}，這份是較新版 desk 的設定，請更新 desk（認得的鍵照常套用）',
   'settings.formatInt': '{path} 要是正整數，視為 {format}',
   'settings.changelogNotString': '{path} 不是字串，照原本的格式',
+  'settings.badPluginId': '{path} 不是「名稱@來源」的格式，這項略過',
+  'settings.globalOnly': '{path} 只讀全域的 dispatch.json，寫在專案這份不套用',
   'settings.changelogOnly': '{path} 只能是 "{format}"，合併 changelog 時會停下報錯',
   'settings.badJson': 'JSON 格式錯誤，這份設定沒有套用',
   'settings.notTopObject': '最外層不是物件，這份設定沒有套用',
