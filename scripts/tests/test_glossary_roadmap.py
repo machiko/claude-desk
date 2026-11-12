@@ -1,7 +1,8 @@
-"""根目錄 GLOSSARY.md 與 docs/ROADMAP.md 的格式（grill-spec 卡 AC-5）。
+"""根目錄 GLOSSARY.md、docs/ROADMAP.md（grill-spec 卡 AC-5）與 docs/adr/README.md（spec-adr 卡 AC-5）的格式。
 
 詞彙表開頭寫明只放詞彙，每條是「**用語**：一兩句定義」加 `_Avoid_` 棄用說法；
-路線圖有終點、已決定、還說不清楚的、不做四段，「還說不清楚的」列有面板路線圖卡。
+路線圖有終點、已決定、還說不清楚的、不做四段，「還說不清楚的」列有面板路線圖卡；
+ADR 說明寫明格式（背景、決定、取捨三段）、三條件與檔名編號規則。
 連結有效由 test_doc_links.py 驗（ROADMAP 在 docs/ 底下）。
 
 執行：python3 -m unittest discover -s scripts/tests
@@ -13,6 +14,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GLOSSARY = os.path.join(ROOT, 'GLOSSARY.md')
 ROADMAP = os.path.join(ROOT, 'docs', 'ROADMAP.md')
+ADR_README = os.path.join(ROOT, 'docs', 'adr', 'README.md')
 ENTRY = re.compile(r'^\*\*([^*]+)\*\*：\S')
 AVOID = re.compile(r'^_Avoid_：\S')
 ROADMAP_SECTIONS = ('終點', '已決定', '還說不清楚的', '不做')
@@ -75,6 +77,24 @@ class GlossaryRoadmapTest(unittest.TestCase):
         for name in ROADMAP_SECTIONS:
             self.assertRegex(found[name], r'(?m)^- \S', f'「{name}」段沒有條目')
         self.assertIn('面板路線圖卡', found['還說不清楚的'])
+
+    def test_adr_readme_defines_format_and_criteria(self):
+        """spec-adr AC-5：ADR 說明有三段格式（背景、決定、取捨，依序）、三條件、檔名 `NNNN-<主題>.md` 與編號接最大的規則。"""
+        text = read(ADR_README)
+        found = sections(text)
+        for name in ('什麼決策要寫', '檔名與編號'):
+            self.assertIn(name, found)
+        criteria = found['什麼決策要寫']
+        self.assertIn('三條件都符合', criteria)
+        for name in ('難退回', '出乎意料', '真的有取捨'):
+            self.assertRegex(criteria, rf'(?m)^- {name}：\S', f'三條件少了「{name}」')
+        naming = found['檔名與編號']
+        for part in ('`NNNN-<主題>.md`', '四位數編號', '接著這個資料夾裡最大的編號', '「（ADR-NNNN）」'):
+            self.assertIn(part, naming)
+        # 範本在程式碼區塊裡，`## 背景` 會被 sections() 當成二級標題切開，所以直接取「## 格式」到下一段之間
+        fmt = text[text.index('\n## 格式\n'):text.index('\n## 誰建檔\n')]
+        template = re.findall(r'(?m)^## (背景|決定|取捨)$', fmt)
+        self.assertEqual(template, ['背景', '決定', '取捨'], '格式範本要依序有背景、決定、取捨三段')
 
 
 if __name__ == '__main__':
