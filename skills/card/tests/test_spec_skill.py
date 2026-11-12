@@ -1,5 +1,6 @@
-"""skills/card/SKILL.md「產生規格」的測試：釐清題有推薦就寫成預設決定、沒推薦的才按依賴分輪問；必問程式矛盾與用詞衝突；
-驗收情境反證檢查；回報的預設決定用 ❓／➡️ 兩行；規格前審背景跑、小卡跳過。
+"""skills/card/SKILL.md「產生規格」的測試：釐清題有推薦就寫成預設決定、沒推薦的才按依賴分輪問（獨立題放第一輪）；
+必問程式矛盾、用詞衝突與跟既有 ADR 矛盾；三條件決策列進實作計畫留成 ADR；驗收情境反證檢查；
+回報的預設決定用 ❓／➡️ 兩行；規格前審背景跑、小卡跳過。
 
 `claude plugin test` 的環境不能讀 .md 檔，所以讀檔的斷言放這裡（做法同 test_release_skill.py）。
 
@@ -67,12 +68,14 @@ class SpecSkillTest(unittest.TestCase):
         self.assertNotIn('總共 3–5 題', ask)
 
     def test_spec_skill_asks_in_dependency_rounds_with_caps(self):
-        """grill-spec AC-1：沒推薦的題按依賴分輪，第一輪只問被依賴的題、第二輪才問依賴它們的題；每輪最多 3 題、最多 2 輪；
-        還有題目沒問完時回報建議拆卡；有推薦的題照舊寫成預設、不問。"""
+        """grill-spec AC-1：沒推薦的題按依賴分輪，第一輪問被依賴的題、第二輪才問依賴它們的題；每輪最多 3 題、最多 2 輪；
+        還有題目沒問完時回報建議拆卡；有推薦的題照舊寫成預設、不問。
+        spec-adr 卡把第一輪從「只問被依賴的題」改成也問彼此獨立的題（見 test_spec_skill_asks_independent_questions_in_first_round），
+        這裡的子字串跟著拿掉「只」，其他斷言不變。"""
         ask = step(self.body, '4.')
         rounds = next((l for l in ask.splitlines() if '按依賴分輪' in l), None)
         self.assertIsNotNone(rounds, '步驟 4 沒有「按依賴分輪」的規則')
-        for part in ('第一輪只問別題要看它答案才能決定的題', '第二輪才問依賴它們的題', '最多 2 輪', '還有題目沒問', '建議拆卡'):
+        for part in ('第一輪問別題要看它答案才能決定的題', '第二輪才問依賴它們的題', '最多 2 輪', '還有題目沒問', '建議拆卡'):
             self.assertIn(part, rounds)
         self.assertLess(rounds.index('第一輪'), rounds.index('第二輪'))
         self.assertIn('每輪最多 3 題', ask)
@@ -81,6 +84,59 @@ class SpecSkillTest(unittest.TestCase):
         self.assertIn('2 輪問完還有題目沒問時', report)
         self.assertIn('建議拆卡', report)
         self.assertIn('按依賴分輪、每輪最多 3 題', self.front)
+
+    def test_spec_skill_asks_independent_questions_in_first_round(self):
+        """spec-adr AC-4：跟別題都沒有依賴關係的題放第一輪，跟被依賴的題一起算進每輪 3 題；放不下時先放被依賴的題。"""
+        ask = step(self.body, '4.')
+        rounds = next(l for l in ask.splitlines() if '按依賴分輪' in l)
+        first = rounds[rounds.index('第一輪'):rounds.index('第二輪才問')]
+        for part in ('被依賴的題', '跟別題都沒有依賴關係的題', '彼此獨立的題', '兩種一起算進每輪 3 題',
+                     '放不下時先放被依賴的題', '剩下的獨立題排第二輪'):
+            self.assertIn(part, first)
+        self.assertNotIn('第一輪只問', rounds)
+
+    def test_spec_skill_challenges_conflicts_with_existing_adr(self):
+        """spec-adr AC-2：步驟 2 讀既有 ADR 的「決定」；需求跟某份 ADR 的決定矛盾時必問、不寫成預設，題目附 ADR 編號與決定。"""
+        read_adr = next((l for l in step(self.body, '2.').splitlines() if '`docs/adr/`' in l), None)
+        self.assertIsNotNone(read_adr, '步驟 2 沒有讀 ADR 的規則')
+        for part in ('專案根目錄有 `docs/adr/` 時', '讀各份 ADR 的「決定」段', '步驟 4 拿來比對需求'):
+            self.assertIn(part, read_adr)
+        rule = next(l for l in step(self.body, '4.').splitlines() if l.strip().startswith('- 必問'))
+        for part in ('必問（不寫成預設）', '需求跟既有 ADR（`docs/adr/` 底下）的決定矛盾', '那份 ADR 的編號與決定',
+                     '讓使用者對照著選', '這三種一樣算進每輪 3 題'):
+            self.assertIn(part, rule)
+
+    def test_spec_skill_plans_adr_for_hard_to_reverse_decisions(self):
+        """spec-adr AC-1：三條件都符合的預設決定或回答，實作計畫加一列 `docs/adr/NNNN-<主題>.md`（編號接最大的），
+        Decisions 那筆句尾加「（ADR-NNNN）」；寫規格這一步不建檔。
+        決策有三種來源，各自要有「那筆」可標：預設決定（含 2 輪問不完寫成預設的）標在它那筆；使用者回答的題（含必問）
+        本來不記 Decisions，要另加一筆；確認前改了預設或回答，要照三條件重看、計畫列與編號一起加或拿掉。"""
+        write = step(self.body, '5.')
+        rule = next((l for l in write.splitlines() if l.strip().startswith('- ADR')), None)
+        self.assertIsNotNone(rule, '步驟 5 沒有 ADR 的規則')
+        for part in ('三條件都符合', '難退回', '出乎意料', '真的有取捨', '「### 實作計畫」加一列 `docs/adr/NNNN-<主題>.md`',
+                     '接著資料夾裡最大的編號', 'Decisions 那筆句尾加「（ADR-NNNN）」', '這一步不建檔', '由實作照計畫建並 commit'):
+            self.assertIn(part, rule)
+        for part in ('步驟 4 的預設決定（含 2 輪問不完、照最可能答案寫成預設的題）', '或使用者的回答（含必問的題）',
+                     '預設決定加在它那筆的句尾', '使用者回答的題本來不記 Decisions，要留 ADR 的另加一筆',
+                     '`- D-nn YYYY-MM-DD <user>：<題目> → <回答>（ADR-NNNN）`'):
+            self.assertIn(part, rule)
+        change = next(l for l in step(self.body, '6.').splitlines() if '使用者要改時' in l)
+        for part in ('改了預設或回答，照步驟 5 的 ADR 那條重看三條件', '變成符合就補實作計畫的 ADR 列與 Decisions 的「（ADR-NNNN）」',
+                     '不再符合就兩邊一起拿掉'):
+            self.assertIn(part, change)
+        plan = next(l for l in write.splitlines() if '「### 實作計畫」表' in l)
+        self.assertIn('有三條件都符合的決策時列 ADR 檔', plan)
+        self.assertLess(write.index('「### 實作計畫」表'), write.index('- ADR'))
+
+    def test_spec_skill_skips_adr_when_project_has_no_adr_dir(self):
+        """spec-adr AC-3：沒有 `docs/adr/` 的專案不讀、不比對 ADR，實作計畫不列 ADR 檔，也不建資料夾。"""
+        read_adr = next(l for l in step(self.body, '2.').splitlines() if '`docs/adr/`' in l)
+        for part in ('沒有這個資料夾就不讀、不比對 ADR', '也不建資料夾'):
+            self.assertIn(part, read_adr)
+        rule = next(l for l in step(self.body, '5.').splitlines() if l.strip().startswith('- ADR'))
+        for part in ('專案根目錄有 `docs/adr/` 時', '沒有就整條略過', '實作計畫不列 ADR 檔', '也不建資料夾'):
+            self.assertIn(part, rule)
 
     def test_spec_skill_challenges_code_conflicts_and_glossary_terms(self):
         """grill-spec AC-2：需求跟程式行為對不上、或用詞跟既有 GLOSSARY.md 不一致，一定列為釐清題（不寫成預設），
