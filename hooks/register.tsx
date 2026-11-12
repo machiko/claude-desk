@@ -33,7 +33,7 @@ import { tutorial, TUTORIAL_KEY, setTutorial, cancelSim, simAgents, startSim, re
 export { tutorial } from './tutorial-run'
 import { checkQueue, checking, isQueued, runVerify, resetCheckingState } from './verify-runner'
 export { checkQueue, verifyPending, runVerify } from './verify-runner'
-import { slots, launchKinds, launchingCount, launchedSince, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState } from './dispatch-runner'
+import { slots, launchKinds, launchingCount, launchedSince, launchEventCount, busyNow, busyRefused, confirmedIdle, startedSince, dispatch, resetDispatchState } from './dispatch-runner'
 export { dispatch, launchingCount, busyRefused, confirmedIdle } from './dispatch-runner'
 import { SESSIONS_KEY, SPIN_MS, VERIFIES_KEY, confirmed, feedPush, launch, loadChains, loadJobs, loadSummaries, me, missingRegistry, confirmThen, openPath, refreshMs, registryError, runGraceMs, statusLine, summarizeStatuses, tellPanel, toggleLogs } from './desk-io'
 import { isEmpty } from './layout'
@@ -90,10 +90,17 @@ let spinTimer: Timer
 let active = false
 let generation = 0
 export let refreshing: Promise<void> | null = null
+/**
+ * 最近一輪（或正在跑的那輪）重新整理的快照已寫好、畫面已更新：寫完快照、動態、狀態列與轉圈後就 resolve，
+ * 不等後面停掉舊 Agent、派排隊的派工、自動流程這些收尾；提早結束或整輪出錯也 resolve。refreshAfterWrite 回傳它。
+ */
+let snapshotReady: Promise<void> = Promise.resolve()
 let launchSeq = 0
 /** 這個對話最近一次請求的模型與 effort（turn.step 帶的）；重新載入後要等下一次請求。 */
 let turnModel: { model?: string; effort?: string } = {}
 let forcePr = false
+/** 按 r（面板或 /desk refresh）：下一次問容器狀態不沿用 30 秒快取；問過就放掉。 */
+let forceContainers = false
 /**
  * 根目錄 → 這個對話已經為它強制重查過 PR 的推送派工（啟動名）。PR 快取是每個對話各一份，
  * 派工紀錄的 ended 卻是所有對話共用的：別的對話先記下結束，這個對話照樣要為那次推送重查一次。
@@ -144,6 +151,8 @@ async function formatNews($: any, registryPath: string | null, registryText: str
 /** 讀一輪：登錄表 → 每張卡＋檔案時間 → 背景 agent → 快照；差異進動態與 toast。 */
 export async function refresh($: any, options: PluginOptions) {
   if (refreshing) return refreshing
+  let markReady: () => void = () => {}
+  snapshotReady = new Promise<void>(resolve => { markReady = resolve })
   refreshing = (async () => {
     const mine = generation
     const now = await $.clock.now()
@@ -159,6 +168,7 @@ export async function refresh($: any, options: PluginOptions) {
     if (!tutorial) await noteReleased($, rows).catch(() => { /* 只是記下 desk 發版的待辦，下一輪重新整理再看 */ })
     // 教學不看真的背景 agent，只看模擬的那一個。
     const agentsAskedAt = await $.clock.now()
+    const launchesAtAsk = launchEventCount()
     const agentsOut = tutorial ? null : await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 60_000 }).catch(() => null)
     const jobs = await loadJobs($)
     // 被後來派工取代、還停在提問的工作桌 Agent 不代表任務：拿掉它們再挑（狀態照卡片走），之後停掉。
@@ -282,10 +292,12 @@ export async function refresh($: any, options: PluginOptions) {
     // 疊放卡要看原卡合併了沒：所有 case 都建好才找得到原卡（教學沒有疊放卡）。
     const cases: Case[] = tutorial ? built : withStackWait(built)
     // 檢查關閉時當作沒查過：沒有提示，版本格是「檢查並更新」。
+    const forceBoxes = forceContainers
+    forceContainers = false
     const [usage, deskVersions, check, model, boxes] = await Promise.all([
       $.session.usage().catch(() => null), versions($, cases),
       settings && settings.updateCheck !== 'off' ? loadUpdateCheck($) : null,
-      models($, options, turnModel, cases.map(c => c.root), settings ?? undefined), containers($, options, settings ?? undefined),
+      models($, options, turnModel, cases.map(c => c.root), settings ?? undefined), containers($, options, settings ?? undefined, forceBoxes),
     ])
     const limits = (usage?.rateLimits ?? []).map((l: any) => ({ kind: String(l.kind), remaining: 100 - (Number(l.percentUsed) || 0), ...(l.resetsAt ? { resetsAt: String(l.resetsAt) } : {}) }))
     const notice = noticeOf(check, deskVersions.desk)
@@ -320,6 +332,8 @@ export async function refresh($: any, options: PluginOptions) {
     forcePr = false
     statusLine($, cur)
     await spin($, cases.some(c => c.state === 'running'))
+    markReady()
+    const listOutdated = !tutorial && launchEventCount() !== launchesAtAsk
     await stopSuperseded($, cases, superseded, now)
     // 清單是真的（不是教學、claude agents 沒失敗）才看得出誰結束了。
     if (!tutorial && agentsOut && agentsOut.exitCode === 0) {
@@ -331,16 +345,27 @@ export async function refresh($: any, options: PluginOptions) {
       await noteCardAsks($, list, cases, now)
     }
     // 先補派排隊的（同一輪的清單），流程這一輪新派的排在它們後面：先來先派。派出了就用重算過的快照，流程才看得到它在跑。
-    const drained = !tutorial && await drainAgentQueue($, options, cur, agentsOut && agentsOut.exitCode === 0 ? list : null, settings ?? undefined)
-    await autoChain($, options, drained ? (await read($, snapshot)) ?? cur : cur, settings ?? undefined)
+    // 這輪的清單送出後這個對話有派工開始或啟動完（例如重新整理途中按了 t、g）：清單與快照看不到剛派的 Agent，會把它當成已結束；
+    // 不派排隊的、不跑流程，等下一輪（派工後的重讀或計時器）用看得到它的清單再做。要在補派之前看：補派自己的派工不算。
+    if (!listOutdated) {
+      const drained = !tutorial && await drainAgentQueue($, options, cur, agentsOut && agentsOut.exitCode === 0 ? list : null, settings ?? undefined)
+      await autoChain($, options, drained ? (await read($, snapshot)) ?? cur : cur, settings ?? undefined)
+    }
     void summarizeStatuses($, options, cur, summaries)
     if (settings && settings.updateCheck !== 'off' && !tutorial) void autoUpdateCheck($, now)
   })().catch(async (error: unknown) => {
     const message = `工作桌讀取失敗：${error instanceof Error ? error.message : String(error)}`
     // 讀取失敗不代表登錄表不存在：拿掉建立按鈕，錯誤照樣是紅字。
     await update($, snapshot, prev => prev ? { ...prev, error: message, missingRegistry: undefined } : { at: 0, cases: [], error: message, contextPercent: null })
-  }).finally(() => { refreshing = null })
+  }).finally(() => { markReady(); refreshing = null })
   return refreshing
+}
+
+/** 按 r（面板或 /desk refresh）：PR 與容器狀態都不沿用快取，重新整理一輪。 */
+function forcedRefresh($: any, options: PluginOptions): Promise<void> {
+  forcePr = true
+  forceContainers = true
+  return refresh($, options)
 }
 
 let soonTimer: Timer
@@ -456,10 +481,12 @@ async function togglePane($: any) {
  * 檢查開始、排隊、沒跑成，或剛派出 Agent 時重算那件的六段（`patch` 先套上新的 agent、state）：
  * 不等下一輪重新整理，現在卡與全部任務表格立刻一致。
  */
-export async function restage($: any, statusPath: string, patch: (c: Case) => Case = c => c) {
+export async function restage($: any, statusPath: string, patch: (c: Case) => Case = c => c, { settle = false }: { settle?: boolean } = {}) {
   const verifies = await read($, verifiesAtom)
   const verifying = await read($, verifyingAtom)
-  const again = (c: Case) => ({ ...c, pipeline: pipeline(c, verifies[statusPath], statusPath in verifying, isQueued(statusPath)) })
+  const staged = (c: Case) => ({ ...c, pipeline: pipeline(c, verifies[statusPath], statusPath in verifying, isQueued(statusPath)) })
+  // settle：狀態是 patch 從卡片重算的，六段算完再照 finalState 收尾（全部做完算 done、已合併的 failed 算 ready），跟重新整理一樣。
+  const again = (c: Case) => { const x = staged(c); return settle ? { ...x, state: finalState(x) } : x }
   await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => x.statusPath === statusPath ? again(patch(x)) : x) } : s)
 }
 
@@ -473,14 +500,46 @@ export function notify($: any, text: string, repeat = false) {
   void Promise.resolve().then(() => $.ui.notify(text, { title: 'desk' })).catch(() => {})
 }
 
-/** 卡片或登錄表剛被改過（卡片腳本、對話、回合結束）後重新整理：已有一輪在跑（可能在改之前就讀過）就等它結束再讀一輪。 */
-export async function refreshAfterWrite($: any, options: PluginOptions) {
+/**
+ * 卡片或登錄表剛被改過（卡片腳本、對話、回合結束）後重新整理：已有一輪在跑（可能在改之前就讀過）就等它整輪結束再讀一輪。
+ * 新的這輪寫好快照（畫面更新）就回來，不等收尾（派排隊的派工、自動流程）；收尾照樣在背景跑完，期間再要求重新整理會併進這一輪。
+ * whole：等新的這輪整輪跑完才回來。
+ */
+export async function refreshAfterWrite($: any, options: PluginOptions, { whole = false }: { whole?: boolean } = {}): Promise<void> {
   if (refreshing) {
     // 進行中那輪可能在改之前就讀過登錄表：desk 發版的待辦先記，不等它跑完探測（同回合的 archive --cleanup 會刪掉 worktree）。
     if (!tutorial) await noteReleasedNow($, options).catch(() => { /* 下一輪重新整理再看 */ })
     await refreshing.catch(() => {})
   }
-  return refresh($, options)
+  const round = refresh($, options)
+  return whole ? round : snapshotReady
+}
+
+/**
+ * 只重讀一張卡（例如面板剛確認規格）：照 buildCase 的欄位（狀態、檢查、等你、下一步、關卡、規格缺口、修改時間）更新快照裡那張，
+ * 重算狀態與六段；Agent、git、PR 這些探測結果照上一輪的。讀不到卡或快照裡沒有這張就回 false，快照不動。
+ */
+export async function restageFromCard($: any, statusPath: string): Promise<boolean> {
+  const before = (await read($, snapshot))?.cases.find(c => c.statusPath === statusPath)
+  if (!before) return false
+  const [text, stat] = await Promise.all([
+    $.fs.read(statusPath).catch(() => null) as Promise<string | null>,
+    $.fs.stat(statusPath).catch(() => null) as Promise<{ mtimeMs?: number } | null>,
+  ])
+  if (typeof text !== 'string') return false
+  const verify = (await read($, verifiesAtom))[statusPath]
+  const fresh = buildCase({ name: before.name, statusPath, ...(before.manual ? { manual: true } : {}) }, text, typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null, {}, verify, await $.clock.now())
+  const summaries = await loadSummaries($)
+  const short = fresh.status ? summaries[textKey(fresh.status)] ?? compactStatus(fresh.status) : undefined
+  let found = false
+  await restage($, statusPath, c => {
+    found = true
+    const { specGap: _g, releasing: _r, statusShort: _s, ...rest } = c
+    const fromCard = { status: fresh.status, verify: fresh.verify, ask: fresh.ask, next: fresh.next, gate: fresh.gate, updatedAt: fresh.updatedAt }
+    const patched = { ...rest, ...fromCard, ...(fresh.specGap ? { specGap: true as const } : {}), ...(fresh.releasing ? { releasing: fresh.releasing } : {}), ...(short ? { statusShort: short } : {}) }
+    return { ...patched, state: stateOf(patched, verify) }
+  }, { settle: true })
+  return found
 }
 
 /**
@@ -569,7 +628,7 @@ export const register: Register = (on, options) => {
     if (!active) await start($, options, true)
     if (arg === 'tutorial') return { text: await tutorialStart($, options) }
     if (arg === 'tutorial end') return { text: await tutorialEnd($, options) }
-    if (arg === 'refresh') { forcePr = true; await refresh($, options); return { text: '工作桌已重新整理。' } }
+    if (arg === 'refresh') { await forcedRefresh($, options); return { text: '工作桌已重新整理。' } }
     if (arg === 'update') return { text: await runUpdate($) }
     if (arg === 'band' || arg === 'bar') { const hidden = await update($, isBandHidden, v => !v); return { text: hidden ? '摘要列已隱藏，輸入 /desk bar 可重新顯示。' : '摘要列已顯示。' } }
     const m = arg.match(/^(verify|open|go|continue|sync|review|reply)\s+(\S+)\s*(.*)$/)
@@ -698,7 +757,7 @@ export const register: Register = (on, options) => {
       publishPush: c => void confirmThen($, `${c.statusPath}\npush`, () => publishPush($, options, c)),
       help: () => void update($, helpAtom, v => !v),
       more: () => void update($, showAllAtom, () => view.showAll ? null : focusKey),
-      refresh: () => { forcePr = true; void refresh($, options) },
+      refresh: () => { void forcedRefresh($, options) },
       toggleBand: () => void update($, isBandHidden, v => !v),
       update: () => void runUpdate($),
       createRegistry: () => { if (s.missingRegistry) void createRegistry($, options, s.missingRegistry) },

@@ -26,7 +26,7 @@ import { sentState } from './turn'
 import { readSent } from './prompt-sync'
 import { trustCheck } from './approve-check'
 import { STACK_AUTO_NEXT } from './stack'
-import { dispatch, refresh, refreshAfterWrite, optionsRef } from './register'
+import { dispatch, refresh, refreshAfterWrite, restageFromCard, optionsRef } from './register'
 import { t } from './i18n'
 
 // 示範任務那句搬到 theme.ts；呼叫端與測試照舊從這裡匯入也行。
@@ -301,7 +301,7 @@ export async function archiveCase($: any, options: PluginOptions, c: Case) {
 
 /**
  * 真實模式的確認規格：執行 /desk:card spec <slug> ok 用的同一支腳本（在任務的 worktree 裡跑，認得出同一個專案），
- * 卡片由腳本改；確認後重讀，照按 g 的規則自動派實作（dispatchAfterSpec）。腳本失敗（卡片已被改過、找不到卡）就提示錯誤原因（腳本印的第一行），關卡留著、不派。
+ * 卡片由腳本改；確認後重讀這張卡（restageFromCard），照按 g 的規則自動派實作（dispatchAfterSpec），再在背景重新整理。腳本失敗（卡片已被改過、找不到卡）就提示錯誤原因（腳本印的第一行），關卡留著、不派。
  */
 export async function confirmSpec($: any, options: PluginOptions, c: Case) {
   const r = await runCardScript($, options, c, 'spec-ok')
@@ -317,7 +317,14 @@ export async function confirmSpec($: any, options: PluginOptions, c: Case) {
   }
   await feedPush($, [{ at: now, text: t('cardActions.specOk', { name: c.name }), tone: 'success', card: c.statusPath }])
   await tellPanel($, now, '規格已確認，可以派實作', { name: c.name, skip: tutorial })
-  await refreshAfterWrite($, options)
+  // 只重讀這張卡就派，不等進行中那輪重新整理（可能卡在查容器、PR）；背景整輪重讀排在派工送出之後，
+  // 才不會拿派工前的狀態蓋掉「啟動中」、或在收尾重派。讀不到卡就照舊等整輪重讀完再派。
+  if (await restageFromCard($, c.statusPath)) {
+    await dispatchAfterSpec($, options, c.statusPath)
+    void refreshAfterWrite($, options)
+    return
+  }
+  await refreshAfterWrite($, options, { whole: true })
   await dispatchAfterSpec($, options, c.statusPath)
 }
 

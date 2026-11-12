@@ -21,3 +21,10 @@ export function startsAgents(data: any, clock: any, opts: { keep: 'all' | 'other
     return result(0, id)
   }
 }
+
+/** 一道閘門：open() 之前 wait 一直等著（模擬卡住的 docker compose ps、還沒回來的 claude --bg）。 */
+export function gate(): { wait: Promise<void>; open: () => void } {
+  let open: () => void = () => {}
+  const wait = new Promise<void>(resolve => { open = resolve })
+  return { wait, open }
+}

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, REGISTRY, flat, text } from './fixture'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, NOW, REGISTRY, flat, text, result } from './fixture'
 import { setFields } from '../hooks/tutorial'
 
 // 減少每次重新整理的子行程（refresh-spawns 卡）：git 的 ref 沒變就不重問 tag 與遠端領先落後、同一個 Agent 的 log 只讀一次、
@@ -224,4 +224,56 @@ test('test_pending_ci_rechecks_pr_after_sixty_seconds', async ($, on) => {
   expect(within).toBe(1)
   expect(after).toBe(2)
   expect(forced).toBe(3)
+})
+
+// 按鍵即時反應（snappy-panel 卡）：頁尾的產品版本（最新 v* tag）也是 refs/tags 沒變就不重問。
+const tagLists = (data: any, from: number) => data.gitCalls.slice(from).filter((g: any) => g.args.join(' ').startsWith('tag --list')) as unknown[]
+
+/** 按鍵即時反應 AC-4：tag 沒變的第二輪不再問 git tag --list，頁尾版本照舊；讀不到 tag 檔案時間就每輪照舊問 */
+test('test_second_refresh_skips_version_tag_list_when_refs_unchanged', async ($, on) => {
+  const { data, clock } = fixture(on)
+  featureCards(data)
+  const ui = await $.ui.mount(PANE(100))
+
+  await refresh($, clock)
+  expect(tagLists(data, 0)).toHaveLength(1)
+  const mark = data.gitCalls.length
+  await refresh($, clock)
+  expect(tagLists(data, mark)).toEqual([])
+  expect(flat(text(await ui.drawn()))).toContain(flat('線上 v1.3.0'))
+
+  // refs/tags 的修改時間讀不到（reftable、權限）：不快取，每輪照舊問
+  delete data.mtimes[TAGS]
+  const unreadable = data.gitCalls.length
+  await refresh($, clock)
+  await refresh($, clock)
+  expect(tagLists(data, unreadable)).toHaveLength(2)
+  expect(flat(text(await ui.drawn()))).toContain(flat('線上 v1.3.0'))
+  await ui.unmount()
+})
+
+/** 按鍵即時反應 AC-4：打了新的 v* tag（refs/tags 時間變了），下一輪頁尾就顯示新版號 */
+test('test_new_version_tag_shows_in_footer_on_next_refresh', async ($, on) => {
+  const { data, clock } = fixture(on)
+  featureCards(data)
+  const ui = await $.ui.mount(PANE(100))
+  await refresh($, clock)
+  expect(flat(text(await ui.drawn()))).toContain(flat('線上 v1.3.0'))
+
+  // 打了 v1.4.0：refs/tags 多一個檔，資料夾時間變了
+  const asked = { n: 0 }
+  data.exec = (e: any) => {
+    if (e.argv[0] !== 'git' || !e.argv.slice(3).join(' ').startsWith('tag --list')) return null
+    asked.n++
+    return result(0, 'v1.4.0\nv1.3.0\n')
+  }
+  data.mtimes[TAGS] = NOW - 1000
+  await refresh($, clock)
+  expect(asked.n).toBe(1)
+  expect(flat(text(await ui.drawn()))).toContain(flat('線上 v1.4.0'))
+  // 之後沒再打 tag：不再問，頁尾留在新版號
+  await refresh($, clock)
+  expect(asked.n).toBe(1)
+  expect(flat(text(await ui.drawn()))).toContain(flat('線上 v1.4.0'))
+  await ui.unmount()
 })

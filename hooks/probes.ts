@@ -43,6 +43,12 @@ const tags = new Map<string, string>()
 const commonDirs = new Map<string, string>()
 /** common dir＋HEAD → 上次 tag --contains 沒找到時的 tag 簽章；簽章沒變（沒打新 tag）就不重問。 */
 const tagMisses = new Map<string, string>()
+/** common dir → 上次問 `git tag --list v*` 時的 tag 簽章與最新的 v* tag；簽章沒變（沒打新 tag）就不重問。 */
+const versionTags = new Map<string, { stamp: string; live: string | undefined }>()
+/** compose 資料夾 → 上次問 docker compose ps 的時間與結果（Docker 沒開的錯誤也記）；CONTAINERS_TTL_MS 內沿用。 */
+const containerCache = new Map<string, { at: number; summary: ContainerSummary }>()
+/** 容器狀態沿用多久；按 r 重新整理與檢查前確認容器一律重查。 */
+export const CONTAINERS_TTL_MS = 30_000
 /** 根目錄＋分支 → 上次照 origin 同名分支算領先落後時的 HEAD＋簽章與結果；都沒變就沿用。 */
 const originCounts = new Map<string, { stamp: string; counts: Partial<GitState> }>()
 /** at＝最後一次嘗試、okAt＝最後一次讀成功；failed 時套 PR_RETRY_MS。 */
@@ -80,6 +86,8 @@ export function clearProbeCaches() {
   tags.clear()
   commonDirs.clear()
   tagMisses.clear()
+  versionTags.clear()
+  containerCache.clear()
   originCounts.clear()
   prs.clear()
   risks.clear()
@@ -548,16 +556,23 @@ export async function settingsReport($: any, options: PluginOptions): Promise<Se
   }))
 }
 
-/** 主工作區的容器：docker compose ps；Docker 沒開或讀不到就記錯誤，不擋其他東西。 */
-export async function containers($: any, options: PluginOptions, preloadedSettings?: DispatchSettings): Promise<ContainerSummary> {
+/**
+ * 主工作區的容器：docker compose ps；Docker 沒開或讀不到就記錯誤，不擋其他東西。
+ * 同一個 compose 資料夾 CONTAINERS_TTL_MS 內沿用上次的結果（錯誤也沿用）；force（按 r、檢查前確認容器）一定重查。
+ */
+export async function containers($: any, options: PluginOptions, preloadedSettings?: DispatchSettings, force = false): Promise<ContainerSummary> {
   // dispatch.json 的 composeDir 優先（跟著專案），再來是 plugin 選項；都沒有就不看容器（面板不顯示容器列，檢查也不先確認容器）。
   const settings = preloadedSettings ?? await loadSettings($, options)
   const own = settings.composeDir
   if (!own && !String(options.composeDir ?? '').trim()) return { total: 0, running: 0, down: [], unhealthy: [] }
   const dir = own ? expandHome(own, await home($)) : await optionPath($, options, 'composeDir', '')
+  const askedAt = await $.clock.now()
+  const cached = containerCache.get(dir)
+  if (cached && !force && askedAt - cached.at < CONTAINERS_TTL_MS) return cached.summary
   const r = await $.process.run(['docker', 'compose', 'ps', '-a', '--format', 'json'], { cwd: dir, timeoutMs: 10_000 }).catch(() => null)
-  if (!r || r.exitCode !== 0) return { total: 0, running: 0, down: [], unhealthy: [], error: t('probes.dockerDown') }
-  return summarize(parseCompose(String(r.stdout)))
+  const summary: ContainerSummary = !r || r.exitCode !== 0 ? { total: 0, running: 0, down: [], unhealthy: [], error: t('probes.dockerDown') } : summarize(parseCompose(String(r.stdout)))
+  containerCache.set(dir, { at: askedAt, summary })
+  return summary
 }
 
 /** desk 自己的版本（plugin.json）；產品線上版＝發版線所在 repo 最新的 v* tag，開發中＝release/* 分支名。 */
@@ -567,9 +582,25 @@ export async function versions($: any, cases: Case[]): Promise<Snapshot['version
     try { deskVersion = String(JSON.parse(manifest ?? '{}').version ?? '') } catch { deskVersion = '' }
   }
   const line = cases.find(c => c.git && /^release\//.test(c.git.branch)) ?? cases.find(c => c.git)
-  const live = line ? ((await git($, line.root, ['tag', '--list', 'v*', '--sort=-creatordate'])) ?? '').split(/\r?\n/).filter(Boolean)[0] : undefined
+  const live = line ? await latestTag($, line.root) : undefined
   const dev = line?.git && /^release\//.test(line.git.branch) ? line.git.branch.replace(/^release\//, '') : undefined
   return { ...(deskVersion ? { desk: deskVersion } : {}), ...(live ? { live } : {}), ...(dev ? { dev } : {}) }
+}
+
+/**
+ * 最新的 v* tag（依建立時間）。先讀 refs/tags 與 packed-refs 的修改時間：跟上次問的時候一樣（沒打新 tag）就沿用上次的答案；
+ * 讀不到時間（不是 git 資料夾、reftable）就每次照舊問 git。先讀簽章再問，問完才打的 tag 下一輪看得到。
+ */
+async function latestTag($: any, root: string): Promise<string | undefined> {
+  const common = await commonDir($, root)
+  const stamp = common ? await refStamp($, common, [`${common}/refs/tags`]) : null
+  const cached = common ? versionTags.get(common) : undefined
+  if (stamp !== null && cached && cached.stamp === stamp) return cached.live
+  const out = await git($, root, ['tag', '--list', 'v*', '--sort=-creatordate'])
+  const live = (out ?? '').split(/\r?\n/).filter(Boolean)[0]
+  // git 失敗（null）不快取：下一輪再問。
+  if (common && stamp !== null && out !== null) versionTags.set(common, { stamp, live })
+  return live
 }
 
 /**

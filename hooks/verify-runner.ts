@@ -90,12 +90,20 @@ export async function verifyBroke($: any, c: Case, auto: boolean, error: unknown
   await spin($, false)
 }
 
-/** 佔到位子之後真正跑檢查：容器沒起來就不跑；跑完記結果、更新六段。回傳有沒有跑完、記下結果。 */
+/**
+ * 佔到位子之後真正跑檢查：先顯示「測試中」再確認容器（即時查，不沿用快取）；容器沒起來就退回原樣、不跑；
+ * 跑完記結果、更新六段。回傳有沒有跑完、記下結果。
+ */
 export async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
+  const startedAt = await $.clock.now()
+  await update($, verifyingAtom, v => ({ ...v, [c.statusPath]: startedAt }))
+  await restage($, c.statusPath)
+  await spin($, true)
   // 檢查要用的容器沒在跑：不執行，也不記成「未通過」，直接說要先啟動哪個。
-  const box = await containers($, optionsRef!)
+  const box = await containers($, optionsRef!, undefined, true)
   const missing = missingServices(c.verify, box, (await loadSettings($, optionsRef!)).checkServices)
   if (missing.length) {
+    await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
     const stop = containersStop(missing)
     const reason = stopText(stop)
     $.ui.toast(t('toast.named', { name: c.name, text: reason }), { timeoutMs: 10_000 })
@@ -105,17 +113,16 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
     if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, stop, true) : r)) notify($, t('toast.chainPaused', { name: c.name, why: reason }))
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
+    await spin($, false)
     return false
   }
-  const startedAt = await $.clock.now()
-  await update($, verifyingAtom, v => ({ ...v, [c.statusPath]: startedAt }))
-  await restage($, c.statusPath)
-  await spin($, true)
+  // 總執行時間只算真的跑檢查的那段（照舊從確認完容器起算）。
+  const ranAt = await $.clock.now()
   const result = await verifyResult($, c)
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
-  await addCheckTime($, c, result.at - startedAt)
+  await addCheckTime($, c, result.at - ranAt)
   const outcome = result.ok ? t('verifyRunner.passed') : t('verifyRunner.failedExit', { code: result.exitCode })
   await feedPush($, [{ at: result.at, text: t('feed.named', { name: c.name, text: outcome }), tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })

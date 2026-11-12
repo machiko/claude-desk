@@ -155,13 +155,19 @@ async function runningDeskNow($: any): Promise<number> {
  * 丟錯也記（確認不到、確認時出錯的 Agent 可能已經在跑）。
  */
 async function launchMarked($: any, c: Case, prompt: string, o: Parameters<typeof launch>[3], recent: readonly RawAgent[] | undefined) {
+  launchEvents++
   lastLaunchAt = await $.clock.now()
   try {
     return await launch($, c, prompt, o, recent)
   } finally {
+    launchEvents++
     lastLaunchAt = await $.clock.now()
   }
 }
+
+/** 這個對話派工啟動開始與結束的次數（各算一次）；重新整理比對問清單前後的值，看清單送出後有沒有派工動過。 */
+let launchEvents = 0
+export const launchEventCount = (): number => launchEvents
 
 /** 這件有派工還在啟動（已佔名額或已寫「啟動中」佔位）。 */
 export async function starting($: any, statusPath: string): Promise<boolean> {
