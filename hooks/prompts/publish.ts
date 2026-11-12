@@ -32,6 +32,11 @@ const PR_HISTORY = '歷程記一筆「Agent：push 並開 PR → 等 CI（PR #<�
  * 資安審查（高風險改動才有）的 SECURITY.md 也讀；兩份都沒有 MEDIUM 就不加這段。`field` 是 PR 說明那一欄的名稱（GitHub 內文、Bitbucket description）。
  */
 const MEDIUM_IN_PR = (field: string) => `${field}另讀 ${REVIEW_FILE}，有 ${SECURITY_FILE} 也讀，把裡面的 MEDIUM 逐條列在「驗收記錄的 MEDIUM」段，兩份都沒有 MEDIUM 就不加這段`
+/**
+ * 合併風險寫進 PR 說明：看 PR 的人一眼知道合併後能不能直接退回（單向門／雙向門）、會影響到哪裡。
+ * 推送 Agent 看 diff 自己判斷，不接風險分級的結果；只在 Agent 自己寫 PR 說明時加（GitHub、Bitbucket），跟 MEDIUM_IN_PR 一致。
+ */
+const RISK_IN_PR = (field: string) => `${field}加「合併風險」段：寫明這次是單向門（合併後很難直接退回，例如資料遷移、對外格式、刪除）還是雙向門，以及影響範圍（哪些使用者或流程會受影響），照 diff 自己判斷`
 /** 開不了 PR 時的收尾：push 完把網址留給人開。 */
 const LEAVE_URL = 'push 完把開 PR 的網址寫進 等你 後結束'
 
@@ -40,11 +45,11 @@ export function openPrSteps(branch: string, target: string, how?: PrHow): string
   const fill = (s: string) => s.replace(/\{branch\}/g, branch).replace(/\{target\}/g, target)
   if (how?.open?.trim()) return `開 PR 用 \`${fill(how.open.trim())}\`，${PR_HISTORY}；指令失敗時${LEAVE_URL}`
   if (how?.host === 'github') {
-    return `開 PR 用 gh：先 \`gh pr list --head ${branch} --state open\` 確認沒有開著的 PR，再 \`gh pr create${target ? ` --base ${target}` : ''} --head ${branch}\`（標題用分支 commit 的主旨，內文寫改了什麼、怎麼測），${MEDIUM_IN_PR('內文')}，${PR_HISTORY}；沒有 gh 或 gh 沒登入時，${LEAVE_URL}`
+    return `開 PR 用 gh：先 \`gh pr list --head ${branch} --state open\` 確認沒有開著的 PR，再 \`gh pr create${target ? ` --base ${target}` : ''} --head ${branch}\`（標題用分支 commit 的主旨，內文寫改了什麼、怎麼測），${MEDIUM_IN_PR('內文')}，${RISK_IN_PR('內文')}，${PR_HISTORY}；沒有 gh 或 gh 沒登入時，${LEAVE_URL}`
   }
   if (how?.host === 'bitbucket') {
     const path = `/repositories/${how.repo || '<workspace>/<repo>'}/pullrequests`
-    return `開 PR 用 Bitbucket MCP：先 \`bb_get ${path}\`（queryParams q=source.branch.name="${branch}" AND state="OPEN"）確認沒有開著的 PR，再 \`bb_post ${path}\`（body：title 用分支 commit 的主旨、source.branch.name=${branch}${target ? `、destination.branch.name=${target}` : ''}、description 寫改了什麼與怎麼測、close_source_branch=true），${MEDIUM_IN_PR('description ')}，${PR_HISTORY}；沒有 bb_post 工具時，${LEAVE_URL}`
+    return `開 PR 用 Bitbucket MCP：先 \`bb_get ${path}\`（queryParams q=source.branch.name="${branch}" AND state="OPEN"）確認沒有開著的 PR，再 \`bb_post ${path}\`（body：title 用分支 commit 的主旨、source.branch.name=${branch}${target ? `、destination.branch.name=${target}` : ''}、description 寫改了什麼與怎麼測、close_source_branch=true），${MEDIUM_IN_PR('description ')}，${RISK_IN_PR('description ')}，${PR_HISTORY}；沒有 bb_post 工具時，${LEAVE_URL}`
   }
   return `開 PR，${PR_HISTORY}；沒有 gh 或平台開不了 PR 時，${LEAVE_URL}`
 }
