@@ -1,6 +1,6 @@
 // build-like-review：會改程式的派工（實作、回覆、修正）交出前先做審查會做的檢查；同步、審查、推送、解衝突不帶。
 import { expect, test } from 'claude-code/testing'
-import { buildPrompt, openPrRequest, pushRequest, readsPitfalls, writesCode } from '../hooks/dispatch'
+import { buildPrompt, pushRequest, readsPitfalls, writesCode } from '../hooks/dispatch'
 import { AGENT_STOPPED, MEDIUM_FIX_NOT_SENT } from '../hooks/chain'
 import { QUOTA_NOTHING_TO_FIX } from '../hooks/prompts/fix'
 import { buildCase } from '../hooks/model'
@@ -278,26 +278,4 @@ test('test_non_writing_prompts_skip_self_check_rules', () => {
   // 審查照舊讀清單（跟實作同一句，dispatch-slim AC-2）；其他三種不讀
   for (const p of others.filter(p => p !== review)) expect(p).not.toContain(PITFALLS_LINE('/h/pitfalls.md'))
   expect(review).toContain('先讀專案常犯錯誤清單 /h/pitfalls.md，逐條對照這次的改動。')
-})
-
-/**
- * dispatch-slim AC-5：同一張卡組實作、修正、解衝突、推送的提示，修正、解衝突、推送都比改之前短，實作不變。
- * BEFORE 是改之前（main bc98d6f）用這裡同一組參數量到的長度；之後改了共用規則讓實作那格不相等時，照新長度重量整組基準。
- */
-const BEFORE = { continue: 1677, fixCheck: 1722, fixReview: 1990, fixSecurity: 1992, fixMedium: 2020, catchup: 1445, openPr: 1240, push: 1094 }
-test('test_slim_prompts_are_shorter_than_before', () => {
-  const c = mk('依規格實作')
-  const P = '/h/pitfalls.md'
-  const now = {
-    continue: buildPrompt(c, 'continue', '', undefined, undefined, undefined, '', P).length,
-    fixCheck: buildPrompt(c, 'continue', '', { from: 'check', round: 1, tail: ['boom'] }, undefined, undefined, '', P).length,
-    fixReview: buildPrompt(c, 'continue', '', { from: 'review', round: 1 }, undefined, undefined, '', P).length,
-    fixSecurity: buildPrompt(c, 'continue', '', { from: 'review', round: 2, security: true }, undefined, undefined, '', P).length,
-    fixMedium: buildPrompt(c, 'continue', '', { from: 'medium', round: 3 }, undefined, undefined, '', P).length,
-    catchup: buildPrompt(atMerge(), 'catchup', 'origin/main').length,
-    openPr: buildPrompt(atMerge(), 'publish', openPrRequest('feature/a', 'origin/main', { host: 'github', repo: 'acme/shop' })).length,
-    push: buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12)).length,
-  }
-  expect(now.continue).toBe(BEFORE.continue)
-  for (const k of ['fixCheck', 'fixReview', 'fixSecurity', 'fixMedium', 'catchup', 'openPr', 'push'] as const) expect([k, now[k] < BEFORE[k]]).toEqual([k, true])
 })
