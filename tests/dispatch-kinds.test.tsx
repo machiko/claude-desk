@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, PANE, CARD_A, CARD_B, CARD_C, result } from './fixture'
-import { MODEL_KINDS, modelFor, parseSettings } from '../hooks/dispatch'
+import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, result } from './fixture'
+import { FRESH_SESSION_LEAD, MODEL_KINDS, modelFor, parseSettings } from '../hooks/dispatch'
+import { settingsProblems } from '../hooks/settings'
+import { startsAgents } from './world'
 
 const SETTINGS = '/home/u/.claude/handoffs/dispatch.json'
 const KINDS = { review: { effort: 'xhigh' }, publish: { model: 'haiku', effort: 'low' } }
@@ -172,9 +174,11 @@ test('test_invalid_or_unknown_kinds_are_ignored', () => {
   const withEmpty = parseSettings(JSON.stringify({ ...plain, kinds: {} }))
   const without = parseSettings(JSON.stringify(plain))
   expect(without.kinds).toEqual({})
+  // 修正是帶 fix 的繼續（不是派工種類）。
+  const pick = (from: typeof without, kind: typeof MODEL_KINDS[number] | 'sync') => kind === 'fix' ? modelFor(from, '/p/a', 'continue', { fix: true }) : modelFor(from, '/p/a', kind)
   for (const kind of [...MODEL_KINDS, 'sync' as const]) {
-    expect(modelFor(without, '/p/a', kind)).toEqual(modelFor(withEmpty, '/p/a', kind))
-    if (kind !== 'sync') expect(modelFor(without, '/p/a', kind)).toEqual({ model: 'opus', effort: 'xhigh', fresh: kind === 'review' || kind === 'publish' })
+    expect(pick(without, kind)).toEqual(pick(withEmpty, kind))
+    if (kind !== 'sync') expect(pick(without, kind)).toEqual({ model: 'opus', effort: 'xhigh', fresh: kind === 'review' || kind === 'publish' })
   }
 })
 
@@ -240,4 +244,106 @@ test('test_confirm_text_uses_project_override_with_kind_effort', async ($, on) =
   expect(own?.text || own?.props?.label).toBe('再按 w 確認驗收（sonnet · xhigh）')
   expect(flags(data.launches[0])).toBe('sonnet xhigh')
   expect(other?.text || other?.props?.label).toContain('派 Agent 開 PR（haiku · low）')
+})
+
+/** 自動流程派一次修正輪：實作做完、檢查沒過；回傳修正那次的啟動。 */
+async function autoFixLaunch($: any, data: any, clock: any, settings: object) {
+  data.files[SETTINGS] = JSON.stringify(settings)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Alpha | \`${CARD_A}\` |`
+  data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'h1' }
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無')
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.agents = []
+  data.launch = async (e: any) => {
+    const id = `e000000${data.launches.length}`
+    data.agents = [{ id, kind: 'background', cwd: '/home/u/wt/alpha', name: e.argv[3], sessionId: `${id}-0000-4000-8000-000000000000`, state: 'working', status: 'busy', startedAt: clock.now() }]
+    return result(0, id)
+  }
+  const step = async () => { await clock.advance(2500); await clock.settle() }
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any)
+  await clock.settle()
+  data.run = async () => result(1, 'boom\n')
+  data.agents = data.agents.map((a: any) => ({ ...a, status: 'idle', state: 'done' }))
+  await $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle(); await step(); await step(); await step()
+  expect(data.launches).toHaveLength(2)
+  return { first: data.launches[0], fix: data.launches[1] }
+}
+
+/** 這個對話的 Beta 流程已過關、PR 開著，main 前進後試合併有衝突：自動派解衝突；回傳那次啟動。 */
+async function autoCatchupLaunch($: any, data: any, clock: any, settings: object) {
+  const BETA = '/home/u/wt/beta'
+  data.files[SETTINGS] = JSON.stringify(settings)
+  data.agents = []
+  data.gh = [{ number: 12, state: 'OPEN', baseRefName: 'main', headRepositoryOwner: { login: 'acme' }, url: 'https://github.com/acme/shop/pull/12', statusCheckRollup: [{ conclusion: 'SUCCESS', status: 'COMPLETED' }] }]
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  data.files[CARD_B] = `<!-- DESK -->\n- 狀態：Beta 過關\n- 驗證：\`npm test\`\n- 等你：無\n- 下一步：合併\n${PASSED}\n<!-- /DESK -->`
+  data.git[BETA] = { branch: 'feature/b', head: 'h1', remote: 'git@github.com:acme/shop.git', releases: '', conflicts: ['src/a.ts'] }
+  data.store.chains = { [BETA]: { owner: 'fixture-session', startedAt: 0, round: 0, passed: true, reviewHead: 'h1', reviewBranch: 'feature/b', judgedHead: 'h1', judgedBranch: 'feature/b' } }
+  data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok: true, exitCode: 0, tail: [], truncated: false, head: 'h1' } }
+  data.store.jobs = { [BETA]: { sessionId: 'b0000009-0000-4000-8000-000000000000', last: { launchName: 'desk-x', nativeId: 'b0000009', sessionId: 'b0000009-0000-4000-8000-000000000000', kind: 'review', startedAt: 0, fresh: true, owner: 'fixture-session', handled: true, ended: { how: 'finished' } } } }
+  data.store.trustedVerify = { [CARD_B]: 'npm test' }
+  startsAgents(data, clock, { keep: 'others' })
+  for (let i = 0; i < 3; i++) {
+    await $.command.run({ command: 'desk', args: 'refresh' } as any)
+    await clock.settle(); await clock.advance(2500); await clock.settle()
+  }
+  expect(data.launches).toHaveLength(1)
+  expect(promptOf(data.launches[0])).toContain('合併基準分支、解衝突')
+  return data.launches[0]
+}
+
+/** AC-4：kinds 設了 fix（模型與 effort 跟 continue 不同）與 catchup。 */
+test('test_fix_and_catchup_kinds_pick_their_own_model', { timeoutMs: 15_000 }, async ($, on) => {
+  const KINDS_FIX = { continue: { model: 'sonnet', effort: 'medium' }, fix: { model: 'haiku', effort: 'low' }, catchup: { model: 'opus', effort: 'max' } }
+  const settings = { model: 'opus', effort: 'high', kinds: KINDS_FIX }
+  // 設定檢查認得 kinds.fix 與 kinds.catchup
+  expect(settingsProblems(JSON.stringify(settings))).toEqual([])
+  const s = parseSettings(JSON.stringify(settings))
+  expect(s.kinds).toEqual(KINDS_FIX)
+  // 修正只在帶 fix 時讀 kinds.fix（按 g 的修正不帶 fix，照 continue）
+  expect(modelFor(s, '/p/a', 'continue')).toEqual({ model: 'sonnet', effort: 'medium', fresh: false })
+  expect(modelFor(s, '/p/a', 'continue', { fix: true })).toEqual({ model: 'haiku', effort: 'low', fresh: true })
+  expect(modelFor(s, '/p/a', 'catchup')).toEqual({ model: 'opus', effort: 'max', fresh: true })
+  // 只寫一欄：另一欄退回 continue 的；模型跟 continue 一樣就接原本的對話
+  const half = parseSettings(JSON.stringify({ model: 'opus', effort: 'high', kinds: { continue: { model: 'sonnet', effort: 'medium' }, fix: { effort: 'xhigh' }, catchup: { model: 'haiku' } } }))
+  expect(modelFor(half, '/p/a', 'continue', { fix: true })).toEqual({ model: 'sonnet', effort: 'xhigh', fresh: false })
+  expect(modelFor(half, '/p/a', 'catchup')).toEqual({ model: 'haiku', effort: 'medium', fresh: true })
+
+  // 自動派的修正輪：用 fix 的模型與 effort、開新對話（不帶 --resume），提示開頭說這是新的對話
+  const { data, clock } = fixture(on)
+  const { first, fix } = await autoFixLaunch($, data, clock, settings)
+  expect(flags(first)).toBe('sonnet medium')
+  expect(flags(fix)).toBe('haiku low')
+  expect(fix.argv).not.toContain('--resume')
+  expect(promptOf(fix).startsWith(FRESH_SESSION_LEAD)).toBe(true)
+  expect(promptOf(fix)).toContain('修正第 1／2 輪：完成檢查')
+  // 修正輪的新對話不換掉任務的對話：之後的繼續照舊接實作那個
+  expect((data.store.jobs as any)['/home/u/wt/alpha'].sessionId).toBe('e0000001-0000-4000-8000-000000000000')
+
+  // 面板狀態列列出「修正」「解衝突」的模型
+  const ui = await $.ui.mount(PANE(200))
+  const footer = (await ui.findAll({ type: 'Text' })).map((n: any) => n.text).join('')
+  await ui.unmount()
+  expect(footer).toContain('繼續 sonnet medium · 修正 haiku low · 解衝突 opus max')
+})
+
+/** AC-4：fix 只設 effort 時照舊接原本的對話。 */
+test('test_fix_and_catchup_kinds_pick_their_own_model: fix effort only keeps the session', { timeoutMs: 15_000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const { first, fix } = await autoFixLaunch($, data, clock, { model: 'opus', effort: 'high', kinds: { fix: { effort: 'xhigh' } } })
+  expect(flags(first)).toBe('opus high')
+  expect(flags(fix)).toBe('opus xhigh')
+  expect(fix.argv[fix.argv.indexOf('--resume') + 1]).toBe('e0000001-0000-4000-8000-000000000000')
+  expect(promptOf(fix)).not.toContain(FRESH_SESSION_LEAD)
+})
+
+/** AC-4：自動派的解衝突用 catchup 的模型與 effort，模型跟 continue 不同就開新對話。 */
+test('test_fix_and_catchup_kinds_pick_their_own_model: catchup', { timeoutMs: 15_000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  const catchup = await autoCatchupLaunch($, data, clock, { model: 'opus', effort: 'high', kinds: { continue: { model: 'sonnet' }, catchup: { model: 'haiku', effort: 'low' } } })
+  expect(flags(catchup)).toBe('haiku low')
+  expect(catchup.argv).not.toContain('--resume')
+  expect(promptOf(catchup).startsWith(FRESH_SESSION_LEAD)).toBe(true)
 })

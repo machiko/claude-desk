@@ -195,3 +195,21 @@ test('combined security review does not dispatch second review', async ($, on) =
   expect(chain.passed).toBe(true)
   expect(chain.needsHuman).toBe('highRisk')
 })
+
+/**
+ * 維持-1（少等、少按、少續跑）：做完一輪寫進「等你」、已在對話處理（answered）：流程停下、過關（含高風險等你看）時照舊不派；
+ * 本來就該停的（Agent 被停掉、檢查指令改過）照舊停；其他改派一次「繼續」，不算修正輪（不帶 reason），額度不足照舊煞車。
+ */
+test('test_answered_question_does_not_resume_stopped_or_passed_chain', () => {
+  const answered = { answered: true }
+  expect(nextStep(run(0, { stopped: STOP.agentStopped.code }), 'continue', null, null, true, answered)).toBeNull()
+  expect(nextStep(run(0, { stopped: 'quotaHold' }), 'continue', true, null, true, answered)).toBeNull()
+  expect(nextStep(run(0, { passed: true }), 'continue', true, null, true, answered)).toBeNull()
+  expect(nextStep(run(0, { passed: true, needsHuman: 'highRisk' }), 'reply', true, null, true, answered)).toBeNull()
+  expect(nextStep(run(), 'continue', null, null, true, { ...answered, stopped: true })).toEqual({ kind: 'stop', reason: STOP.agentStopped })
+  expect(nextStep(run(), 'continue', null, null, false, { ...answered, changed: true })).toEqual({ kind: 'stop', reason: STOP.checkChanged, atCheck: true })
+  // 其他：本來要跑檢查、派審查、派修正或過關的，都改成派一次繼續（同一輪、不算修正）
+  for (const check of [null, true, false]) expect(nextStep(run(1), 'continue', check, null, true, answered)).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 1 })
+  expect(nextStep(run(), 'reply', true, null, true, { ...answered, risk: { level: 'low', reasons: [] } })).toEqual({ kind: 'dispatch', dispatch: 'continue', round: 0 })
+  expect(nextStep(run(), 'continue', null, null, true, { ...answered, quotaHold: 'x' })).toEqual({ kind: 'stop', reason: 'x', resume: { dispatch: 'continue', round: 0 } })
+})
