@@ -108,13 +108,23 @@ class SpecSkillTest(unittest.TestCase):
 
     def test_spec_skill_plans_adr_for_hard_to_reverse_decisions(self):
         """spec-adr AC-1：三條件都符合的預設決定或回答，實作計畫加一列 `docs/adr/NNNN-<主題>.md`（編號接最大的），
-        Decisions 那筆句尾加「（ADR-NNNN）」；寫規格這一步不建檔。"""
+        Decisions 那筆句尾加「（ADR-NNNN）」；寫規格這一步不建檔。
+        決策有三種來源，各自要有「那筆」可標：預設決定（含 2 輪問不完寫成預設的）標在它那筆；使用者回答的題（含必問）
+        本來不記 Decisions，要另加一筆；確認前改了預設或回答，要照三條件重看、計畫列與編號一起加或拿掉。"""
         write = step(self.body, '5.')
         rule = next((l for l in write.splitlines() if l.strip().startswith('- ADR')), None)
         self.assertIsNotNone(rule, '步驟 5 沒有 ADR 的規則')
         for part in ('三條件都符合', '難退回', '出乎意料', '真的有取捨', '「### 實作計畫」加一列 `docs/adr/NNNN-<主題>.md`',
                      '接著資料夾裡最大的編號', 'Decisions 那筆句尾加「（ADR-NNNN）」', '這一步不建檔', '由實作照計畫建並 commit'):
             self.assertIn(part, rule)
+        for part in ('步驟 4 的預設決定（含 2 輪問不完、照最可能答案寫成預設的題）', '或使用者的回答（含必問的題）',
+                     '預設決定加在它那筆的句尾', '使用者回答的題本來不記 Decisions，要留 ADR 的另加一筆',
+                     '`- D-nn YYYY-MM-DD <user>：<題目> → <回答>（ADR-NNNN）`'):
+            self.assertIn(part, rule)
+        change = next(l for l in step(self.body, '6.').splitlines() if '使用者要改時' in l)
+        for part in ('改了預設或回答，照步驟 5 的 ADR 那條重看三條件', '變成符合就補實作計畫的 ADR 列與 Decisions 的「（ADR-NNNN）」',
+                     '不再符合就兩邊一起拿掉'):
+            self.assertIn(part, change)
         plan = next(l for l in write.splitlines() if '「### 實作計畫」表' in l)
         self.assertIn('有三條件都符合的決策時列 ADR 檔', plan)
         self.assertLess(write.index('「### 實作計畫」表'), write.index('- ADR'))
