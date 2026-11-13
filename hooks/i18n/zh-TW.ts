@@ -456,6 +456,7 @@ export const zhTW = {
   'cardActions.specFailed': '確認規格失敗：{why}',
   'cardActions.specOk': '{name} 規格已確認，可以派實作',
   'cardActions.specNotDispatched': '規格已確認；無法自動派實作（{why}）{next}',
+  'cardActions.specPastBuild': '規格已確認；實作已完成，沒有派實作：照「輪到你」接著做',
   'cardActions.stackNotDispatched': '不用再等原卡；無法自動派實作（{why}）{next}',
   'cardActions.stackDispatch': '{name} 不用再等原卡，自動派實作',
   'cardActions.stopNoAgent': '{name}：無法停止（找不到在跑的 Agent）；按 r 重新整理後再看',

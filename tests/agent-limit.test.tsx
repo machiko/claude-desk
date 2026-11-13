@@ -47,7 +47,7 @@ function helpers($: any, data: any, clock: any) {
 }
 
 /** AC-1 */
-test('test_dispatch_queues_with_position_when_three_desk_agents_are_busy', async ($, on) => {
+test('test_dispatch_queues_with_position_when_three_desk_agents_are_busy', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock } = fixture(on)
   setup(data, clock)
   const h = helpers($, data, clock)

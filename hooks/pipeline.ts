@@ -45,11 +45,12 @@ export const standingVerdict = (c: Pick<Case, 'gate' | 'chain'>): ReviewVerdict 
 export const isReleaseLine = (c: Pick<Case, 'git'>) => !!c.git && /^release\//.test(c.git.branch)
 
 /**
- * 真實模式可以按 t 確認規格：停在規格段、關卡是 spec：…、認得到填好的驗收情境、沒有 Agent 在跑或停著等回覆，也不是示範任務。
+ * 真實模式可以按 t 確認規格：算過六段、關卡是 spec：…、認得到填好的驗收情境、沒有 Agent 在跑或停著等回覆，也不是示範任務。
+ * 不限六段停在規格段：規格還沒確認、程式就先寫好（甚至測試已過）的卡，六段算到後面，關卡 spec 卻擋著派工，t 是它唯一的出口。
  * 有關卡時 state 是 gate 而不是 running，所以直接看 agent。
  */
 export const awaitsSpecOk = (c: Pick<Case, 'demo' | 'agent' | 'pipeline' | 'gate' | 'specGap'>) =>
-  !c.demo && !c.agent && !c.specGap && c.pipeline?.current === 'spec' && parseGate(c.gate)?.kind === 'spec'
+  !c.demo && !c.agent && !c.specGap && !!c.pipeline && parseGate(c.gate)?.kind === 'spec'
 
 /** 可以從面板歸檔：六段全過（finalState 已排除 Agent 在跑、等你），不是發版線，也不是示範任務。教學模式由呼叫端另外排除。 */
 export const canArchive = (c: Pick<Case, 'demo' | 'state' | 'git'>) => !c.demo && c.state === 'done' && !isReleaseLine(c)

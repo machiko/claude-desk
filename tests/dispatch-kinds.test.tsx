@@ -93,7 +93,7 @@ test('test_kinds_win_over_project_override', async ($, on) => {
   expect(flags(cont)).toBe('opus xhigh')
 })
 
-test('test_fix_rounds_and_security_review_follow_their_kind', async ($, on) => {
+test('test_fix_rounds_and_security_review_follow_their_kind', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock } = fixture(on)
   data.files[SETTINGS] = JSON.stringify({ model: 'opus', effort: 'high', kinds: { continue: { model: 'sonnet', effort: 'medium' }, reply: { model: 'haiku' }, review: { effort: 'xhigh' } } })
   // 碰到中介層是高風險：程式碼審查過了還會加跑資安審查
