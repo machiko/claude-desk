@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 import { fixture, PANE, CARD_A, CARD_B, CARD_C, REGISTRY, result, text, flat } from './fixture'
-import { screen, busyAgent as busy } from './world'
+import { screen, busyAgent as busy, gate } from './world'
 import { appendTo, setFields, tutorialPaths, TUTORIAL_INTRO } from '../hooks/tutorial'
 import { afterSpecRefusal } from '../hooks/dispatch'
+import { PRESS_AGENTS_MS } from '../hooks/dispatch-runner'
 import { specOkCards, specOkMarks, specOkMatches, specOkTarget, specOkTargets, specOkVerdict } from '../hooks/touch'
 
 // 確認規格後自動派實作：面板按兩次 t 當下派；對話跑 /desk:card spec … ok 的，回合結束後派。確認規格就算核准了檢查欄的指令；排隊、不能派的原因都跟按 g 一樣。
@@ -11,6 +12,8 @@ const BETA = '/home/u/wt/beta'
 const GAMMA = '/home/u/wt/gamma'
 const SPEC_GATE = '- 關卡：spec：待確認規格（AC-1～AC-2）'
 const CONFIRMED = '規格已確認（AC-1～AC-2），可派實作'
+/** 現在卡狀態列顯示的那句（括號裡的 AC 編號會被省略）。 */
+const CONFIRMED_SHOWN = '狀態 規格已確認，可派實作'
 const SPEC_OK = (card: string) => `case-${card}-spec-ok`
 const SLUG: Record<string, string> = { alpha: CARD_A, beta: CARD_B, gamma: CARD_C }
 const turnDone = (turnId = 't1') => ({ answer: '', durationMs: 4000, isAborted: false, turnId, reason: 'answer' }) as any
@@ -721,6 +724,144 @@ test('specOkCards takes the card path only from a successful card.py spec-ok', (
   expect(specOkCards(bash(script('gamma')), undefined)).toEqual([])
   expect(specOkCards(bash(`cat ${CARD_B}`), ok)).toEqual([])
   expect(specOkCards(bash('echo "card.py spec-ok beta"'), 'card.py spec-ok beta\n')).toEqual([])
+})
+
+/** 按鍵即時反應 AC-1：重新整理卡在查容器時按兩次 t，不等那輪跑完就顯示規格已確認、啟動中並派出實作；跑完後畫面一致、不多派 */
+test('test_spec_ok_dispatches_build_before_background_refresh_finishes', { timeoutMs: 15000, options: { composeDir: '/home/u/app' } }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B])
+  scriptOk(data)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(120))
+  // 下一輪重新整理卡在 docker compose ps；派出的 claude --bg 也先不回來，畫面停在啟動中
+  const docker = gate()
+  const starting = gate()
+  data.exec = async (e: any) => { if (e.argv[0] === 'docker') await docker.wait; return null }
+  const launch = data.launch
+  data.launch = async (e: any) => { await starting.wait; return launch(e) }
+  const stuck = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  await h.pressT(ui, CARD_B)
+  expect(data.composeCalls).toHaveLength(1)
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(BETA)
+  // 那輪重新整理還卡著：這張卡已經是規格已確認、實作段啟動中
+  const early = await screen(ui)
+  expect(early).toContain(flat('派工中，等 Agent 啟動'))
+  expect(early).toContain(flat(CONFIRMED_SHOWN))
+  expect(early).not.toContain(flat('t 確認規格並派實作'))
+  starting.open()
+  await clock.settle()
+  expect(await screen(ui)).toContain(flat('Agent 在寫程式'))
+
+  // 卡住的那輪跑完（它在確認前讀的卡片、看不到剛派的實作的 Agent 清單），背景重讀還卡在問 Agent 清單：
+  // 畫面不退回待確認規格、不跳「進入關卡」的提示，也不把實作當成做完
+  const background = gate()
+  data.exec = async (e: any) => { if (e.argv[0] === 'claude' && e.argv[1] === 'agents' && e.timeoutMs !== PRESS_AGENTS_MS) await background.wait; return null }
+  const toasts = data.toasts.length
+  docker.open()
+  await stuck
+  await clock.settle()
+  const between = await screen(ui)
+  expect(between).toContain(flat(CONFIRMED_SHOWN))
+  expect(between).toContain(flat('Agent 在寫程式'))
+  expect(between).not.toContain(flat('t 確認規格並派實作'))
+  expect(data.toasts.slice(toasts)).toEqual([])
+
+  // 背景重讀跑完：畫面一致，不多派、也不把實作當成做完去跑檢查
+  background.open()
+  await clock.settle()
+  await clock.advance(5000); await clock.settle()
+  const after = await screen(ui)
+  expect(after).toContain(flat('Agent 在寫程式'))
+  expect(after).toContain(flat(CONFIRMED_SHOWN))
+  expect(data.launches).toHaveLength(1)
+  expect(data.processCalls.map((e: any) => e.argv.join(' ')).filter((a: string) => a.includes('npm test'))).toEqual([])
+  await ui.unmount()
+})
+
+/** 按鍵即時反應 AC-3：卡片被改過觸發的重讀在畫面更新後就回來，不等派工隊伍那件送出；期間再要求重新整理不另開一輪，那件只送出一次 */
+test('test_refresh_after_write_returns_before_queued_dispatch_finishes', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |\n| Gamma | \`${CARD_C}\` |`
+  atSpec(data, clock, [CARD_B])
+  data.files[CARD_C] = setFields(data.files[CARD_C]!, { 驗證: '`node test.mjs`', 下一步: '實作匯出' })
+  data.store.trustedVerify = { [CARD_B]: 'npm test', [CARD_C]: 'node test.mjs' }
+  // 三個在跑的工作桌 Agent（別的專案）：maxAgents 預設 3，已滿；Gamma 的實作排進派工隊伍
+  data.agents = [busy('desk-m0-0', '/home/u/other/one'), busy('desk-m0-1', '/home/u/other/two'), busy('desk-m0-2', '/home/u/other/three')]
+  conversationBash(on, data)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(160))
+  await $.command.run({ command: 'desk', args: 'go Gamma' } as any)
+  await clock.settle()
+  expect(data.toasts).toContain('Gamma：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
+
+  // 一個 Agent 結束、空出名額；送出 Gamma 的 claude --bg 一直不回來（那輪重新整理的收尾卡在它）
+  data.agents = data.agents.map((a: any, i: number) => i === 0 ? { ...a, status: 'idle', state: 'done' } : a)
+  const starting = gate()
+  const launch = data.launch
+  data.launch = async (e: any) => { await starting.wait; return launch(e) }
+  // 重新整理問 claude agents 用 60 秒逾時；按鍵派工即時問的是 PRESS_AGENTS_MS，不算重新整理
+  const lists = { n: 0 }
+  data.exec = (e: any) => { if (e.argv[0] === 'claude' && e.argv[1] === 'agents' && e.timeoutMs !== PRESS_AGENTS_MS) lists.n++; return null }
+
+  // 對話確認 Beta 的規格、回合結束：重讀那輪補派 Gamma（卡住），快照一寫好就派 Beta（名額被 Gamma 佔著，排隊）
+  await $.tool.call({ tool: 'Bash', command: script('beta') } as any)
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(GAMMA)
+  expect(data.toasts).toContain('Beta：同時執行的 Agent 已達上限 3 個，已排隊（第 1 位）')
+  await ui.press({ key: `row-${CARD_B}` })
+  expect(await screen(ui)).toContain(flat(CONFIRMED_SHOWN))
+  expect(lists.n).toBe(1)
+
+  // 收尾還沒跑完時再要求重新整理（計時器、對話改卡後的稍後重讀）：併進進行中那輪，不另外問清單
+  await clock.advance(30_000); await clock.settle()
+  expect(lists.n).toBe(1)
+
+  // Gamma 送出後：它只送出一次，Beta 照舊排著（名額又滿了）
+  starting.open()
+  await clock.settle()
+  await clock.advance(3000); await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(data.toasts.filter(t => t === 'Gamma：繼續已派出')).toHaveLength(1)
+  await ui.unmount()
+})
+
+/** 按鍵即時反應審查 HIGH 同類：重新整理卡著時按兩次 g 派實作，卡住那輪跑完後畫面仍是 Agent 在寫程式，不退回待辦、不跳提示 */
+test('test_dispatch_during_a_stuck_refresh_stays_running_after_it_finishes', { timeoutMs: 15000, options: { composeDir: '/home/u/app' } }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B])
+  confirmCard(data, CARD_B)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(120))
+  // 下一輪重新整理卡在 docker compose ps（它的 Agent 清單在派工前就讀了）
+  const docker = gate()
+  data.exec = async (e: any) => { if (e.argv[0] === 'docker') await docker.wait; return null }
+  const stuck = $.command.run({ command: 'desk', args: 'refresh' } as any)
+  await clock.settle()
+
+  await h.pressG(ui, CARD_B)
+  expect(data.launches).toHaveLength(1)
+  expect(await screen(ui)).toContain(flat('Agent 在寫程式'))
+  const toasts = data.toasts.length
+  docker.open()
+  await stuck
+  await clock.settle()
+  const after = await screen(ui)
+  expect(after).toContain(flat('Agent 在寫程式'))
+  expect(after).not.toContain(flat('g 派 Agent 做下一步'))
+  expect(data.toasts.slice(toasts)).toEqual([])
+  expect(data.processCalls.map((e: any) => e.argv.join(' ')).filter((a: string) => a.includes('npm test'))).toEqual([])
+  await ui.unmount()
 })
 
 // 規格關卡卡住已實作的卡：規格確認前就先 commit、跑過完成檢查的卡，確認後照六段當下的位置接著走，不重派實作。

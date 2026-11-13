@@ -9,7 +9,7 @@ import { missingServices } from './containers'
 import { feedPush, tellPanel, me, loadChains, loadJobs, saveChain, VERIFIES_KEY, JOBS_KEY } from './desk-io'
 import { paused } from './chain'
 import { containersStop, stopText, verifyBrokeStop } from './stop-reason'
-import { isMerged, pipeline, finalState } from './pipeline'
+import { isMerged } from './pipeline'
 import { MISSING_CHECK_NEXT, MISSING_CHECK_WHY } from './dispatch'
 import { writeStats } from './run-stats'
 import { addRunTime } from './run-time'
@@ -91,12 +91,20 @@ export async function verifyBroke($: any, c: Case, auto: boolean, error: unknown
   await spin($, false)
 }
 
-/** 佔到位子之後真正跑檢查：容器沒起來就不跑；跑完記結果、更新六段。回傳有沒有跑完、記下結果。 */
+/**
+ * 佔到位子之後真正跑檢查：先顯示「測試中」再確認容器（即時查，不沿用快取）；容器沒起來就退回原樣、不跑；
+ * 跑完記結果、更新六段。回傳有沒有跑完、記下結果。
+ */
 export async function executeVerify($: any, c: Case, auto: boolean): Promise<boolean> {
+  const startedAt = await $.clock.now()
+  await update($, verifyingAtom, v => ({ ...v, [c.statusPath]: startedAt }))
+  await restage($, c.statusPath)
+  await spin($, true)
   // 檢查要用的容器沒在跑：不執行，也不記成「未通過」，直接說要先啟動哪個。
-  const box = await containers($, optionsRef!)
+  const box = await containers($, optionsRef!, undefined, true)
   const missing = missingServices(c.verify, box, (await loadSettings($, optionsRef!)).checkServices)
   if (missing.length) {
+    await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
     const stop = containersStop(missing)
     const reason = stopText(stop)
     $.ui.toast(t('toast.named', { name: c.name, text: reason }), { timeoutMs: 10_000 })
@@ -106,24 +114,24 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
     if (auto && await saveChain($, normalizeRoot(c.root), r => r ? paused(r, stop, true) : r)) notify($, t('toast.chainPaused', { name: c.name, why: reason }))
     await update($, snapshot, s => s ? { ...s, containers: box } : s)
     await restage($, c.statusPath)
+    await spin($, false)
     return false
   }
-  const startedAt = await $.clock.now()
-  await update($, verifyingAtom, v => ({ ...v, [c.statusPath]: startedAt }))
-  await restage($, c.statusPath)
-  await spin($, true)
+  // 總執行時間只算真的跑檢查的那段（照舊從確認完容器起算）。
+  const ranAt = await $.clock.now()
   const result = await verifyResult($, c)
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
-  await addCheckTime($, c, startedAt, result.at)
+  await addCheckTime($, c, ranAt, result.at)
   const outcome = result.ok ? t('verifyRunner.passed') : t('verifyRunner.failedExit', { code: result.exitCode })
   await feedPush($, [{ at: result.at, text: t('feed.named', { name: c.name, text: outcome }), tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
   $.ui.toast(t('toast.named', { name: c.name, text: result.ok ? t('verifyRunner.passed') : t('verifyRunner.failed') }), { timeoutMs: 6000 })
   // 你按 v 的檢查沒過送一次通知（每按一次 v 送一則，同一句不去重）；自動流程的沒過直接派修正，修到上限停下時另有「流程已暫停」通知。
   if (!result.ok && !auto) notify($, t('toast.named', { name: c.name, text: outcome }), true)
-  await update($, snapshot, s => s ? { ...s, cases: s.cases.map(x => { if (x.statusPath !== c.statusPath) return x; const y = { ...x, state: stateOf(x, result) }; const z = { ...y, pipeline: pipeline(y, result) }; return { ...z, state: finalState(z) } }) } : s)
+  // 走 restage（記成本地補丁）：進行中那輪重新整理在跑之前讀的檢查結果，不會把這次的結果蓋回去。
+  await restage($, c.statusPath, x => ({ ...x, state: stateOf(x, result) }), { settle: true })
   await spin($, false)
   if (auto) refreshSoon($, optionsRef!)
   return true
