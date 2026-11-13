@@ -564,7 +564,8 @@ function statusParts(view: PaneView): Part[] {
   const m = s.models
   if (m?.session) groups.push([{ text: `${t('pane.sessionModel')} `, color: COLOR.faint }, { text: modelLabel(m.session), color: COLOR.dim, bold: true }, ...(m.effort ? [{ text: ` ${m.effort}`, color: COLOR.faint }] : [])])
   if (m?.dispatch?.model) groups.push([{ text: `${t('pane.dispatchModel')} ${m.dispatch.model}${m.dispatch.effort ? ` ${m.dispatch.effort}` : ''}`, color: COLOR.faint }])
-  for (const k of m?.kinds ?? []) groups.push([{ text: `${KIND_LABEL[k.kind]} ${[k.model, k.effort].filter(Boolean).join(' ')}`, color: COLOR.faint }])
+  // 修正不是派工種類（帶 fix 的繼續），另取字。
+  for (const k of m?.kinds ?? []) groups.push([{ text: `${k.kind === 'fix' ? t('kindLabel.fix') : KIND_LABEL[k.kind]} ${[k.model, k.effort].filter(Boolean).join(' ')}`, color: COLOR.faint }])
   if (m?.sync?.model) groups.push([{ text: `${KIND_LABEL.sync} ${m.sync.model}${m.sync.effort ? ` ${m.sync.effort}` : ''}${m.sync.fresh ? t('pane.freshSession') : ''}`, color: COLOR.faint }])
   const v = s.versions
   if (v?.live) groups.push([{ text: t('pane.live', { version: v.live }), color: COLOR.dim }])

@@ -3,7 +3,7 @@ import { atom, read, update } from 'claude-code'
 import type { PluginOptions } from 'claude-code'
 import type { AgentInfo, Case, Verify } from '../types'
 import { KIND_LABEL, LaunchError, REVIEW_FILE, SECURITY_FILE, buildPrompt, fixesByG, markRefusal, refusalOf, refusalText, untrustedSteps, readsPitfalls } from './dispatch'
-import { addRunTime, dispatchRunMs } from './run-time'
+import { addRunTime, dispatchRunMs, stageOf } from './run-time'
 import { modelFor, normalizeRoot, pitfallsFor } from './settings'
 import type { DispatchKind, JobRecord, QueueOpts, RootJobs, ReviewOpts, UntrustedHold } from './dispatch'
 import type { DispatchSettings } from './settings'
@@ -19,7 +19,7 @@ import { WORD, DEMO_ONLY } from './theme'
 import { lastLaunches } from './stale-agents'
 import { restage, spin, tutorial, lastAgents, lastAgentsAt } from './register'
 import { carriedFix, carriedReview, countedFix } from './chain'
-import { checkStands } from './pipeline'
+import { passedAtHead } from './pipeline'
 import { fixesReview } from './prompts/fix'
 import { t } from './i18n'
 
@@ -179,11 +179,11 @@ export const LAUNCH_ERROR_MAX = 80
 
 /**
  * 換上新派工前這個根目錄要留下的紀錄（不含 last、sessionId，由呼叫端換上新的）。上一次派工還沒記結束（例如停著等回覆、按 y 回覆）：
- * 它在跑的時間先加進總執行時間，換掉之後就不會再算到它。
+ * 它在跑的時間先加進總執行時間、記成一段（見 stageOf），換掉之後就不會再算到它。
  */
 export function carriedJobs(cur: RootJobs | undefined, now: number, grace: number, branch: string | undefined): RootJobs {
   const prev = cur?.last
-  const kept = prev && !prev.ended ? addRunTime(cur, dispatchRunMs(prev, now, grace), branch) : cur ?? {}
+  const kept = prev && !prev.ended ? addRunTime(cur, dispatchRunMs(prev, now, grace), branch, stageOf(prev, now, grace) ?? undefined) : cur ?? {}
   const { last: _, sessionId: _s, ...rest } = kept
   return rest
 }
@@ -208,7 +208,7 @@ async function reviewScope($: any, c: Case, probed: Case['git'], settings: Dispa
   const found = (settings.review.preflightMinFiles ?? 0) > 0 ? await diffFiles($, at, settings.cardBase) : await diffBase($, at, settings.cardBase)
   const verify = ((await read($, verifiesAtom)) as Record<string, Verify>)[c.statusPath]
   // HEAD 要對得上（不只是沒移動）：讀不到 HEAD、舊紀錄沒記 HEAD 都照舊重跑。
-  const verifiedHead = checkStands(at, verify) === true && verify?.head && verify.head === at.git?.head ? verify.head : undefined
+  const verifiedHead = passedAtHead(at, verify) ? verify?.head : undefined
   const securityFocus = !security && !!settings.review.combineSecurity && (await riskOf($, at, settings.riskHigh, settings.cardBase)).level === 'high'
   return {
     ...(found ? { target: found.target } : {}),
@@ -222,10 +222,10 @@ async function reviewScope($: any, c: Case, probed: Case['git'], settings: Dispa
  * 派工：`claude --bg --name <唯一名> [--resume <任務的 session>] [--model] [--effort] <提示>` 在任務根目錄啟動，
  * 從啟動後的 agents 清單用名字對回完整 session id 才算成功；審查與（設了同步模型的）同步開新 session，不改任務的 session。
  * 同時在跑的工作桌 Agent 已達上限（maxAgents）就排進派工隊伍，有空位再依序派出。
- * `fromQueue`：從派工隊伍取出來派的，值是它原本在隊伍的位置；名額被搶走就放回那裡。
+ * `fromQueue`：從派工隊伍取出來派的，值是它原本在隊伍的位置；名額被搶走就放回那裡。`queuedAt`：它最早排進隊伍的時間，派出時記成排隊多久。
  * 回傳有沒有接手：派出或排進隊伍是 true；被拒、按了取消、啟動失敗、名額被搶走放回隊伍是 false。
  */
-export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: QueueOpts & { fromQueue?: number } = {}): Promise<boolean> {
+export async function dispatch($: any, options: PluginOptions, c: Case, kind: DispatchKind, opts: QueueOpts & { fromQueue?: number; queuedAt?: number } = {}): Promise<boolean> {
   const text = opts.text ?? ''
   const fromQueue = opts.fromQueue !== undefined
   if (c.demo) { $.ui.toast(DEMO_ONLY); return false }
@@ -238,7 +238,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   // 派實作要先核准完成檢查（面板第二次按 g 就核准）；從隊伍派出的排隊前已核准過，排隊期間檢查改了的在隊伍那邊就擋下。
   if (kind === 'continue' && !opts.auto && !fromQueue && !isApproved(await trustedChecks($), c)) { $.ui.toast(unapprovedText(c)); return false }
   const settings = await loadSettings($, options)
-  const { model, effort, fresh } = modelFor(settings, c.root, kind)
+  // 自動流程派的修正（帶 fix）讀 kinds.fix；你按 g 的修正不帶 fix，照 continue 的。
+  const { model, effort, fresh } = modelFor(settings, c.root, kind, { fix: !!opts.fix })
   const jobs = await loadJobs($)
   const rootKey = normalizeRoot(c.root)
   const own: RootJobs = jobs[rootKey] ?? {}
@@ -251,12 +252,12 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
   const now = await $.clock.now()
   // 同時在跑的工作桌 Agent 已達上限（教學與 maxAgents 0 不限）：排進隊伍；隊伍裡已經有人在等時也排，先來先派。
   // 名額＝在跑的（整台機器）＋這個對話已佔的。問完在跑的之後，到佔位或排進隊伍之間不能有 await：同時派好幾件才不會都看到有空位。
-  const { fromQueue: at, ...queued } = opts
+  const { fromQueue: at, queuedAt, ...queued } = opts
   const full = !tutorial && settings.maxAgents > 0 && ((!fromQueue && hasAgentQueue()) || await runningDeskNow($) + slots.size >= settings.maxAgents)
   // 同一件同時派了兩次：開頭檢查時先到的還沒佔位，到這裡才擋得下後到的。
   if (slots.has(c.statusPath)) { await refuseStarting($, c, kind, opts); return false }
   if (full) {
-    if (fromQueue) { await requeue($, c, kind, queued, at!); return false }
+    if (fromQueue) { await requeue($, c, kind, queued, at!, queuedAt); return false }
     if (await enqueueDispatch($, c, kind, queued, settings.maxAgents)) return true
     if (!opts.auto) $.ui.toast(alreadyQueued(c))
     return false
@@ -283,7 +284,8 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
       const recheck = !!opts.auto && !!run?.recheck && !opts.security
       review = { round, template, ...(tutorial ? {} : await reviewScope($, c, probed, settings, !!opts.security)), ...((round > 0 || recheck) && base ? { base } : {}), ...(recheck ? { recheck: true } : {}), ...(opts.security ? { security: true } : {}), pitfalls }
     }
-    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls)
+    // 修正或解衝突因換模型開新對話：提示開頭說明沒有先前記憶（審查、推送、同步的提示本來就是給新對話的）。
+    const prompt = buildPrompt(c, kind, text, opts.fix, review, settings, name, pitfalls, fresh && (!!opts.fix || kind === 'catchup'))
     const doing: NonNullable<AgentInfo['kind']> = opts.fix ? 'fix' : kind
     launchKinds = { ...launchKinds, [c.statusPath]: doing }
     await update($, launchingAtom, v => ({ ...v, [c.statusPath]: now }))
@@ -293,7 +295,7 @@ export async function dispatch($: any, options: PluginOptions, c: Case, kind: Di
     // 剛讀過的 agents 清單當啟動前的清單（不再跑一次）；先取再記這次啟動的時間，之後的派工才不會沿用看不到這個 Agent 的清單。
     const recent = tutorial ? undefined : recentAgents(await $.clock.now())
     const confirmed = tutorial ? startSim($, options, c, kind, name, now, opts) : await launchMarked($, c, prompt, { model, effort, sessionId, name, mcp, disablePlugins: settings.disablePlugins }, recent)
-    const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}) }
+    const record: JobRecord = { launchName: name, nativeId: String(confirmed.id ?? name), sessionId: confirmed.sessionId!, kind, startedAt: now, fresh, owner: await me($), ...(opts.fix ? { round: opts.fix.round } : {}), ...(opts.security ? { security: true } : {}), ...(queuedAt !== undefined && now > queuedAt ? { queuedMs: now - queuedAt } : {}) }
     // 手動按繼續或審查就開一輪新的流程；自動派的接續原本那輪。同一條分支累計的修正數照帶（不歸零）；
     // 「這條分支審查過」也照帶：按 g 改完只跑測試、不複審（按 w 照樣派審查）。
     // 你按 g 派的修正不受上限擋，但照樣算一輪；Agent 被停掉後重開、停在檢查段時按 g 不是修正，不算（fixesByG）。

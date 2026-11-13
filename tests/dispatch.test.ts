@@ -728,9 +728,10 @@ test('every dispatch prompt tells agent to stamp history with date command', () 
  * card-base-and-fast-path AC-3（取代 agent-limit AC-5 的「收尾跑一次完成檢查」）：會改程式的派工改的過程與收尾都只跑相關測試，
  * 整套的完成檢查交給工作桌做完後的那次；審查沒有通過紀錄時照舊自己重跑，同步與推送不加。
  */
-test('code dispatch leaves full check to desk verify', () => {
+/** AC-3（少等、少按、少續跑）：會改程式的派工（實作、回覆、修正）交出前跑一次卡片「檢查」欄的完整指令；審查、同步、推送不加。 */
+test('test_code_dispatch_runs_full_check_once_before_handing_over', () => {
   const related = '改程式的過程中只跑跟這次改動有關的測試（目標測試或相關的測試檔），不要每改一次就跑整套'
-  const once = '收尾 commit 前也只跑跟改動有關的測試，不用自己跑完成檢查 `node test.mjs`（整套）'
+  const once = '交出前（收尾 commit 前）跑一次卡片「檢查」欄的完整指令 `node test.mjs`，紅了自己修好再跑到綠才交'
   const c = { ...mk('寫測試'), verify: 'node test.mjs' }
   const s = parseSettings(JSON.stringify({ rules: ['測試只能用 make test'] }))
   const code = [
@@ -742,8 +743,8 @@ test('code dispatch leaves full check to desk verify', () => {
   for (const p of code) {
     expect(p).toContain(related)
     expect(p).toContain(once)
-    expect(p).toContain('做完後工作桌會自動跑一次，沒過會再派修正')
-    expect(p).not.toContain('收尾 commit 前跑一次')
+    expect(p).toContain('工作桌之後會再自動跑一次')
+    expect(p).not.toContain('不用自己跑')
     // 專案規則仍接在最後
     expect(p.endsWith('測試只能用 make test')).toBe(true)
   }
@@ -752,10 +753,10 @@ test('code dispatch leaves full check to desk verify', () => {
   expect(review.endsWith('測試只能用 make test')).toBe(true)
   for (const p of [review, buildPrompt(c, 'sync', '', undefined, undefined, s), buildPrompt(atMerge(), 'publish', pushRequest('feature/a', 12), undefined, undefined, s)]) {
     expect(p).not.toContain(related)
-    expect(p).not.toContain('收尾 commit 前')
+    expect(p).not.toContain('交出前（收尾 commit 前）')
   }
   // 卡片沒有檢查：指向卡片的「檢查」欄
-  expect(buildPrompt({ ...c, verify: '' }, 'continue')).toContain('不用自己跑卡片「檢查」欄的完成檢查（整套）')
+  expect(buildPrompt({ ...c, verify: '' }, 'continue')).toContain('交出前（收尾 commit 前）跑一次卡片「檢查」欄的完整指令，紅了自己修好')
 })
 
 /** agent-limit：maxAgents 非負整數照用（0＝不限），其他都用預設 3；在跑的只算 busy 的工作桌背景 Agent。 */

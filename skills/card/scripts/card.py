@@ -27,6 +27,8 @@
   card.py archive <slug>… [--cleanup]          卡、審查檔與 .task 的計畫／報告複製到歸檔資料夾、登錄表列移到「已歸檔」段（不刪 worktree）；
                                                worktree 有 .task/stats.json 或登錄表旁 reviews/ 有這張卡的審查留檔時，輸出與已歸檔那行帶
                                                「統計：總執行 N 分・修正 n 輪・驗收 n 輪（資安 n）」，只列有資料的部分（壞掉的欄位略過）；
+                                               stats.json 有逐段紀錄時再接「・各段：實作 N 分、測試 N 分…・空等 N 分（排隊 N 分）」
+                                               （壞掉的筆略過，排隊 0 不寫括號）；
                                                可一次給多張，有一張找不到就報錯、哪張都不動。--cleanup（發版確認裡同意過才帶）：複製完再
                                                移除已併入主 repo 目前分支、沒有未提交改動的 worktree（git worktree remove）與分支（git branch -d），
                                                不用 --force／-D、不碰遠端；主 worktree 不移除。只有一個例外：worktree 含 submodule 時 git 不加
@@ -1220,6 +1222,47 @@ def card_stats(root):
     return stats_count(data.get('runMs')), stats_count(data.get('fixRounds'))
 
 
+# 逐段紀錄的種類（hooks/dispatch.ts 的 StageKind）與統計句裡的名稱，依這個順序列出。
+STAGE_LABELS = (
+    ('continue', '實作'), ('reply', '回覆'), ('verify', '測試'), ('review', '驗收'), ('security', '資安'),
+    ('fix', '修正'), ('sync', '同步'), ('catchup', '解衝突'), ('publish', '推送'),
+)
+
+
+def card_runs(root):
+    """讀 stats.json 的逐段紀錄：只留種類認得、時間與執行毫秒是非負數字、結束不早於開始的筆，依開始時間排序。
+    回傳 [(種類, 開始, 結束, 執行毫秒, 排隊毫秒)]；排隊毫秒壞掉或沒有算 0。沒有檔、不是 JSON、不是清單回傳空清單。"""
+    try:
+        data = json.loads(read(os.path.join(root, STATS_FILE)))
+    except (OSError, ValueError):
+        return []
+    runs = data.get('runs') if isinstance(data, dict) else None
+    kinds = {k for k, _ in STAGE_LABELS}
+    valid = []
+    for r in runs if isinstance(runs, list) else []:
+        if not isinstance(r, dict) or r.get('kind') not in kinds:
+            continue
+        start, end, ms = (stats_count(r.get(k)) for k in ('startedAt', 'endedAt', 'runMs'))
+        if start is None or end is None or ms is None or end < start:
+            continue
+        valid.append((r['kind'], start, end, ms, stats_count(r.get('queuedMs')) or 0))
+    return sorted(valid, key=lambda r: r[1])
+
+
+def stages_text(runs):
+    """「各段：實作 N 分、測試 N 分・空等 N 分（排隊 N 分）」：各段是同種類執行毫秒的加總，依 STAGE_LABELS 順序只列有的；
+    空等是相鄰兩段「下一段開始 − 上一段結束」大於 0 的加總，只有一段時沒有空等；排隊是第二段起各段排隊毫秒的加總
+    （排隊落在上一段結束到這段開始的空檔裡；第一段之前沒有空檔），0 就不寫括號。"""
+    stages = '、'.join(f'{label} {run_minutes_text(sum(r[3] for r in runs if r[0] == kind))}'
+                      for kind, label in STAGE_LABELS if any(r[0] == kind for r in runs))
+    parts = [f'各段：{stages}']
+    if len(runs) > 1:
+        idle = sum(max(0, nxt[1] - prev[2]) for prev, nxt in zip(runs, runs[1:]))
+        queued = sum(r[4] for r in runs[1:])
+        parts.append(f'空等 {run_minutes_text(idle)}' + (f'（排隊 {run_minutes_text(queued)}）' if queued else ''))
+    return '・'.join(parts)
+
+
 def review_counts(root):
     """登錄表旁 reviews/ 裡這張卡（worktree 資料夾名）的審查留檔份數：(程式碼審查, 資安審查)。"""
     folder = os.path.basename(os.path.normpath(root))
@@ -1231,13 +1274,17 @@ def review_counts(root):
 
 
 def stats_line(root):
-    """歸檔的統計句「統計：總執行 N 分・修正 n 輪・驗收 n 輪（資安 n）」；只列有資料的部分，都沒有是空字串。"""
+    """歸檔的統計句「統計：總執行 N 分・修正 n 輪・驗收 n 輪（資安 n）」；只列有資料的部分，都沒有是空字串。
+    有逐段紀錄（壞掉的筆略過後還有）時接「・各段：…・空等 N 分（排隊 N 分）」（見 stages_text）；前面那句都沒有時不單獨印各段。"""
     run_ms, fixes = card_stats(root)
     code, security = review_counts(root)
     parts = ([f'總執行 {run_minutes_text(run_ms)}'] if run_ms is not None else []) \
         + ([f'修正 {fixes} 輪'] if fixes is not None else []) \
         + ([f'驗收 {code} 輪' + (f'（資安 {security}）' if security else '')] if code or security else [])
-    return f'統計：{"・".join(parts)}' if parts else ''
+    if not parts:
+        return ''
+    runs = card_runs(root)
+    return f'統計：{"・".join(parts + ([stages_text(runs)] if runs else []))}'
 
 
 def archive_one(slug, path, root, cleanup_after):

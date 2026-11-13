@@ -793,3 +793,39 @@ test('test_manual_dispatch_ignores_quota_threshold — /desk go resume while the
   expect(String(data.launches[0].argv.at(-1))).not.toContain('程式碼審查')
   expect((data.store.chains as any)[BETA].stopped).toBe('quotaHold')
 })
+
+/**
+ * 維持-2（少等、少按、少續跑）：實作做完一輪時把題目寫進「等你」、在對話清成無，額度低於門檻：
+ * 跟其他額度煞車一樣不派「繼續」，流程暫停、動態寫剩多少與門檻；之後按 g 重開派的是「繼續」。
+ */
+test('test_answered_question_resume_respects_quota_hold', async ($, on) => {
+  const { data, clock } = fixture(on)
+  const log = feedLog(on)
+  betaImplemented(data, clock)
+  // 那次實作做完時題目寫進了「等你」（工作桌看過，記成 cardAsked），之後在對話清掉
+  data.store.jobs = { [BETA]: lastJob('continue', { fresh: false, cardAsked: true }) }
+  data.files[CARD_B] = data.files[CARD_B]!.replace(/- 等你：.*$/m, '- 等你：無')
+  quota(data, 75)
+  const h = helpers($, data, clock)
+
+  await h.refresh()
+  for (let i = 0; i < 3; i++) { await h.step(); await h.refresh() }
+
+  expect(data.launches).toHaveLength(0)
+  expect(h.checks()).toBe(0)
+  const chain = (data.store.chains as any)[BETA]
+  expect(chain.stopped).toBe('quotaHold')
+  expect(chain.resume).toEqual({ dispatch: 'continue', round: 0 })
+  expect(log.list.filter(e => e.text === `Beta 流程已暫停：${REASON}`)).toHaveLength(1)
+
+  // 按 g 重開：派的是「繼續」（照卡片下一步），不是驗收
+  const ui = await $.ui.mount(PANE(160))
+  await ui.press({ key: `row-${CARD_B}` })
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  await ui.press({ key: `case-${CARD_B}-continue` }); await clock.settle()
+  await ui.unmount()
+  expect(data.launches).toHaveLength(1)
+  const prompt = String(data.launches[0].argv.at(-1))
+  expect(prompt.startsWith('依卡片的下一步繼續：')).toBe(true)
+  expect(prompt).not.toContain('程式碼審查')
+})

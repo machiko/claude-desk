@@ -7,7 +7,7 @@ import { JOBS_KEY, loadJobs } from './desk-io'
 import type { JobRecord, RootJobs } from './dispatch'
 import { worktreeMark } from './probes'
 import { writeStats } from './run-stats'
-import { addRunTime, dispatchRunMs, observeRun, runOf } from './run-time'
+import { addRunTime, dispatchRunMs, observeRun, runOf, stageOf } from './run-time'
 import type { RunShown } from './run-time'
 import { normalizeRoot } from './settings'
 
@@ -17,7 +17,7 @@ const snapshot = atom({ plugin: 'desk', key: 'snapshot' } as const, null)
  * 這幾個根目錄（登錄表上的卡，加上要停掉的做完 Agent 所在的，可能是別的專案）最後一次派工的 Agent：
  * - 剛結束（做完或被停掉）：記下怎麼結束；會改程式的那種（繼續、回覆、修正）再記下這時 worktree 的未提交指紋，
  *   之後派工用它分辨「現在的改動是上一個 Agent 留下的」還是別的對話在改。每一次派工只記一次，審查與同步不動指紋。
- *   同時把這次派工在跑的時間加進總執行時間：只在第一次記下 ended 時加，同一次派工不會重複算；
+ *   同時把這次派工在跑的時間加進總執行時間、這一段接進逐段紀錄（見 stageOf）：只在第一次記下 ended 時加，同一次派工不會重複算；
  *   最多算到最後看到它在跑之後 grace（工作桌關著時結束的，不把關著的時間算進去）。
  * - 還在跑或停下來等人：記下最後看到在跑的時間、等人時暫停（見 observeRun），等的時間不算。
  * 記下之後同步更新這一輪的畫面（畫面在記下之前就算好了），總執行不會晚一輪才跟上；結束的那次也把統計寫進 worktree 的 .task/stats.json（見 writeStats）。
@@ -34,7 +34,7 @@ export async function noteRuns($: any, list: readonly any[], roots: readonly str
     const all = await loadJobs($)
     const cur = all[key]?.last
     if (!cur || cur.launchName !== last.launchName || cur.ended) continue
-    const timed = addRunTime(all[key], dispatchRunMs(cur, now, grace), branches[key])
+    const timed = addRunTime(all[key], dispatchRunMs(cur, now, grace), branches[key], stageOf(cur, now, grace) ?? undefined)
     const next: RootJobs = { ...timed, ...(mark ? { mark: mark.hash } : {}), last: { ...cur, ended: { how } } }
     await $.store.set(JOBS_KEY, { ...all, [key]: next })
     await writeStats($, key)

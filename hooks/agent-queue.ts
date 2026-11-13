@@ -61,10 +61,10 @@ export async function enqueueDispatch($: any, c: Case, kind: DispatchKind, opts:
   return true
 }
 
-/** 從隊伍取出要派、名額卻被搶走：不出聲放回原來的位置。 */
-export async function requeue($: any, c: Case, kind: DispatchKind, opts: QueueOpts, index: number) {
+/** 從隊伍取出要派、名額卻被搶走：不出聲放回原來的位置；有 queuedAt（最早排進去的時間）就照帶，排隊時間從那刻算。 */
+export async function requeue($: any, c: Case, kind: DispatchKind, opts: QueueOpts, index: number, queuedAt?: number) {
   if (isAgentQueued(c.statusPath)) return
-  const entry: QueueEntry = { statusPath: c.statusPath, kind, opts, at: await $.clock.now() }
+  const entry: QueueEntry = { statusPath: c.statusPath, kind, opts, at: queuedAt ?? await $.clock.now() }
   await setQueue($, [...agentQueue.slice(0, index), entry, ...agentQueue.slice(index)])
 }
 
@@ -169,7 +169,7 @@ export async function drainAgentQueue($: any, options: PluginOptions, s: Snapsho
     if (foreign) { await drop($, entry, c, foreign, s.at, mine, true); continue }
     const index = agentQueue.indexOf(entry)
     await setQueue($, agentQueue.filter(e => e !== entry))
-    const sent = await dispatch($, options, entry.opts.auto ? { ...c!, state: 'ready' } : c!, entry.kind, { ...queuedOpts(c!, entry), fromQueue: index })
+    const sent = await dispatch($, options, entry.opts.auto ? { ...c!, state: 'ready' } : c!, entry.kind, { ...queuedOpts(c!, entry), fromQueue: index, queuedAt: entry.at })
     // 名額被別處搶走：dispatch 已把它放回原位，這一輪不再派。
     if (isAgentQueued(entry.statusPath)) break
     if (sent) { running++; launched = true }
