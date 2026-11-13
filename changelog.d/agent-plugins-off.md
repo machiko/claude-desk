@@ -1,1 +1,0 @@
-- 新增全域 dispatch.json 的 disablePlugins：列出的外掛（名稱@來源）背景 Agent 不載入，主對話不受影響；寫在專案的 dispatch.json 不套用，面板會提示要放全域

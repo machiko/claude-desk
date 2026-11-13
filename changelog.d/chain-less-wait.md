@@ -1,4 +1,0 @@
-- 新增 在對話答完卡片「等你」後自動接著派一次繼續，不用再按 g
-- 調整 Agent 沒有新 commit 時沿用同一個 HEAD 已通過的完成檢查，不重跑
-- 調整 實作 Agent 交出前先跑一次完整的完成檢查
-- 新增 dispatch.json kinds 可另設 fix（修正輪）與 catchup（解衝突）的模型與 effort
