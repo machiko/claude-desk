@@ -58,9 +58,15 @@ export type StageRun = { kind: StageKind; startedAt: number; endedAt: number; ru
 
 export { KIND_LABEL }
 
-/** 組 `claude --bg` 的參數；提示詞一定是最後一個。沒開 `mcp` 就加 `--strict-mcp-config`，背景 Agent 不拉任何 MCP 程序。 */
-export function launchArgs(prompt: string, opts: { model?: string; effort?: string; sessionId?: string; launchName: string; mcp?: boolean }): string[] {
-  return ['claude', '--bg', '--name', opts.launchName, ...(opts.sessionId ? ['--resume', opts.sessionId] : []), ...(opts.model ? ['--model', opts.model] : []), ...(opts.effort ? ['--effort', opts.effort] : []), ...(opts.mcp ? [] : ['--strict-mcp-config']), prompt]
+/**
+ * 組 `claude --bg` 的參數；提示詞一定是最後一個。沒開 `mcp` 就加 `--strict-mcp-config`，背景 Agent 不拉任何 MCP 程序。
+ * `disablePlugins` 非空時加 `--settings '{"enabledPlugins":{"<名>":false}}'`：背景 Agent 不載入那些外掛的 skill、agent 清單與 hook，
+ * 每回合少讀一大段固定內容（實測停用 ECC 後，Agent 看到的 ecc: skill 從 159 個變成 0 個）；主對話不受影響。
+ */
+export function launchArgs(prompt: string, opts: { model?: string; effort?: string; sessionId?: string; launchName: string; mcp?: boolean; disablePlugins?: readonly string[] }): string[] {
+  const off = opts.disablePlugins ?? []
+  const plugins = off.length ? ['--settings', JSON.stringify({ enabledPlugins: Object.fromEntries(off.map(p => [p, false])) })] : []
+  return ['claude', '--bg', '--name', opts.launchName, ...(opts.sessionId ? ['--resume', opts.sessionId] : []), ...(opts.model ? ['--model', opts.model] : []), ...(opts.effort ? ['--effort', opts.effort] : []), ...(opts.mcp ? [] : ['--strict-mcp-config']), ...plugins, prompt]
 }
 
 /** `claude --bg` 印出的短 id 或完整 session id；一行文字、JSON 或夾在句子裡都行；找到兩個不同的就不猜。 */

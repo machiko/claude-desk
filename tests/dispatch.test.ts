@@ -9,7 +9,11 @@ import { IDLE_WHY, REVIEW_WHY } from '../hooks/next-words'
 const whyOf = (c: any, kind: DispatchKind): string => refusalOf(c, kind)?.why ?? ''
 import { buildCase } from '../hooks/model'
 import { pipeline } from '../hooks/pipeline'
+import { fixture, CARD_A, CARD_B } from './fixture'
+import { startsAgents } from './world'
 import type { Case, Verify } from '../types'
+
+const GLOBAL_SETTINGS = '/home/u/.claude/handoffs/dispatch.json'
 
 const card = (next: string, extra = '') => `<!-- DESK -->\n- 狀態：ok\n- 驗證：\`true\`\n- 等你：無\n- 下一步：${next}\n- 關卡：無\n${extra}<!-- /DESK -->`
 const mk = (next: string, agents: any = {}) => buildCase({ name: 'A', statusPath: '/p/a/.desk/CARD.md' }, card(next), 1, agents, undefined)
@@ -63,6 +67,37 @@ test('launch args skip MCP servers unless mcp is on; settings only accept an exp
   expect(parseSettings(JSON.stringify({ mcp: true })).mcp).toBe(true)
   expect(parseSettings(JSON.stringify({ mcp: 'true' })).mcp).toBe(false)
   expect(parseSettings(JSON.stringify({ mcp: 1 })).mcp).toBe(false)
+})
+
+/** 卡片「背景 Agent 停用指定外掛」AC-1：全域 dispatch.json 的 disablePlugins 變成 --settings 的 enabledPlugins:false；提示詞照舊最後一個。 */
+test('test_launch_args_disable_listed_plugins', async ($, on) => {
+  const off = ['ecc@everything-claude-code', 'document-skills@anthropic-agent-skills']
+  const disabled = JSON.stringify({ enabledPlugins: { 'ecc@everything-claude-code': false, 'document-skills@anthropic-agent-skills': false } })
+  expect(parseSettings(JSON.stringify({ disablePlugins: off })).disablePlugins).toEqual(off)
+  expect(launchArgs('p', { launchName: 'n', disablePlugins: off })).toEqual(['claude', '--bg', '--name', 'n', '--strict-mcp-config', '--settings', disabled, 'p'])
+  expect(launchArgs('p', { launchName: 'n', mcp: true, disablePlugins: off })).toEqual(['claude', '--bg', '--name', 'n', '--settings', disabled, 'p'])
+  // 維持：沒設或空清單，啟動指令跟改之前一樣
+  expect(parseSettings(null).disablePlugins).toEqual([])
+  expect(launchArgs('p', { launchName: 'n', disablePlugins: [] })).toEqual(['claude', '--bg', '--name', 'n', '--strict-mcp-config', 'p'])
+
+  // 實際派工：實作（按 g）與同步都帶這段設定
+  const { data, clock } = fixture(on)
+  data.agents = []
+  data.files[GLOBAL_SETTINGS] = JSON.stringify({ disablePlugins: off })
+  data.files[CARD_A] = data.files[CARD_A]!.replace('要 push 嗎？A) 要 B) 等', '無').replace('- 下一步：push', '- 下一步：實作匯入')
+  data.git['/home/u/wt/alpha'] = { branch: 'feature/alpha', head: 'a1' }
+  data.git['/home/u/wt/gamma'] = { branch: 'feature/gamma', head: 'g1' }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs', [CARD_B]: 'npm test' }
+  startsAgents(data, clock, { keep: 'others' })
+  await $.command.run({ command: 'desk', args: 'refresh' } as any); await clock.settle()
+  await $.command.run({ command: 'desk', args: 'go Alpha' } as any); await clock.settle()
+  await $.command.run({ command: 'desk', args: 'sync Gamma' } as any); await clock.settle()
+  expect(data.launches.map((l: any) => l.init.cwd)).toEqual(['/home/u/wt/alpha', '/home/u/wt/gamma'])
+  for (const l of data.launches) {
+    const argv: string[] = l.argv
+    expect(argv.slice(-3, -1)).toEqual(['--settings', disabled])
+    expect(String(argv.at(-1))).toContain(l.init.cwd === '/home/u/wt/alpha' ? 'Alpha' : 'Gamma')
+  }
 })
 
 test('launch token: short id, uuid, json, or one id inside a sentence; two ids is ambiguous', () => {
