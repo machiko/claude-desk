@@ -863,3 +863,80 @@ test('test_dispatch_during_a_stuck_refresh_stays_running_after_it_finishes', { t
   expect(data.processCalls.map((e: any) => e.argv.join(' ')).filter((a: string) => a.includes('npm test'))).toEqual([])
   await ui.unmount()
 })
+
+// 規格關卡卡住已實作的卡：規格確認前就先 commit、跑過完成檢查的卡，確認後照六段當下的位置接著走，不重派實作。
+const passedCheck = (data: any, ok: boolean) => {
+  data.store.verifies = { [CARD_B]: { command: 'npm test', at: 0, ok, exitCode: ok ? 0 : 1, tail: [], truncated: false, head: 'g1' } }
+}
+const PAST_BUILD = 'Beta：規格已確認；實作已完成，沒有派實作：照「輪到你」接著做'
+
+/** 規格關卡卡住已實作的卡 AC-2：測試已過（驗收段），按兩次 t 派審查（同按 w），不派實作 */
+test('test_spec_confirm_dispatches_review_not_build_when_check_already_passed', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B])
+  passedCheck(data, true)
+  scriptOk(data)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(120))
+
+  await h.pressT(ui, CARD_B)
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  // 派的是審查，不是實作（繼續）
+  expect(data.launches).toHaveLength(1)
+  expect(data.launches[0].init.cwd).toBe(BETA)
+  expect(String(data.launches[0].argv.at(-1))).toContain('程式碼審查')
+  expect(String(data.launches[0].argv.at(-1))).not.toContain('依卡片的下一步繼續')
+  expect(data.toasts).toContain('Beta：驗收已派出')
+  expect(data.toasts).not.toContain('Beta：繼續已派出')
+  await h.refresh()
+  expect(await screen(ui)).toContain(flat('Agent 在驗收'))
+  await ui.unmount()
+})
+
+/** 規格關卡卡住已實作的卡 AC-3：測試沒過（測試段），按兩次 t 只確認、不派任何 Agent，之後照測試段原本的說法 */
+test('test_spec_confirm_dispatches_nothing_when_card_is_past_build', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B])
+  passedCheck(data, false)
+  scriptOk(data)
+  const h = helpers($, clock)
+  await h.refresh()
+  const ui = await $.ui.mount(PANE(120))
+  expect(await screen(ui)).toContain(flat('t 確認規格並派實作（先按 o 看過規格，或輸入 /desk:card spec beta ok）'))
+
+  await h.pressT(ui, CARD_B)
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.launches).toHaveLength(0)
+  expect(data.toasts).toContain(PAST_BUILD)
+  expect(data.toasts).not.toContain('Beta：繼續已派出')
+  await h.refresh()
+  // 「輪到你」照測試段（測試沒過）原本的說法
+  expect(await screen(ui)).toContain(flat('g 讓 Agent 修正（測試未通過，也可自己修好後按 v 重跑）'))
+  await ui.unmount()
+})
+
+/** 規格關卡卡住已實作的卡 AC-4：主對話跑 spec-ok 確認測試已過的卡，回合結束後跟面板一樣派審查、不派實作 */
+test('test_conversation_spec_ok_dispatches_review_when_check_already_passed', { timeoutMs: 15000 }, async ($, on) => {
+  const { data, clock } = fixture(on)
+  data.files[REGISTRY] = `## 任務\n| Project | path |\n| --- | --- |\n| Beta | \`${CARD_B}\` |`
+  atSpec(data, clock, [CARD_B])
+  passedCheck(data, true)
+  conversationBash(on, data)
+  const h = helpers($, clock)
+  await h.refresh()
+
+  await $.tool.call({ tool: 'Bash', command: script('beta') } as any)
+  await clock.advance(1000); await clock.settle()
+  expect(data.files[CARD_B]).toContain('- 關卡：無')
+  expect(data.launches).toHaveLength(0)
+  await $.turn.complete(turnDone())
+  await clock.settle()
+  expect(data.launches).toHaveLength(1)
+  expect(String(data.launches[0].argv.at(-1))).toContain('程式碼審查')
+  expect(String(data.launches[0].argv.at(-1))).not.toContain('依卡片的下一步繼續')
+  expect(data.toasts).toContain('Beta：驗收已派出')
+  expect(data.toasts).not.toContain('Beta：繼續已派出')
+})

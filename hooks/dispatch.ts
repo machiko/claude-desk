@@ -10,7 +10,7 @@ import { UUID, agentWaits, approvalWait } from './agents'
 import { slugOf } from './text'
 import { normalizeRoot, parseSettings } from './settings'
 import type { DispatchSettings } from './settings'
-import { DONE_RULE, NO_PUSH_RULE, PUSH_RULE, PUSH_SCOPE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
+import { DONE_RULE, FRESH_SESSION_LEAD, NO_PUSH_RULE, PUSH_RULE, PUSH_SCOPE_RULE, SELF_CHECK_RULE, SPEC_RULE, cardRules, changelogRule, pitfallsRule, testRule } from './prompts/rules'
 import { CATCHUP_CARD_RULE, catchupHead } from './prompts/catchup'
 import { PUBLISH_CARD_RULE, publishHead } from './prompts/publish'
 import { reviewPrompt, reviewTask } from './prompts/review'
@@ -25,7 +25,7 @@ import { STACK_NEXT, stackWaitWhy } from './stack'
 import { NEWER_CARD_WHY, UPDATE_DESK_NEXT } from './formats'
 
 // 各派工的提示詞在 prompts/<種類>.ts；呼叫端照舊從這裡匯入。
-export { NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
+export { FRESH_SESSION_LEAD, NO_PUSH_RULE, PUSH_RULE } from './prompts/rules'
 export { openPrRequest, openPrSteps, prHowOf, pushRequest } from './prompts/publish'
 export type { PrHow } from './prompts/publish'
 export { REVIEW_FILE, SECURITY_FILE, reviewTask } from './prompts/review'
@@ -49,8 +49,12 @@ const SHORT_ID = /^[0-9a-f]{8}$/i
  */
 export type DispatchKind = 'continue' | 'sync' | 'review' | 'reply' | 'publish' | 'catchup'
 /** 一次派工留下的紀錄，按任務根目錄存在 $.store。 */
-export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 自動流程已接手這次（開跑自動檢查，或停在檢查段後你重開）：之後「等你」出現的題目不是它做完時寫的。 */ chained?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' }; /** 之前幾段在跑的時間加起來（停下來等人時收進來）。 */ busyMs?: number; /** 現在這段開始在跑的時間；沒有就是派出的時間。 */ runAt?: number; /** 這段最後一次看到它在跑（最多每 RUN_SEEN_STEP_MS 記一次）。 */ seenAt?: number; /** 停下來等人（提問、權限提示）：現在這段不算，再看到它在跑才重新起算。 */ paused?: true }
-export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string; /** 這條分支已結束的派工與自動檢查總共跑了幾毫秒（不含正在跑的）。 */ runMs?: number; /** runMs 算的是哪條分支；同一個資料夾換了分支就從 0 起算。 */ runBranch?: string }
+export type JobRecord = { launchName: string; nativeId: string; sessionId: string; kind: DispatchKind; startedAt: number; fresh: boolean; answered?: boolean; /** 這次停在提問時，工作桌看過卡片「等你」有內容（題目寫進卡片了）；之後「等你」清成「無」就算在對話處理過。 */ cardAsked?: boolean; /** 自動流程已處理過這次的結果。 */ handled?: boolean; /** 自動流程已接手這次（開跑自動檢查，或停在檢查段後你重開）：之後「等你」出現的題目不是它做完時寫的。 */ chained?: boolean; /** 修正第幾輪；0 或沒有是一般派工。 */ round?: number; owner?: string; /** 這次審查是資安審查。 */ security?: boolean; /** 審查通過後又有新 commit，流程自己排的「重新檢查、審查」，不是派工。 */ recheck?: boolean; /** 這次怎麼結束的（工作桌看到它不在跑時記下）：做完，或被 `claude stop` 停掉；沒有就是還沒看到它結束。 */ ended?: { how: 'finished' | 'stopped' }; /** 之前幾段在跑的時間加起來（停下來等人時收進來）。 */ busyMs?: number; /** 現在這段開始在跑的時間；沒有就是派出的時間。 */ runAt?: number; /** 這段最後一次看到它在跑（最多每 RUN_SEEN_STEP_MS 記一次）。 */ seenAt?: number; /** 停下來等人（提問、權限提示）：現在這段不算，再看到它在跑才重新起算。 */ paused?: true; /** 從派工隊伍派出：排進隊伍到派出等了幾毫秒（沒排隊就沒有）。 */ queuedMs?: number }
+export type RootJobs = { sessionId?: string; last?: JobRecord; /** 最後一次會改程式的派工（繼續、回覆、修正）結束時 worktree 的未提交指紋（markOf）；派工前拿來分辨現在的改動是不是它留下的。 */ mark?: string; /** 這條分支已結束的派工與自動檢查總共跑了幾毫秒（不含正在跑的）。 */ runMs?: number; /** runMs 算的是哪條分支；同一個資料夾換了分支就從 0 起算。 */ runBranch?: string; /** 這條分支已結束的各段（跟 runMs 同一條分支，換分支一起重新起算；最多留 STAGE_RUNS_MAX 筆）。 */ runs?: StageRun[] }
+/** 逐段紀錄的種類：派工種類，修正（round > 0）、資安審查另列，自動檢查是 verify。 */
+export type StageKind = DispatchKind | 'fix' | 'security' | 'verify'
+/** 一段派工或自動檢查：開始與結束時間、實際在跑的毫秒（停下等人的不算）、從隊伍派出前排了多久。 */
+export type StageRun = { kind: StageKind; startedAt: number; endedAt: number; runMs: number; queuedMs?: number }
 
 export { KIND_LABEL }
 
@@ -153,9 +157,10 @@ export function readsPitfalls(c: Case, kind: DispatchKind, fix?: FixReason): boo
 /**
  * `self`：這次派出去的啟動名；Agent 查同一個 worktree 有沒有別的 Agent 時，才不會把自己當成別人。
  * `pitfalls`：常犯錯誤清單路徑（呼叫端確認檔案存在才給）；只有實作與回覆用得到（修正給了也不帶，見 readsPitfalls），審查的清單照舊放在 `review`。
+ * `freshSession`：修正或解衝突因 kinds.fix／kinds.catchup 換了模型而開新對話：開頭先說這是新的對話、要先讀哪些東西。
  */
-export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = '', pitfalls = ''): string {
-  const head = fix ? fixHead(c, fix)
+export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixReason, review?: ReviewOpts, settings: DispatchSettings = parseSettings(null), self = '', pitfalls = '', freshSession = false): string {
+  const task = fix ? fixHead(c, fix)
     // 下一步還是範本佔位（舊卡沒跑 spec-ok）：不把佔位文字原樣交給 Agent。
     : kind === 'continue' ? (isPlaceholder(c.next) ? PLAN_STEP : manualFixOf(c, kind)?.head || `依卡片的下一步繼續：${c.next || '（下一步空白，先讀卡片與 git 狀態決定）'}`)
     : kind === 'sync' ? '同步卡片：這是新的對話，沒有先前記憶。先讀卡片、git log -5 與 git status，只寫檔案與 git 看得到的事實；看不出結果的寫「待確認」，不要補做工作。只在狀態、下一步、檢查確實與事實不符時才改那一欄；歷程只在有新的事實（新 commit、新測試結果、新發現）時加一行，並寫出那個事實；什麼都沒變就一個字都不寫、直接結束。'
@@ -163,6 +168,7 @@ export function buildPrompt(c: Case, kind: DispatchKind, text = '', fix?: FixRea
     : kind === 'publish' ? publishHead(text)
     : kind === 'catchup' ? catchupHead(text, c.verify)
     : `${named(settings.user).trimStart()}的回覆：${text}`
+  const head = freshSession ? `${FRESH_SESSION_LEAD}\n${task}` : task
   const writes = writesCode(kind, fix)
   const publishing = !fix && kind === 'publish'
   const catchup = !fix && kind === 'catchup'

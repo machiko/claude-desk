@@ -1797,6 +1797,72 @@ class CardScriptTest(unittest.TestCase):
         for slug in ('order-export', 'refund'):
             self.assertTrue(os.path.isfile(os.path.join(self.t, 'archive', f'{slug}-CARD.md')))
 
+    def write_stage_runs(self, folder, runs, extra=None):
+        """worktree 的 .task/stats.json：總執行 14 分、修正 1 輪，加上這份逐段紀錄（runs）。"""
+        stats = {'branch': f'feature/{folder}', 'runMs': 14 * 60_000 + 30_000, 'fixRounds': 1, 'runs': runs, **(extra or {})}
+        write(os.path.join(self.main + '-worktrees', folder, '.task', 'stats.json'), json.dumps(stats))
+
+    def test_archive_stats_line_shows_stage_minutes_and_idle_time(self):
+        """每段計時 AC-3：逐段紀錄實作 6、測試 1、驗收 4、修正 3 分，段間空檔共 12 分（排隊 5 分）：統計句接各段與空等；沒排過隊時沒有括號。"""
+        self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
+        self.run_card('new', 'feature/refund', '退款', 'origin/main')
+        m = 60_000
+        # 先後：實作 0–6、（空 2）測試 8–9、（空 6，排隊 5）驗收 15–19、（空 4）修正 23–26；紀錄故意不照先後放
+        runs = [
+            {'kind': 'review', 'startedAt': 15 * m, 'endedAt': 19 * m, 'runMs': 4 * m, 'queuedMs': 5 * m},
+            {'kind': 'continue', 'startedAt': 0, 'endedAt': 6 * m, 'runMs': 6 * m},
+            {'kind': 'fix', 'startedAt': 23 * m, 'endedAt': 26 * m, 'runMs': 3 * m},
+            {'kind': 'verify', 'startedAt': 8 * m, 'endedAt': 9 * m, 'runMs': 1 * m},
+        ]
+        self.write_stage_runs('order-export', runs)
+        self.write_stage_runs('refund', [{k: v for k, v in r.items() if k != 'queuedMs'} for r in runs])
+        self.write_reviews('order-export', ['code', 'security', 'code'])
+        self.write_reviews('refund', ['code', 'security', 'code'])
+
+        r = self.run_card('archive', 'order-export')
+        plain = self.run_card('archive', 'refund')
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        line = '統計：總執行 14 分・修正 1 輪・驗收 2 輪（資安 1）・各段：實作 6 分、測試 1 分、驗收 4 分、修正 3 分・空等 12 分（排隊 5 分）'
+        self.assertIn(line, r.stdout.splitlines())
+        self.assertTrue(self.archived_line('order-export').endswith(f'；{line}'), read(self.reg))
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        unqueued = '統計：總執行 14 分・修正 1 輪・驗收 2 輪（資安 1）・各段：實作 6 分、測試 1 分、驗收 4 分、修正 3 分・空等 12 分'
+        self.assertIn(unqueued, plain.stdout.splitlines())
+        self.assertTrue(self.archived_line('refund').endswith(f'；{unqueued}'), read(self.reg))
+
+    def test_archive_skips_malformed_stage_runs(self):
+        """每段計時 AC-4：壞掉的筆（時間不是數字、結束早於開始、種類不認得）略過，其餘照算；整份壞掉或空的只印原句。"""
+        for branch, name in (('feature/order-export', '訂單匯出'), ('feature/refund', '退款'), ('feature/coupon', '折價券')):
+            self.run_card('new', branch, name, 'origin/main')
+        m = 60_000
+        good = [
+            {'kind': 'continue', 'startedAt': 0, 'endedAt': 6 * m, 'runMs': 6 * m},
+            {'kind': 'verify', 'startedAt': 8 * m, 'endedAt': 9 * m, 'runMs': 1 * m},
+        ]
+        broken = [
+            {'kind': 'review', 'startedAt': '15', 'endedAt': 19 * m, 'runMs': 4 * m},
+            {'kind': 'fix', 'startedAt': 23 * m, 'endedAt': 20 * m, 'runMs': 3 * m},
+            {'kind': 'lint', 'startedAt': 30 * m, 'endedAt': 31 * m, 'runMs': 1 * m},
+            {'kind': 'review', 'startedAt': 40 * m, 'endedAt': 41 * m, 'runMs': -1},
+            'not a run',
+        ]
+        self.write_stage_runs('order-export', [broken[0], good[0], broken[1], broken[2], good[1], broken[3], broken[4]])
+        self.write_stage_runs('refund', broken)
+        self.write_stage_runs('coupon', [], {'runs': 'oops'})
+
+        mixed = self.run_card('archive', 'order-export')
+        all_broken = self.run_card('archive', 'refund')
+        not_list = self.run_card('archive', 'coupon')
+
+        for r in (mixed, all_broken, not_list):
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stderr, '')
+        self.assertIn('統計：總執行 14 分・修正 1 輪・各段：實作 6 分、測試 1 分・空等 2 分', mixed.stdout.splitlines())
+        for slug, r in (('refund', all_broken), ('coupon', not_list)):
+            self.assertIn('統計：總執行 14 分・修正 1 輪', r.stdout.splitlines())
+            self.assertTrue(self.archived_line(slug).endswith('；統計：總執行 14 分・修正 1 輪'), read(self.reg))
+
     def test_unknown_target_lists_cases(self):
         self.run_card('new', 'feature/order-export', '訂單匯出', 'origin/main')
         r = self.run_card('card', 'nope')

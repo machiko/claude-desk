@@ -337,12 +337,13 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
     : { who: 'you', text: TURN_TEXT.checkFailed(), action: 'continue' }
   const gate = parseGate(c.gate)
   if (gate?.kind === 'unknown') return { who: 'you', text: TURN_TEXT.unknownGate(gate.detail), action: 'open' }
+  // 規格還沒確認、程式卻已經寫好（六段過了規格段）：關卡 spec 擋著派工，一樣叫你按 t 確認，確認後照六段接著走。
+  if (specPastBuild(c)) return c.agent ? { who: 'ai', text: runningText(c) } : specOkTurn(c)
   switch (c.pipeline?.current) {
     case 'spec':
       if ((gate?.kind === 'spec' || c.specGap) && c.agent) return { who: 'ai', text: runningText(c) }
       // 關卡是 spec 但認不到驗收情境：沒有東西可確認，叫你寫規格。
-      // 疊放卡的原卡還沒合併：照樣能確認規格，只是確認後要等原卡合併才派實作。
-      if (gate?.kind === 'spec' && !c.specGap) return { who: 'you', text: c.stackWait ? TURN_TEXT.specOkStacked(`${CARD_CMD} spec ${slugOf(c)} ok`, c.stackWait) : TURN_TEXT.specOk(`${CARD_CMD} spec ${slugOf(c)} ok`), action: 'spec-ok' }
+      if (gate?.kind === 'spec' && !c.specGap) return specOkTurn(c)
       if (c.specGap) return { who: 'you', text: TURN_TEXT.specGap(`${CARD_CMD} spec ${slugOf(c)}`) }
       // 規格沒問題（或舊卡沒有規格段），停在這段只因為檢查欄空白、還是 `<…>` 範本佔位或說明文字：請人填一條真的指令。
       return { who: 'you', text: TURN_TEXT.missingCheck(), action: 'open' }
@@ -376,6 +377,16 @@ function baseTurn(c: Case, ctx: TurnCtx): BaseTurn {
   }
 }
 
+
+/** 關卡是 spec、認得到驗收情境，六段卻已過了規格段（規格確認前就先寫好程式）。 */
+const specPastBuild = (c: Case): boolean =>
+  parseGate(c.gate)?.kind === 'spec' && !c.specGap && !!c.pipeline && c.pipeline.current !== 'spec'
+
+/** 叫你按 t 確認規格；疊放卡的原卡還沒合併：照樣能確認規格，只是確認後要等原卡合併才派實作。 */
+function specOkTurn(c: Case): BaseTurn {
+  const cmd = `${CARD_CMD} spec ${slugOf(c)} ok`
+  return { who: 'you', text: c.stackWait ? TURN_TEXT.specOkStacked(cmd, c.stackWait) : TURN_TEXT.specOk(cmd), action: 'spec-ok' }
+}
 
 function mergeTurn(c: Case): BaseTurn {
   // 跟基準分支有衝突：先解衝突。這個對話的流程會自動派 Agent；不自動派的寫原因，在對話處理。
@@ -448,6 +459,7 @@ export function isHandling(c: Case, ctx: TurnCtx = {}): boolean {
   if (quotaHeld(c.chain) && isQuotaHold(c.chain)) return false
   const gate = parseGate(c.gate)
   if (gate?.kind === 'unknown') return false
+  if (specPastBuild(c)) return !!c.agent
   switch (c.pipeline?.current) {
     case 'spec': return (gate?.kind === 'spec' || !!c.specGap) && !!c.agent
     case 'review': return !!standingVerdict(c) || willAutoReview(c)

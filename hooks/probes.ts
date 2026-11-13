@@ -604,17 +604,19 @@ async function latestTag($: any, root: string): Promise<string | undefined> {
 }
 
 /**
- * 這個對話的模型（/model 顯示的那個）與最近一次請求的 effort；派工與同步用的模型與 effort；kinds 只列跟派工不同的種類。
+ * 這個對話的模型（/model 顯示的那個）與最近一次請求的 effort；派工與同步用的模型與 effort；kinds 只列跟派工不同的種類（修正、解衝突只在 kinds 有設時列）。
  * 有 projects 覆寫的任務另外列在 byRoot（每種派工實際會用的），確認字照它寫；都用 modelFor 算，跟實際派工同一套規則。
  */
 export async function models($: any, options: PluginOptions, turnModel: { model?: string; effort?: string }, roots: readonly string[] = [], preloadedSettings?: DispatchSettings): Promise<Snapshot['models']> {
   const session = turnModel.model || String((await $.session.model().catch(() => '')) ?? '')
   const settings = preloadedSettings ?? await loadSettings($, options)
   const sync = modelFor(settings, '', 'sync')
-  const pick = (root: string, kind: ModelKind) => { const m = modelFor(settings, root, kind); return { model: m.model, effort: m.effort } }
-  const kinds = MODEL_KINDS.map(kind => ({ kind, ...pick('', kind) })).filter(k => k.model !== settings.model || k.effort !== settings.effort)
+  // 修正是帶 fix 的 continue；修正與解衝突沒在 kinds 設就跟 continue 一樣，不重複列。
+  const pick = (root: string, kind: ModelKind) => { const m = kind === 'fix' ? modelFor(settings, root, 'continue', { fix: true }) : modelFor(settings, root, kind); return { model: m.model, effort: m.effort } }
+  const listed = MODEL_KINDS.filter(kind => (kind !== 'fix' && kind !== 'catchup') || !!settings.kinds[kind])
+  const kinds = listed.map(kind => ({ kind, ...pick('', kind) })).filter(k => k.model !== settings.model || k.effort !== settings.effort)
   const overridden = [...new Set(roots.map(normalizeRoot))].filter(r => settings.projects[r]?.model !== undefined || settings.projects[r]?.effort !== undefined)
-  const byRoot = Object.fromEntries(overridden.map(r => [r, Object.fromEntries(MODEL_KINDS.map(kind => [kind, pick(r, kind)]))]))
+  const byRoot = Object.fromEntries(overridden.map(r => [r, Object.fromEntries(listed.map(kind => [kind, pick(r, kind)]))]))
   return {
     ...(session ? { session } : {}), ...(turnModel.effort ? { effort: turnModel.effort } : {}),
     dispatch: { model: settings.model, effort: settings.effort },

@@ -8,10 +8,10 @@ import { quotaHold, quotaLow } from './model'
 import { archiveReview, loadSettings, prProbe, riskOf, worktreeMark } from './probes'
 import { markRefusalStop, specBlocks, specGapStop } from './dispatch'
 import type { DispatchKind, FixReason, JobRecord, RootJobs } from './dispatch'
-import { askClearedOnCard, askedOnCardAtEnd } from './agents'
+import { askClearedOnCard, askedOnCardAtEnd, codeJobEnded } from './agents'
 import { normalizeRoot } from './settings'
 import type { DispatchSettings } from './settings'
-import { checkStands, isMerged, parseVerdict } from './pipeline'
+import { checkStands, isMerged, parseVerdict, passedAtHead } from './pipeline'
 import { t } from './i18n'
 import { catchupFeed, catchupHold } from './catchup'
 import { REVIEW_FIX_NOT_SENT, carriedFix, carriedReview, fixTotalOf, handedOver, judgedAt, nextStep, paused, recheckFeed, skipsReview } from './chain'
@@ -91,7 +91,7 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     // 流程已過關或停下就不等：之後才派的推送／開 PR、同步、解衝突，下面的主判斷不會標成已處理，等它會永遠派不出去。
     const idle = (!last || !!last.handled || !!run?.passed || !!run?.stopped) && !agentBusy && !c.agent?.asks && !(c.statusPath in verifies) && !verifyPending(c.statusPath) && !isAgentQueued(c.statusPath) && !(c.statusPath in (await read($, launchingAtom)))
     if (!merged && run?.mediumFixAt && run.owner === mine && idle && await fixPickedMedium($, options, c, run, jobs[key], s.at)) { acted = true; continue }
-    // 實作或回覆做完時把要你決定的事寫進「等你」：等你在對話處理完（清成「無」後照「已在對話處理」那條走，不自動接著派）。
+    // 實作或回覆做完時把要你決定的事寫進「等你」：等你在對話處理完（清成「無」後自動接著派一次繼續，見下面的 answered）。
     if (!run || !last || last.handled || agentBusy || c.agent?.asks || askedOnCardAtEnd(last, c.ask) || c.statusPath in verifies || checking === c.statusPath || isQueued(c.statusPath) || isAgentQueued(c.statusPath) || c.statusPath in (await read($, launchingAtom))) continue
     // 別的對話開的流程：照舊不碰。
     if (run.owner !== mine) continue
@@ -107,15 +107,18 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
       continue
     }
     const verify = (await read($, verifiesAtom))[c.statusPath]
-    const fresh = verify && verify.at >= last.startedAt ? verify : undefined
+    // 這次派工之後跑的檢查；Agent 沒有新 commit、worktree 沒有未提交改動（卡片與 .task 不算），而且同一個 HEAD、同一條指令上次通過：沿用，不重跑。
+    const fresh = verify && (verify.at >= last.startedAt || (!tutorial && passedAtHead(c, verify) && (await worktreeMark($, c.root)).files === 0)) ? verify : undefined
     const finished: DispatchKind | null = last.kind === 'sync' ? null : last.kind
     const settings = finished ? await loadSettings($, options, preloaded) : undefined
     const risk = settings ? await riskOf($, c, settings.riskHigh, settings.cardBase) : undefined
     const stoppedAgent = last.ended?.how === 'stopped'
-    // 額度煞車：要派下一個 Agent 前看 5 小時額度。停在提問、題目已在對話處理的那次本來就不派，不看。
+    // 題目寫進「等你」、已在對話處理：做完一輪才寫的（answered）自動接著派一次繼續；Agent 還停在提問的照 handedOver 不派。
     const handed = askClearedOnCard(last, c.ask)
-    const hold = settings && !tutorial && !handed ? quotaHold(s.limits, settings.chainQuotaStop, s.at) : null
-    const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent, ...(hold ? { quotaHold: hold } : {}), ...(c.git?.branch ? { branch: c.git.branch } : {}), ...(settings?.review.combineSecurity ? { combineSecurity: true } : {}) })
+    const answered = handed && codeJobEnded(last)
+    // 額度煞車：要派下一個 Agent 前看 5 小時額度。還停在提問、題目已在對話處理的那次本來就不派，不看。
+    const hold = settings && !tutorial && (!handed || answered) ? quotaHold(s.limits, settings.chainQuotaStop, s.at) : null
+    const planned = nextStep(run, finished, checkStands(c, fresh), parseVerdict(c.gate), trusted[c.statusPath] === c.verify && !!c.verify, { ...(risk ? { risk } : {}), lastWasSecurity: !!last.security, changed: c.statusPath in trusted, stopped: stoppedAgent, ...(hold ? { quotaHold: hold } : {}), ...(c.git?.branch ? { branch: c.git.branch } : {}), ...(settings?.review.combineSecurity ? { combineSecurity: true } : {}), ...(answered ? { answered: true } : {}) })
     if (!planned) continue
     // 寫入放棄（被別的對話蓋掉）不算有動作：不提早重新整理，等下一次重新整理再試，免得每兩秒重套一次。
     const actedBefore = acted
@@ -127,8 +130,8 @@ export async function autoChain($: any, options: PluginOptions, s: Snapshot, pre
     if (finished === 'review' && !stoppedAgent && !(await saveChain($, key, r => r ? { ...r, ...judgedAt(r, !!last.security, c.git), ...markReviewed } : r, saveOpts))) { acted = actedBefore; continue }
     // 被停掉的審查沒寫完：不歸檔、不算判過。
     if (finished === 'review' && !stoppedAgent && planned.kind !== 'verify' && !tutorial) await archiveReview($, options, c, !!last.security, s.at)
-    // 停在提問、題目已在對話處理的那次：結論照記，不替它跑檢查或派 Agent（也就不會因為被取代而停掉它）。
-    const next = handed ? handedOver(planned) : planned
+    // 還停在提問、題目已在對話處理的那次：結論照記，不替它跑檢查或派 Agent（也就不會因為被取代而停掉它）。
+    const next = handed && !answered ? handedOver(planned) : planned
     if (!next) { await markHandled(); continue }
     // 開跑自動檢查前記下流程已接手：檢查跑到一半或停在檢查段（容器未啟動、測試中斷）時「等你」出現的題目，不再當成那次派工寫的。
     if (next.kind === 'verify') { await markChained(); void runVerify($, c, true); continue }

@@ -5,8 +5,11 @@ import type { FeedEvent, SettingsChecked } from '../types'
 import { SETTINGS_FORMAT } from './formats'
 import { t } from './i18n'
 
-/** dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude，解衝突用 continue 的。 */
-export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish'] as const
+/**
+ * dispatch.json 的 kinds 可以各設模型的派工種類；同步另用 sync.claude。fix 是自動流程派的修正（檢查沒過、審查要修、選修掉的 MEDIUM），
+ * catchup 是自動派的解衝突：沒設（或只設一欄）的欄位退回 continue 的。
+ */
+export const MODEL_KINDS = ['continue', 'reply', 'review', 'publish', 'fix', 'catchup'] as const
 export type ModelKind = typeof MODEL_KINDS[number]
 /**
  * 審查用語；template 是審查契約檔（空白用 plugin 內附的 templates/review.md）。
@@ -140,14 +143,25 @@ export function pitfallsFor(settings: DispatchSettings, fallback: string, home: 
   return own ? expandHome(own, home) : fallback
 }
 
-/** 這件任務這種派工用的 model／effort：種類（kinds）> 任務覆寫 > 全域；同步另有自己的模型，解衝突照 continue（接任務的 session）。 */
-export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind): { model: string; effort: string; fresh: boolean } {
+/**
+ * 這件任務這種派工用的 model／effort：種類（kinds）> 任務覆寫 > 全域；同步另有自己的模型。
+ * 解衝突讀 kinds.catchup、自動流程的修正（`fix`）讀 kinds.fix，每欄沒寫就退回 continue 實際用的；設的模型跟 continue 的不同時開新對話
+ * （換模型接原本的對話，快取會失效），只換 effort 或模型相同照舊接任務的 session。
+ */
+export function modelFor(settings: DispatchSettings, root: string, kind: DispatchKind, opts: { fix?: boolean } = {}): { model: string; effort: string; fresh: boolean } {
   const own = settings.projects[normalizeRoot(root)] ?? {}
   const base = { model: own.model ?? settings.model, effort: own.effort ?? settings.effort }
   if (kind === 'sync') return { model: settings.sync.model || base.model, effort: settings.sync.effort || base.effort, fresh: settings.sync.fresh }
-  const byKind = settings.kinds[kind === 'catchup' ? 'continue' : kind] ?? {}
+  // 解衝突的底是 continue 的設定，kinds.catchup 有寫的欄位再蓋上去。
+  const ownKind = settings.kinds[kind === 'catchup' ? 'continue' : kind]
+  const picked = { model: ownKind?.model ?? base.model, effort: ownKind?.effort ?? base.effort }
+  const side = kind === 'catchup' ? settings.kinds.catchup : kind === 'continue' && opts.fix ? settings.kinds.fix : undefined
+  if (side) {
+    const model = side.model ?? picked.model
+    return { model, effort: side.effort ?? picked.effort, fresh: model !== picked.model }
+  }
   // 推送只要分支與卡片，開新對話就夠了，不接任務那個越來越長的 session。
-  return { model: byKind.model ?? base.model, effort: byKind.effort ?? base.effort, fresh: kind === 'review' || kind === 'publish' }
+  return { ...picked, fresh: kind === 'review' || kind === 'publish' }
 }
 
 // ── 設定檔驗證：指出 dispatch.json 哪裡寫錯、改用了什麼。只報告，不改 parseSettings 的解析結果。──

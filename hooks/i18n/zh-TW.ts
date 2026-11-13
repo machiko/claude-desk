@@ -156,6 +156,7 @@ export const zhTW = {
   'kindLabel.reply': '回覆',
   'kindLabel.publish': '推送',
   'kindLabel.catchup': '解衝突',
+  'kindLabel.fix': '修正',
 
   // 疊放卡（hooks/stack.ts）
   'stack.waitWhy': '等原卡「{name}」合併',
@@ -455,6 +456,7 @@ export const zhTW = {
   'cardActions.specFailed': '確認規格失敗：{why}',
   'cardActions.specOk': '{name} 規格已確認，可以派實作',
   'cardActions.specNotDispatched': '規格已確認；無法自動派實作（{why}）{next}',
+  'cardActions.specPastBuild': '規格已確認；實作已完成，沒有派實作：照「輪到你」接著做',
   'cardActions.stackNotDispatched': '不用再等原卡；無法自動派實作（{why}）{next}',
   'cardActions.stackDispatch': '{name} 不用再等原卡，自動派實作',
   'cardActions.stopNoAgent': '{name}：無法停止（找不到在跑的 Agent）；按 r 重新整理後再看',
@@ -524,7 +526,7 @@ export const zhTW = {
   'staleAgents.endedRecordFailed': '停掉做完的 Agent {agent} 後記不下結果（{err}）',
   'staleAgents.endedStopFailed': '停不掉做完的 Agent {agent}：{err}',
   'staleAgents.askHandled': '{name} Agent 的提問已在對話處理（卡片「等你」已清），不再等它回覆',
-  'staleAgents.askCleared': '{name} 「等你」已在對話處理，流程不替那次派工接著跑；照「輪到你」繼續',
+  'staleAgents.askCleared': '{name} 「等你」已在對話處理',
 
   // 檢查列、提醒、審查前置與 git 狀態（hooks/extras.ts）
   'extras.approveT': '核准這條（再按 t 之後自動執行）：{verify}',

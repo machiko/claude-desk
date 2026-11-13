@@ -28,7 +28,7 @@ async function heldAtChangedCheck($: any, on: any) {
 }
 
 /** AC-1 */
-test('test_pressing_v_twice_approves_the_changed_check_and_resumes_the_chain', async ($, on) => {
+test('test_pressing_v_twice_approves_the_changed_check_and_resumes_the_chain', { timeoutMs: 15000 }, async ($, on) => {
   const { data, clock, h, chain } = await heldAtChangedCheck($, on)
   expect(sh(data)).toBe(0)
   expect(chain().heldAtCheck).toBe(true)

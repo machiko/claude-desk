@@ -1,6 +1,7 @@
 // 完成檢查（Verify）佇列與執行排程。
 import { atom, read, update } from 'claude-code'
 import type { Case, Verify } from '../types'
+import type { StageRun } from './dispatch'
 import { DEMO_ONLY } from './theme'
 import { isApproved, trustedChecks, unapprovedText } from './approve-check'
 import { containers, loadSettings, verifyResult } from './probes'
@@ -122,7 +123,7 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   await update($, verifyingAtom, v => Object.fromEntries(Object.entries(v).filter(([k]) => k !== c.statusPath)))
   const all = await update($, verifiesAtom, v => ({ ...v, [c.statusPath]: result }))
   await $.store.set(VERIFIES_KEY, all).catch(() => {})
-  await addCheckTime($, c, result.at - ranAt)
+  await addCheckTime($, c, ranAt, result.at)
   const outcome = result.ok ? t('verifyRunner.passed') : t('verifyRunner.failedExit', { code: result.exitCode })
   await feedPush($, [{ at: result.at, text: t('feed.named', { name: c.name, text: outcome }), tone: result.ok ? 'success' : 'error', card: c.statusPath }])
   await tellPanel($, result.at, outcome, { name: c.name, skip: auto || tutorial })
@@ -136,11 +137,13 @@ export async function executeVerify($: any, c: Case, auto: boolean): Promise<boo
   return true
 }
 
-/** 檢查跑完：這次花的時間加進這件的總執行時間，統計檔跟著重寫。記不下來只少算這一次，不擋檢查結果。 */
-async function addCheckTime($: any, c: Case, ms: number) {
+/** 檢查跑完：這次花的時間加進這件的總執行時間、記成一段測試，統計檔跟著重寫。記不下來只少算這一次，不擋檢查結果。 */
+async function addCheckTime($: any, c: Case, startedAt: number, endedAt: number) {
   const key = normalizeRoot(c.root)
+  const ms = Math.max(0, endedAt - startedAt)
+  const run: StageRun = { kind: 'verify', startedAt, endedAt: startedAt + ms, runMs: ms }
   const all = await loadJobs($)
-  const saved = await $.store.set(JOBS_KEY, { ...all, [key]: addRunTime(all[key], ms, c.git?.branch) }).then(() => true, () => false)
+  const saved = await $.store.set(JOBS_KEY, { ...all, [key]: addRunTime(all[key], ms, c.git?.branch, run) }).then(() => true, () => false)
   if (saved) await writeStats($, key)
 }
 

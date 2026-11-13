@@ -1,5 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { fixture, feedLog, flat, text, PANE, CARD_A, result, storedStop } from './fixture'
+import { fixture, feedLog, flat, text, PANE, CARD_A, NOW, result, storedStop } from './fixture'
+import { alphaOnly, helpers, sh, ROOT } from './alpha-chain'
+import { markOf } from '../hooks/worktree-mark'
 import { AGENT_STOPPED, recheckFeed, skipsReview } from '../hooks/chain'
 import { buildCase, summary } from '../hooks/model'
 import { UNREVIEWED_GATE } from '../hooks/card'
@@ -781,3 +783,65 @@ test('risk after a new commit uses the PR target for the turn hint and the flow 
   expect(f.chain().unreviewed).toBe(true)
   expect(f.chain().needsHuman).toBeUndefined()
 })
+
+/**
+ * 少等、少按、少續跑：這個對話的實作 Agent 剛做完一輪（還沒處理）；完成檢查上次在 `verified` 這個 HEAD、同一條指令跑過，結果是 `ok`。
+ * `head` 是現在的 HEAD，`changed` 是 worktree 未提交改動的檔數（卡片與 .task 不算）。
+ */
+function finishedAfterCheck(data: any, clock: any, opts: { head: string; changed?: number; ok?: boolean; reviewed?: boolean }) {
+  // 未提交的改動是那個 Agent 留下的（結束時記下的指紋跟現在一樣），派下一步不會被當成別的對話在改。
+  const dirty = Array.from({ length: opts.changed ?? 0 }, (_, i) => `1 .M N... 100644 100644 100644 a b f${i}.ts`).join('\n')
+  alphaOnly(data, clock)
+  data.git[ROOT] = { branch: 'feature/alpha', head: opts.head, files: ['src/app.ts'], ...(opts.changed ? { changed: opts.changed } : {}) }
+  data.store.trustedVerify = { [CARD_A]: 'node test.mjs' }
+  data.store.verifies = { [CARD_A]: { command: 'node test.mjs', at: NOW - 120_000, ok: opts.ok ?? true, exitCode: opts.ok === false ? 1 : 0, tail: [], truncated: false, head: 'h1' } }
+  data.store.chains = { [ROOT]: { owner: 'fixture-session', startedAt: NOW - 120_000, round: 0, ...(opts.reviewed ? { reviewedBranch: 'feature/alpha' } : {}) } }
+  data.store.jobs = { [ROOT]: { sessionId: 'a0000009-0000-4000-8000-000000000000', mark: markOf(dirty, '').hash, last: { launchName: 'desk-old-0', nativeId: 'a0000009', sessionId: 'a0000009-0000-4000-8000-000000000000', kind: 'continue', startedAt: NOW - 60_000, fresh: false, owner: 'fixture-session', ended: { how: 'finished' } } } }
+}
+
+/** AC-2（少等、少按、少續跑）：沒有新 commit、worktree 乾淨、同一個 HEAD 同一條指令上次通過：不再執行檢查指令，照「已通過」派驗收；審查過的分支直接過關。 */
+test('test_finished_agent_without_new_commit_reuses_passed_check', async ($, on) => {
+  const { data, clock } = fixture(on)
+  finishedAfterCheck(data, clock, { head: 'h1' })
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.step(); await h.step()
+
+  expect(sh(data)).toBe(0)
+  expect(data.launches).toHaveLength(1)
+  expect(h.prompt(0)).toContain('程式碼審查')
+})
+
+test('test_finished_agent_without_new_commit_reuses_passed_check — a reviewed branch passes without rerunning', async ($, on) => {
+  const { data, clock } = fixture(on)
+  finishedAfterCheck(data, clock, { head: 'h1', reviewed: true })
+  const h = helpers($, data, clock)
+  await h.refresh()
+  await h.step(); await h.step()
+
+  expect(sh(data)).toBe(0)
+  expect(data.launches).toHaveLength(0)
+  const chain = (data.store.chains as any)[ROOT]
+  expect(chain.passed).toBe(true)
+  expect(chain.unreviewed).toBe(true)
+  expect(chain.judgedHead).toBe('h1')
+})
+
+/** 維持-3（少等、少按、少續跑）：有新 commit、沒新 commit 但有未提交改動、或同一個 HEAD 上次沒過：跟改之前一樣重跑完成檢查，照結果派驗收。 */
+for (const [why, opts] of [
+  ['new commit', { head: 'h2' }],
+  ['dirty tree', { head: 'h1', changed: 2 }],
+  ['failed at the same head', { head: 'h1', ok: false }],
+] as const) {
+  test(`test_finished_agent_with_new_commit_or_dirty_tree_still_reruns_check — ${why}`, async ($, on) => {
+    const { data, clock } = fixture(on)
+    finishedAfterCheck(data, clock, opts)
+    const h = helpers($, data, clock)
+    await h.refresh()
+    await h.step(); await h.step(); await h.step()
+
+    expect(sh(data)).toBe(1)
+    expect(data.launches).toHaveLength(1)
+    expect(h.prompt(0)).toContain('程式碼審查')
+  })
+}
